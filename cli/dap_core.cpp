@@ -10,6 +10,12 @@
 
 #include "cli/dap_core.h"
 
+// DAP 二期：条件断点求值使用临时 Interpreter 沙箱（与 IdeController 的
+// VM 条件断点求值同模式），仅在断点行首次到达时执行，开销可接受。
+// 命中条件/改值文本解析复用 debug/DebugTypes.h 共享实现（三路径一致）。
+#include "debug/DebugTypes.h"
+#include "interpreter/Interpreter.h"
+
 #include <QtCore/QByteArray>
 #include <QtCore/QCoreApplication>
 #include <QtCore/QTextStream>
@@ -230,13 +236,42 @@ std::string DebugSession::launch(const std::string& source, const std::string& f
 }
 
 void DebugSession::setBreakpoints(const std::unordered_set<int>& lines) {
-    breakpoints_ = lines;
+    // 旧 API 兼容：无条件全量替换，委托结构化 API 保证元数据一致清理
+    std::vector<SourceBreakpoint> bps;
+    bps.reserve(lines.size());
+    for (int line : lines) {
+        SourceBreakpoint bp;
+        bp.line = line;
+        bps.push_back(bp);
+    }
+    setSourceBreakpoints(bps);
+}
+
+void DebugSession::setSourceBreakpoints(const std::vector<SourceBreakpoint>& bps) {
+    breakpoints_.clear();
+    bpConditions_.clear();
+    bpHitConditions_.clear();
+    // 命中计数重置：与 DebugController::setBreakpointCondition 对齐——
+    // 断点集合/条件变更后旧计数无意义（hitCondition 基于计数判定）。
+    bpHitCounts_.clear();
+    for (const auto& bp : bps) {
+        if (bp.line <= 0)
+            continue;
+        breakpoints_.insert(bp.line);
+        if (!bp.condition.empty())
+            bpConditions_[bp.line] = bp.condition;
+        if (!bp.hitCondition.empty())
+            bpHitConditions_[bp.line] = bp.hitCondition;
+    }
 }
 
 StepResult DebugSession::doContinue() {
-    // 记录起始行号：在行号改变之前不检查断点，
-    // 避免同一断点行的多条指令被重复命中。
-    int startLine = vm_.getCurrentLine();
+    // DAP 二期 fix：逐行跟踪（prevLine）替代固定起始行（startLine）门控。
+    // 原实现仅比较起始行：离开起始行后，断点行的每条指令都会调用
+    // hitBreakpoint()。无状态时碰巧无害（首次即 return），但引入命中计数/
+    // 条件求值后会重复递增计数、重复求值条件。prevLine 跟踪保证
+    // 每次"到达新行"仅检查一次（与 DebugController crossedLine 语义对齐）。
+    int prevLine = vm_.getCurrentLine();
     int count = 0;
     while (count < kMaxStepInstructions) {
         // L21: 每 kPausePollInterval 步轮询一次 stdin 是否有 pause 请求。
@@ -260,11 +295,13 @@ StepResult DebugSession::doContinue() {
         if (r != StepResult::Ok) {
             return r;
         }
-        // 当前行的剩余指令不检查断点
-        if (vm_.getCurrentLine() == startLine) {
+        // 同一行的剩余指令不检查断点（逐行跟踪，见函数头注释）
+        int curLine = vm_.getCurrentLine();
+        if (curLine == prevLine) {
             ++count;
             continue;
         }
+        prevLine = curLine;
         if (hitBreakpoint()) {
             return StepResult::Ok;
         }
@@ -349,7 +386,108 @@ StepResult DebugSession::stepUntilFrameDepthDecrease(size_t initialFrameCount) {
 }
 
 bool DebugSession::hitBreakpoint() const {
-    return breakpoints_.count(vm_.getCurrentLine()) > 0;
+    int line = vm_.getCurrentLine();
+    if (breakpoints_.count(line) == 0)
+        return false;
+    // DAP 二期：条件断点——条件不满足则不命中（不递增 hitCount，
+    // 对齐 DebugController::shouldPauseAtBreakpoint 的条件分支语义）
+    auto condIt = bpConditions_.find(line);
+    if (condIt != bpConditions_.end() && !condIt->second.empty()) {
+        if (!evalBreakpointCondition(condIt->second))
+            return false;
+    }
+    // 条件满足（或无条件）才计一次命中，再用命中条件决定是否暂停
+    int count = ++bpHitCounts_[line];
+    auto hcIt = bpHitConditions_.find(line);
+    if (hcIt != bpHitConditions_.end() && !hcIt->second.empty()) {
+        return hitConditionSatisfied(hcIt->second, count);
+    }
+    return true;
+}
+
+bool DebugSession::evalBreakpointCondition(const std::string& cond) const {
+    try {
+        // 与 IdeController::setConditionEvaluator 同模式：
+        // (1) 自动补分号（用户条件表达式通常不带分号，Parser 要求分号）
+        // (2) 临时 Interpreter + setGlobalEnvironment 注入变量
+        // (3) evaluateCondition 沙箱求值单语句（不用 execute：
+        //     execute 会 resetState 清空预注入的环境）
+        std::string condExpr = cond;
+        if (!condExpr.empty() && condExpr.back() != ';') {
+            condExpr += ';';
+        }
+        Lexer lx;
+        auto tokens = lx.scan(condExpr);
+        if (lx.getDiagnostics().hasErrors())
+            return false;
+        Parser ps;
+        auto parsed = ps.parse(tokens);
+        if (!parsed || parsed->statements.empty() || ps.getDiagnostics().hasErrors())
+            return false;
+        Interpreter tempInterp;
+        auto env = std::make_shared<Environment>();
+        // 注入顺序：先全局后栈顶帧 locals（locals 遮蔽同名全局，与 VM 作用域一致）
+        for (const auto& kv : vm_.getGlobals())
+            env->define(kv.first, kv.second);
+        size_t fc = vm_.getFrameCount();
+        if (fc > 0) {
+            for (const auto& kv : vm_.getFrameLocalsAt(fc - 1))
+                env->define(kv.first, kv.second);
+        }
+        tempInterp.setGlobalEnvironment(env);
+        Value result = tempInterp.evaluateCondition(parsed->statements[0].get());
+        return result.isTruthy();
+    } catch (...) {
+        // 求值异常（未定义变量/类型错误等）视为条件不满足
+        return false;
+    }
+}
+
+bool DebugSession::hitConditionSatisfied(const std::string& expr, int count) {
+    // 转发 debug/DebugTypes.h 共享实现（DebugController/VmStepper/DAP 三路径一致）
+    return evalHitCondition(expr, count);
+}
+
+bool DebugSession::parseValueText(const std::string& text, Value& out) {
+    // 转发 debug/DebugTypes.h 共享实现
+    return parseDebugValueText(text, out);
+}
+
+DebugSession::SetVariableResult DebugSession::setVariable(int variablesReference, const std::string& name,
+                                                          const std::string& valueText) {
+    SetVariableResult r;
+    Value newVal;
+    if (!parseValueText(valueText, newVal)) {
+        r.message = "无法解析新值（支持 int / float / true / false / null / \"字符串\"）";
+        return r;
+    }
+    bool written = false;
+    if (variablesReference == kGlobalsScopeReference) {
+        written = vm_.setGlobalValue(name, newVal);
+    } else if (variablesReference >= kLocalsScopeReference && variablesReference < kGlobalsScopeReference) {
+        // DAP frameId (0=栈顶) → VM frameIndex (0=栈底)，与 evaluate 同换算
+        int frameId = variablesReference - kLocalsScopeReference;
+        size_t frameCount = vm_.getFrameCount();
+        if (frameCount > 0 && frameId >= 0 && static_cast<size_t>(frameId) < frameCount) {
+            size_t vmFrameIndex = frameCount - 1 - static_cast<size_t>(frameId);
+            written = vm_.setFrameLocalAt(vmFrameIndex, name, newVal);
+        }
+        // main 帧的"局部"实为全局槽位：帧内未命中时回退全局写入
+        if (!written)
+            written = vm_.setGlobalValue(name, newVal);
+    } else {
+        r.message = "容器子元素编辑暂不支持（仅支持 Locals/Globals 作用域变量）";
+        return r;
+    }
+    if (!written) {
+        r.message = "变量不存在: " + name;
+        return r;
+    }
+    r.ok = true;
+    r.value = valueToString(newVal);
+    r.type = valueTypeName(newVal);
+    r.variablesReference = getVariablesReference(newVal);
+    return r;
 }
 
 std::vector<DapStackFrame> DebugSession::getCallStack() const {
@@ -791,6 +929,21 @@ std::vector<QJsonObject> DapRequestHandler::handleMessage(const QJsonObject& mes
             QJsonObject emptyBody;
             responses.push_back(makeResponse(seq, cmd, false, emptyBody, errMsg));
         }
+    } else if (cmd == "attach") {
+        // DAP 二期：attach 请求。MiniLang 调试器为进程内模型，无外部进程可
+        // 附加——attach 语义等价 launch（客户端 attach 配置提供 program/source）。
+        QJsonValue body = handleLaunch(args);
+        if (session_.isLaunched()) {
+            QJsonObject emptyBody;
+            responses.push_back(makeResponse(seq, cmd, true, emptyBody));
+        } else {
+            std::string errMsg = body.toObject().value("message").toString().toStdString();
+            if (errMsg.empty()) {
+                errMsg = "attach failed";
+            }
+            QJsonObject emptyBody;
+            responses.push_back(makeResponse(seq, cmd, false, emptyBody, errMsg));
+        }
     } else if (cmd == "setBreakpoints") {
         QJsonValue body = handleSetBreakpoints(args);
         responses.push_back(makeResponse(seq, cmd, true, body));
@@ -852,6 +1005,15 @@ std::vector<QJsonObject> DapRequestHandler::handleMessage(const QJsonObject& mes
     } else if (cmd == "evaluate") {
         QJsonValue body = handleEvaluate(args);
         responses.push_back(makeResponse(seq, cmd, true, body));
+    } else if (cmd == "setVariable") {
+        // DAP 二期：调试暂停时修改变量值
+        QJsonValue body = handleSetVariable(args);
+        QJsonObject b = body.toObject();
+        bool ok = b.value("success").toBool();
+        std::string msg = b.value("message").toString().toStdString();
+        b.remove("success");
+        b.remove("message");
+        responses.push_back(makeResponse(seq, cmd, ok, b, ok ? "" : msg));
     } else if (cmd == "threads") {
         QJsonValue body = handleThreads(args);
         responses.push_back(makeResponse(seq, cmd, true, body));
@@ -978,11 +1140,12 @@ QJsonValue DapRequestHandler::handleInitialize(const QJsonObject& /*args*/) {
     QJsonObject capabilities;
     capabilities["supportsConfigurationDoneRequest"] = true;
     capabilities["supportsFunctionBreakpoints"] = false;
-    capabilities["supportsConditionalBreakpoints"] = false;
-    capabilities["supportsHitConditionalBreakpoints"] = false;
+    // DAP 二期：条件断点/命中条件/setVariable 已实现
+    capabilities["supportsConditionalBreakpoints"] = true;
+    capabilities["supportsHitConditionalBreakpoints"] = true;
     capabilities["supportsEvaluateForHovers"] = true;
     capabilities["supportsStepBack"] = false;
-    capabilities["supportsSetVariable"] = false;
+    capabilities["supportsSetVariable"] = true;
     capabilities["supportsTerminateRequest"] = true;
     capabilities["supportsDisassembleRequest"] = false;
     capabilities["supportsCancelRequest"] = false;
@@ -1062,37 +1225,61 @@ QJsonValue DapRequestHandler::handleLaunch(const QJsonObject& args) {
     return QJsonObject();
 }
 
+QJsonValue DapRequestHandler::handleSetVariable(const QJsonObject& args) {
+    // DAP 二期：setVariable 请求。body 中的 success/message 为内部传递字段，
+    // 分发层提取后移除（DAP 响应的 success 在外层 response 对象）。
+    int ref = args.value("variablesReference").toInt();
+    std::string name = args.value("name").toString().toStdString();
+    std::string valueText = args.value("value").toString().toStdString();
+
+    auto result = session_.setVariable(ref, name, valueText);
+
+    QJsonObject body;
+    body["success"] = result.ok;
+    if (result.ok) {
+        body["value"] = QString::fromStdString(result.value);
+        body["type"] = QString::fromStdString(result.type);
+        body["variablesReference"] = result.variablesReference;
+    } else {
+        body["message"] = QString::fromStdString(result.message);
+    }
+    return body;
+}
+
 QJsonValue DapRequestHandler::handleSetBreakpoints(const QJsonObject& args) {
     QJsonArray breakpointsArray;
-    std::vector<int> lines;
+    std::vector<DebugSession::SourceBreakpoint> bps;
 
-    // 从 args["breakpoints"] 数组提取每个断点的 line
+    // DAP 二期：从 args["breakpoints"] 提取 line + condition + hitCondition
     if (args.contains("breakpoints")) {
         QJsonValue bpVal = args.value("breakpoints");
         if (bpVal.isArray()) {
             breakpointsArray = bpVal.toArray();
             for (const QJsonValue& v : breakpointsArray) {
                 if (v.isObject()) {
-                    int line = v.toObject().value("line").toInt();
-                    if (line > 0) {
-                        lines.push_back(line);
+                    QJsonObject bpObj = v.toObject();
+                    DebugSession::SourceBreakpoint sbp;
+                    sbp.line = bpObj.value("line").toInt();
+                    sbp.condition = bpObj.value("condition").toString().toStdString();
+                    sbp.hitCondition = bpObj.value("hitCondition").toString().toStdString();
+                    if (sbp.line > 0) {
+                        bps.push_back(std::move(sbp));
                     }
                 }
             }
         }
     }
 
-    // 设置断点（全量替换）
-    std::unordered_set<int> lineSet(lines.begin(), lines.end());
-    session_.setBreakpoints(lineSet);
+    // 设置断点（全量替换，含条件元数据）
+    session_.setSourceBreakpoints(bps);
 
     // 构建断点响应
     QJsonArray responseBreakpoints;
     int bpId = 0;
-    for (int line : lines) {
+    for (const auto& sbp : bps) {
         DapBreakpoint bp;
         bp.id = bpId++;
-        bp.line = line;
+        bp.line = sbp.line;
         bp.verified = true;
 
         // 附加 source 信息
@@ -1315,6 +1502,33 @@ std::string versionString() {
 
 std::string serverName() {
     return "minilang-dap";
+}
+
+// ============================================================
+// DAP 服务器主循环（供 dap_entry.cpp 统一入口调用）
+// ============================================================
+
+int runDapServer() {
+    DapTransport transport;
+    DapRequestHandler handler;
+
+    while (!handler.shouldExit()) {
+        auto message = transport.read();
+        if (!message) {
+            // EOF 或读取错误
+            return 0;
+        }
+
+        // 处理消息前清除 pause 标志
+        handler.session().clearPauseRequest();
+
+        std::vector<QJsonObject> responses = handler.handleMessage(*message);
+        for (const auto& resp : responses) {
+            transport.write(resp);
+        }
+    }
+
+    return 0;
 }
 
 } // namespace minilang_dap

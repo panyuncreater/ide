@@ -54,35 +54,7 @@
 
 #ifdef MINILANG_USE_JIT
 
-namespace {
-
-/// 运行 JIT 后端，返回输出字符串
-/// 失败时返回带错误标记的字符串（与 ThreeBackends.h 风格一致）
-std::string runJIT(const std::string& src) {
-    Lexer lx;
-    auto tk = lx.scan(src);
-    Parser p;
-    auto ast = p.parse(tk);
-    if (!ast)
-        return "<parse-fail>";
-
-    Compiler c;
-    auto cr = c.compile(*ast);
-    if (c.getDiagnostics().hasErrors())
-        return "<compile:" + c.getLastError() + ">";
-
-    JITBackend jit;
-    std::string out;
-    jit.setOutputCallback([&](const std::string& s) { out += s; });
-    JitResult result = jit.execute(cr);
-    if (result == JitResult::CompileError)
-        return out + "<jit-compile:" + jit.getLastError() + ">";
-    if (result == JitResult::RuntimeError)
-        return out + "<jit-runtime:" + jit.getLastError() + ">";
-    return out;
-}
-
-} // namespace
+#include "TestJITHelper.h"
 
 // ============================================================
 // 阶段 1 PoC 测试用例（R138）
@@ -137,6 +109,37 @@ TEST(TestJIT, SubtractionToNegative) {
 TEST(TestJIT, BackendName) {
     JITBackend jit;
     EXPECT_EQ(jit.backendName(), "JIT");
+}
+
+// 拓展二期·教学（字节码↔汇编对照）：setAsmCapture 捕获发射的汇编文本
+TEST(TestJIT, AsmCaptureCollectsEmittedAssembly) {
+    Lexer lx;
+    auto tk = lx.scan("print(1+2);");
+    Parser p;
+    auto ast = p.parse(tk);
+    ASSERT_TRUE(ast != nullptr);
+    Compiler c;
+    auto cr = c.compile(*ast);
+    ASSERT_FALSE(c.getDiagnostics().hasErrors());
+
+    JITBackend jit;
+    jit.setAsmCapture(true);
+    std::string out;
+    jit.setOutputCallback([&](const std::string& s) { out += s; });
+    ASSERT_EQ(jit.execute(cr), JitResult::OK);
+    EXPECT_EQ(out, "3");
+
+    // 捕获的汇编非空且含 x86 指令痕迹（prologue 必有 push/mov）
+    const std::string& asmText = jit.getCapturedAsm();
+    EXPECT_FALSE(asmText.empty());
+    EXPECT_NE(asmText.find("mov"), std::string::npos);
+
+    // 未启用捕获时不残留上次内容之外的开销（新实例默认关闭 → 空）
+    JITBackend jit2;
+    std::string out2;
+    jit2.setOutputCallback([&](const std::string& s) { out2 += s; });
+    ASSERT_EQ(jit2.execute(cr), JitResult::OK);
+    EXPECT_TRUE(jit2.getCapturedAsm().empty());
 }
 
 TEST(TestJIT, DiagnosticsClearedOnExecute) {
@@ -5349,10 +5352,10 @@ TEST(TestJIT, R160InlineCachePolymorphicDegradation) {
 // 本测试验证 JIT 无条件同步是否真的等价覆盖 V-P1-6 语义。
 // ============================================================
 
-// R161Closure* 三个测试因 JIT 闭包访问类字段时崩溃（V-P1-6 JIT 同步缺失 + 闭包字段捕获 bug）
-// 暂时禁用，待 JIT 路径补全 V-P1-6 同步语义后启用。
-// StackVM/RegisterVM/Interpreter 路径均已通过 V-P1-6 fix 正确处理此场景，
-// 此处仅 JIT 路径缺失。详见 R160 changelog 与 JIT.cpp:3433 注释。
+// R161Closure* 三个测试曾因 JIT 闭包访问类字段时崩溃（V-P1-6 JIT 同步缺失 + 闭包字段捕获 bug）
+// 被标记 DISABLED_；JIT 路径补全 V-P1-6 同步语义后已重新启用并通过。
+// 四后端（Interpreter/StackVM/RegisterVM/JIT）均正确处理此场景。
+// 历史背景见 R160 changelog 与 JIT.cpp jitMethodReturn 注释。
 TEST(TestJIT, R161ClosureReadsMethodField) {
     // 分级验证 step 1：闭包读取类字段（不修改），确认基础路径正常
     const std::string src = "class C {\n"

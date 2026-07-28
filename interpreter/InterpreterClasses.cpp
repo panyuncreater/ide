@@ -91,10 +91,20 @@ void Interpreter::visitMemberAccess(MemberAccess& node) {
         if (classIt != classRegistry_.end()) {
             ClassInfo* searchClass = &classIt->second;
             if (isSuperAccess) {
-                if (classIt->second.superClassName.empty()) {
-                    runtimeError("类 " + classIt->second.name + " 没有父类，不能使用 super", node.line, node.column);
+                // AUDIT-R5 R4 fix: 以词法类（classContextStack_ 顶部 = 当前执行方法的
+                // 定义类）而非运行时实例类解析 super 搜索起点，对齐 visitMethodCall
+                // 的 isSuperCall 路径（L3344-3351）与 VM 的 OP_SUPER_CALL（编译期编码
+                // currentClassName_）。原实现用 objC.className()：A←B←C 且实例为 C 时，
+                // B 方法内的 super 成员访问从 C 的父类 B 开始搜索，可能重新命中 B
+                // 自身方法造成错误分派甚至无限递归。
+                const std::string& lexicalClassName =
+                    !classContextStack_.empty() ? classContextStack_.back() : objC.className();
+                auto lexIt = classRegistry_.find(lexicalClassName);
+                ClassInfo* lexClass = (lexIt != classRegistry_.end()) ? &lexIt->second : &classIt->second;
+                if (lexClass->superClassName.empty()) {
+                    runtimeError("类 " + lexClass->name + " 没有父类，不能使用 super", node.line, node.column);
                 }
-                auto superIt = classRegistry_.find(classIt->second.superClassName);
+                auto superIt = classRegistry_.find(lexClass->superClassName);
                 if (superIt != classRegistry_.end()) {
                     searchClass = &superIt->second;
                 }
@@ -139,12 +149,14 @@ void Interpreter::visitMemberAssign(MemberAssign& node) {
     // L19 Watchpoint（pre-execution 语义，与 VM OP_MEMBER_SET 对齐）：
     // 字段写入检查。仅当 node.object 是简单 VarRef 时附带接收者变量名，
     // 复杂链式访问（如 obj.a.b = 1）仅按 fieldName 匹配（varName 空通配）。
-    if (debugger_ && debugger_->hasWatchpoints()) {
+    // AUDIT-R4 BUG-15 fix: atomic load 到局部变量
+    auto dbg = debugger_.load(std::memory_order_acquire);
+    if (dbg && dbg->hasWatchpoints()) {
         std::string rootVarName;
         if (node.object->nodeType == NodeType::NODE_VAR_REF) {
             rootVarName = static_cast<VarRef*>(node.object.get())->name;
         }
-        debugger_->checkWatchpointHit(rootVarName, true, node.fieldName, node.line);
+        dbg->checkWatchpointHit(rootVarName, true, node.fieldName, node.line);
     }
     // 左到右求值：object → value（由 writeBack 内部按序求值）
     lastValue_ = writeBack(node.object.get(), false, nullptr, node.fieldName, node.value.get(), node.line, node.column);

@@ -157,6 +157,13 @@ enum class OpCode : uint8_t {
     //   - 若计数器 > 目标：不可能（计数器从 0 单调递增，target 首次命中即抛出）
     // 注：VM 使用与 Interpreter 相同的重放模式，保证四后端语义一致。
     OP_YIELD,
+
+    // PERF: 类型特化算术操作码（跳过运行时类型检查）
+    // 编译器在静态确定两个操作数均为 int 时生成，消除热循环中的分支预测开销。
+    OP_ADD_INT_SPEC,  // int + int → int（无类型检查）
+    OP_SUB_INT_SPEC,  // int - int → int（无类型检查）
+    OP_MUL_INT_SPEC,  // int * int → int（无类型检查）
+    OP_LT_INT_SPEC,   // int < int → bool（无类型检查，最常见的循环比较）
 };
 
 // ============================================================
@@ -243,6 +250,17 @@ struct BytecodeChunk {
     // fieldOrder 一致（缓存纯派生自 fieldOrder）。
     mutable std::unordered_map<std::string, size_t> fieldIndexCache_;
     mutable bool fieldIndexCacheBuilt_ = false;
+
+    // P-1 perf: per-chunk 全局变量解析缓存（平坦数组，按常量池索引直接寻址）。
+    // 替代 VM 级 globalCache_（unordered_map<const std::string*, ...>），
+    // 将每次 OP_GET_VAR/OP_SET_VAR 的哈希查找降为 O(1) 数组下标访问。
+    // mutable：执行期在 const chunk 上下文中惰性填充（同 fieldIndexCache_ 模式）。
+    struct VarCacheEntry {
+        int resolvedSlot = -2;  // >=0: globalSlots_ 下标; -1: 非 slot 变量; -2: 未解析
+        Value* valuePtr = nullptr; // globals_ 中的值指针（slot==-1 时有效）
+        uint32_t version = 0;      // 缓存写入时的 globalsVersion 快照
+    };
+    mutable std::vector<VarCacheEntry> varCache_;
 
     // R164 协程/生成器：标记此 chunk 为生成器函数体（fun* 声明）。
     // VM 在 OP_CALL 时检测此标志：若为 true，不直接 setupFunctionCallFrame，
@@ -418,12 +436,18 @@ public:
 struct VMEnumVariantInfo {
     std::string name; // variant 名（如 "Red"/"Some"）
     int arity = 0;    // 期望参数数量（无参 variant 为 0）
+    // AUDIT-R6 F3 fix: 字段类型注解（对齐 Interpreter::visitEnumVariantExpr 的 typeMatch
+    // 校验）。原 VM/RegisterVM 仅校验 arity，E.V("s") 对 V(int) 静默构造成功——三后端不一致。
+    std::vector<std::string> paramTypes;
 };
 
 /// R99 enum 元信息（编译期→运行时传递）
 struct VMEnumInfo {
     std::string name;                        // enum 名（如 "Color"/"Option"）
     std::vector<VMEnumVariantInfo> variants; // variant 列表
+    // AUDIT-R6 F3 fix: 泛型类型参数（运行时擦除，字段类型为类型参数时跳过校验，
+    // 对齐 Interpreter 的 isTypeParameter 豁免）。
+    std::vector<std::string> typeParams;
 };
 
 /// 编译结果：包含主 chunk 和函数 chunk

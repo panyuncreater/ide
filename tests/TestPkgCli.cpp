@@ -1814,3 +1814,197 @@ TEST(PkgCliHelpTest, HelpDocumentsVersionConstraints) {
     EXPECT_NE(h.find("~1.0.0"), std::string::npos);
     EXPECT_NE(h.find("--no-transitive"), std::string::npos);
 }
+
+// ============================================================
+// 拓展二期：Lockfile + 哈希校验
+// ============================================================
+
+namespace {
+
+/// lockfile 测试环境：registry + packages + lockfile 路径组装
+struct LockfileTestEnv {
+    QString registryPath;
+    QString packagesPath;
+    QString lockfilePath;
+    QByteArray regArg, pkgArg, lockArg;
+
+    explicit LockfileTestEnv(const QTemporaryDir& tmpDir) {
+        registryPath = QDir(tmpDir.path()).filePath("registry");
+        packagesPath = QDir(tmpDir.path()).filePath("packages");
+        lockfilePath = QDir(tmpDir.path()).filePath("minilang.lock");
+        regArg = registryPath.toLocal8Bit();
+        pkgArg = packagesPath.toLocal8Bit();
+        lockArg = lockfilePath.toLocal8Bit();
+    }
+
+    /// 构建 install <spec> 参数
+    CliArgs installArgs(const char* spec) {
+        const char* argv[] = {"minilang-pkg",     "install",        spec,
+                              "--registry",       regArg.constData(), "--packages-dir",
+                              pkgArg.constData(), "--lockfile",       lockArg.constData()};
+        return parseArgs(9, const_cast<char**>(argv));
+    }
+
+    /// 构建 verify 参数
+    CliArgs verifyArgs() {
+        const char* argv[] = {"minilang-pkg",     "verify",     "--registry",       regArg.constData(),
+                              "--packages-dir",   pkgArg.constData(), "--lockfile", lockArg.constData()};
+        return parseArgs(8, const_cast<char**>(argv));
+    }
+};
+
+} // namespace
+
+TEST(PkgLockfileTest, InstallCreatesLockfileWithHash) {
+    QTemporaryDir tmpDir;
+    ASSERT_TRUE(tmpDir.isValid());
+    LockfileTestEnv env(tmpDir);
+    createTestRegistry(env.registryPath);
+
+    CommandResult result = processInstall(env.installArgs("math-utils"));
+    EXPECT_EQ(result.exitCode, 0) << result.output;
+
+    // lockfile 应已生成，含包名/版本/sha256 哈希
+    ASSERT_TRUE(QFile::exists(env.lockfilePath));
+    PkgConfig config;
+    config.lockfilePath = env.lockfilePath.toStdString();
+    PackageManager pm(config);
+    ASSERT_TRUE(pm.loadLockfile());
+    const LockEntry* entry = pm.lockfile().find("math-utils");
+    ASSERT_NE(entry, nullptr);
+    EXPECT_EQ(entry->version, "1.0.0");
+    EXPECT_EQ(entry->hash.substr(0, 7), "sha256:");
+}
+
+TEST(PkgLockfileTest, ComputePackageHashDeterministicAndContentSensitive) {
+    QTemporaryDir tmpDir;
+    ASSERT_TRUE(tmpDir.isValid());
+    QString pkgDir = QDir(tmpDir.path()).filePath("pkg");
+    (void)QDir(pkgDir).mkpath(".");
+    writeFile(QDir(pkgDir).filePath("a.mini"), "var x = 1;\n");
+    writeFile(QDir(pkgDir).filePath("b.mini"), "var y = 2;\n");
+
+    std::string h1 = PackageManager::computePackageHash(pkgDir.toStdString());
+    std::string h2 = PackageManager::computePackageHash(pkgDir.toStdString());
+    EXPECT_EQ(h1, h2);          // 确定性
+    EXPECT_EQ(h1.substr(0, 7), "sha256:");
+
+    // 内容变化 → 哈希变化
+    writeFile(QDir(pkgDir).filePath("a.mini"), "var x = 999;\n");
+    std::string h3 = PackageManager::computePackageHash(pkgDir.toStdString());
+    EXPECT_NE(h1, h3);
+
+    // 目录不存在 → 空字符串
+    EXPECT_TRUE(PackageManager::computePackageHash((pkgDir + "_nonexistent").toStdString()).empty());
+}
+
+TEST(PkgLockfileTest, VersionPinningReproducesLockedVersion) {
+    QTemporaryDir tmpDir;
+    ASSERT_TRUE(tmpDir.isValid());
+    LockfileTestEnv env(tmpDir);
+    createVersionedRegistry(env.registryPath);
+
+    // 首次安装 ^1.0.0 → 锁定 1.0.0（^1.0.0 不匹配 2.0.0）
+    CommandResult r1 = processInstall(env.installArgs("ver-pkg@^1.0.0"));
+    EXPECT_EQ(r1.exitCode, 0) << r1.output;
+
+    // 删除已安装包，无版本重新安装：若无 lockfile 会选最新 2.0.0，
+    // 有 lockfile 则锁定回 1.0.0（可重现安装）
+    ASSERT_TRUE(QDir(QDir(env.packagesPath).filePath("ver-pkg")).removeRecursively());
+    CommandResult r2 = processInstall(env.installArgs("ver-pkg"));
+    EXPECT_EQ(r2.exitCode, 0) << r2.output;
+    EXPECT_NE(r2.output.find("@1.0.0"), std::string::npos) << r2.output;
+}
+
+TEST(PkgLockfileTest, HashMismatchRejectsTamperedRegistry) {
+    QTemporaryDir tmpDir;
+    ASSERT_TRUE(tmpDir.isValid());
+    LockfileTestEnv env(tmpDir);
+    createTestRegistry(env.registryPath);
+
+    // 首次安装锁定哈希
+    CommandResult r1 = processInstall(env.installArgs("math-utils"));
+    EXPECT_EQ(r1.exitCode, 0) << r1.output;
+
+    // 篡改 registry 内容，删除已安装包后重新安装 → 哈希不匹配拒绝
+    writeFile(QDir(QDir(env.registryPath).filePath("math-utils")).filePath("math-utils.mini"),
+              "export fun add(a, b) { return a - b; } // 恶意篡改\n");
+    ASSERT_TRUE(QDir(QDir(env.packagesPath).filePath("math-utils")).removeRecursively());
+
+    CommandResult r2 = processInstall(env.installArgs("math-utils"));
+    EXPECT_EQ(r2.exitCode, 2);
+    EXPECT_NE(r2.output.find("哈希校验失败"), std::string::npos) << r2.output;
+    // 回滚：不可信内容不得落盘
+    EXPECT_FALSE(isPackageInstalled(env.packagesPath.toStdString(), "math-utils"));
+}
+
+TEST(PkgLockfileTest, VerifyPassesOnIntactInstall) {
+    QTemporaryDir tmpDir;
+    ASSERT_TRUE(tmpDir.isValid());
+    LockfileTestEnv env(tmpDir);
+    createTestRegistry(env.registryPath);
+
+    ASSERT_EQ(processInstall(env.installArgs("math-utils")).exitCode, 0);
+    CommandResult result = processVerify(env.verifyArgs());
+    EXPECT_EQ(result.exitCode, 0) << result.output;
+    EXPECT_NE(result.output.find("校验通过"), std::string::npos);
+}
+
+TEST(PkgLockfileTest, VerifyDetectsTamperedInstalledPackage) {
+    QTemporaryDir tmpDir;
+    ASSERT_TRUE(tmpDir.isValid());
+    LockfileTestEnv env(tmpDir);
+    createTestRegistry(env.registryPath);
+
+    ASSERT_EQ(processInstall(env.installArgs("math-utils")).exitCode, 0);
+    // 篡改已安装包内容
+    writeFile(QDir(QDir(env.packagesPath).filePath("math-utils")).filePath("math-utils.mini"),
+              "export fun add(a, b) { return 0; }\n");
+
+    CommandResult result = processVerify(env.verifyArgs());
+    EXPECT_EQ(result.exitCode, 2);
+    EXPECT_NE(result.output.find("哈希不匹配"), std::string::npos) << result.output;
+}
+
+TEST(PkgLockfileTest, VerifyDetectsMissingPackage) {
+    QTemporaryDir tmpDir;
+    ASSERT_TRUE(tmpDir.isValid());
+    LockfileTestEnv env(tmpDir);
+    createTestRegistry(env.registryPath);
+
+    ASSERT_EQ(processInstall(env.installArgs("math-utils")).exitCode, 0);
+    ASSERT_TRUE(QDir(QDir(env.packagesPath).filePath("math-utils")).removeRecursively());
+
+    CommandResult result = processVerify(env.verifyArgs());
+    EXPECT_EQ(result.exitCode, 2);
+    EXPECT_NE(result.output.find("未安装"), std::string::npos) << result.output;
+}
+
+TEST(PkgLockfileTest, VerifyWithoutLockfileFails) {
+    QTemporaryDir tmpDir;
+    ASSERT_TRUE(tmpDir.isValid());
+    LockfileTestEnv env(tmpDir);
+
+    CommandResult result = processVerify(env.verifyArgs());
+    EXPECT_EQ(result.exitCode, 2);
+    EXPECT_NE(result.output.find("lockfile 不存在"), std::string::npos) << result.output;
+}
+
+TEST(PkgLockfileTest, CorruptLockfileRejected) {
+    QTemporaryDir tmpDir;
+    ASSERT_TRUE(tmpDir.isValid());
+    LockfileTestEnv env(tmpDir);
+    createTestRegistry(env.registryPath);
+    writeFile(env.lockfilePath, "{ 损坏的 json !!!");
+
+    CommandResult result = processInstall(env.installArgs("math-utils"));
+    EXPECT_EQ(result.exitCode, 2);
+    EXPECT_NE(result.output.find("lockfile 解析失败"), std::string::npos) << result.output;
+}
+
+TEST(PkgLockfileTest, HelpDocumentsLockfileAndVerify) {
+    std::string h = helpString();
+    EXPECT_NE(h.find("--lockfile"), std::string::npos);
+    EXPECT_NE(h.find("verify"), std::string::npos);
+    EXPECT_NE(h.find("minilang.lock"), std::string::npos);
+}

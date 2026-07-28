@@ -54,6 +54,10 @@ private:
     /// 第 2 步：递归遍历模块 AST，重命名声明 + 引用
     void renameInBlock(Block* node);
     void renameInNode(ASTNode* node);
+    /// AUDIT-R5 BUG-09 fix: 递归登记 match pattern 的绑定变量（VARIABLE 模式的
+    /// variableName，VARIANT/TUPLE/OR 递归 subPatterns）到当前作用域，
+    /// 避免 case body/guard 内引用绑定变量时被误判为模块顶层名而重命名。
+    void collectMatchPatternBindings(const class MatchPattern* pattern);
 
     // 作用域管理
     void pushScope() { scopeStack_.emplace_back(); }

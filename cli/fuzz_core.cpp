@@ -33,6 +33,24 @@
 
 namespace minilang_fuzz {
 
+// P1 fix: JSON 字符串转义，防止特殊字符（引号/反斜杠/换行）破坏 JSON 结构（注入防护）
+static std::string escapeJson(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() + 16);
+    for (char c : s) {
+        switch (c) {
+            case '"': out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default: out += c;
+        }
+    }
+    return out;
+}
+
+
 namespace {
 
 // ============================================================
@@ -680,9 +698,11 @@ FuzzResult fuzzThreeAgree(const std::string& source) {
 
 FuzzSummary runFuzzBatch(const FuzzOptions& opts) {
     FuzzSummary summary;
-    // 种子派生：0 = 时间派生
+    // BUG-67 fix: 种子派生改为依据 seedSpecified 标志而非"值是否为 0"。
+    // 原逻辑下 --seed 0 会被误判为"未指定"而改用时间派生，导致用户无法用 seed=0 复现。
+    // 现仅当用户未显式提供 --seed 时才做时间派生，显式 --seed 0 将精确保留 seed=0。
     uint64_t actualSeed = opts.seed;
-    if (actualSeed == 0) {
+    if (!opts.seedSpecified) {
         actualSeed = static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
     }
     summary.seed = actualSeed;
@@ -692,7 +712,10 @@ FuzzSummary runFuzzBatch(const FuzzOptions& opts) {
 
     auto batchStart = std::chrono::steady_clock::now();
 
-    for (int i = 0; i < opts.iterations; ++i) {
+    // BUG-66 fix (P2 整数溢出): 循环变量由 int 提升为 int64_t。opts.iterations 虽为 int，
+    // 但下游进度计算 (i + 1) 及未来 iterations 字段拓宽时，int i 在 >INT_MAX 次迭代下会
+    // 溢出回绕导致死循环/越界。使用 int64_t 与比较运算保持安全宽度。
+    for (int64_t i = 0; i < opts.iterations; ++i) {
         std::string source;
         if (opts.mode == FuzzMode::Mutate) {
             std::string seed = mutator.generateSeedCorpus();
@@ -725,8 +748,9 @@ FuzzSummary runFuzzBatch(const FuzzOptions& opts) {
         }
 
         // 非 quiet 模式实时输出进度
-        if (!opts.quiet && (i % 10 == 0 || i == opts.iterations - 1)) {
-            std::fprintf(stdout, "[%d/%d] crashes=%d disagreements=%d\n", i + 1, opts.iterations, summary.crashes,
+        if (!opts.quiet && (i % 10 == 0 || i == static_cast<int64_t>(opts.iterations) - 1)) {
+            std::fprintf(stdout, "[%lld/%d] crashes=%d disagreements=%d\n",
+                         static_cast<long long>(i + 1), opts.iterations, summary.crashes,
                          summary.disagreements);
             std::fflush(stdout);
         }
@@ -749,7 +773,10 @@ FuzzSummary processFile(const std::string& path, const FuzzOptions& opts) {
     FuzzSummary summary;
     std::ifstream ifs(path);
     if (!ifs) {
-        summary.crashes = -1; // 用 -1 标记文件错误
+        // BUG-93 fix: 用显式 ok/errorMessage 字段替代 crashes=-1 哨兵值，
+        // 避免 crashes 计数被错误地置为负数（语义混乱、易被聚合代码漏检）。
+        summary.ok = false;
+        summary.errorMessage = "文件打开失败";
         return summary;
     }
     std::ostringstream oss;
@@ -809,6 +836,9 @@ CliArgs parseArgs(int argc, char* argv[]) {
                 break;
             try {
                 args.options.seed = std::stoull(val);
+                // BUG-67 fix: 标记用户显式提供了 --seed，使 --seed 0 可精确复现，
+                // 不再被 runFuzzBatch 的"0 = 时间派生"逻辑覆盖。
+                args.options.seedSpecified = true;
             } catch (...) {
                 args.parseError = true;
                 args.errorMessage = "无效的种子值: " + val;
@@ -1071,7 +1101,7 @@ std::string formatSummaryJson(const FuzzSummary& summary) {
     oss << "  \"crashCases\": [\n";
     for (size_t i = 0; i < summary.crashCases.size(); ++i) {
         const auto& c = summary.crashCases[i];
-        oss << "    {\"index\": " << i << ", \"phase\": \"" << c.errorPhase << "\", \"source\": \"" << c.source
+        oss << "    {\"index\": " << i << ", \"phase\": \"" << c.errorPhase << "\", \"source\": \"" << escapeJson(c.source)
             << "\"}";
         if (i + 1 < summary.crashCases.size())
             oss << ",";
@@ -1081,9 +1111,9 @@ std::string formatSummaryJson(const FuzzSummary& summary) {
     oss << "  \"disagreementCases\": [\n";
     for (size_t i = 0; i < summary.disagreementCases.size(); ++i) {
         const auto& d = summary.disagreementCases[i];
-        oss << "    {\"index\": " << i << ", \"reason\": \"" << d.errorMessage << "\", \"interp\": \"" << d.interpOutput
-            << "\", \"stackvm\": \"" << d.stackvmOutput << "\", \"regvm\": \"" << d.regvmOutput << "\", \"source\": \""
-            << d.source << "\"}";
+        oss << "    {\"index\": " << i << ", \"reason\": \"" << escapeJson(d.errorMessage) << "\", \"interp\": \"" << escapeJson(d.interpOutput)
+            << "\", \"stackvm\": \"" << escapeJson(d.stackvmOutput) << "\", \"regvm\": \"" << escapeJson(d.regvmOutput) << "\", \"source\": \""
+            << escapeJson(d.source) << "\"}";
         if (i + 1 < summary.disagreementCases.size())
             oss << ",";
         oss << "\n";

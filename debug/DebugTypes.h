@@ -58,11 +58,18 @@ struct CallStackEntry {
     std::vector<std::pair<std::string, Value>> locals; // 该帧的局部变量快照
 };
 
-/// 断点信息（支持条件断点 + R104 Logpoint）
+/// 断点信息（支持条件断点 + R104 Logpoint + 拓展二期命中条件/依赖链）
 struct BreakpointInfo {
     int line;
     std::string condition; // 条件表达式（空字符串 = 无条件断点）
     int hitCount = 0;      // 命中次数
+    // 拓展二期：命中条件（hit condition）——基于命中计数决定是否暂停。
+    // 语法："N"(==N) / "== N" / ">= N" / "> N" / "% N"(每 N 次)。
+    // 条件不满足时仍递增 hitCount（到达即计数）但不暂停。
+    std::string hitCondition;
+    // 拓展二期：依赖断点链——仅当行 dependsOnLine 的断点至少命中过
+    // 一次（hitCount > 0）后本断点才激活（-1 = 无依赖）。
+    int dependsOnLine = -1;
     // R104 Logpoint：断点类型 + 日志模板
     // kind == Logpoint 时，logMessage 非空，支持 {expr} 插值（在沙箱中求值后输出）。
     // kind == Line 时，logMessage 字段被忽略。
@@ -74,7 +81,94 @@ struct BreakpointInfo {
 
     bool isConditional() const { return !condition.empty(); }
     bool isLogpoint() const { return kind == BreakpointKind::Logpoint; }
+    bool hasHitCondition() const { return !hitCondition.empty(); }
+    bool hasDependency() const { return dependsOnLine > 0; }
 };
+
+// ============================================================
+// 拓展二期：命中条件判定与调试改值文本解析（三路径共享）
+// ------------------------------------------------------------
+// DebugController（Interpreter 路径）/ VmStepper（VM 路径）/
+// dap_core（DAP 会话）共用同一实现，保证语义一致（三后端一致性原则）。
+// ============================================================
+
+/// 命中条件判定。支持 "N"/"== N"/">= N"/"> N"/"% N"；
+/// 空表达式或解析失败返回 true（视为无命中条件，不拦截，宽容优于静默失效）。
+inline bool evalHitCondition(const std::string& expr, int count) {
+    size_t b = expr.find_first_not_of(" \t");
+    size_t e = expr.find_last_not_of(" \t");
+    if (b == std::string::npos)
+        return true;
+    std::string s = expr.substr(b, e - b + 1);
+    std::string op = "==";
+    size_t numStart = 0;
+    if (s.rfind(">=", 0) == 0 || s.rfind("==", 0) == 0) {
+        op = s.substr(0, 2);
+        numStart = 2;
+    } else if (s[0] == '>' || s[0] == '%') {
+        op = s.substr(0, 1);
+        numStart = 1;
+    }
+    try {
+        long n = std::stol(s.substr(numStart));
+        if (op == "==")
+            return count == n;
+        if (op == ">=")
+            return count >= n;
+        if (op == ">")
+            return count > n;
+        if (op == "%")
+            return n > 0 && count % n == 0;
+    } catch (...) {
+        // 解析失败：视为无命中条件
+    }
+    return true;
+}
+
+/// 调试改值（setVariable）新值文本解析：int / float / true / false /
+/// null / "带引号字符串"。不支持任意表达式（副作用隔离）。
+inline bool parseDebugValueText(const std::string& text, Value& out) {
+    size_t b = text.find_first_not_of(" \t");
+    size_t e = text.find_last_not_of(" \t");
+    if (b == std::string::npos)
+        return false;
+    std::string s = text.substr(b, e - b + 1);
+    if (s == "true") {
+        out = Value(true);
+        return true;
+    }
+    if (s == "false") {
+        out = Value(false);
+        return true;
+    }
+    if (s == "null") {
+        out = Value::nullValue();
+        return true;
+    }
+    if (s.size() >= 2 && s.front() == '"' && s.back() == '"') {
+        out = Value(s.substr(1, s.size() - 2));
+        return true;
+    }
+    try {
+        size_t pos = 0;
+        long long iv = std::stoll(s, &pos);
+        if (pos == s.size()) {
+            out = Value(static_cast<int64_t>(iv));
+            return true;
+        }
+    } catch (...) {
+    }
+    try {
+        size_t pos = 0;
+        double dv = std::stod(s, &pos);
+        if (pos == s.size()) {
+            out = Value(dv);
+            return true;
+        }
+    } catch (...) {
+    }
+    return false;
+}
 
 /// R104 调试器拓展：函数断点信息
 /// 按函数名设置断点（不依赖行号）。函数被调用时（callNamedFunction / OP_CALL / REG_CALL 入口），

@@ -65,7 +65,11 @@ struct RefCounted {
     // Bug2 fix: GcManager 跟踪标志。构造时为 false，registerTracked 设为 true。
     // 析构时若为 true，通知 GcManager 从 aliveSet_ 移除，避免 collectCycle
     // 迭代 tracked_ 时访问已释放的对象（UAF）。
-    mutable bool gcTracked_ = false;
+    // AUDIT-R4 BUG-13 fix: 改为 atomic<bool>——写入点 registerTracked 在锁内，
+    // 但析构线程在 ~RefCounted 中锁外读取，跨线程裸 bool 读写构成 TOCTOU
+    // 数据竞争（可能导致 aliveSet_ 残留悬垂条目）。relaxed 序足够：
+    // release() 的 acq_rel 已保证注册线程写入对析构线程可见。
+    mutable std::atomic<bool> gcTracked_{false};
 
     explicit RefCounted(ValueType t) : type(t) {}
 

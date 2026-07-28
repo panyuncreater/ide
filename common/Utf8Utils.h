@@ -50,6 +50,13 @@ inline int64_t codepointCount(const std::string& s) {
     return count;
 }
 
+/// PERF: 带 ASCII 提示的重载。当调用方已通过 StringData::cachedIsAscii 确认为纯 ASCII 时，
+/// 直接返回字节长度（纯 ASCII 每字节 = 1 码位），从 O(n) 降为 O(1)。
+inline int64_t codepointCount(const std::string& s, bool knownAscii) {
+    if (knownAscii) return static_cast<int64_t>(s.size());
+    return codepointCount(s);
+}
+
 /// 将码位索引转换为字节索引。cpIdx 超出范围时返回 s.size()。
 inline size_t codepointToByteIndex(const std::string& s, int64_t cpIdx) {
     size_t bytePos = 0;
@@ -67,9 +74,12 @@ inline size_t codepointToByteIndex(const std::string& s, int64_t cpIdx) {
 }
 
 /// 将字节索引转换为码位索引（计算前 byteIdx 字节包含多少码位）。
+/// AUDIT-R3 P2 fix: 循环同时约束 b < s.size()，与 codepointToByteIndex 的
+/// AUDIT-BUG-C4 钳制对齐——调用方传入超过字符串长度的 byteIdx 时，
+/// 原实现以越界下标读 s（UB）。公共工具头需防御性边界。
 inline int64_t byteToCodepointIndex(const std::string& s, size_t byteIdx) {
     int64_t charIdx = 0;
-    for (size_t b = 0; b < byteIdx;) {
+    for (size_t b = 0; b < byteIdx && b < s.size();) {
         b += byteLength(static_cast<unsigned char>(s[b]));
         charIdx++;
     }

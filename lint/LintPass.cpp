@@ -23,6 +23,7 @@ void LintPass::resetState() {
     scopeStack_.clear();
     functions_.clear();
     classes_.clear();
+    enums_.clear(); // 拓展二期：穷尽性检查的枚举表
     unreachableInCurrentBlock_ = false;
     currentComplexity_ = 0;
     currentFunctionName_.clear();
@@ -151,11 +152,11 @@ bool LintPass::isRuleEnabled(LintRule rule) const {
 }
 
 void LintPass::reportWarning(LintRule rule, const std::string& msg, int line, int col) {
-    diagnostics_.addWarning(msg, line, col, DiagSource::TypeChecker, ruleCode(rule));
+    diagnostics_.addWarning(msg, line, col, DiagSource::Lint, ruleCode(rule));
 }
 
 void LintPass::reportInfo(LintRule rule, const std::string& msg, int line, int col) {
-    diagnostics_.addInfo(msg, line, col, DiagSource::TypeChecker, ruleCode(rule));
+    diagnostics_.addInfo(msg, line, col, DiagSource::Lint, ruleCode(rule));
 }
 
 std::string LintPass::ruleCode(LintRule rule) {
@@ -176,6 +177,8 @@ std::string LintPass::ruleCode(LintRule rule) {
         return "lint-cyclomatic-complexity";
     case LintRule::NamingConvention:
         return "lint-naming-convention";
+    case LintRule::NonExhaustiveMatch:
+        return "lint-non-exhaustive-match";
     case LintRule::Count:
         return "";
     }
@@ -200,6 +203,8 @@ std::string LintPass::ruleName(LintRule rule) {
         return "CyclomaticComplexity";
     case LintRule::NamingConvention:
         return "NamingConvention";
+    case LintRule::NonExhaustiveMatch:
+        return "NonExhaustiveMatch";
     case LintRule::Count:
         return "";
     }
@@ -472,8 +477,9 @@ void LintPass::visitVarRef(VarRef& node) {
 }
 
 void LintPass::visitAssignment(Assignment& node) {
-    // 赋值左侧变量标记为使用（因为读取了它的地址/引用）
-    useVar(node.name);
+    // Bug #90 fix: 赋值左侧是写入而非读取，不应标记为"已使用"。
+    // 否则 `x = 1;`（从未读取 x）会被误判为已使用，漏报 UnusedVariable。
+    // 真正的读取由 visitVarRef 中的 useVar 处理。
     if (node.value) {
         node.value->accept(*this);
     }
@@ -563,14 +569,133 @@ void LintPass::visitBinaryOp(BinaryOp& node) {
 // 辅助方法
 // ============================================================
 
+// ============================================================
+// 拓展二期：match 穷尽性检查（NonExhaustiveMatch）
+// ------------------------------------------------------------
+// 判定规则：
+//   1. 存在兜底分支（default，或无 guard 的 WILDCARD/VARIABLE pattern）
+//      → 穷尽，不报。
+//   2. 否则收集"完全覆盖"的 variant：VARIANT pattern 无 guard 且全部
+//      子 pattern 不可失败（WILDCARD/VARIABLE）才计入（Some(1) 只覆盖
+//      字面量 1，不算覆盖 Some）；OR pattern 递归展开。
+//   3. 枚举类型取首个 VARIANT pattern 的 enumName；无 VARIANT pattern
+//      （非枚举 match）或枚举声明不在本文件（跨模块）则跳过。
+//   4. 差集非空 → 警告列出缺失 variant。
+// 三后端行为不受影响（运行时未命中仍报统一错误），本规则提供
+// 编译期预警（教学价值：展示 sealed 类型的穷尽性思维）。
+// ============================================================
+
+namespace {
+
+/// pattern 是否不可失败（匹配任意值）
+bool isIrrefutablePattern(const MatchPattern& p) {
+    return p.kind == MatchPatternKind::WILDCARD || p.kind == MatchPatternKind::VARIABLE;
+}
+
+/// 递归收集 pattern 完全覆盖的 variant（含 OR 展开），并记录首个 enum 名
+void collectCoveredVariants(const MatchPattern& p, std::string& enumName,
+                            std::unordered_set<std::string>& covered) {
+    if (p.kind == MatchPatternKind::VARIANT) {
+        if (enumName.empty())
+            enumName = p.enumName;
+        if (p.enumName != enumName)
+            return; // 混合枚举（异常代码）：保守跳过
+        // 全部子 pattern 不可失败才算完全覆盖该 variant
+        for (const auto& sp : p.subPatterns) {
+            if (!sp || !isIrrefutablePattern(*sp))
+                return;
+        }
+        covered.insert(p.variantName);
+    } else if (p.kind == MatchPatternKind::OR) {
+        for (const auto& sp : p.subPatterns) {
+            if (sp)
+                collectCoveredVariants(*sp, enumName, covered);
+        }
+    }
+}
+
+} // namespace
+
+void LintPass::visitEnumDecl(EnumDecl& node) {
+    // 收集枚举声明（同名重声明后者覆盖，与运行时注册表语义一致）
+    std::vector<std::string> names;
+    names.reserve(node.variants.size());
+    for (const auto& v : node.variants) {
+        names.push_back(v.name);
+    }
+    enums_[node.name] = std::move(names);
+    traverseChildren(node);
+}
+
+void LintPass::visitMatchExpr(MatchExpr& node) {
+    if (isRuleEnabled(LintRule::NonExhaustiveMatch)) {
+        bool hasCatchAll = false;
+        std::string enumName;
+        std::unordered_set<std::string> covered;
+        for (const auto& mc : node.cases) {
+            // 兜底分支：default 或无 guard 的不可失败 pattern
+            // （含 guard 的分支可能失败，不算兜底）
+            if (mc.isDefault || !mc.pattern) {
+                if (!mc.guard)
+                    hasCatchAll = true;
+                continue;
+            }
+            if (!mc.guard && isIrrefutablePattern(*mc.pattern)) {
+                hasCatchAll = true;
+                continue;
+            }
+            if (!mc.guard) {
+                collectCoveredVariants(*mc.pattern, enumName, covered);
+            } else if (enumName.empty() && mc.pattern->kind == MatchPatternKind::VARIANT) {
+                // 含 guard 的 VARIANT 不计入覆盖，但可用于确定枚举类型
+                enumName = mc.pattern->enumName;
+            }
+        }
+        if (!hasCatchAll && !enumName.empty()) {
+            auto it = enums_.find(enumName);
+            if (it != enums_.end()) {
+                std::string missing;
+                for (const auto& v : it->second) {
+                    if (covered.count(v) == 0) {
+                        if (!missing.empty())
+                            missing += ", ";
+                        missing += enumName + "." + v;
+                    }
+                }
+                if (!missing.empty()) {
+                    reportWarning(LintRule::NonExhaustiveMatch,
+                                  "match 未穷尽枚举 '" + enumName + "' 的全部 variant（缺少: " + missing +
+                                      "），未命中时将抛运行时错误；补全 case 或添加 default 分支",
+                                  node.line, node.column);
+                }
+            }
+        }
+    }
+    // 继续默认遍历（scrutinee/body/guard 子节点，变量使用追踪不受影响）
+    traverseChildren(node);
+}
+
+// Bug #89 fix: 递归检测条件表达式子树中的赋值节点。
+// 原实现仅检查顶层节点，无法捕获 `if (a && (b = 1))` 这类嵌套赋值。
+static bool containsAssignment(ASTNode* node) {
+    if (!node)
+        return false;
+    if (node->nodeType == NodeType::NODE_ASSIGNMENT)
+        return true;
+    for (ASTNode* child : node->children()) {
+        if (containsAssignment(child))
+            return true;
+    }
+    return false;
+}
+
 void LintPass::checkConditionForAssignment(ASTNode* cond, int /*line*/, int /*col*/) {
     if (!cond || !isRuleEnabled(LintRule::AssignmentInCondition)) {
         return;
     }
-    if (cond->nodeType == NodeType::NODE_ASSIGNMENT) {
-        auto* assign = static_cast<Assignment*>(cond);
-        reportWarning(LintRule::AssignmentInCondition, "条件表达式中含赋值（可能误将 '==' 写成 '='）", assign->line,
-                      assign->column);
+    if (containsAssignment(cond)) {
+        reportWarning(LintRule::AssignmentInCondition, "条件表达式中含赋值（可能误将 '==' 写成 '='）", cond->line,
+                      cond->column);
     }
 }
 

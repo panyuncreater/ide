@@ -177,6 +177,22 @@ TEST(BugHuntDifficultyAudit, BeginnerHintsAtLeastThree) {
     }
 }
 
+// 12b. AUDIT-R2 P2-9 fix: 递进提示不变量扩展到全题库——原仅断言入门级，
+//      进阶/专家题的 hints 数量无守护（UI 的"下一提示"递进交互依赖 ≥3 条）。
+//      另：每条提示文本非空（TeachingPanelsBugHunt.CriticalFieldsNonEmpty 仅检查
+//      hints 容器非空，未检查逐条内容）。
+TEST(BugHuntDifficultyAudit, AllItemsHaveAtLeastThreeNonEmptyHints) {
+    const auto& items = BugHuntLibrary::items();
+    for (const auto& it : items) {
+        EXPECT_GE(it.hints.size(), 3u)
+            << it.id << ": 递进提示应至少 3 条，实际 " << it.hints.size();
+        for (size_t h = 0; h < it.hints.size(); ++h) {
+            EXPECT_FALSE(it.hints[h].empty())
+                << it.id << ": 第 " << (h + 1) << " 条提示为空";
+        }
+    }
+}
+
 // 13. 入门级题目 BUG-READ-01 的 sourceCode 含 "7 / 2"
 TEST(BugHuntDifficultyAudit, Read01SourceCodeContainsDivision) {
     const auto& items = BugHuntLibrary::items();

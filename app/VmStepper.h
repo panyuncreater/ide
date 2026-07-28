@@ -23,6 +23,7 @@
 #include <QObject>
 #include <QSet>
 #include <QString>
+#include <QThread> // AUDIT-R4 BUG-14: assertMainThread 线程亲和性断言
 #include <QTimer>
 #include <atomic>
 #include <functional>
@@ -73,7 +74,10 @@ public:
     /// A1 fix: 设置 RegisterVM 编译结果（仅 useRegister_=true 时使用）
     void setRegisterCompileResult(const RegisterCompileResult& result) { lastRegCompileResult_ = result; }
     /// A4 fix: 设置 VM 模式断点（复用 Interpreter 的 breakpoint 行号集合）
-    void setBreakpoints(const QSet<int>& breakpoints) override { vmBreakpoints_ = breakpoints; }
+    void setBreakpoints(const QSet<int>& breakpoints) override {
+        assertMainThread(); // AUDIT-R4 BUG-14
+        vmBreakpoints_ = breakpoints;
+    }
 
     /// R98 runToCursor: 设置一次性临时断点（仅命中一次后自动清除）。
     /// 调用此方法后调用 stepByMode(VmStepMode::RUN) 即可"运行到目标行"。
@@ -82,6 +86,7 @@ public:
     /// @param line 目标行号（必须 > 0，否则忽略）
     /// @note stop()/reset()/析构会清除临时断点
     void setTempBreakpoint(int line) {
+        assertMainThread(); // AUDIT-R4 BUG-14: 非 atomic 字段仅限主线程访问
         if (line <= 0)
             return;
         vmTempBreakpointLine_ = line;
@@ -89,11 +94,17 @@ public:
 
     /// R98 runToCursor: 清除临时断点（手动取消/停止/重置时调用）。
     /// VmStepper 仅在主线程访问（QTimer + UI 槽），无需加锁。
-    void clearTempBreakpoint() { vmTempBreakpointLine_ = -1; }
+    void clearTempBreakpoint() {
+        assertMainThread(); // AUDIT-R4 BUG-14
+        vmTempBreakpointLine_ = -1;
+    }
 
     /// R98 runToCursor: 查询当前临时断点行号（调试/测试用）。
     /// @return 临时断点行号；无临时断点时返回 -1
-    int getTempBreakpoint() const { return vmTempBreakpointLine_; }
+    int getTempBreakpoint() const {
+        assertMainThread(); // AUDIT-R4 BUG-14
+        return vmTempBreakpointLine_;
+    }
 
     // P1-4 fix: IDebugController 接口要求的临时断点方法（转发到 setTempBreakpoint 系列别名）
     void setTemporaryBreakpoint(int line) override { setTempBreakpoint(line); }
@@ -104,6 +115,7 @@ public:
     // BUG-DBG-AUDIT-2 fix: 条件变更时重置对应行的 hitCount（对齐
     // DebugController::setBreakpointCondition 行 308-313，条件变更 → hitCount 清零）。
     void setBreakpointConditions(const QMap<int, std::string>& conditions) {
+        assertMainThread(); // AUDIT-R4 BUG-14
         vmBreakpointConditions_ = conditions;
         for (auto it = conditions.begin(); it != conditions.end(); ++it) {
             vmBreakpointHitCounts_.remove(it.key());
@@ -116,6 +128,55 @@ public:
     int getBreakpointHitCount(int line) const override {
         auto it = vmBreakpointHitCounts_.find(line);
         return it != vmBreakpointHitCounts_.end() ? it.value() : 0;
+    }
+
+    // ---- 拓展二期：命中条件（hit condition）+ 依赖断点链 ----
+    /// 设置行断点命中条件（"N"/"== N"/">= N"/"> N"/"% N"，空=清除）。
+    /// 变更时重置该行 hitCount（对齐 setBreakpointConditions 语义）。
+    void setBreakpointHitCondition(int line, const std::string& expr) {
+        assertMainThread();
+        if (expr.empty()) {
+            vmBreakpointHitConditions_.remove(line);
+        } else {
+            vmBreakpointHitConditions_[line] = expr;
+        }
+        vmBreakpointHitCounts_.remove(line);
+    }
+    std::string getBreakpointHitCondition(int line) const {
+        auto it = vmBreakpointHitConditions_.find(line);
+        return it != vmBreakpointHitConditions_.end() ? it.value() : std::string{};
+    }
+
+    /// 设置依赖断点链：仅当 dependsOnLine 的断点至少命中过一次后，
+    /// line 的断点才激活（depLine <= 0 清除依赖）。
+    void setBreakpointDependency(int line, int depLine) {
+        assertMainThread();
+        if (depLine <= 0) {
+            vmBreakpointDependencies_.remove(line);
+        } else {
+            vmBreakpointDependencies_[line] = depLine;
+        }
+    }
+    int getBreakpointDependency(int line) const {
+        auto it = vmBreakpointDependencies_.find(line);
+        return it != vmBreakpointDependencies_.end() ? it.value() : -1;
+    }
+
+    // ---- 拓展二期：调试暂停时写变量（setVariable）----
+    /// 先尝试当前栈顶帧局部（含 upvalue），未命中回退全局。
+    /// 仅在 VM 非运行（暂停/单步间隙）时允许写入。
+    /// @return true 写入成功；false 变量不存在或 VM 正在运行
+    bool setVariableValue(const std::string& name, const Value& val) {
+        assertMainThread();
+        if (isVmRunning_.load())
+            return false;
+        size_t fc = getFrameCount();
+        if (fc > 0) {
+            bool ok = useRegister_ ? regVm_.setFrameLocalAt(fc - 1, name, val) : vm_.setFrameLocalAt(fc - 1, name, val);
+            if (ok)
+                return true;
+        }
+        return useRegister_ ? regVm_.setGlobalValue(name, val) : vm_.setGlobalValue(name, val);
     }
 
     /// P2-1 fix: 检查 VM 条件断点求值是否被请求停止。
@@ -284,6 +345,7 @@ public:
     ///       traceRecorder().captureVmStep() 写入环形缓冲区，不影响步进性能。
     ///       调用方在切换后端时需重新设置 backend 参数。
     void setRecordingEnabled(bool enabled, TraceBackend backend) {
+        assertMainThread(); // AUDIT-R4 BUG-14
         recordingEnabled_ = enabled;
         recorderBackend_ = backend;
     }
@@ -300,6 +362,7 @@ public:
     ///       recordingEnabled_ 不变（如需继续录制请保持 true）。
     ///       vmLastPausedLine_/vmCrossedLine_/vmCrossedDeeper_ 重置避免影响下次步进。
     bool restoreFromSnapshot(const TraceSnapshot& snap) {
+        assertMainThread(); // AUDIT-R4 BUG-14
         if (snap.backend != TraceBackend::StackVM && snap.backend != TraceBackend::RegisterVM) {
             return false; // Interpreter 路径不支持回滚
         }
@@ -332,10 +395,31 @@ public:
         return ok;
     }
 
+    /// 拓展二期：回溯调试单步后退（reverse step）。
+    /// 依赖 FullState 模式录制：回滚到轨迹中倒数第二个快照并丢弃
+    /// 末尾快照，连续调用可持续后退（reverse-continue = 循环 stepBack，
+    /// 或经 ReverseDebugTimelinePanel 直接跳任意历史步）。
+    /// @return false：快照不足（<2）/后端不匹配/未以 FullState 录制
+    bool stepBack() {
+        assertMainThread();
+        auto& rec = traceRecorder();
+        if (rec.size() < 2)
+            return false;
+        auto snap = rec.stepAt(rec.size() - 2);
+        if (!snap)
+            return false;
+        if (!restoreFromSnapshot(*snap))
+            return false;
+        // 丢弃"未来"步：支持连续后退，且重新执行的录制不与旧轨迹混杂
+        rec.truncateFrom(rec.size() - 1);
+        return true;
+    }
+
     // ---- A1 fix: 后端模式切换 ----
     /// 启用/禁用 RegisterVM 后端。true 时所有步进/状态访问转发到 regVm_。
     /// 切换时自动 reset 两个后端，避免遗留状态污染。
     void setUseRegister(bool enabled) {
+        assertMainThread(); // AUDIT-R4 BUG-14
         if (useRegister_ == enabled)
             return;
         // BUG-EXTRA-1 fix: 必须始终调用 reset() 而非仅在 isVmRunning_ 时调用 stop()。
@@ -348,7 +432,10 @@ public:
         lastRegCompileResult_.reset();
         useRegister_ = enabled;
     }
-    bool isRegisterMode() const { return useRegister_; }
+    bool isRegisterMode() const {
+        assertMainThread(); // AUDIT-R4 BUG-14
+        return useRegister_;
+    }
 
     // ---- 步进操作 ----
     /// 单步执行 VM（等价于 stepIn），返回结果状态
@@ -369,6 +456,7 @@ public:
     // B2 fix: 停止 RUN 模式定时器并重置 isVmRunning_，避免 runBatch 在已 resetState 的 VM 上调用
     // currentFrame() 触发 std::abort。原 reset() 遗漏定时器停止 + 状态复位。
     void reset() override {
+        assertMainThread(); // AUDIT-R4 BUG-14
         if (vmRunTimer_)
             vmRunTimer_->stop();
         isVmRunning_ = false;
@@ -401,7 +489,10 @@ public:
     }
 
     bool isRunning() const { return isVmRunning_; }
-    bool isInitialized() const { return isVmInitialized_; }
+    bool isInitialized() const {
+        assertMainThread(); // AUDIT-R4 BUG-14
+        return isVmInitialized_;
+    }
 
     // ---- VM 状态访问器（B6 fix: 语义化快照接口，GUI 仅通过这些方法读取 VM 状态）----
     // B6 bug fix: getStack 改返回 by value，避免返回 vm_.stack_ 引用导致调用方
@@ -493,6 +584,14 @@ private slots:
     void runBatch();
 
 private:
+    // AUDIT-R4 BUG-14 fix: 线程亲和性断言。VmStepper 的非 atomic 状态字段
+    // （isVmInitialized_/useRegister_/vmTempBreakpointLine_ 等）依赖"仅主线程
+    // 访问（QTimer + UI 槽）"的约定保证安全。历史上 isVmRunning_ 曾因被 REPL
+    // 异步任务跨线程读取而不得不 atomic 化（IDE-ATOMIC-01）——本断言在 Debug
+    // 构建中把同类违规从"无提示数据竞争"提前为确定性崩溃，强制约定。
+    // Release 构建中 Q_ASSERT 为 no-op，零开销。
+    void assertMainThread() const { Q_ASSERT(QThread::currentThread() == thread()); }
+
     // A1 fix: 双后端实例。RegisterVM 在 useRegister_=false 时闲置，
     // 不持有运行时资源（resetState 后 frames_/globals_ 均空），内存开销可忽略。
     VM vm_;
@@ -528,6 +627,10 @@ private:
     // -1 表示无临时断点；>0 为目标行号。命中后立即清除（stepByMode/runBatch 中处理）。
     int vmTempBreakpointLine_ = -1;
     QMap<int, std::string> vmBreakpointConditions_; // #4 fix: 条件断点表达式
+    // 拓展二期：命中条件（行号→表达式）与依赖断点链（行号→依赖行）。
+    // 判定集中在 breakpointGateAllows（RUN 模式断点命中即将暂停前的统一门控）。
+    QMap<int, std::string> vmBreakpointHitConditions_;
+    QMap<int, int> vmBreakpointDependencies_;
     // BUG-DBG-AUDIT-2 fix: VM 模式断点命中计数（行号→次数），对齐
     // DebugController::breakpointInfos_[line].hitCount。checkBreakpointHit 命中时递增，
     // reset() 清空，setBreakpointConditions 重置对应行。
@@ -576,6 +679,16 @@ private:
     /// 无条件或求值为真时返回 true。
     /// R104 Logpoint：命中时输出日志并递增 hitCount，但返回 false（不暂停）。
     bool checkBreakpointHit(int line);
+
+    /// 拓展二期：断点暂停前的统一门控。在既有命中判定
+    /// （checkBreakpointHit + lastPaused/crossedLine 门控）全部通过、
+    /// 即将暂停前调用：
+    ///   1. 依赖链：依赖行断点从未命中过 → false（未激活，不计数不暂停）
+    ///   2. 递增 hitCount（到达即计数，原调用点的递增已内联至此）
+    ///   3. 命中条件不满足 → false（已计数但不暂停）
+    /// 返回 false 时调用方不更新 vmLastPausedLine_/vmCrossedLine_，
+    /// 下次到达同行仍可重新判定。
+    bool breakpointGateAllows(int line);
 
     /// R104 Logpoint：处理 Logpoint 命中（输出日志、递增 hitCount）。
     /// @return true 表示已处理（调用方应跳过此断点不暂停）

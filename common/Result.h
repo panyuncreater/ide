@@ -66,20 +66,20 @@ struct ErrorInfo {
 };
 
 /// 统一结果类型：持有成功值 T 或错误 ErrorInfo
-template <typename T> class Result {
+/// AUDIT-R4 BUG-08 fix: 标注 [[nodiscard]]——调用方丢弃返回的 Result 即静默
+/// 吞错误（无任何诊断）。加标注后编译器在 /W4+/WX 下强制所有调用点
+/// 显式处理或显式丢弃（(void) 转换）。
+template <typename T> class [[nodiscard]] Result {
 public:
     /// 成功构造
-    static Result ok(T value) {
-        Result r;
-        r.data_.template emplace<0>(std::move(value));
-        return r;
-    }
+    /// AUDIT-R3 P2 fix: 用 in_place_index 直接构造 variant，消除"先默认构造
+    /// Result 再 emplace"的模式——原实现隐式要求 T 可默认构造（variant 默认
+    /// 构造第 0 备选 T），且 err 路径白白构造再销毁一个 T。
+    static Result ok(T value) { return Result(std::variant<T, ErrorInfo>(std::in_place_index<0>, std::move(value))); }
 
     /// 错误构造
     static Result err(ErrorInfo error) {
-        Result r;
-        r.data_.template emplace<1>(std::move(error));
-        return r;
+        return Result(std::variant<T, ErrorInfo>(std::in_place_index<1>, std::move(error)));
     }
 
     /// 错误构造（便捷版）
@@ -98,9 +98,19 @@ public:
     const ErrorInfo& error() const { return std::get<1>(data_); }
 
     /// 获取成功值或默认值
-    T unwrap_or(T fallback) const { return is_ok() ? std::get<0>(data_) : std::move(fallback); }
+    /// AUDIT-R3 P2 fix: 改为 if/else——原三目运算符混合 const 左值与右值，
+    /// 公共类型退化为纯右值导致 fallback 分支也多一次拷贝；现 fallback
+    /// 分支走函数参数的隐式 move。
+    T unwrap_or(T fallback) const {
+        if (is_ok())
+            return std::get<0>(data_);
+        return fallback;
+    }
 
 private:
+    /// AUDIT-R3 P2 fix: 私有 variant 构造（供 ok/err 工厂使用，不要求 T 可默认构造）
+    explicit Result(std::variant<T, ErrorInfo>&& v) : data_(std::move(v)) {}
+
     std::variant<T, ErrorInfo> data_;
 };
 

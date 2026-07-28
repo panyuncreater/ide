@@ -18,9 +18,11 @@
 #include <QtCore/QTextStream>
 
 #include <algorithm>
+#include <cctype> // LSP 二期：rename 新名校验 isalpha/isalnum
 #include <cstdio>
 #include <cstring>
 #include <sstream>
+#include <unordered_map> // LSP 二期：semanticTokens 名称→类型映射
 
 #ifdef _WIN32
 #include <fcntl.h>
@@ -28,6 +30,10 @@
 #endif
 
 namespace minilang_lsp {
+
+// LSP 二期：semanticTokens 类型图例前向声明（定义在 handler 实现区，
+// handleInitialize 构造 capabilities 时使用）
+QJsonArray semanticTokenTypesLegend();
 
 // ============================================================
 // 位置转换工具（1-based MiniLang ↔ 0-based LSP）
@@ -176,6 +182,7 @@ std::vector<LspDiagnostic> DiagnosticCollector::fromLint(const DiagnosticBag& ba
 
 void SymbolIndex::build(Block& ast) {
     decls_.clear();
+    refs_.clear();
     symbols_.clear();
     collectDecls(&ast, false);
     // 将扁平声明列表转换为符号列表（documentSymbol 用）
@@ -286,6 +293,31 @@ void SymbolIndex::collectDecls(ASTNode* node, bool inClass) {
             collectDecls(stmt.get(), inClass);
         break;
     }
+    // ---- LSP 二期：引用收集（references/rename/semanticTokens 分类）----
+    case NodeType::NODE_VAR_REF: {
+        auto* ref = static_cast<VarRef*>(node);
+        refs_.push_back(RefInfo{ref->name, ref->line, ref->column});
+        break;
+    }
+    case NodeType::NODE_ASSIGNMENT: {
+        // 赋值目标也是引用（写使用点）：rename 必须覆盖左侧名称
+        auto* asg = static_cast<Assignment*>(node);
+        refs_.push_back(RefInfo{asg->name, asg->line, asg->column});
+        if (asg->value)
+            collectDecls(asg->value.get(), inClass);
+        break;
+    }
+    case NodeType::NODE_FUN_CALL: {
+        // 直接名称调用 f(args)：name 非空且无 callee 时记录函数名引用
+        auto* call = static_cast<FunCall*>(node);
+        if (!call->name.empty() && !call->callee)
+            refs_.push_back(RefInfo{call->name, call->line, call->column});
+        for (auto& arg : call->arguments)
+            collectDecls(arg.get(), inClass);
+        if (call->callee)
+            collectDecls(call->callee.get(), inClass);
+        break;
+    }
     default:
         // 其他节点类型：递归遍历子节点
         for (auto* child : node->children())
@@ -304,6 +336,40 @@ std::optional<LspPosition> SymbolIndex::findDefinition(const std::string& name) 
         }
     }
     return std::nullopt;
+}
+
+const SymbolIndex::DeclInfo* SymbolIndex::findDecl(const std::string& name) const {
+    for (const auto& decl : decls_) {
+        if (decl.name == name)
+            return &decl;
+    }
+    return nullptr;
+}
+
+std::vector<LspPosition> SymbolIndex::findReferences(const std::string& name, bool includeDeclaration) const {
+    // (line, character) 对集合去重（声明位置可能与引用重叠）
+    std::vector<std::pair<int, int>> positions;
+    if (includeDeclaration) {
+        for (const auto& decl : decls_) {
+            if (decl.name == name)
+                positions.emplace_back(toLspLine(decl.line), toLspChar(decl.column));
+        }
+    }
+    for (const auto& ref : refs_) {
+        if (ref.name == name)
+            positions.emplace_back(toLspLine(ref.line), toLspChar(ref.column));
+    }
+    std::sort(positions.begin(), positions.end());
+    positions.erase(std::unique(positions.begin(), positions.end()), positions.end());
+    std::vector<LspPosition> result;
+    result.reserve(positions.size());
+    for (const auto& [ln, ch] : positions) {
+        LspPosition pos;
+        pos.line = ln;
+        pos.character = ch;
+        result.push_back(pos);
+    }
+    return result;
 }
 
 std::vector<LspCompletionItem> SymbolIndex::completions() const {
@@ -643,6 +709,14 @@ std::vector<QJsonObject> LspRequestHandler::handleMessage(const QJsonObject& mes
             result = handleDocumentSymbol(params);
         } else if (method == "textDocument/formatting") {
             result = handleFormatting(params);
+        } else if (method == "textDocument/references") {
+            result = handleReferences(params); // LSP 二期
+        } else if (method == "textDocument/rename") {
+            result = handleRename(params); // LSP 二期
+        } else if (method == "textDocument/signatureHelp") {
+            result = handleSignatureHelp(params); // LSP 二期
+        } else if (method == "textDocument/semanticTokens/full") {
+            result = handleSemanticTokens(params); // LSP 二期
         } else {
             // 未知方法：返回错误响应
             QJsonObject errorResponse;
@@ -705,6 +779,23 @@ QJsonValue LspRequestHandler::handleInitialize(const QJsonObject& /*params*/) {
     capabilities["definitionProvider"] = true;
     capabilities["documentSymbolProvider"] = true;
     capabilities["documentFormattingProvider"] = true;
+
+    // LSP 二期：references / rename / signatureHelp / semanticTokens
+    capabilities["referencesProvider"] = true;
+    capabilities["renameProvider"] = true;
+    QJsonObject signatureHelpProvider;
+    QJsonArray triggerChars;
+    triggerChars.append("(");
+    triggerChars.append(",");
+    signatureHelpProvider["triggerCharacters"] = triggerChars;
+    capabilities["signatureHelpProvider"] = signatureHelpProvider;
+    QJsonObject semanticTokensProvider;
+    QJsonObject legend;
+    legend["tokenTypes"] = semanticTokenTypesLegend();
+    legend["tokenModifiers"] = QJsonArray();
+    semanticTokensProvider["legend"] = legend;
+    semanticTokensProvider["full"] = true;
+    capabilities["semanticTokensProvider"] = semanticTokensProvider;
 
     result["capabilities"] = capabilities;
 
@@ -912,6 +1003,264 @@ QJsonValue LspRequestHandler::handleFormatting(const QJsonObject& params) {
     return edits;
 }
 
+// ============================================================
+// LSP 二期：references / rename / signatureHelp / semanticTokens
+// ============================================================
+
+/// semanticTokens 类型图例（initialize 与 handleSemanticTokens 共用，
+/// 索引即编码值）：0=keyword 1=function 2=class 3=variable 4=number
+/// 5=string 6=enum 7=enumMember
+QJsonArray semanticTokenTypesLegend() {
+    QJsonArray types;
+    types.append("keyword");
+    types.append("function");
+    types.append("class");
+    types.append("variable");
+    types.append("number");
+    types.append("string");
+    types.append("enum");
+    types.append("enumMember");
+    return types;
+}
+
+QJsonValue LspRequestHandler::handleReferences(const QJsonObject& params) {
+    std::string uri;
+    int line, character;
+    if (!extractTextDocumentPosition(params, uri, line, character))
+        return QJsonValue();
+    auto* doc = docManager_.get(uri);
+    if (!doc || !doc->ast || doc->hasParseErrors)
+        return QJsonValue();
+    auto idName = getIdentifierAt(*doc, line, character);
+    if (!idName)
+        return QJsonValue();
+    // context.includeDeclaration 缺省 true（LSP 客户端通常显式传）
+    bool includeDecl = true;
+    if (params.contains("context"))
+        includeDecl = params.value("context").toObject().value("includeDeclaration").toBool(true);
+
+    SymbolIndex idx;
+    idx.build(*doc->ast);
+    auto positions = idx.findReferences(*idName, includeDecl);
+    if (positions.empty())
+        return QJsonValue();
+
+    QJsonArray locations;
+    int len = static_cast<int>(idName->length());
+    for (const auto& pos : positions) {
+        locations.append(json::location(uri, pos.line, pos.character, pos.line, pos.character + len));
+    }
+    return locations;
+}
+
+QJsonValue LspRequestHandler::handleRename(const QJsonObject& params) {
+    std::string uri;
+    int line, character;
+    if (!extractTextDocumentPosition(params, uri, line, character))
+        return QJsonValue();
+    auto* doc = docManager_.get(uri);
+    if (!doc || !doc->ast || doc->hasParseErrors)
+        return QJsonValue();
+    auto idName = getIdentifierAt(*doc, line, character);
+    if (!idName)
+        return QJsonValue();
+
+    std::string newName = params.value("newName").toString().toStdString();
+    // 新名校验：合法标识符且非关键字（避免重命名后源码不可解析）
+    auto isValidIdentifier = [](const std::string& s) {
+        if (s.empty())
+            return false;
+        if (!(std::isalpha(static_cast<unsigned char>(s[0])) || s[0] == '_'))
+            return false;
+        for (char c : s) {
+            if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_'))
+                return false;
+        }
+        return true;
+    };
+    if (!isValidIdentifier(newName) || Lexer::keywords().count(newName) > 0)
+        return QJsonValue();
+
+    SymbolIndex idx;
+    idx.build(*doc->ast);
+    auto positions = idx.findReferences(*idName, /*includeDeclaration=*/true);
+    if (positions.empty())
+        return QJsonValue();
+
+    QJsonArray edits;
+    int oldLen = static_cast<int>(idName->length());
+    for (const auto& pos : positions) {
+        edits.append(json::textEdit(pos.line, pos.character, pos.line, pos.character + oldLen, newName));
+    }
+    QJsonObject changes;
+    changes[QString::fromStdString(uri)] = edits;
+    QJsonObject workspaceEdit;
+    workspaceEdit["changes"] = changes;
+    return workspaceEdit;
+}
+
+QJsonValue LspRequestHandler::handleSignatureHelp(const QJsonObject& params) {
+    std::string uri;
+    int line, character;
+    if (!extractTextDocumentPosition(params, uri, line, character))
+        return QJsonValue();
+    auto* doc = docManager_.get(uri);
+    if (!doc || !doc->ast || doc->hasParseErrors)
+        return QJsonValue();
+
+    // 从光标向前扫 tokens：找到当前未闭合的 '(' 及其前的函数名，
+    // 同时统计同层逗号数作为 activeParameter。
+    int targetLine = fromLspLine(line);
+    int targetCol = fromLspChar(character);
+    int depth = 0;
+    int activeParam = 0;
+    const Token* funTok = nullptr;
+    for (int i = static_cast<int>(doc->tokens.size()) - 1; i >= 0; --i) {
+        const Token& t = doc->tokens[i];
+        // 仅考虑光标之前的 token
+        if (t.line > targetLine || (t.line == targetLine && t.column >= targetCol))
+            continue;
+        if (t.type == TokenType::TK_RPAREN) {
+            ++depth;
+        } else if (t.type == TokenType::TK_LPAREN) {
+            if (depth == 0) {
+                if (i > 0 && doc->tokens[static_cast<size_t>(i) - 1].type == TokenType::TK_IDENTIFIER)
+                    funTok = &doc->tokens[static_cast<size_t>(i) - 1];
+                break;
+            }
+            --depth;
+        } else if (t.type == TokenType::TK_COMMA && depth == 0) {
+            ++activeParam;
+        }
+    }
+    if (!funTok)
+        return QJsonValue();
+
+    SymbolIndex idx;
+    idx.build(*doc->ast);
+    const auto* decl = idx.findDecl(funTok->lexeme);
+    if (!decl || (decl->kind != LspSymbolKind::Function && decl->kind != LspSymbolKind::Method))
+        return QJsonValue();
+
+    // 签名 label = 名称 + detail（如 "add(a: int, b: int) -> int"）；
+    // 参数列表从 detail 括号内按顶层逗号拆分
+    QJsonObject signature;
+    signature["label"] = QString::fromStdString(decl->name + decl->detail);
+    QJsonArray paramInfos;
+    auto lp = decl->detail.find('(');
+    auto rp = decl->detail.rfind(')');
+    if (lp != std::string::npos && rp != std::string::npos && rp > lp + 1) {
+        std::string inner = decl->detail.substr(lp + 1, rp - lp - 1);
+        size_t start = 0;
+        while (start <= inner.size()) {
+            size_t comma = inner.find(',', start);
+            std::string piece =
+                (comma == std::string::npos) ? inner.substr(start) : inner.substr(start, comma - start);
+            // trim
+            size_t b = piece.find_first_not_of(' ');
+            size_t e = piece.find_last_not_of(' ');
+            if (b != std::string::npos) {
+                QJsonObject pi;
+                pi["label"] = QString::fromStdString(piece.substr(b, e - b + 1));
+                paramInfos.append(pi);
+            }
+            if (comma == std::string::npos)
+                break;
+            start = comma + 1;
+        }
+    }
+    signature["parameters"] = paramInfos;
+
+    QJsonObject result;
+    QJsonArray signatures;
+    signatures.append(signature);
+    result["signatures"] = signatures;
+    result["activeSignature"] = 0;
+    result["activeParameter"] = activeParam;
+    return result;
+}
+
+QJsonValue LspRequestHandler::handleSemanticTokens(const QJsonObject& params) {
+    std::string uri = params.value("textDocument").toObject().value("uri").toString().toStdString();
+    auto* doc = docManager_.get(uri);
+    if (!doc)
+        return QJsonValue();
+
+    // 标识符分类表：从 SymbolIndex 声明构建 name→类型索引（解析失败时
+    // 仅关键字/字面量着色，标识符默认 variable）
+    std::unordered_map<std::string, int> nameToType;
+    if (doc->ast && !doc->hasParseErrors) {
+        SymbolIndex idx;
+        idx.build(*doc->ast);
+        for (const auto& decl : idx.decls()) {
+            int type = 3; // variable
+            switch (decl.kind) {
+            case LspSymbolKind::Function:
+            case LspSymbolKind::Method:
+                type = 1;
+                break;
+            case LspSymbolKind::Class:
+                type = 2;
+                break;
+            case LspSymbolKind::Enum:
+                type = 6;
+                break;
+            case LspSymbolKind::EnumMember:
+                type = 7;
+                break;
+            default:
+                type = 3;
+                break;
+            }
+            // enum variant 名含 "."：取最后一段作为标识符分类键
+            auto dotPos = decl.name.rfind('.');
+            std::string key = (dotPos == std::string::npos) ? decl.name : decl.name.substr(dotPos + 1);
+            nameToType.emplace(key, type);
+        }
+    }
+
+    const auto& kwMap = Lexer::keywords();
+    // LSP semanticTokens 差分编码：每 token 5 元组
+    // (deltaLine, deltaStartChar, length, tokenType, tokenModifiers)
+    QJsonArray data;
+    int prevLine = 0;
+    int prevChar = 0;
+    for (const auto& tok : doc->tokens) {
+        if (tok.lexeme.empty())
+            continue;
+        int type = -1;
+        if (kwMap.find(tok.lexeme) != kwMap.end()) {
+            type = 0; // keyword
+        } else if (tok.type == TokenType::TK_IDENTIFIER) {
+            auto it = nameToType.find(tok.lexeme);
+            type = (it != nameToType.end()) ? it->second : 3;
+        } else if (tok.type == TokenType::TK_INT_LIT || tok.type == TokenType::TK_FLOAT_LIT) {
+            type = 4; // number
+        } else if (tok.type == TokenType::TK_STRING_LIT || tok.type == TokenType::TK_STRING_PART) {
+            type = 5; // string
+        }
+        if (type < 0)
+            continue;
+        int tokLine = toLspLine(tok.line);
+        int tokChar = toLspChar(tok.column);
+        int deltaLine = tokLine - prevLine;
+        int deltaChar = (deltaLine == 0) ? tokChar - prevChar : tokChar;
+        if (deltaLine < 0 || deltaChar < 0)
+            continue; // 乱序 token（插值字符串片段等）保守跳过
+        data.append(deltaLine);
+        data.append(deltaChar);
+        data.append(static_cast<int>(tok.lexeme.size()));
+        data.append(type);
+        data.append(0);
+        prevLine = tokLine;
+        prevChar = tokChar;
+    }
+
+    QJsonObject result;
+    result["data"] = data;
+    return result;
+}
+
 std::vector<QJsonObject> LspRequestHandler::handleDidOpen(const QJsonObject& params) {
     std::vector<QJsonObject> responses;
 
@@ -1055,6 +1404,30 @@ std::string versionString() {
 
 std::string serverName() {
     return "minilang-lsp";
+}
+
+// ============================================================
+// LSP 服务器主循环（供 lsp_entry.cpp 统一入口调用）
+// ============================================================
+
+int runLspServer() {
+    JsonRpcTransport transport;
+    LspRequestHandler handler;
+
+    while (!handler.shouldExit()) {
+        auto message = transport.read();
+        if (!message) {
+            // stdin EOF（客户端断开连接）
+            return handler.isShutdownRequested() ? 0 : 1;
+        }
+
+        std::vector<QJsonObject> responses = handler.handleMessage(*message);
+        for (const auto& resp : responses) {
+            transport.write(resp);
+        }
+    }
+
+    return handler.isShutdownRequested() ? 0 : 1;
 }
 
 } // namespace minilang_lsp

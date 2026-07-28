@@ -2351,6 +2351,484 @@ static bool runVMWithModulesCompileError(const std::string& source,
     return compiler.getDiagnostics().hasErrors();
 }
 
+// ============================================================
+// AUDIT-R5 R5 fix 回归锁：可变导出量导入快照语义（四后端配置一致）
+// ------------------------------------------------------------
+// 模块导出可变变量 + 修改它的函数，导入方导入两者后调函数再读变量：
+// 三后端（Interpreter / StackVM / StackVM-IR / RegisterVM-IR）均须输出导入时的快照值，
+// 而非模块内变异后的新值。历史上 Interpreter=快照(0)、VM/IR=共享(2) 不一致（R5），
+// 现统一到 Interpreter 基准（快照）。命名空间导入本就是快照字典，本组不重复验证。
+// ============================================================
+static std::string runInterpModsSnap(const std::string& src,
+                                     const std::unordered_map<std::string, std::string>& mods) {
+    Lexer lx;
+    auto tk = lx.scan(src);
+    Parser p;
+    auto ast = p.parse(tk);
+    if (!ast)
+        return "<parse-fail>";
+    Interpreter interp;
+    std::string out;
+    interp.setOutputCallback([&](const std::string& s) { out += s; });
+    interp.setModuleLoader([&](const std::string& path) -> std::string {
+        auto it = mods.find(path);
+        return it == mods.end() ? "" : it->second;
+    });
+    try {
+        interp.execute(*ast);
+    } catch (const std::exception& e) {
+        return out + "<rt:" + std::string(e.what()) + ">";
+    }
+    return out;
+}
+static std::string runStackIRModsSnap(const std::string& src,
+                                      const std::unordered_map<std::string, std::string>& mods) {
+    Lexer lx;
+    auto tk = lx.scan(src);
+    Parser p;
+    auto ast = p.parse(tk);
+    if (!ast)
+        return "<parse-fail>";
+    Compiler c;
+    c.setUseIR(true);
+    c.setModuleLoader([&](const std::string& path) -> std::string {
+        auto it = mods.find(path);
+        return it == mods.end() ? "" : it->second;
+    });
+    CompileResult cr;
+    try {
+        cr = c.compile(*ast);
+    } catch (const std::exception& e) {
+        return "<compile-ex:" + std::string(e.what()) + ">";
+    }
+    if (c.getDiagnostics().hasErrors())
+        return "<compile:" + c.getLastError() + ">";
+    VM vm;
+    std::string out;
+    vm.setOutputCallback([&](const std::string& s) { out += s; });
+    vm.execute(cr);
+    if (vm.hasError())
+        return out + "<rt:" + vm.getLastError() + ">";
+    return out;
+}
+static std::string runRegIRModsSnap(const std::string& src,
+                                    const std::unordered_map<std::string, std::string>& mods) {
+    Lexer lx;
+    auto tk = lx.scan(src);
+    Parser p;
+    auto ast = p.parse(tk);
+    if (!ast)
+        return "<parse-fail>";
+    Compiler c;
+    c.setUseRegisterVM(true);
+    c.setModuleLoader([&](const std::string& path) -> std::string {
+        auto it = mods.find(path);
+        return it == mods.end() ? "" : it->second;
+    });
+    try {
+        c.compile(*ast);
+    } catch (const std::exception& e) {
+        return "<compile-ex:" + std::string(e.what()) + ">";
+    }
+    if (c.getDiagnostics().hasErrors())
+        return "<compile:" + c.getLastError() + ">";
+    RegisterVM vm;
+    std::string out;
+    vm.setOutputCallback([&](const std::string& s) { out += s; });
+    vm.execute(c.getLastRegisterResult());
+    if (vm.hasError())
+        return out + "<rt:" + vm.getLastError() + ">";
+    return out;
+}
+
+// 具名导入：导入可变变量 counter + 函数 inc；inc() 两次后读 counter 应为快照 0
+TEST(VME2EImportSnapshot, MutableExportNamedImport) {
+    std::unordered_map<std::string, std::string> mods = {
+        {"m", "export var counter = 0;"
+              "export fun inc() { counter = counter + 1; }"}};
+    std::string src = "import { counter, inc } from \"m\";"
+                      "inc(); inc();"
+                      "print(counter);";
+    EXPECT_EQ(runInterpModsSnap(src, mods), "0");   // Interpreter 基准
+    EXPECT_EQ(runVMWithModules(src, mods), "0");    // StackVM 非-IR
+    EXPECT_EQ(runStackIRModsSnap(src, mods), "0");  // StackVM IR
+    EXPECT_EQ(runRegIRModsSnap(src, mods), "0");    // RegisterVM IR
+}
+
+// 全量导入（bare import）：同样快照语义
+TEST(VME2EImportSnapshot, MutableExportImportAll) {
+    std::unordered_map<std::string, std::string> mods = {
+        {"m", "export var counter = 0;"
+              "export fun inc() { counter = counter + 1; }"}};
+    std::string src = "import \"m\";"
+                      "inc(); inc(); inc();"
+                      "print(counter);";
+    EXPECT_EQ(runInterpModsSnap(src, mods), "0");
+    EXPECT_EQ(runVMWithModules(src, mods), "0");
+    EXPECT_EQ(runStackIRModsSnap(src, mods), "0");
+    EXPECT_EQ(runRegIRModsSnap(src, mods), "0");
+}
+
+// 快照不破坏函数调用：inc() 仍递增模块内变量并返回递增值，导入的 c 保持快照
+TEST(VME2EImportSnapshot, FunctionCallStillMutatesModuleVar) {
+    std::unordered_map<std::string, std::string> mods = {
+        {"m", "export var c = 0;"
+              "export fun inc() { c = c + 1; return c; }"}};
+    std::string src = "import { c, inc } from \"m\";"
+                      "print(inc());" // 1（模块内 c）
+                      "print(inc());" // 2
+                      "print(c);";    // 0（导入快照）
+    EXPECT_EQ(runInterpModsSnap(src, mods), "120");
+    EXPECT_EQ(runVMWithModules(src, mods), "120");
+    EXPECT_EQ(runStackIRModsSnap(src, mods), "120");
+    EXPECT_EQ(runRegIRModsSnap(src, mods), "120");
+}
+
+// ============================================================
+// AUDIT-R6 回归锁：本轮实证确认并修复的 Bug（F1-F8）
+// ============================================================
+// 辅助：启用 IR 优化的栈式 VM 执行（F2 回归锁用）
+static std::string runStackIROptR6(const std::string& src) {
+    Lexer lx;
+    auto tk = lx.scan(src);
+    Parser p;
+    auto ast = p.parse(tk);
+    if (!ast)
+        return "<parse-fail>";
+    Compiler c;
+    c.setUseIR(true);
+    c.setIROptimize(true);
+    CompileResult cr;
+    try {
+        cr = c.compile(*ast);
+    } catch (const std::exception& e) {
+        return "<compile-ex:" + std::string(e.what()) + ">";
+    }
+    if (c.getDiagnostics().hasErrors())
+        return "<compile:" + c.getLastError() + ">";
+    VM vm;
+    std::string out;
+    vm.setOutputCallback([&](const std::string& s) { out += s; });
+    vm.execute(cr);
+    if (vm.hasError())
+        return out + "<rt:" + vm.getLastError() + ">";
+    return out;
+}
+
+// F3: enum variant 字段类型校验四后端一致（原 VM/RegVM 仅校 arity，E.V("s") 静默成功）
+TEST(AuditR6Regression, EnumVariantFieldTypeCheckAllBackends) {
+    std::unordered_map<std::string, std::string> noMods;
+    std::string src = "enum E { V(int) } var x = E.V(\"s\"); print(\"done\");";
+    const char* expect = "\u7b2c 1 \u4e2a\u53c2\u6570\u7c7b\u578b\u4e0d\u5339\u914d";
+    EXPECT_NE(runInterpModsSnap(src, noMods).find(expect), std::string::npos);
+    EXPECT_NE(runVMWithModules(src, noMods).find(expect), std::string::npos);
+    EXPECT_NE(runStackIRModsSnap(src, noMods).find(expect), std::string::npos);
+    EXPECT_NE(runRegIRModsSnap(src, noMods).find(expect), std::string::npos);
+}
+
+// F4: 解构 per-name 类型注解四后端一致校验（原仅 Interpreter 校验）
+TEST(AuditR6Regression, DestructurePerNameTypeCheckAllBackends) {
+    std::unordered_map<std::string, std::string> noMods;
+    std::string src = "var (a: int, b) = (\"s\", 2); print(\"done\");";
+    const char* expect = "\u7c7b\u578b\u6ce8\u89e3\u8fdd\u53cd";
+    EXPECT_NE(runInterpModsSnap(src, noMods).find(expect), std::string::npos);
+    EXPECT_NE(runVMWithModules(src, noMods).find(expect), std::string::npos);
+    EXPECT_NE(runStackIRModsSnap(src, noMods).find(expect), std::string::npos);
+    EXPECT_NE(runRegIRModsSnap(src, noMods).find(expect), std::string::npos);
+}
+
+// F5: throw 逃逸时快照重建闭包的变异写回（原 Interpreter 丢失写回→输出 1，VM=2）
+TEST(AuditR6Regression, ThrowEscapeClosureWriteBack) {
+    std::unordered_map<std::string, std::string> noMods;
+    std::string src = "fun mk() { var x = 0;"
+                      "  fun f(t) { x = x + 1; if (t) { throw \"b\"; } return x; }"
+                      "  return [f]; }"
+                      "var fns = mk();"
+                      "try { fns[0](true); } catch (e) {}"
+                      "print(fns[0](false));";
+    EXPECT_EQ(runInterpModsSnap(src, noMods), "2");
+    EXPECT_EQ(runVMWithModules(src, noMods), "2");
+    EXPECT_EQ(runStackIRModsSnap(src, noMods), "2");
+    EXPECT_EQ(runRegIRModsSnap(src, noMods), "2");
+}
+
+// F2: irOptimize + 解构的 DUP CSE/DCE 栈下溢（原报“栈下溢”）
+TEST(AuditR6Regression, IROptDestructureNoStackUnderflow) {
+    EXPECT_EQ(runStackIROptR6("var t = (1, 2); var (a, b) = t; print(a + b);"), "3");
+    EXPECT_EQ(runStackIROptR6("var t = (1, 2, 3); var (a, b, c) = t; print(a + b + c);"), "6");
+}
+
+// F8: 模块顶层解构名隔离（原 VM 可用原名读到模块内部值 7）
+TEST(AuditR6Regression, ModuleTopLevelDestructureIsolated) {
+    std::unordered_map<std::string, std::string> mods = {{"m", "var (a, b) = (7, 8); export var ok = 1;"}};
+    std::string src = "import \"m\"; print(a);";
+    const char* expect = "\u672a\u5b9a\u4e49";
+    EXPECT_NE(runInterpModsSnap(src, mods).find(expect), std::string::npos);
+    EXPECT_NE(runVMWithModules(src, mods).find(expect), std::string::npos);
+    EXPECT_NE(runStackIRModsSnap(src, mods).find(expect), std::string::npos);
+    EXPECT_NE(runRegIRModsSnap(src, mods).find(expect), std::string::npos);
+    // 模块内部仍可正常使用解构名（重命名后内部引用一致）
+    std::unordered_map<std::string, std::string> mods2 = {
+        {"m2", "var (a, b) = (7, 8); export fun getA() { return a; }"}};
+    std::string src2 = "import { getA } from \"m2\"; print(getA());";
+    EXPECT_EQ(runInterpModsSnap(src2, mods2), "7");
+    EXPECT_EQ(runVMWithModules(src2, mods2), "7");
+    EXPECT_EQ(runStackIRModsSnap(src2, mods2), "7");
+    EXPECT_EQ(runRegIRModsSnap(src2, mods2), "7");
+}
+
+// F1: 畸形 match 语法（`case X:` 而非 `case X =>`）不再挂死 Parser（原死循环）
+TEST(AuditR6Regression, MalformedMatchParseNoHang) {
+    std::string src = "match (1) { case n: { var f = 1; } } print(\"ok\");";
+    Lexer lx;
+    auto tk = lx.scan(src);
+    Parser p;
+    auto ast = p.parse(tk);
+    (void)ast;
+    // 能跑到这里即证明无死循环；畸形语法应产生诊断
+    EXPECT_TRUE(p.hasErrors());
+}
+
+// ============================================================
+// AUDIT-R6 B1：finally 内 break/continue/return 与待处理异常/return 的交互
+//（Java 式丢弃语义，三后端统一）。修复前：Interpreter 外层 catch 被截断、
+// StackVM 异常值每轮泄漏至栈溢出、IR 路径 finally 自链死循环。
+// ============================================================
+
+// finally 内 break 丢弃待处理异常：外层 catch 不执行，循环退出
+TEST(AuditR6FinallyAbrupt, BreakDiscardsPendingException) {
+    std::unordered_map<std::string, std::string> noMods;
+    std::string src = "var log = \"\";"
+                      "while (true) {"
+                      "  try {"
+                      "    try { throw \"e\"; } finally { break; }"
+                      "  } catch (er) { log = log + \"A\"; log = log + \"B\"; }"
+                      "  log = log + \"X\";"
+                      "}"
+                      "print(\"L:\" + log);";
+    EXPECT_EQ(runInterpModsSnap(src, noMods), "L:");
+    EXPECT_EQ(runVMWithModules(src, noMods), "L:");
+    EXPECT_EQ(runStackIRModsSnap(src, noMods), "L:");
+    EXPECT_EQ(runRegIRModsSnap(src, noMods), "L:");
+}
+
+// finally 内 continue 丢弃待处理异常：每轮直接进入下一次迭代
+TEST(AuditR6FinallyAbrupt, ContinueDiscardsPendingException) {
+    std::unordered_map<std::string, std::string> noMods;
+    std::string src = "var log = \"\"; var i = 0;"
+                      "while (i < 3) {"
+                      "  i = i + 1;"
+                      "  try {"
+                      "    try { throw \"e\"; } finally { continue; }"
+                      "  } catch (er) { log = log + \"C\"; }"
+                      "  log = log + \"X\";"
+                      "}"
+                      "print(log + \":\" + i);";
+    EXPECT_EQ(runInterpModsSnap(src, noMods), ":3");
+    EXPECT_EQ(runVMWithModules(src, noMods), ":3");
+    EXPECT_EQ(runStackIRModsSnap(src, noMods), ":3");
+    EXPECT_EQ(runRegIRModsSnap(src, noMods), ":3");
+}
+
+// finally 内 break 丢弃待传播的 return（Java 语义：break 胜出）
+TEST(AuditR6FinallyAbrupt, BreakDiscardsPendingReturn) {
+    std::unordered_map<std::string, std::string> noMods;
+    std::string src = "fun f() {"
+                      "  var i = 0;"
+                      "  while (i < 5) {"
+                      "    i = i + 1;"
+                      "    try { return 99; } finally { break; }"
+                      "  }"
+                      "  return i;"
+                      "}"
+                      "print(f());";
+    EXPECT_EQ(runInterpModsSnap(src, noMods), "1");
+    EXPECT_EQ(runVMWithModules(src, noMods), "1");
+    EXPECT_EQ(runStackIRModsSnap(src, noMods), "1");
+    EXPECT_EQ(runRegIRModsSnap(src, noMods), "1");
+}
+
+// 回归锁：finally 无 abrupt 时 rethrow 完整性不变（异常值经临时暂存后原样重抛）
+TEST(AuditR6FinallyAbrupt, PlainFinallyStillRethrows) {
+    std::unordered_map<std::string, std::string> noMods;
+    std::string src = "var log = \"\";"
+                      "try {"
+                      "  try { throw \"e\"; } finally { log = log + \"F\"; }"
+                      "} catch (er) { log = log + er; }"
+                      "print(log);";
+    EXPECT_EQ(runInterpModsSnap(src, noMods), "Fe");
+    EXPECT_EQ(runVMWithModules(src, noMods), "Fe");
+    EXPECT_EQ(runStackIRModsSnap(src, noMods), "Fe");
+    EXPECT_EQ(runRegIRModsSnap(src, noMods), "Fe");
+}
+
+// 嵌套 finally：内层 finally 的 break 丢弃异常后仍链式执行外层 finally
+TEST(AuditR6FinallyAbrupt, BreakChainsThroughOuterFinally) {
+    std::unordered_map<std::string, std::string> noMods;
+    std::string src = "var log = \"\";"
+                      "while (true) {"
+                      "  try {"
+                      "    try { throw \"x\"; } finally { log = log + \"I\"; break; }"
+                      "  } finally { log = log + \"O\"; }"
+                      "}"
+                      "print(log);";
+    EXPECT_EQ(runInterpModsSnap(src, noMods), "IO");
+    EXPECT_EQ(runVMWithModules(src, noMods), "IO");
+    EXPECT_EQ(runStackIRModsSnap(src, noMods), "IO");
+    EXPECT_EQ(runRegIRModsSnap(src, noMods), "IO");
+}
+
+// AUDIT-R6 B4: 嵌套同名导出快照——inner 与 outer 都导出 v（outer 不导入 v，
+// 仅导入 w）：inner 内联时 v 共用 outer preScan 的槽且 detach 释放了名 v，
+// outer 自己的 export var v 另分新槽——内联前记录的槽号过期，
+// 原 record 时窗使导入方拷贝读到 inner 旧槽的 5 而非 outer 的 100
+TEST(AuditR6ImportSnapshot, NestedSameNameExportSnapshot) {
+    std::unordered_map<std::string, std::string> mods = {
+        {"inner", "export var v = 5; export var w = 1;"},
+        {"outer", "import { w } from \"inner\"; export var v = 100; export var q = w;"}};
+    std::string src = "import { v } from \"outer\"; print(v);";
+    EXPECT_EQ(runInterpModsSnap(src, mods), "100");
+    EXPECT_EQ(runVMWithModules(src, mods), "100");
+    EXPECT_EQ(runStackIRModsSnap(src, mods), "100");
+    EXPECT_EQ(runRegIRModsSnap(src, mods), "100");
+}
+
+// ============================================================
+// AUDIT-R7 回归锁（实证探针转正）
+// ============================================================
+
+// F2/F6: 生成器内未捕获 throw 穿透到调用方 catch（原 StackVM/RegVM 误置 done、
+// 异常值被 pop、ip 错位；RegVM 还用"不支持方法"覆盖真实错误）
+TEST(AuditR7Regression, GenThrowEscapesToCallerCatch) {
+    std::unordered_map<std::string, std::string> noMods;
+    std::string src = "fun* gen() { yield 1; throw \"boom\"; yield 2; }"
+                      "var g = gen();"
+                      "var log = \"\";"
+                      "try { log = log + g.next(); log = log + g.next(); }"
+                      "catch (e) { log = log + \"C:\" + e; }"
+                      "print(log + \"|\" + g.done());";
+    EXPECT_EQ(runInterpModsSnap(src, noMods), "1C:boom|false");
+    EXPECT_EQ(runVMWithModules(src, noMods), "1C:boom|false");
+    EXPECT_EQ(runStackIRModsSnap(src, noMods), "1C:boom|false");
+    EXPECT_EQ(runRegIRModsSnap(src, noMods), "1C:boom|false");
+}
+
+// F1: try{break}finally{return} 的 pendingJumpStack_ 跨帧残留（原 StackVM 常量池
+// 索引越界、RegVM 寄存器越界 C++ 异常逃逸宿主）
+TEST(AuditR7Regression, AbruptReplaceAbruptNoStaleJumpTarget) {
+    std::unordered_map<std::string, std::string> noMods;
+    std::string src = "fun f() {"
+                      "  while (true) { try { break; } finally { return \"R\"; } }"
+                      "  return \"L\";"
+                      "}"
+                      "var log = \"\";"
+                      "try { log = log + f(); } finally { log = log + \"F\"; }"
+                      "log = log + \"E\";"
+                      "print(log);";
+    EXPECT_EQ(runInterpModsSnap(src, noMods), "RFE");
+    EXPECT_EQ(runVMWithModules(src, noMods), "RFE");
+    EXPECT_EQ(runStackIRModsSnap(src, noMods), "RFE");
+    EXPECT_EQ(runRegIRModsSnap(src, noMods), "RFE");
+}
+
+// F3: TCO 帧复用前关闭 upvalue（原三 VM 路径闭包全部读到末轮值 "111"）
+TEST(AuditR7Regression, TcoFrameReuseClosureSnapshotsPerIteration) {
+    std::unordered_map<std::string, std::string> noMods;
+    std::string src = "var fns = [];"
+                      "fun rec(n) {"
+                      "  fun cap() { return n; }"
+                      "  fns.push(cap);"
+                      "  if (n <= 1) { return 0; }"
+                      "  return rec(n - 1);"
+                      "}"
+                      "rec(3);"
+                      "print(\"\" + fns[0]() + fns[1]() + fns[2]());";
+    EXPECT_EQ(runInterpModsSnap(src, noMods), "321");
+    EXPECT_EQ(runVMWithModules(src, noMods), "321");
+    EXPECT_EQ(runStackIRModsSnap(src, noMods), "321");
+    EXPECT_EQ(runRegIRModsSnap(src, noMods), "321");
+}
+
+// F4: match OR pattern 同名绑定——失败备选的部分绑定不污染 case 环境
+//（原 Interpreter 误报"绑定变量已在 case 作用域中定义"）
+TEST(AuditR7Regression, MatchOrPatternTrialBindingIsolation) {
+    std::unordered_map<std::string, std::string> noMods;
+    std::string src = "enum P { A(int, int) }"
+                      "var v = P.A(9, 2);"
+                      "var r = match (v) { case P.A(x, 2) or P.A(1, x) => x case _ => -1 };"
+                      "print(r);";
+    EXPECT_EQ(runInterpModsSnap(src, noMods), "9");
+    EXPECT_EQ(runVMWithModules(src, noMods), "9");
+    EXPECT_EQ(runStackIRModsSnap(src, noMods), "9");
+    EXPECT_EQ(runRegIRModsSnap(src, noMods), "9");
+    std::string src2 = "enum P { A(int, int) }"
+                       "var v = P.A(1, 7);"
+                       "var r = match (v) { case P.A(x, 2) or P.A(1, x) => x case _ => -1 };"
+                       "print(r);";
+    EXPECT_EQ(runInterpModsSnap(src2, noMods), "7");
+    EXPECT_EQ(runVMWithModules(src2, noMods), "7");
+    EXPECT_EQ(runStackIRModsSnap(src2, noMods), "7");
+    EXPECT_EQ(runRegIRModsSnap(src2, noMods), "7");
+}
+
+// F5: 类方法内嵌套命名函数的深尾递归——三 VM 路径 TCO 判据一致
+//（原 StackVM 直接路径 isMethod 误判致无 TCO 报深度超限；Interpreter 无 TCO
+// 报深度超限为已知设计差异，见 ConsistencyDiff.G7/E6 注释）
+TEST(AuditR7Regression, NestedFunInMethodTcoConsistentAcrossVMs) {
+    std::unordered_map<std::string, std::string> noMods;
+    std::string src = "class C {"
+                      "  fun run() {"
+                      "    fun loop(n) { if (n <= 0) { return \"ok\"; } return loop(n - 1); }"
+                      "    return loop(500);"
+                      "  }"
+                      "}"
+                      "var c = C();"
+                      "print(c.run());";
+    EXPECT_EQ(runVMWithModules(src, noMods), "ok");
+    EXPECT_EQ(runStackIRModsSnap(src, noMods), "ok");
+    EXPECT_EQ(runRegIRModsSnap(src, noMods), "ok");
+}
+
+// F6: 生成器体内运行时错误的错误文本四后端统一
+//（原 RegVM 用"类型 coroutine 不支持方法 next"覆盖"未定义的变量"）
+TEST(AuditR7Regression, GenBodyErrorTextUnified) {
+    std::unordered_map<std::string, std::string> noMods;
+    std::string src = "fun* gen() { yield hidden; }"
+                      "fun driver() { var hidden = 42; var g = gen(); return g.next(); }"
+                      "print(driver());";
+    const char* expect = "\u672a\u5b9a\u4e49\u7684\u53d8\u91cf";
+    EXPECT_NE(runInterpModsSnap(src, noMods).find(expect), std::string::npos);
+    EXPECT_NE(runVMWithModules(src, noMods).find(expect), std::string::npos);
+    EXPECT_NE(runStackIRModsSnap(src, noMods).find(expect), std::string::npos);
+    EXPECT_NE(runRegIRModsSnap(src, noMods).find(expect), std::string::npos);
+}
+
+// F1 补充锁：finally 体（经 break 进入）内调用含 try-finally 的函数，
+// 被调函数的 FINALLY_END 不得误弹调用方在途续跳目标
+TEST(AuditR7Regression, CalleeFinallyDoesNotStealCallerJumpTarget) {
+    std::unordered_map<std::string, std::string> noMods;
+    std::string src = "fun f() { try { var a = 1; } finally { var b = 2; } return \"f\"; }"
+                      "var log = \"\";"
+                      "while (true) { try { break; } finally { log = log + f(); } }"
+                      "print(log + \"D\");";
+    EXPECT_EQ(runInterpModsSnap(src, noMods), "fD");
+    EXPECT_EQ(runVMWithModules(src, noMods), "fD");
+    EXPECT_EQ(runStackIRModsSnap(src, noMods), "fD");
+    EXPECT_EQ(runRegIRModsSnap(src, noMods), "fD");
+}
+
+// F5b: 表达式 callee（fns[0]()）的跨调用变异持久性（根因：非 const closureName()
+// 的 ensureUnique 静默分离 ClosureData，原 Interpreter=11 vs VM=12）
+TEST(AuditR6Regression, ExprCalleeClosureMutationPersists) {
+    std::unordered_map<std::string, std::string> noMods;
+    std::string src = "fun mk() { var x = 0; fun f() { x = x + 1; return x; } return [f]; }"
+                      "var fns = mk(); print(fns[0]()); print(fns[0]());";
+    EXPECT_EQ(runInterpModsSnap(src, noMods), "12");
+    EXPECT_EQ(runVMWithModules(src, noMods), "12");
+    EXPECT_EQ(runStackIRModsSnap(src, noMods), "12");
+    EXPECT_EQ(runRegIRModsSnap(src, noMods), "12");
+}
+
 // 测试：import 全部导出
 TEST(VME2EImport, ImportAll) {
     std::string src = "import \"mymod\";"
@@ -2552,6 +3030,25 @@ TEST(VME2EImport, DiamondDependency) {
     // base 模块只编译一次（run-once），baseVal 全局槽位复用
     EXPECT_EQ(runVMWithModules(src, modules), "4344");
 }
+
+// BUG-M4 fix（AUDIT-R5 续）：Windows 上同一文件的不同大小写拼写 import 去重为同一模块。
+// 缓存去重键在 Windows 小写折叠，loader 仍收到原大小写路径（供大小写敏感 loader 解析）。
+// 该行为平台相关：Windows 大小写不敏感（去重）；Linux/macOS 大小写敏感（视为不同模块）。
+// 故本测试仅在 Windows 断言去重语义。
+#ifdef _WIN32
+TEST(VME2EImport, CaseInsensitiveDedupOnWindows) {
+    // 模块 loadmod 在加载时打印一次。以两种大小写拼写 import——
+    // Windows 上第二次命中缓存去重键（run-once），"loaded" 仅打印一次。
+    std::string src = "import \"loadmod\";"
+                      "import \"LoadMod\";";
+    // loader 键含两种大小写指向同一源码，验证 loader 收到原大小写路径也能命中；
+    // 去重由 cacheKey（小写折叠）保证，第二次 import 不再调用 loader。
+    std::unordered_map<std::string, std::string> modules = {{"loadmod", "print(\"loaded\");"},
+                                                            {"LoadMod", "print(\"loaded\");"}};
+    // 去重生效：仅加载一次，"loaded" 打印一次
+    EXPECT_EQ(runVMWithModules(src, modules), "loaded");
+}
+#endif
 
 // ============================================================
 // VM-IMPORT: IR 路径 / 寄存器式路径的模块导入测试

@@ -159,4 +159,18 @@ inline std::string formatWithLine(const std::string& msg, int line) {
     return result;
 }
 
+/// @brief 截断字符串到指定长度用于错误消息显示。
+///
+/// 三后端（Interpreter/StackVM/RegisterVM/JIT）及 GUI 共享同一截断逻辑，
+/// 保证异常值 toString 输出长度可控（防止循环引用对象导致超长输出）。
+/// P1 dedup: 提取自 VM.cpp / RegisterVM.cpp / Interpreter.cpp / JITRuntime.cpp /
+/// VmStackPanel.cpp 中重复的 `if (str.size() > 200) str = str.substr(0, 200) + "...";`
+///
+/// @param str 待截断的字符串（原地修改）
+/// @param maxLen 最大保留长度（超出则截断并追加 "..."，默认 200）
+inline void truncateForError(std::string& str, size_t maxLen = 200) {
+    if (str.size() > maxLen)
+        str = str.substr(0, maxLen) + "...";
+}
+
 } // namespace ErrorFormat

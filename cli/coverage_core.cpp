@@ -29,7 +29,9 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <map> // 拓展二期：分支点有序映射
 #include <sstream>
+#include <unordered_map> // 拓展二期：行计数（原经间接包含，显式化）
 #include <unordered_set>
 
 namespace minilang_coverage {
@@ -85,9 +87,101 @@ std::unordered_set<int> collectExecutableFromRegister(const RegisterCompileResul
     return lines;
 }
 
+// ============================================================
+// 拓展二期：分支覆盖率基础设施
+// ------------------------------------------------------------
+// 静态扫描：线性遍历字节流（instructionSizeAt 前进）找出所有
+// JUMP_IF_FALSE 指令，记录 (chunk, ip) → {行号, 跳转目标, fall-through}。
+// 运行时判定：stepCallback 传"被执行指令的地址"；见到 JIF 后挂起
+// pending，下一次回调的 ip 等于跳转目标 → 假分支；等于 fall-through
+// → 真分支（JIF 不跨帧，同 chunk 内判定安全）。
+// ============================================================
+namespace {
+
+/// 分支点静态信息 + 运行时计数
+struct BranchPointInfo {
+    int line = 0;
+    size_t target = 0;      ///< 跳转目标（条件为假）
+    size_t fallthrough = 0; ///< 顺序执行地址（条件为真）
+    uint64_t trueCount = 0;
+    uint64_t falseCount = 0;
+};
+
+using BranchKey = std::pair<std::string, size_t>; // (chunkName, ip)
+using BranchMap = std::map<BranchKey, BranchPointInfo>;
+
+/// 扫描栈式 chunk 的 JUMP_IF_FALSE 分支点（3 字节：op + 16 位绝对偏移）
+void scanBranchesStack(const BytecodeChunk& chunk, const std::string& chunkName, BranchMap& out) {
+    size_t off = 0;
+    while (off < chunk.code.size()) {
+        if (static_cast<OpCode>(chunk.code[off]) == OpCode::OP_JUMP_IF_FALSE && off + 2 < chunk.code.size()) {
+            BranchPointInfo bp;
+            bp.line = chunk.getLine(off);
+            bp.target = static_cast<size_t>(chunk.code[off + 1] | (chunk.code[off + 2] << 8));
+            bp.fallthrough = off + 3;
+            out[{chunkName, off}] = bp;
+        }
+        size_t sz = chunk.instructionSizeAt(off);
+        if (sz == 0)
+            break; // 防御：异常元数据不死循环
+        off += sz;
+    }
+}
+
+/// 扫描寄存器 chunk 的 REG_JUMP_IF_FALSE（4 字节：op + src + 16 位偏移）
+void scanBranchesRegister(const RegBytecodeChunk& chunk, const std::string& chunkName, BranchMap& out) {
+    size_t off = 0;
+    while (off < chunk.code.size()) {
+        if (static_cast<RegOp>(chunk.code[off]) == RegOp::REG_JUMP_IF_FALSE && off + 3 < chunk.code.size()) {
+            BranchPointInfo bp;
+            bp.line = (off < chunk.lines.size()) ? chunk.lines[off] : 0;
+            bp.target = static_cast<size_t>(chunk.code[off + 2] | (chunk.code[off + 3] << 8));
+            bp.fallthrough = off + 4;
+            out[{chunkName, off}] = bp;
+        }
+        size_t sz = chunk.instructionSizeAt(off);
+        if (sz == 0)
+            break;
+        off += sz;
+    }
+}
+
+/// 运行时待判定分支（上一步是 JIF 时挂起）
+struct PendingBranch {
+    bool active = false;
+    BranchKey key;
+};
+
+/// 将分支计数结果写入 FileCoverage（按行号排序 + 同行序号）
+void fillBranchCoverage(const BranchMap& branches, FileCoverage& fc) {
+    std::map<int, int> lineSeq; // 行号 → 已分配序号
+    for (const auto& kv : branches) {
+        BranchCoverage bc;
+        bc.line = kv.second.line;
+        bc.id = lineSeq[bc.line]++;
+        bc.trueCount = kv.second.trueCount;
+        bc.falseCount = kv.second.falseCount;
+        fc.branches.push_back(bc);
+    }
+    std::sort(fc.branches.begin(), fc.branches.end(),
+              [](const BranchCoverage& a, const BranchCoverage& b) {
+                  return a.line != b.line ? a.line < b.line : a.id < b.id;
+              });
+    fc.totalBranchOutcomes = static_cast<int>(fc.branches.size()) * 2;
+    fc.coveredBranchOutcomes = 0;
+    for (const auto& bc : fc.branches) {
+        if (bc.trueCount > 0)
+            ++fc.coveredBranchOutcomes;
+        if (bc.falseCount > 0)
+            ++fc.coveredBranchOutcomes;
+    }
+}
+
+} // namespace
+
 /// 按 StackVM 后端分析覆盖率
 FileCoverage analyzeWithStackVM(const std::string& source, const std::string& sourceName, Block& ast,
-                                [[maybe_unused]] const CoverageOptions& opts) {
+                                const CoverageOptions& opts) {
     FileCoverage fc;
     fc.sourceName = sourceName;
     fc.source = source;
@@ -106,14 +200,46 @@ FileCoverage analyzeWithStackVM(const std::string& source, const std::string& so
     // 2. 收集可执行行集
     auto executableLines = collectExecutableFromStack(cr);
 
-    // 3. 设置 VM stepCallback 收集行号计数
+    // 2.5 拓展二期：分支点静态扫描（main + 全部函数 chunk）
+    BranchMap branchMap;
+    if (opts.branch) {
+        scanBranchesStack(cr.mainChunk, "main", branchMap);
+        for (const auto& kv : cr.functionChunks) {
+            scanBranchesStack(kv.second, kv.first, branchMap);
+        }
+    }
+
+    // 3. 设置 VM stepCallback 收集行号计数（+ 分支走向判定）
     std::unordered_map<int, uint64_t> lineCounts;
     VM vm;
     vm.setOutputCallback([](const std::string&) {}); // 静默输出
-    vm.setStepCallback([&lineCounts, &vm](const VMStepInfo&) {
+    PendingBranch pending;
+    vm.setStepCallback([&lineCounts, &vm, &branchMap, &pending, &opts](const VMStepInfo& info) {
         int line = vm.getCurrentLine();
         if (line > 0) {
             ++lineCounts[line];
+        }
+        if (!opts.branch)
+            return;
+        // 分支判定：上一步是 JIF → 本步 ip 等于 target(假)/fallthrough(真)
+        std::string chunkName = vm.getCurrentChunkName();
+        if (pending.active) {
+            auto it = branchMap.find(pending.key);
+            if (it != branchMap.end() && chunkName == pending.key.first) {
+                if (info.ip == it->second.target) {
+                    ++it->second.falseCount;
+                } else if (info.ip == it->second.fallthrough) {
+                    ++it->second.trueCount;
+                }
+            }
+            pending.active = false;
+        }
+        if (info.opcode == OpCode::OP_JUMP_IF_FALSE) {
+            BranchKey key{chunkName, info.ip};
+            if (branchMap.count(key)) {
+                pending.active = true;
+                pending.key = std::move(key);
+            }
         }
     });
     vm.setStepCallbackEnabled(true);
@@ -167,13 +293,17 @@ FileCoverage analyzeWithStackVM(const std::string& source, const std::string& so
     fc.ratio = fc.totalExecutable > 0
                    ? (100.0 * static_cast<double>(fc.totalCovered) / static_cast<double>(fc.totalExecutable))
                    : 0.0;
+    // 拓展二期：分支覆盖结果写入报告
+    if (opts.branch) {
+        fillBranchCoverage(branchMap, fc);
+    }
     fc.ok = true;
     return fc;
 }
 
 /// 按 RegisterVM 后端分析覆盖率
 FileCoverage analyzeWithRegisterVM(const std::string& source, const std::string& sourceName, Block& ast,
-                                   [[maybe_unused]] const CoverageOptions& opts) {
+                                   const CoverageOptions& opts) {
     FileCoverage fc;
     fc.sourceName = sourceName;
     fc.source = source;
@@ -193,15 +323,50 @@ FileCoverage analyzeWithRegisterVM(const std::string& source, const std::string&
     // 2. 收集可执行行集
     auto executableLines = collectExecutableFromRegister(cr);
 
-    // 3. 设置 RegisterVM stepCallback 收集行号计数
+    // 2.5 拓展二期：分支点静态扫描（main + 全部函数 chunk）
+    BranchMap branchMap;
+    if (opts.branch) {
+        scanBranchesRegister(cr.mainChunk, "main", branchMap);
+        for (const auto& kv : cr.functionChunks) {
+            scanBranchesRegister(kv.second, kv.first, branchMap);
+        }
+    }
+
+    // 3. 设置 RegisterVM stepCallback 收集行号计数（+ 分支走向判定）
     std::unordered_map<int, uint64_t> lineCounts;
     RegisterVM vm;
     vm.setOutputCallback([](const std::string&) {});
-    vm.setStepCallback([&lineCounts, &vm](const RegVMStepInfo&) {
+    // RegisterVM 的 notifyStep 传"执行后 ip"（与 StackVM 传"执行前 ip"不同，
+    // 见 RegisterVMExec Bug #80 注释：观察指令执行后的帧状态）。因此
+    // JIF 回调里 info.ip 已是 target/fallthrough，JIF 的静态地址等于
+    // 上一次回调的 ip（上条指令执行后 ip 指向 JIF）——同一次回调内即可判定。
+    struct RegPrevStep {
+        bool valid = false;
+        std::string chunk;
+        size_t ip = 0;
+    };
+    RegPrevStep prev;
+    vm.setStepCallback([&lineCounts, &vm, &branchMap, &prev, &opts](const RegVMStepInfo& info) {
         int line = vm.getCurrentLine();
         if (line > 0) {
             ++lineCounts[line];
         }
+        if (!opts.branch)
+            return;
+        std::string chunkName = vm.getCurrentChunkName();
+        if (info.opcode == RegOp::REG_JUMP_IF_FALSE && prev.valid && prev.chunk == chunkName) {
+            auto it = branchMap.find({chunkName, prev.ip});
+            if (it != branchMap.end()) {
+                if (info.ip == it->second.target) {
+                    ++it->second.falseCount;
+                } else if (info.ip == it->second.fallthrough) {
+                    ++it->second.trueCount;
+                }
+            }
+        }
+        prev.valid = true;
+        prev.chunk = std::move(chunkName);
+        prev.ip = info.ip;
     });
     vm.setStepCallbackEnabled(true);
 
@@ -253,6 +418,10 @@ FileCoverage analyzeWithRegisterVM(const std::string& source, const std::string&
     fc.ratio = fc.totalExecutable > 0
                    ? (100.0 * static_cast<double>(fc.totalCovered) / static_cast<double>(fc.totalExecutable))
                    : 0.0;
+    // 拓展二期：分支覆盖结果写入报告（RegisterVM 路径）
+    if (opts.branch) {
+        fillBranchCoverage(branchMap, fc);
+    }
     fc.ok = true;
     return fc;
 }
@@ -411,6 +580,17 @@ std::string formatFileText(const FileCoverage& fc, const CoverageOptions& opts) 
     os << "后端: " << fc.backendUsed << "\n";
     os << "覆盖率: " << fc.totalCovered << "/" << fc.totalExecutable << " (" << std::fixed << std::setprecision(2)
        << fc.ratio << "%)\n";
+    // 拓展二期：分支覆盖率摘要（--branch 启用时）
+    if (fc.totalBranchOutcomes > 0) {
+        double branchRatio =
+            100.0 * static_cast<double>(fc.coveredBranchOutcomes) / static_cast<double>(fc.totalBranchOutcomes);
+        os << "分支覆盖: " << fc.coveredBranchOutcomes << "/" << fc.totalBranchOutcomes << " outcome (" << std::fixed
+           << std::setprecision(2) << branchRatio << "%)\n";
+        for (const auto& bc : fc.branches) {
+            os << "  行 " << bc.line << " 分支#" << bc.id << ": 真=" << bc.trueCount << " 假=" << bc.falseCount
+               << ((bc.trueCount > 0 && bc.falseCount > 0) ? "" : "  [未全覆盖]") << "\n";
+        }
+    }
 
     if (opts.showSource) {
         auto srcLines = splitLines(fc.source);
@@ -508,6 +688,26 @@ std::string formatFileLcov(const FileCoverage& fc) {
             ++lh;
         os << "DA:" << lc.line << "," << lc.count << "\n";
     }
+    // 拓展二期：分支覆盖 BRDA/BRF/BRH 记录（lcov 规范：
+    // BRDA:<line>,<block>,<branch>,<taken 次数或 - 表示未执行>）
+    if (fc.totalBranchOutcomes > 0) {
+        for (const auto& bc : fc.branches) {
+            os << "BRDA:" << bc.line << ",0," << (bc.id * 2) << ",";
+            if (bc.trueCount > 0)
+                os << bc.trueCount;
+            else
+                os << "-";
+            os << "\n";
+            os << "BRDA:" << bc.line << ",0," << (bc.id * 2 + 1) << ",";
+            if (bc.falseCount > 0)
+                os << bc.falseCount;
+            else
+                os << "-";
+            os << "\n";
+        }
+        os << "BRF:" << fc.totalBranchOutcomes << "\n";
+        os << "BRH:" << fc.coveredBranchOutcomes << "\n";
+    }
     os << "LF:" << lf << "\n";
     os << "LH:" << lh << "\n";
     os << "end_of_record\n";
@@ -574,6 +774,8 @@ CliArgs parseArgs(int argc, char* argv[]) {
             }
         } else if (arg == "--show-counts") {
             args.options.showCounts = true;
+        } else if (arg == "--branch") {
+            args.options.branch = true; // 拓展二期：分支覆盖率
         } else if (arg == "--show-source") {
             args.options.showSource = true;
         } else if (arg == "--no-uncovered") {
@@ -621,6 +823,7 @@ void printHelp() {
               "  --backend <type>      选择后端：stack | register | both（默认 stack）\n"
               "  --format <format>     输出格式：text | lcov（默认 text）\n"
               "  --show-counts         显示每行执行次数\n"
+              "  --branch              分支覆盖率（JUMP_IF_FALSE 双向统计，lcov 含 BRDA/BRF/BRH）\n"
               "  --show-source         显示源码行内容\n"
               "  --no-uncovered        不显示未覆盖行清单（默认显示）\n"
               "  --fail-under <pct>    覆盖率阈值（0-100），低于则返回退出码 1\n"

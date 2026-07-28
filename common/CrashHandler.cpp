@@ -23,7 +23,15 @@
 #include <sstream>
 
 // 平台特定头文件
+// ARCH-10 Unity Build 修复：定义 WIN32_LEAN_AND_MEAN / NOMINMAX / NOGDI 三个
+// 标准最小化宏，避免 <windows.h> 拉入的 wingdi.h / winuser.h 等子头文件在全局
+// 命名空间定义 `type` / `min` / `max` / `Polygon` 等宏，污染后续 lexer/Token.h
+// 的 TokenType / Token::type 字段（C3646 未知重写说明符）。
+// 此三宏是 Windows SDK 官方推荐的最小化包含方式，不影响 dbghelp.h 的 MiniDumpWriteDump。
 #ifdef _WIN32
+#  define WIN32_LEAN_AND_MEAN
+#  define NOMINMAX
+#  define NOGDI
 #  include <windows.h>
 #  include <dbghelp.h>
 #  pragma comment(lib, "dbghelp.lib")
@@ -47,7 +55,20 @@ namespace minilang {
 // ============================================================
 namespace {
 std::atomic<void(*)()> g_crashCallback{nullptr};
+
+// 跨平台 localtime 包装：
+//   - Windows(MSVC) 用 localtime_s（安全 CRT），签名 errno_t localtime_s(tm*, const time_t*)
+//   - POSIX(Linux/macOS) 用 localtime_r，签名 struct tm* localtime_r(const time_t*, tm*)
+// 两者参数顺序相反，此处统一封装为 (time_t, tm*) 顺序并返回 bool。
+// 成功时填充 *out 并返回 true；失败时返回 false（*out 不被修改，调用方应预填零）。
+inline bool safeLocaltime(std::time_t t, std::tm* out) {
+#ifdef _WIN32
+    return localtime_s(out, &t) == 0;
+#else
+    return localtime_r(&t, out) != nullptr;
+#endif
 }
+} // namespace
 
 // ============================================================
 // 单例
@@ -151,8 +172,8 @@ void CrashHandler::writeCrashMeta(const std::string& dumpDir,
     auto now = std::chrono::system_clock::now();
     auto t   = std::chrono::system_clock::to_time_t(now);
     oss << "{\n";
-    std::tm tmBuf;
-    localtime_s(&tmBuf, &t);
+    std::tm tmBuf{}; // 零初始化：localtime 转换失败时降级为 1900-01-01 00:00:00
+    safeLocaltime(t, &tmBuf);
     oss << "  \"timestamp\": \"" << std::put_time(&tmBuf, "%Y-%m-%d %H:%M:%S") << "\",\n";
     oss << "  \"signal\": \"" << signalName << "\",\n";
     oss << "  \"dumpFile\": \"" << dumpFile << "\"\n";
@@ -231,8 +252,8 @@ CrashReport CrashHandler::lastCrashReport() {
         latestTime - fs::file_time_type::clock::now() + std::chrono::system_clock::now());
     auto t = std::chrono::system_clock::to_time_t(sctp);
     std::ostringstream ts;
-    std::tm tmBuf;
-    localtime_s(&tmBuf, &t);
+    std::tm tmBuf{}; // 零初始化：localtime 转换失败时降级为 1900-01-01 00:00:00
+    safeLocaltime(t, &tmBuf);
     ts << std::put_time(&tmBuf, "%Y-%m-%d %H:%M:%S");
     report.timestamp = ts.str();
 
@@ -342,10 +363,14 @@ LONG WINAPI minilangExceptionFilter(EXCEPTION_POINTERS* ep) {
              excName,
              st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
 
-    std::string dumpPath = g_winDumpDir + "\\" + fname;
+    // P2 #59 fix: 避免在 SEH 过滤器中使用堆分配（std::string 拼接），
+    // 因为崩溃可能由堆损坏引起，此时堆分配会导致二次崩溃。
+    // 改用栈缓冲 + snprintf 构造完整路径。
+    char dumpPath[MAX_PATH];
+    snprintf(dumpPath, sizeof(dumpPath), "%s\\%s", g_winDumpDir.c_str(), fname);
 
     // 写 minidump
-    HANDLE hFile = CreateFileA(dumpPath.c_str(), GENERIC_WRITE, 0, nullptr,
+    HANDLE hFile = CreateFileA(dumpPath, GENERIC_WRITE, 0, nullptr,
                                 CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (hFile != INVALID_HANDLE_VALUE) {
         MINIDUMP_EXCEPTION_INFORMATION mei;
@@ -357,8 +382,28 @@ LONG WINAPI minilangExceptionFilter(EXCEPTION_POINTERS* ep) {
         CloseHandle(hFile);
     }
 
-    // 写元信息文件
-    CrashHandler::writeCrashMeta(g_winDumpDir, dumpPath, excName);
+    // P2 #59 fix: 写元信息文件——使用栈缓冲 + CreateFileA/WriteFile，
+    // 避免原 writeCrashMeta 中的 std::ostringstream/std::ofstream 堆分配。
+    {
+        char metaPath[MAX_PATH];
+        snprintf(metaPath, sizeof(metaPath), "%s\\.crashmeta", g_winDumpDir.c_str());
+        char metaBuf[512];
+        SYSTEMTIME st2;
+        GetLocalTime(&st2);
+        int metaLen = snprintf(metaBuf, sizeof(metaBuf),
+            "{\n  \"timestamp\": \"%04d-%02d-%02d %02d:%02d:%02d\",\n"
+            "  \"signal\": \"%s\",\n"
+            "  \"dumpFile\": \"%s\"\n}\n",
+            st2.wYear, st2.wMonth, st2.wDay, st2.wHour, st2.wMinute, st2.wSecond,
+            excName, dumpPath);
+        HANDLE hMeta = CreateFileA(metaPath, GENERIC_WRITE, 0, nullptr,
+                                    CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (hMeta != INVALID_HANDLE_VALUE) {
+            DWORD written = 0;
+            WriteFile(hMeta, metaBuf, (DWORD)metaLen, &written, nullptr);
+            CloseHandle(hMeta);
+        }
+    }
 
     // 链式调用上一个过滤器（如 WerFault）
     if (g_prevFilter) {
@@ -393,7 +438,10 @@ bool CrashHandler::installWindows(const std::string& dumpDir) {
 namespace {
 
 // 全局 dump 目录（handler 中无法访问 this）
-std::string g_posixDumpDir;
+// Bug #91 fix: 信号 handler 必须 async-signal-safe，禁止使用 std::string
+// （其 c_str() 可能触发分配/拷贝，且非异步信号安全）。改用固定大小 char 数组，
+// install 阶段 strncpy 写入，handler 中直接读取字符指针。
+char g_posixDumpDir[1024];
 
 // 原始 sigaction 备份
 struct sigaction g_oldSegv;
@@ -462,7 +510,7 @@ void crashHandler(int sig, siginfo_t* info, void* ucontext) {
     // 拼接完整路径（不调用 malloc，使用栈缓冲）
     char fullPath[1024];
     snprintf(fullPath, sizeof(fullPath), "%s/%s",
-             g_posixDumpDir.c_str(), fname);
+             g_posixDumpDir, fname);
 
     // 打开文件（O_CREAT | O_WRONLY | O_TRUNC）
     int fd = open(fullPath, O_CREAT | O_WRONLY | O_TRUNC, 0644);
@@ -526,7 +574,9 @@ bool registerHandler(int sig, struct sigaction* old) {
 } // anonymous namespace
 
 bool CrashHandler::installPosix(const std::string& dumpDir) {
-    g_posixDumpDir = dumpDir;
+    // Bug #91 fix: 用 strncpy 写入固定缓冲，确保 handler 中无需调用 std::string 方法
+    std::strncpy(g_posixDumpDir, dumpDir.c_str(), sizeof(g_posixDumpDir) - 1);
+    g_posixDumpDir[sizeof(g_posixDumpDir) - 1] = '\0';
     bool ok = true;
     ok &= registerHandler(SIGSEGV, &g_oldSegv);
     ok &= registerHandler(SIGABRT, &g_oldAbort);

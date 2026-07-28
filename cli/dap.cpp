@@ -24,6 +24,7 @@
 #include <vector>
 
 #ifdef _WIN32
+#include <conio.h>
 #include <fcntl.h>
 #include <io.h>
 #include <windows.h>

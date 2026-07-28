@@ -32,6 +32,11 @@ struct DebugPauseEvent {
 class DebugController {
 public:
     DebugController() = default;
+    // 拓展二期修复：与生产版签名对齐的构造函数（忽略 parent，定义在 .cpp）。
+    // minilang_core 的 mocs_compilation（Unity batch）会引用
+    // ??0DebugController@@QEAA@PEAVQObject@@@Z；若桩不提供该符号，
+    // 链接器会从 lib 拉取真实 DebugController.cpp.obj → LNK2005。
+    explicit DebugController(class QObject* parent);
     ~DebugController() = default;
 
     // 步进模式控制：stepIn/stepOver/stepOut/resume/stop 设置各调试模式，setCurrentDepth 由解释器同步当前栈深度。

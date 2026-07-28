@@ -280,14 +280,24 @@ bool WorkerManager::prepareRun(bool isDebug, std::shared_ptr<Block> astRoot, con
                     // REPL 输出静默丢失、input() 返回空串。此处强制恢复主线程回调。
                     try {
                         setupMainCallbacks();
+                    } catch (const std::exception& e2) {
+                        LOG_WARNING(std::string("setupMainCallbacks threw after cleanupWorker failure: ") + e2.what(),
+                                    "IDE");
                     } catch (...) {
+                        LOG_WARNING("setupMainCallbacks threw unknown exception after cleanupWorker failure", "IDE");
                     }
                 } catch (...) {
                     isRunning_ = false;
                     isDebugRun_ = false;
                     try {
                         setupMainCallbacks();
+                    } catch (const std::exception& e2) {
+                        LOG_WARNING(std::string("setupMainCallbacks threw after unknown cleanupWorker failure: ") +
+                                        e2.what(),
+                                    "IDE");
                     } catch (...) {
+                        LOG_WARNING("setupMainCallbacks threw unknown exception after unknown cleanupWorker failure",
+                                    "IDE");
                     }
                 }
                 emit workerFinished(wasDebug);
@@ -320,6 +330,14 @@ bool WorkerManager::prepareRun(bool isDebug, std::shared_ptr<Block> astRoot, con
 
 /// 启动 worker 线程执行（moveToThread 后 start），置 isRunning_ 状态。
 void WorkerManager::startWorker() {
+    // BUG-65 fix (P2 空指针防护): startWorker 可能在 prepareRun 失败/未调用、或
+    // stopForClose/forceStop 已 reset 唯一指针后被调用，直接解引用 workerThread_/worker_
+    // 会触发空指针崩溃。入口处校验两个 unique_ptr，未初始化时 emit genericError 通知
+    // 上层（与 setupMainCallbacks 错误信号通道一致）并安全返回。
+    if (!workerThread_ || !worker_) {
+        emit genericError("Worker not initialized");
+        return;
+    }
     workerThread_->start();
     QMetaObject::invokeMethod(worker_.get(), "run", Qt::QueuedConnection);
 }

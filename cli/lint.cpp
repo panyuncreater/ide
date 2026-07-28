@@ -49,7 +49,10 @@ int main(int argc, char* argv[]) {
     bool anyError = false;
 
     for (const auto& file : args.files) {
-        LintProcessResult r = processFile(file, args.options, args.format, args.quiet);
+        // 拓展二期：--fix / --fix-dry-run 模式走结构化修复管线
+        LintProcessResult r = (args.fix || args.fixDryRun)
+                                  ? processFileFix(file, args.options, args.fixDryRun)
+                                  : processFile(file, args.options, args.format, args.quiet);
         if (!r.ok) {
             std::fprintf(stderr, "%s\n", r.errorMessage.c_str());
             anyError = true;

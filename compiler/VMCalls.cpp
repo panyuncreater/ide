@@ -693,7 +693,7 @@ VMResult VM::executeCallExprValue(size_t& ip, OpCode op) {
         return runtimeError("栈下溢: OP_CALL_EXPR");
     }
 
-    // 编译器先 push 闭包值再 push 参数（Compiler.cpp:1150-1158, IR.cpp visitFunCall），
+    // 编译器先 push 闭包值再 push 参数（CompilerStmt.cpp visitFunCall, AstIRBuilder.cpp visitFunCall），
     // 实际栈布局: [..., closure, arg0, arg1, ..., argN-1]
     // 需从栈中移除闭包值（在参数下方），保留参数在栈顶供新帧使用。
     size_t closurePos = stack_.size() - argCount - 1;
@@ -1268,6 +1268,9 @@ VMResult VM::executeClassNew(size_t& ip, OpCode op) {
         int extraSlots = initChunk.localCount - preAllocated;
         // V-P2-1 fix: extraSlots 为负表示帧布局损坏
         if (extraSlots < 0) {
+            // AUDIT-P1 fix: 错误返回前清理栈上已推入的 this+fields+args，
+            // 与 executeCallConstructor 同路径（L410-413）保持栈平衡。
+            popN(1 + fieldCount + static_cast<int>(args.size()));
             return runtimeError(ErrorFormat::formatStd("类 {} 的 init 方法帧布局损坏: localCount={} < preAllocated={}",
 
                                                        className, initChunk.localCount, preAllocated));
@@ -1728,9 +1731,16 @@ VMResult VM::dispatchCoroutineBuiltin(Value& obj, const std::string& methodName,
             pop();
             return runtimeError("coroutine.next() 不接受参数", DiagCodes::kArityMismatch);
         }
+        // AUDIT-R7 F2 fix: 快照 tryStack_ 检测生成器体内未捕获 throw 的穿透（仿
+        // dispatchSyncObjectBuiltin 的 P3-A1）。穿透时 throwException 已截断栈
+        //（receiver 已被清除）并 push 异常值 + 设 catchIp，不可 pop/push/推进 ip。
+        size_t savedTryStackSize = tryStack_.size();
         Value result = callCoroutineNext(obj);
         if (hasError_) {
             return VMResult::VM_RUNTIME_ERROR;
+        }
+        if (tryStack_.size() < savedTryStackSize) {
+            return VMResult::VM_EXCEPTION_THROW;
         }
         // 设置 lastMutatedReceiver_ 为接收者原值（对齐 finishSharedBuiltin 和 RegisterVM
         // 的 lastMutatedReceiverReg_ = objReg）。IR 路径对所有 isVarRef 方法调用无条件
@@ -1802,6 +1812,12 @@ Value VM::callCoroutineNext(Value& coroVal) {
     // 保存调用方上下文
     size_t savedFrameCount = frames_.size();
     size_t savedStackSize = stack_.size();
+    // AUDIT-R7 F2 fix: 快照 tryStack_ 检测异常穿透（仿 invokeClosureSync 的 P3-A1）。
+    // 生成器体内未捕获 throw 经 throwException 弹出生成器帧、消费外层 handler、
+    // 截断栈并 push 异常值 + 设 catchIp。此时 hasError_ 为 false 且帧数回落，
+    // 原实现误入"正常结束"分支：无条件置 done=true、dispatch 层再 pop 掉 catch
+    // 期待的异常值并推进已被改写的 ip → catch 目标错位 + done 状态与 Interpreter 分歧。
+    size_t savedTryStackSize = tryStack_.size();
     int savedTargetYieldId = currentCoroutineTargetYieldId_;
     int savedYieldExecCount = currentYieldExecutionCount_;
 
@@ -1885,13 +1901,24 @@ Value VM::callCoroutineNext(Value& coroVal) {
 
         if (hasError_) {
             needCleanup = true;
-        } else if (stack_.size() > savedStackSize) {
-            // 正常结束：OP_RETURN 已弹出帧并 push 返回值
-            result = pop();
+            // AUDIT-R7 F2 fix（发现 3）: 不可恢复错误不置 done/currentValueBox（与
+            // Interpreter/RegisterVM 对齐：两者错误路径均保持 done=false）。
+        } else if (tryStack_.size() < savedTryStackSize) {
+            // AUDIT-R7 F2 fix: 异常穿透到调用方 catch——不置 done、不动结果、不清理
+            //（throwException 已就位 catch 状态：栈顶是异常值、调用方 ip=catchIp）。
+            // 由 dispatchCoroutineBuiltin 同样检测并返回 VM_EXCEPTION_THROW。
+            currentCoroutineTargetYieldId_ = savedTargetYieldId;
+            currentYieldExecutionCount_ = savedYieldExecCount;
+            return Value::nullValue();
+        } else {
+            if (stack_.size() > savedStackSize) {
+                // 正常结束：OP_RETURN 已弹出帧并 push 返回值
+                result = pop();
+            }
+            cd->done = true;
+            cd->currentValueBox.clear();
+            cd->currentValueBox.push_back(result);
         }
-        cd->done = true;
-        cd->currentValueBox.clear();
-        cd->currentValueBox.push_back(result);
     } catch (const VMYieldSignal& e) {
         // 命中目标 yield：保存 yield 值，递增 currentYieldId
         result = std::move(e.yieldValue);

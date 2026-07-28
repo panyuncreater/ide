@@ -22,6 +22,9 @@
 #include <gtest/gtest.h>
 
 #include "ast/ASTNode.h"
+#include "compiler/Compiler.h"    // 拓展二期：VM/RegisterVM setVariable 写接口测试
+#include "compiler/RegisterVM.h" // 拓展二期
+#include "compiler/VM.h"         // 拓展二期
 #include "debug/DebugController.h"
 #include "debug/DebugTypes.h"
 #include "interpreter/Interpreter.h"
@@ -648,3 +651,310 @@ TEST(R104LogpointSignal, LogpointLogged_EmittedOnHit) {
         EXPECT_EQ(msg, "Hit line 3");
     }
 }
+
+// ============================================================
+// 拓展二期：命中条件（hit condition）/ 依赖断点链 / 调试改值
+// ------------------------------------------------------------
+// 集成测试模式：pausedAt（DirectConnection，worker 线程内同步回调）
+// 中直接 resume()——emit 时 paused_ 已为 true，resume 设 paused_=false，
+// 随后 pauseExecution 的 wait 谓词立即满足，不会阻塞（自恢复模式）。
+// ============================================================
+
+TEST(Phase2HitCondition, EvalHitConditionSyntax) {
+    // 纯函数：五种语法 + 容错
+    EXPECT_TRUE(evalHitCondition("3", 3));
+    EXPECT_FALSE(evalHitCondition("3", 2));
+    EXPECT_TRUE(evalHitCondition("== 2", 2));
+    EXPECT_FALSE(evalHitCondition("== 2", 3));
+    EXPECT_TRUE(evalHitCondition(">= 3", 3));
+    EXPECT_TRUE(evalHitCondition(">= 3", 5));
+    EXPECT_FALSE(evalHitCondition(">= 3", 2));
+    EXPECT_TRUE(evalHitCondition("> 2", 3));
+    EXPECT_FALSE(evalHitCondition("> 2", 2));
+    EXPECT_TRUE(evalHitCondition("% 2", 4));
+    EXPECT_FALSE(evalHitCondition("% 2", 3));
+    // 空/非法表达式：视为无命中条件（不拦截）
+    EXPECT_TRUE(evalHitCondition("", 1));
+    EXPECT_TRUE(evalHitCondition("abc", 1));
+    EXPECT_TRUE(evalHitCondition("  >= 2  ", 2)); // 首尾空白容忍
+}
+
+TEST(Phase2HitCondition, ParseDebugValueTextTypes) {
+    Value v;
+    ASSERT_TRUE(parseDebugValueText("42", v));
+    EXPECT_TRUE(v.isInt());
+    EXPECT_EQ(v.intVal(), 42);
+    ASSERT_TRUE(parseDebugValueText(" -7 ", v));
+    EXPECT_EQ(v.intVal(), -7);
+    ASSERT_TRUE(parseDebugValueText("3.5", v));
+    EXPECT_TRUE(v.isFloat());
+    ASSERT_TRUE(parseDebugValueText("true", v));
+    EXPECT_TRUE(v.isBool());
+    ASSERT_TRUE(parseDebugValueText("null", v));
+    EXPECT_TRUE(v.isNull());
+    ASSERT_TRUE(parseDebugValueText("\"hi\"", v));
+    EXPECT_TRUE(v.isString());
+    // 拒绝：空串/任意表达式
+    EXPECT_FALSE(parseDebugValueText("", v));
+    EXPECT_FALSE(parseDebugValueText("1 + 2", v));
+}
+
+TEST(Phase2HitCondition, PausesOnlyWhenSatisfied) {
+    // 命中条件 ">= 3"：循环 5 轮，前 2 次到达仅计数不暂停，后 3 次暂停
+    const std::string source = "var i = 0;\n"      // line 1
+                               "while (i < 5) {\n" // line 2
+                               "    i = i + 1;\n"  // line 3 — bp + hitCondition
+                               "}\n"               // line 4
+                               "print(i);\n";      // line 5
+    auto ast = parseSource(source);
+    ASSERT_NE(ast, nullptr);
+
+    Interpreter interp;
+    auto dbg = std::make_shared<DebugController>();
+    std::string output;
+    interp.setOutputCallback([&](const std::string& s) { output += s; });
+    interp.setDebugger(dbg);
+    interp.setDebugMode(true);
+
+    dbg->reset();
+    dbg->resume();
+    dbg->setBreakpoint(3);
+    dbg->setBreakpointHitCondition(3, ">= 3");
+
+    std::atomic<int> pauseCount{0};
+    QObject::connect(
+        dbg.get(), &DebugController::pausedAt, dbg.get(),
+        [&](int) {
+            pauseCount.fetch_add(1);
+            dbg->resume(); // 自恢复：emit 时 paused_=true，resume 后 wait 立即返回
+        },
+        Qt::DirectConnection);
+
+    interp.execute(*ast);
+
+    EXPECT_EQ(pauseCount.load(), 3);             // 第 3/4/5 次命中才暂停
+    EXPECT_EQ(dbg->getBreakpointHitCount(3), 5); // 到达即计数：5 次
+    EXPECT_EQ(output, "5");
+}
+
+TEST(Phase2HitCondition, ModuloPausesEveryN) {
+    // 命中条件 "% 2"：每 2 次命中暂停一次（5 轮 → 第 2/4 次，共 2 次）
+    const std::string source = "var i = 0;\n"
+                               "while (i < 5) {\n"
+                               "    i = i + 1;\n"
+                               "}\n"
+                               "print(i);\n";
+    auto ast = parseSource(source);
+    ASSERT_NE(ast, nullptr);
+
+    Interpreter interp;
+    auto dbg = std::make_shared<DebugController>();
+    interp.setOutputCallback([](const std::string&) {});
+    interp.setDebugger(dbg);
+    interp.setDebugMode(true);
+
+    dbg->reset();
+    dbg->resume();
+    dbg->setBreakpoint(3);
+    dbg->setBreakpointHitCondition(3, "% 2");
+
+    std::atomic<int> pauseCount{0};
+    QObject::connect(
+        dbg.get(), &DebugController::pausedAt, dbg.get(),
+        [&](int) {
+            pauseCount.fetch_add(1);
+            dbg->resume();
+        },
+        Qt::DirectConnection);
+
+    interp.execute(*ast);
+
+    EXPECT_EQ(pauseCount.load(), 2);
+    EXPECT_EQ(dbg->getBreakpointHitCount(3), 5);
+}
+
+TEST(Phase2Dependency, InactiveUntilDependencyHit) {
+    // 行 3 依赖行 5（循环后才执行）：行 3 永不激活，仅行 5 暂停 1 次
+    const std::string source = "var i = 0;\n"      // line 1
+                               "while (i < 5) {\n" // line 2
+                               "    i = i + 1;\n"  // line 3 — bp，依赖行 5
+                               "}\n"               // line 4
+                               "print(i);\n";      // line 5 — bp
+    auto ast = parseSource(source);
+    ASSERT_NE(ast, nullptr);
+
+    Interpreter interp;
+    auto dbg = std::make_shared<DebugController>();
+    std::string output;
+    interp.setOutputCallback([&](const std::string& s) { output += s; });
+    interp.setDebugger(dbg);
+    interp.setDebugMode(true);
+
+    dbg->reset();
+    dbg->resume();
+    dbg->setBreakpoint(3);
+    dbg->setBreakpoint(5);
+    dbg->setBreakpointDependency(3, 5);
+
+    std::vector<int> pausedLines;
+    QObject::connect(
+        dbg.get(), &DebugController::pausedAt, dbg.get(),
+        [&](int line) {
+            pausedLines.push_back(line);
+            dbg->resume();
+        },
+        Qt::DirectConnection);
+
+    interp.execute(*ast);
+
+    // 行 3 被依赖链抑制（行 5 尚未命中）；行 5 正常暂停 1 次
+    ASSERT_EQ(pausedLines.size(), 1u);
+    EXPECT_EQ(pausedLines[0], 5);
+    EXPECT_EQ(dbg->getBreakpointHitCount(3), 0); // 未激活：不计数
+    EXPECT_EQ(output, "5");
+}
+
+TEST(Phase2Dependency, ActivatesAfterDependencyHit) {
+    // 行 5 依赖行 3（先执行）：行 3 命中后行 5 激活 → 两者都暂停
+    const std::string source = "var i = 0;\n"
+                               "while (i < 5) {\n"
+                               "    i = i + 1;\n" // line 3 — bp
+                               "}\n"
+                               "print(i);\n"; // line 5 — bp，依赖行 3
+    auto ast = parseSource(source);
+    ASSERT_NE(ast, nullptr);
+
+    Interpreter interp;
+    auto dbg = std::make_shared<DebugController>();
+    interp.setOutputCallback([](const std::string&) {});
+    interp.setDebugger(dbg);
+    interp.setDebugMode(true);
+
+    dbg->reset();
+    dbg->resume();
+    dbg->setBreakpoint(3);
+    dbg->setBreakpoint(5);
+    dbg->setBreakpointDependency(5, 3);
+
+    std::atomic<int> pauseCount{0};
+    QObject::connect(
+        dbg.get(), &DebugController::pausedAt, dbg.get(),
+        [&](int) {
+            pauseCount.fetch_add(1);
+            dbg->resume();
+        },
+        Qt::DirectConnection);
+
+    interp.execute(*ast);
+
+    EXPECT_EQ(pauseCount.load(), 6); // 行 3 × 5 + 行 5 × 1
+    EXPECT_EQ(dbg->getBreakpointHitCount(5), 1);
+}
+
+TEST(Phase2SetVariable, WriteCallbackChangesInterpreterState) {
+    // 首次暂停时把 i 改写为 100 → 循环提前退出，print 输出 101
+    const std::string source = "var i = 0;\n"
+                               "while (i < 5) {\n"
+                               "    i = i + 1;\n" // line 3 — bp
+                               "}\n"
+                               "print(i);\n";
+    auto ast = parseSource(source);
+    ASSERT_NE(ast, nullptr);
+
+    Interpreter interp;
+    auto dbg = std::make_shared<DebugController>();
+    std::string output;
+    interp.setOutputCallback([&](const std::string& s) { output += s; });
+    interp.setDebugger(dbg);
+    interp.setDebugMode(true);
+
+    // 写回调：沿当前 Environment 作用域链写入（与 DebugCoordinator 同模式）
+    dbg->setVariableWriteCallback([&](const std::string& name, const Value& v) -> bool {
+        auto env = interp.currentEnvironmentShared();
+        if (!env)
+            return false;
+        return env->set(name, v);
+    });
+
+    dbg->reset();
+    dbg->resume();
+    dbg->setBreakpoint(3);
+
+    std::atomic<bool> written{false};
+    QObject::connect(
+        dbg.get(), &DebugController::pausedAt, dbg.get(),
+        [&](int) {
+            if (!written.exchange(true)) {
+                // 暂停窗口内写变量：isPaused()==true（emit 前已置位）
+                EXPECT_TRUE(dbg->setVariableValue("i", Value(static_cast<int64_t>(100))));
+            }
+            dbg->resume();
+        },
+        Qt::DirectConnection);
+
+    interp.execute(*ast);
+
+    // 首次暂停（i=0，执行 line3 前）写 i=100 → i=i+1 → 101 → 退出循环
+    EXPECT_EQ(output, "101");
+}
+
+TEST(Phase2SetVariable, RejectsWhenNotPaused) {
+    auto dbg = std::make_shared<DebugController>();
+    dbg->setVariableWriteCallback([](const std::string&, const Value&) { return true; });
+    // 未暂停：拒绝写入（安全窗口约束）
+    EXPECT_FALSE(dbg->setVariableValue("x", Value(static_cast<int64_t>(1))));
+}
+
+// ============================================================
+// 拓展二期：VM / RegisterVM 写接口（setGlobalValue 镜像验证）
+// ============================================================
+
+TEST(Phase2SetVariableVm, StackVmSetGlobalValue) {
+    Lexer lx;
+    auto tk = lx.scan("var g = 1;\nprint(g);\n");
+    Parser p;
+    auto ast = p.parse(tk);
+    ASSERT_NE(ast, nullptr);
+    Compiler c;
+    c.setModuleLoader([](const std::string&) { return std::string(); });
+    auto cr = c.compile(*ast);
+    ASSERT_FALSE(c.getDiagnostics().hasErrors());
+    VM vm;
+    std::string out;
+    vm.setOutputCallback([&](const std::string& s) { out += s; });
+    vm.execute(cr);
+    ASSERT_FALSE(vm.hasError());
+
+    // 写已存在全局 → 成功且 getGlobals 可见新值
+    EXPECT_TRUE(vm.setGlobalValue("g", Value(static_cast<int64_t>(42))));
+    auto globals = vm.getGlobals();
+    ASSERT_TRUE(globals.count("g"));
+    EXPECT_EQ(globals["g"].intVal(), 42);
+    // 不存在的变量 → 拒绝（不新建）
+    EXPECT_FALSE(vm.setGlobalValue("nonexistent", Value(static_cast<int64_t>(1))));
+}
+
+TEST(Phase2SetVariableVm, RegisterVmSetGlobalValue) {
+    Lexer lx;
+    auto tk = lx.scan("var g = 1;\nprint(g);\n");
+    Parser p;
+    auto ast = p.parse(tk);
+    ASSERT_NE(ast, nullptr);
+    Compiler c;
+    c.setUseRegisterVM(true);
+    c.setModuleLoader([](const std::string&) { return std::string(); });
+    c.compile(*ast);
+    ASSERT_FALSE(c.getDiagnostics().hasErrors());
+    RegisterVM vm;
+    std::string out;
+    vm.setOutputCallback([&](const std::string& s) { out += s; });
+    vm.execute(c.getLastRegisterResult());
+    ASSERT_FALSE(vm.hasError());
+
+    EXPECT_TRUE(vm.setGlobalValue("g", Value(static_cast<int64_t>(42))));
+    auto globals = vm.getGlobals();
+    ASSERT_TRUE(globals.count("g"));
+    EXPECT_EQ(globals["g"].intVal(), 42);
+    EXPECT_FALSE(vm.setGlobalValue("nonexistent", Value(static_cast<int64_t>(1))));
+}
+

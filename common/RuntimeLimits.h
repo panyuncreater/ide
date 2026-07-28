@@ -79,6 +79,10 @@ constexpr int64_t MAX_RANGE = 10000000;
 // 需比 MAX_LOOP_ITERATIONS 严格 100 倍。100000 步在简单条件表达式下为毫秒级，
 // 足以覆盖合理条件（如 i > 10 && arr.len() > 5），同时截断 while(true){} 等无限循环。
 constexpr size_t MAX_CONDITION_STEPS = 100000;
+// channel.recvTimeout(ms) 单次等待上限（毫秒）。spawn 为延迟执行模式，
+// recvTimeout 阻塞期间不会有其他线程 send，过大的超时等价于卡死 worker；
+// 60s 上限阻断恶意/误写的超长阻塞，同时覆盖合理的教学演示场景。
+constexpr int64_t MAX_CHANNEL_TIMEOUT_MS = 60000;
 
 // ---- 编译期深度保护 ----
 // Parser 最大递归深度

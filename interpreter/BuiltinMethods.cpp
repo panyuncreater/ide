@@ -519,7 +519,7 @@ Result<Value> executeBuiltinInt(const Value* args, size_t argCount, int line, in
         // BUG 9.3 fix: 浮点转整数溢出检查
         double dv = v.floatVal();
         if (OverflowCheck::doubleToIntOverflow(dv)) {
-            return Result<Value>::err(ErrorFormat::format("int 转换溢出: %g 超出 int64_t 范围", dv), line, column);
+            return Result<Value>::err(ErrorFormat::formatStd("int 转换溢出: {} 超出 int64_t 范围", dv), line, column);
         }
         // 截断小数部分（向零取整，与 C++ static_cast 一致）
         return Result<Value>::ok(Value(static_cast<int64_t>(dv)));
@@ -574,10 +574,56 @@ Result<Value> executeBuiltinAbs(const Value* args, size_t argCount, int line, in
     }
 }
 
-// ---- min(a, b): 最小值 ----
+// ---- min(a, b) / min(arr): 最小值 ----
 /// min(a, b): 返回两个数值中的较小者。a、b 必须同为数值类型，否则 err。
 /// 同为 int 时做整数比较（无精度损失）；否则都转 double 后比较，返回 double。
+/// 拓展二期（SIMD 用户可见内建）：新增 min(arr) 单参数组形态——
+/// 全 int 数组且元素数 >= SIMD_MIN_ELEMENTS 且 CPU 支持 AVX2 时走
+/// simdMinInt64 内核（4 路并行 cmpgt+blend）；否则标量回退。
+/// 空数组 err（无最小值可言）。与 sum(arr) 的 SIMD 策略/回退链一致，
+/// 共享实现层保证三后端语义一致。
 Result<Value> executeBuiltinMin(const Value* args, size_t argCount, int line, int column) {
+    // 拓展二期：单参数组形态 min(arr)
+    if (argCount == 1 && args[0].isArray()) {
+        const auto& arr = args[0].arrayVal();
+        if (arr.empty()) {
+            return Result<Value>::err("min 空数组无最小值", line, column);
+        }
+        bool allInt = true;
+        for (const auto& elem : arr) {
+            if (!elem.isInt()) {
+                allInt = false;
+                break;
+            }
+        }
+        if (allInt) {
+            // SIMD 快速路径（与 sum(arr) 同策略：先批量解码到连续 int64 缓冲区）
+            if (arr.size() >= minilang::simd::SIMD_MIN_ELEMENTS && minilang::simd::hasAvx2Support()) {
+                std::vector<int64_t> buffer(arr.size());
+                for (size_t i = 0; i < arr.size(); ++i) {
+                    buffer[i] = arr[i].intVal();
+                }
+                return Result<Value>::ok(Value(minilang::simd::simdMinInt64(buffer.data(), buffer.size())));
+            }
+            int64_t m = arr[0].intVal();
+            for (size_t i = 1; i < arr.size(); ++i) {
+                if (arr[i].intVal() < m)
+                    m = arr[i].intVal();
+            }
+            return Result<Value>::ok(Value(m));
+        }
+        // 混合数值：转 double 比较（遇非数值 err）
+        double best = 0.0;
+        for (size_t i = 0; i < arr.size(); ++i) {
+            if (!arr[i].isNumber()) {
+                return Result<Value>::err("min 数组含非数值元素: " + arr[i].typeName(), line, column);
+            }
+            double d = arr[i].toDouble();
+            if (i == 0 || d < best)
+                best = d;
+        }
+        return Result<Value>::ok(Value(best));
+    }
     if (auto r = checkExact("min", argCount, 2, line, column); r.is_err())
         return r;
     const Value& a = args[0];
@@ -593,10 +639,50 @@ Result<Value> executeBuiltinMin(const Value* args, size_t argCount, int line, in
     }
 }
 
-// ---- max(a, b): 最大值 ----
+// ---- max(a, b) / max(arr): 最大值 ----
 /// max(a, b): 返回两个数值中的较大者。a、b 必须同为数值类型，否则 err。
 /// 同为 int 时做整数比较；否则转 double 后比较，返回 double。
+/// 拓展二期：新增 max(arr) 单参数组形态（simdMaxInt64 内核，策略同 min）。
 Result<Value> executeBuiltinMax(const Value* args, size_t argCount, int line, int column) {
+    // 拓展二期：单参数组形态 max(arr)
+    if (argCount == 1 && args[0].isArray()) {
+        const auto& arr = args[0].arrayVal();
+        if (arr.empty()) {
+            return Result<Value>::err("max 空数组无最大值", line, column);
+        }
+        bool allInt = true;
+        for (const auto& elem : arr) {
+            if (!elem.isInt()) {
+                allInt = false;
+                break;
+            }
+        }
+        if (allInt) {
+            if (arr.size() >= minilang::simd::SIMD_MIN_ELEMENTS && minilang::simd::hasAvx2Support()) {
+                std::vector<int64_t> buffer(arr.size());
+                for (size_t i = 0; i < arr.size(); ++i) {
+                    buffer[i] = arr[i].intVal();
+                }
+                return Result<Value>::ok(Value(minilang::simd::simdMaxInt64(buffer.data(), buffer.size())));
+            }
+            int64_t m = arr[0].intVal();
+            for (size_t i = 1; i < arr.size(); ++i) {
+                if (arr[i].intVal() > m)
+                    m = arr[i].intVal();
+            }
+            return Result<Value>::ok(Value(m));
+        }
+        double best = 0.0;
+        for (size_t i = 0; i < arr.size(); ++i) {
+            if (!arr[i].isNumber()) {
+                return Result<Value>::err("max 数组含非数值元素: " + arr[i].typeName(), line, column);
+            }
+            double d = arr[i].toDouble();
+            if (i == 0 || d > best)
+                best = d;
+        }
+        return Result<Value>::ok(Value(best));
+    }
     if (auto r = checkExact("max", argCount, 2, line, column); r.is_err())
         return r;
     const Value& a = args[0];
@@ -972,6 +1058,40 @@ BuiltinMethodResult handleSyncObjectMethod(const std::string& method, Value& obj
             }
             std::unique_lock<std::mutex> lock(inner->mu);
             if (inner->queue.empty()) {
+                return BuiltinMethodResult(Value::nullValue(), false);
+            }
+            Value v = std::move(inner->queue.front());
+            inner->queue.pop();
+            return BuiltinMethodResult(std::move(v), false);
+        }
+        // channel.recvTimeout(ms)：等待至多 ms 毫秒；有消息返回消息，
+        // 超时或通道已关闭且无消息返回 null（与 recv 的关闭语义对齐）。
+        // 四后端经本共享函数分发，语义天然一致。
+        if (method == "recvTimeout") {
+            if (args.size() != 1) {
+                throw RuntimeError("channel.recvTimeout 期望 1 个参数，但传入了 " + std::to_string(args.size()) +
+                                       " 个",
+                                   line, col, DiagCodes::kArityMismatch);
+            }
+            if (!args[0].isInt()) {
+                throw RuntimeError("channel.recvTimeout 参数必须是整数（毫秒）", line, col);
+            }
+            int64_t ms = args[0].intVal();
+            if (ms < 0) {
+                throw RuntimeError("channel.recvTimeout 超时不能为负数", line, col);
+            }
+            // DoS 防护：spawn 为延迟执行模式，阻塞期间不会有其他线程 send，
+            // 超长超时等价于卡死 worker，上限见 RuntimeLimits。
+            if (ms > RuntimeLimits::MAX_CHANNEL_TIMEOUT_MS) {
+                throw RuntimeError("channel.recvTimeout 超时上限为 " +
+                                       std::to_string(RuntimeLimits::MAX_CHANNEL_TIMEOUT_MS) + " 毫秒",
+                                   line, col);
+            }
+            std::unique_lock<std::mutex> lock(inner->mu);
+            inner->cv.wait_for(lock, std::chrono::milliseconds(ms),
+                               [&] { return !inner->queue.empty() || inner->closed; });
+            if (inner->queue.empty()) {
+                // 超时或已关闭且无消息
                 return BuiltinMethodResult(Value::nullValue(), false);
             }
             Value v = std::move(inner->queue.front());

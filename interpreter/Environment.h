@@ -1,5 +1,6 @@
 #pragma once
 
+#include "common/SmallMap.h"
 #include "interpreter/Value.h"
 #include <cassert>
 #include <functional>
@@ -214,14 +215,20 @@ public:
     }
 
     /// 收集所有变量到结果向量（避免N个临时vector深拷贝）
+    /// Bug #14 fix: 改为迭代实现，避免深 parent 链递归栈溢出
     void collectVariables(std::vector<std::pair<std::string, Value>>& result) const {
-        // 先收集父作用域（父的变量在前）
-        if (parent) {
-            parent->collectVariables(result);
+        std::vector<const Environment*> chain;
+        const Environment* cur = this;
+        int depth = 0;
+        while (cur && depth++ < 1024) {
+            chain.push_back(cur);
+            cur = cur->parent.get();
         }
-        // 再收集当前作用域（子的覆盖父的，所以追加到末尾）
-        for (const auto& kv : variables) {
-            result.emplace_back(kv.first, kv.second);
+        // 从最外层父作用域开始追加（父的变量在前，子的覆盖父的）
+        for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+            for (const auto& kv : (*it)->variables) {
+                result.emplace_back(kv.first, kv.second);
+            }
         }
     }
 
@@ -245,19 +252,18 @@ public:
     }
 
     /// 仅获取当前作用域变量（不含父作用域）
-    // PERF-01 fix: 改回 unordered_map — std::unordered_map 的引用/指针在 rehash 时
-    // 不失效（C++ 标准保证：node-based 容器仅迭代器失效）。boundInstance_ 指向
-    // variables 中 "this" 条目的 Value*，在 unordered_map 中同样稳定。
-    // 变量查找从 O(log n) 降为 O(1) 平均，解释器整体提速 20-40%。
-    const std::unordered_map<std::string, Value>& localVariables() const { return variables; }
+    // PERF-01 fix: SmallMap 优化 — 大多数作用域 ≤8 变量，使用内联平坦存储避免堆分配。
+    // boundInstance_ 指向 variables 中 "this" 条目的 Value*，SmallMap 内联模式下指针
+    // 在不触发 promoteToHeap 时稳定（define 后不再新增条目时安全）。
+    const SmallMap<std::string, Value, 8>& localVariables() const { return variables; }
 
     // ---- 条件断点沙箱化 (#1 fix) ----
     // 条件断点求值前快照变量绑定，求值后恢复，防止条件中的赋值/声明
     // 修改程序状态。注意：Value 是 ref-counted，容器变异（arr.push）仍
     // 影响共享对象——这是残余限制，文档化在 project_memory 中。
-    std::unordered_map<std::string, Value> snapshotLocalVariables() const { return variables; }
+    std::unordered_map<std::string, Value> snapshotLocalVariables() const { return variables.toUnorderedMap(); }
     void restoreLocalVariables(const std::unordered_map<std::string, Value>& snap) {
-        variables = snap;
+        variables = snap; // SmallMap::operator=(const MapType&)
         // H2 fix: variables = snap 整表替换会使旧 map 中所有 Value* 失效，
         // boundInstance_ 指向旧 variables["this"] 条目，现已悬垂。
         // 必须在新 map 中重新定位 "this" 并重新锚定 boundInstance_，
@@ -279,11 +285,28 @@ public:
     void bindInstance(Value* instance) {
         // instance 应为 nullptr（解绑）或指向 variables 中 "this" 条目的 Value*
         // 调用方契约：instance 指向的 Value 在 Environment 销毁前必须有效
-        // unordered_map 是 node-based，rehash 不失效指针，但 erase/clear 会让指针失效
-        // resetForReuse 已正确处理（先 nullptr 再 clear）
         // Debug 构建中 assert 捕获误用（绑定非实例值）
         assert(instance == nullptr || instance->isInstance());
-        boundInstance_ = instance;
+        if (instance == nullptr) {
+            boundInstance_ = nullptr;
+            return;
+        }
+        // AUDIT-R4 BUG-11 fix: SmallMap 内联模式下，绑定后的任意新 define 触发
+        // promoteToHeap 会搬迁条目使 boundInstance_ 悬垂，且子环境构造时拷贝的
+        // 指针无法被通知重锚定（悬垂沿作用域链扩散）。绑定时强制晋升堆存储
+        // （unordered_map 插入/rehash 不失效引用，仅 erase/clear 失效；
+        // resetForReuse/restoreLocalVariables 已正确处理重锚定），
+        // 此后指针在 define 新变量时保持稳定。
+        // 晋升会使传入的 instance 指针失效，需在晋升后重新定位 "this"。
+        variables.ensureHeapStorage();
+        auto it = variables.find("this");
+        if (it != variables.end() && it->second.isInstance()) {
+            boundInstance_ = &it->second;
+        } else {
+            // "this" 不在本层 variables（调用方从父链取得指针）：保持原契约，
+            // 指针稳定性由定义 "this" 的那层 env 的 bindInstance 保证。
+            boundInstance_ = instance;
+        }
     }
     Value* getBoundInstance() const { return boundInstance_; }
 
@@ -308,6 +331,9 @@ public:
 
     /// 作用域退出时，将本 env 中被捕获的变量的最终值写回闭包的 capturedVars。
     /// 实现等价于 VM 的 OP_CLOSE_UPVALUE（关闭 open upvalue）。
+    /// Bug #44 线程安全约束: 此处 const_cast 绕过 COW 直接修改共享 ClosureData。
+    /// 安全性保证: Interpreter 执行是单线程的，GUI 读取路径通过 snapshot（值拷贝），
+    /// 不会与此写入并发。若未来引入多线程执行，必须重新审视此处。
     void closeCapturedVariables() {
         for (auto& cap : closureCaptures_) {
             auto it = variables.find(cap.capturedName);
@@ -385,14 +411,15 @@ public:
     }
 
     /// 获取当前作用域的类型注解（用于 REPL 状态保存）
-    const std::unordered_map<std::string, std::string>& localTypeAnnotations() const { return typeAnnotations_; }
+    const SmallMap<std::string, std::string, 4>& localTypeAnnotations() const { return typeAnnotations_; }
 
 private:
-    // PERF-01 fix: 改回 unordered_map。C++ 标准保证 unordered_map 的引用/指针在 rehash
-    // 时不失效（仅迭代器失效），因此 boundInstance_（指向 "this" 条目的 Value*）安全。
-    // 变量查找从 O(log n) 降为 O(1) 平均。
-    std::unordered_map<std::string, Value> variables;
-    std::unordered_map<std::string, std::string> typeAnnotations_; // B2: 作用域感知类型注解
+    // SmallMap 优化：内联平坦存储 ≤N 条目，超过后回退 unordered_map。
+    // 大多数作用域（if/while/for 块）仅 1-3 变量，内联模式避免桶数组堆分配。
+    // boundInstance_ 指向 variables 中 "this" 条目的 Value*，内联模式下
+    // 只要不触发 promoteToHeap 就稳定（方法环境变量数通常 ≤8）。
+    SmallMap<std::string, Value, 8> variables;
+    SmallMap<std::string, std::string, 4> typeAnnotations_; // B2: 作用域感知类型注解
     Value* boundInstance_ = nullptr; // P5: 绑定的 this 实例（非拥有指针，方法调用期间有效）
 
     // B1 fix: 闭包捕获追踪。记录哪些闭包捕获了本 env 中的变量。

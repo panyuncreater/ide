@@ -44,6 +44,7 @@ enum class LintRule {
     EmptyBlock,            ///< 空块 {}
     CyclomaticComplexity,  ///< 函数圈复杂度过高
     NamingConvention,      ///< 变量/函数/类命名规范
+    NonExhaustiveMatch,    ///< 拓展二期：match 枚举未覆盖全部 variant 且无 default/通配分支
     Count                  ///< 规则总数（用于遍历）
 };
 
@@ -100,6 +101,9 @@ public:
     void visitBreakStmt(BreakStmt& node) override;
     void visitContinueStmt(ContinueStmt& node) override;
     void visitBinaryOp(BinaryOp& node) override;
+    // 拓展二期：穷尽性检查——收集 enum 声明 + 对照 match 覆盖集
+    void visitEnumDecl(EnumDecl& node) override;
+    void visitMatchExpr(MatchExpr& node) override;
 
 private:
     LintOptions options_;
@@ -129,6 +133,9 @@ private:
 
     // ---- 类定义追踪 ----
     std::unordered_set<std::string> classes_;
+
+    // ---- 拓展二期：枚举声明追踪（穷尽性检查用，name → variant 名列表）----
+    std::unordered_map<std::string, std::vector<std::string>> enums_;
 
     // ---- 死代码检测 ----
     /// 当前块是否已遇到 return/break/continue

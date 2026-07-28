@@ -6,6 +6,7 @@
 
 #include "common/ErrorFormat.h"    // P3 fix: runtimeErrorFmt 替代 std::to_string 拼接
 #include "common/ErrorMessages.h"  // R97 #11 fix: 三后端共享错误消息常量
+#include "common/RuntimeLimits.h"  // B1 TCO: MAX_LOOP_ITERATIONS 尾调用迭代上限
 #include "debug/DebugController.h" // R104: checkFunctionBreakpoint 完整定义
 #include "interpreter/BuiltinMethods.h"
 #include "interpreter/Interpreter.h"
@@ -26,7 +27,12 @@ namespace {
 /// 从闭包的 capturedVars 快照重建环境（C1 fix: 闭包环境 weak_ptr 失效时使用）
 void rebuildEnvFromSnapshot(Value& closureVal, std::shared_ptr<Environment>& funEnv) {
     funEnv = std::make_shared<Environment>(nullptr);
-    for (const auto& kv : closureVal.capturedVars()) {
+    // AUDIT-R6 F5 fix: 用 const 访问器读 capturedVars——非 const 重载的 ensureUnique 在
+    // refCount>1（表达式 callee 如 fns[0] 求值产生的临时拷贝与容器内原闭包共享）时
+    // 分离 ClosureData，后续 writeBackCapturedVars 写入的是临时副本，容器内原闭包的
+    // capturedVars 保持陈旧，跨调用变异丢失（实证：Interpreter=1 vs VM=2）。
+    const auto& captured = const_cast<const Value&>(closureVal).capturedVars();
+    for (const auto& kv : captured) {
         funEnv->define(kv.first, kv.second);
         // AUDIT-P2-CORRECT fix: 标记为捕获变量，用于 writeBackCapturedVars 区分
         // "捕获变量被赋值修改"与"捕获变量被 var 重声明"
@@ -141,11 +147,16 @@ Value Interpreter::callClosureValue(FunCall& node) {
 
     FunDecl* funDecl = calleeVal.closureBody();
     auto closureEnv = calleeVal.closureEnv();
-    std::string effectiveName = calleeVal.closureName();
+    // AUDIT-R6 F5 fix（根因）: 用 const 重载读 closureName——非 const 重载的 ensureUnique
+    // 在 refCount>1（calleeVal 与容器内原闭包共享）时静默分离 ClosureData，后续
+    // rebuild/writeBack 全部作用于分离副本，跨调用变异丢失（实证：数组元素
+    // cd 与 rebuild cd 不同；Interpreter=11 vs VM=12）。命名路径（const 引用）无此问题。
+    std::string effectiveName = const_cast<const Value&>(calleeVal).closureName();
 
     // R104 Function Breakpoint：函数调用入口检查（闭包调用路径）
-    if (debugger_) {
-        debugger_->checkFunctionBreakpoint(effectiveName, node.line);
+    // AUDIT-R4 BUG-15 fix: atomic load 到局部变量
+    if (auto dbg = debugger_.load(std::memory_order_acquire)) {
+        dbg->checkFunctionBreakpoint(effectiveName, node.line);
     }
 
     // BUG-DBG-AUDIT-1 fix: VM 后端创建的闭包（OP_CLOSURE / REG_CLOSURE）仅持有
@@ -248,19 +259,27 @@ Value Interpreter::callClosureValue(FunCall& node) {
     // RA-A fix: 用 RAII 守卫统一管理 funEnv 的 closeCapturedVariables 与 currentEnv_ 恢复，
     // 消除原 catch(...) + throw; 的 rethrow（减少 First-chance Exception 日志噪声）。
     // 守卫在正常路径和异常路径都执行清理，逻辑与原代码严格一致。
+    // AUDIT-R6 F5 fix: throw 逃逸路径也执行快照写回（writeBackCapturedVars）——原实现
+    // 仅正常/return 路径写回，闭包内先赋值后 throw 时修改丢失（实证：Interpreter=1
+    // vs StackVM/RegVM=2，VM 共享 cell 在 throw 前的赋值立即可见）。写回须在
+    // closeCapturedVariables 之前（与正常路径顺序一致）。
     struct FunEnvGuard {
         Interpreter& interp;
         std::shared_ptr<Environment>& env;
         std::shared_ptr<Environment>& prev;
+        Value* closureVal;        // AUDIT-R6 F5: 快照写回目标闭包（可为 null）
+        const bool* fromSnapshot; // AUDIT-R6 F5: 是否经 rebuildEnvFromSnapshot 重建
         bool dismissed = false;
         ~FunEnvGuard() {
             if (!dismissed) {
+                if (env && closureVal && fromSnapshot && *fromSnapshot)
+                    writeBackCapturedVars(*closureVal, env);
                 if (env)
                     env->closeCapturedVariables();
                 interp.currentEnv_ = prev;
             }
         }
-    } envGuard{*this, funEnv, prevEnv};
+    } envGuard{*this, funEnv, prevEnv, &calleeVal, &envFromSnapshot};
 
     try {
         funEnv = std::make_shared<Environment>(closureEnv ? closureEnv : currentEnv_);
@@ -288,6 +307,9 @@ Value Interpreter::callClosureValue(FunCall& node) {
 
         callStack_.emplace_back(effectiveName, funEnv, node.line, recursionDepth_);
         currentEnv_ = funEnv;
+        // B1 TCO: 非蹦床调用点，禁用尾调用上下文（信号不可逃逸出本边界）。
+        // 体内的自尾递归经 callNamedFunction 自建蹦床，深度仍恒定。
+        TcoScopeGuard tcoGuard{*this, nullptr, std::string(), /*isMethod=*/false, /*enabled=*/false};
         executeFunctionBody(static_cast<Block&>(*funDecl->body));
     } catch (ReturnException& e) {
         result = std::move(e.returnValue);
@@ -446,15 +468,20 @@ Result<Value> Interpreter::invokeClosureSync(const Value& closure, const Value* 
         Interpreter& interp;
         std::shared_ptr<Environment>& env;
         std::shared_ptr<Environment>& prev;
+        Value* closureVal;        // AUDIT-R6 F5: 快照写回目标闭包
+        const bool* fromSnapshot; // AUDIT-R6 F5
         bool dismissed = false;
         ~FunEnvGuard() {
             if (!dismissed) {
+                // AUDIT-R6 F5 fix: throw/RuntimeError 逃逸路径也执行快照写回（先写回后 close）
+                if (env && closureVal && fromSnapshot && *fromSnapshot)
+                    writeBackCapturedVars(*closureVal, env);
                 if (env)
                     env->closeCapturedVariables();
                 interp.currentEnv_ = prev;
             }
         }
-    } envGuard{*this, funEnv, prevEnv};
+    } envGuard{*this, funEnv, prevEnv, &const_cast<Value&>(closure), &envFromSnapshot};
 
     try {
         funEnv = std::make_shared<Environment>(closureEnv ? closureEnv : currentEnv_);
@@ -476,12 +503,17 @@ Result<Value> Interpreter::invokeClosureSync(const Value& closure, const Value* 
 
         callStack_.emplace_back(effectiveName, funEnv, line, recursionDepth_);
         currentEnv_ = funEnv;
+        // B1 TCO: 高阶回调/spawn 同步调用非蹦床，禁用尾调用上下文
+        TcoScopeGuard tcoGuard{*this, nullptr, std::string(), /*isMethod=*/false, /*enabled=*/false};
         executeFunctionBody(static_cast<Block&>(*funDecl->body));
     } catch (ReturnException& e) {
         result = std::move(e.returnValue);
     } catch (RuntimeError& e) {
         // 高阶函数闭包内的运行时错误向上传播，转为 Result::err
+        // AUDIT-R6 F5 fix: 错误路径也写回快照变异（与守卫析构逻辑一致，手动路径同步）
         envGuard.dismissed = true;
+        if (!closureEnv && envFromSnapshot && funEnv)
+            writeBackCapturedVars(const_cast<Value&>(closure), funEnv);
         if (funEnv)
             funEnv->closeCapturedVariables();
         currentEnv_ = prevEnv;
@@ -822,6 +854,8 @@ void Interpreter::runInitMethodBody(ClassInfo* cls, FunDecl* initMethod, std::sh
     } envGuard{*this, initEnv, prevEnv};
 
     try {
+        // B1 TCO: init 构造路径非蹦床，禁用尾调用上下文
+        TcoScopeGuard tcoGuard{*this, nullptr, std::string(), /*isMethod=*/false, /*enabled=*/false};
         executeFunctionBody(static_cast<Block&>(*initMethod->body));
     } catch (const ReturnException&) {
         // init 方法的返回值忽略，但更新实例字段
@@ -856,8 +890,9 @@ Value Interpreter::callNamedFunction(FunCall& node) {
     // R104 Function Breakpoint：函数调用入口检查（命名调用路径）。
     // 使用 node.name 对齐 StackVM/RegisterVM 的 peekCalledFunctionName（OP_CALL/REG_CALL
     // 取常量池函数名，闭包路径另由 callClosureValue 检查 effectiveName）。
-    if (debugger_) {
-        debugger_->checkFunctionBreakpoint(node.name, node.line);
+    // AUDIT-R4 BUG-15 fix: atomic load 到局部变量
+    if (auto dbg = debugger_.load(std::memory_order_acquire)) {
+        dbg->checkFunctionBreakpoint(node.name, node.line);
     }
 
     // R164 fix: 参数求值提前到函数查找之前，对齐 VM 求值顺序。
@@ -880,10 +915,11 @@ Value Interpreter::callNamedFunction(FunCall& node) {
     // 快速路径：使用缓存的函数体（跳过环境查找和 funRegistry_ 查找）
     // M7 fix: 检查代数是否匹配，函数重定义后缓存失效
     // P1-2 fix: 若变量已被重赋值为非闭包，缓存失效，回退慢路径
-    if (node.isResolved && node.resolvedDecl && node.resolvedGen_ == funRegistryGen_) {
+    auto cachedDecl = node.resolvedDecl.lock(); // Bug #11 fix: weak_ptr::lock()
+    if (node.isResolved && cachedDecl && node.resolvedGen_ == funRegistryGen_) {
         const Value* calleePtr = currentEnv_->get(node.name);
         if (calleePtr && calleePtr->isClosure()) {
-            funDecl = node.resolvedDecl;
+            funDecl = cachedDecl; // Bug #11 fix: use locked weak_ptr
             closureEnv = calleePtr->closureEnv();
             effectiveName = calleePtr->closureName();
             closureValPtr = const_cast<Value*>(calleePtr); // C1 fix
@@ -948,8 +984,11 @@ Value Interpreter::callNamedFunction(FunCall& node) {
     // F10: 为缺失的参数填充默认值
     // 默认值在函数定义时的闭包环境中求值（与函数体同级）
     // BUGFIX-P2 fix: 使用 RAII guard 恢复 currentEnv_，防止 evaluate() 抛异常时泄漏错误 scope
-    if (argCount < funDecl->params.size()) {
-        auto savedEnv = currentEnv_;
+    // B1 TCO: 提取为 lambda——蹦床循环后续轮次（TailCallSignal 携带的实参
+    // 可能少于形参）同样需要填充默认值。
+    auto fillDefaultArgs = [&](std::vector<Value>& argsInOut) {
+        if (argsInOut.size() >= funDecl->params.size())
+            return;
         struct EnvGuard {
             Interpreter& interp;
             std::shared_ptr<Environment> prev;
@@ -959,15 +998,16 @@ Value Interpreter::callNamedFunction(FunCall& node) {
         if (closureEnv) {
             currentEnv_ = closureEnv;
         }
-        for (size_t i = argCount; i < funDecl->params.size(); ++i) {
+        for (size_t i = argsInOut.size(); i < funDecl->params.size(); ++i) {
             if (funDecl->defaultValues[i]) {
-                argValues.push_back(evaluate(funDecl->defaultValues[i].get()));
+                argsInOut.push_back(evaluate(funDecl->defaultValues[i].get()));
             } else {
                 // 不应发生（requiredParamCount 已校验），防御性处理
-                argValues.push_back(Value::nullValue());
+                argsInOut.push_back(Value::nullValue());
             }
         }
-    }
+    };
+    fillDefaultArgs(argValues);
 
     // R164 协程/生成器：生成器函数调用拦截
     // 检测 FunDecl.isGenerator，返回 Coroutine 值而非直接执行函数体。
@@ -1008,61 +1048,95 @@ Value Interpreter::callNamedFunction(FunCall& node) {
 
     // RA-A fix: RAII 守卫统一管理 funEnv 的 closeCapturedVariables 与 currentEnv_ 恢复，
     // 消除原 catch(...) + throw; 的 rethrow。
+    // AUDIT-R6 F5 fix: throw 逃逸路径也执行快照写回（同 callClosureValue 守卫）。
     struct FunEnvGuard {
         Interpreter& interp;
         std::shared_ptr<Environment>& env;
         std::shared_ptr<Environment>& prev;
+        Value* closureVal;        // AUDIT-R6 F5: 快照写回目标闭包（可为 null）
+        const bool* fromSnapshot; // AUDIT-R6 F5
         bool dismissed = false;
         ~FunEnvGuard() {
             if (!dismissed) {
+                if (env && closureVal && fromSnapshot && *fromSnapshot)
+                    writeBackCapturedVars(*closureVal, env);
                 if (env)
                     env->closeCapturedVariables();
                 interp.currentEnv_ = prev;
             }
         }
-    } envGuard{*this, funEnv, prevEnv};
+    } envGuard{*this, funEnv, prevEnv, closureValPtr, &envFromSnapshot};
 
     try {
-        // 参数类型检查
-        for (size_t i = 0; i < funDecl->params.size() && i < funDecl->paramTypes.size(); ++i) {
-            if (!funDecl->paramTypes[i].empty()) {
-                checkType(
-                    argValues[i], funDecl->paramTypes[i],
-                    [&] { return "函数 " + node.name + " 的参数 " + funDecl->params[i]; }, node.line, node.column);
+        // B1 TCO 蹦床循环：TailCallSignal 触发帧复用（清理本轮 funEnv 后用新
+        // 实参重建环境重新执行函数体），ReturnException 结束整个调用。
+        // C++ 递归深度恒定，深尾递归不再受 MAX_RECURSION_DEPTH 限制（对齐 VM TCO）。
+        int64_t tcoIterations = 0;
+        while (true) {
+            // 参数类型检查（每轮重新执行，与递归调用逐层检查等价）
+            for (size_t i = 0; i < funDecl->params.size() && i < funDecl->paramTypes.size(); ++i) {
+                if (!funDecl->paramTypes[i].empty()) {
+                    checkType(
+                        argValues[i], funDecl->paramTypes[i],
+                        [&] { return "函数 " + node.name + " 的参数 " + funDecl->params[i]; }, node.line, node.column);
+                }
+            }
+
+            // 创建新环境：使用闭包捕获的环境作为父级（如果有的话）。
+            // B1 TCO: 非闭包分支用 prevEnv（调用入口环境）而非 currentEnv_，
+            // 后续轮次 currentEnv_ 已是上一轮 funEnv，直接作父会错误链式嵌套。
+            if (closureEnv) {
+                funEnv = std::make_shared<Environment>(closureEnv);
+            } else {
+                funEnv = std::make_shared<Environment>(prevEnv);
+            }
+
+            // C1 fix: 若闭包环境已过期（weak_ptr 失效），从 capturedVars 快照重建
+            if (!closureEnv && closureValPtr) {
+                rebuildEnvFromSnapshot(*closureValPtr, funEnv);
+                envFromSnapshot = true;
+            }
+
+            // 绑定参数（move 避免深拷贝）
+            for (size_t i = 0; i < funDecl->params.size(); ++i) {
+                // AUDIT-P2.1 fix: 与 callClosureValue 一致，参数遮蔽捕获变量时移除标记，
+                // 防止 writeBackCapturedVars 将参数值写回 capturedVars 污染下次调用
+                funEnv->unmarkCaptured(funDecl->params[i]);
+                funEnv->define(funDecl->params[i], std::move(argValues[i]));
+            }
+
+            // 压入调用栈
+            // BUG-DBG-4 fix: 使用 effectiveName 而非 node.name，与 callClosureValue (L195) 一致。
+            // 原实现使用 node.name（调用变量名），闭包赋值给不同变量时显示变量名而非闭包名。
+            callStack_.emplace_back(effectiveName, funEnv, node.line, recursionDepth_);
+
+            // 切换环境
+            currentEnv_ = funEnv;
+
+            try {
+                // B1 TCO: 启用蹦床上下文（仅本函数体内的自尾调用可触发信号）
+                TcoScopeGuard tcoGuard{*this, funDecl.get(), effectiveName, /*isMethod=*/false, /*enabled=*/true};
+                // 执行函数体（不求值返回值：无 return 语句时函数应返回 null）
+                executeFunctionBody(static_cast<Block&>(*funDecl->body));
+                break;
+            } catch (TailCallSignal& sig) {
+                // 帧复用：与正常返回路径一致的清理（快照写回 + 关闭捕获，
+                // 使本轮内定义的闭包捕获语义与非 TCO 递归完全一致），
+                // 弹出本轮调用栈条目，下一轮重新压入。
+                if (++tcoIterations > RuntimeLimits::MAX_LOOP_ITERATIONS) {
+                    runtimeError(ErrorFormat::formatStd("尾调用迭代次数超过限制 ({})",
+                                                        RuntimeLimits::MAX_LOOP_ITERATIONS),
+                                 node.line, node.column);
+                }
+                if (!closureEnv && envFromSnapshot && closureValPtr && funEnv)
+                    writeBackCapturedVars(*closureValPtr, funEnv);
+                if (funEnv)
+                    funEnv->closeCapturedVariables();
+                callStack_.pop_back();
+                argValues = std::move(sig.args);
+                fillDefaultArgs(argValues);
             }
         }
-
-        // 创建新环境：使用闭包捕获的环境作为父级（如果有的话）
-        if (closureEnv) {
-            funEnv = std::make_shared<Environment>(closureEnv);
-        } else {
-            funEnv = std::make_shared<Environment>(currentEnv_);
-        }
-
-        // C1 fix: 若闭包环境已过期（weak_ptr 失效），从 capturedVars 快照重建
-        if (!closureEnv && closureValPtr) {
-            rebuildEnvFromSnapshot(*closureValPtr, funEnv);
-            envFromSnapshot = true;
-        }
-
-        // 绑定参数（move 避免深拷贝）
-        for (size_t i = 0; i < funDecl->params.size(); ++i) {
-            // AUDIT-P2.1 fix: 与 callClosureValue 一致，参数遮蔽捕获变量时移除标记，
-            // 防止 writeBackCapturedVars 将参数值写回 capturedVars 污染下次调用
-            funEnv->unmarkCaptured(funDecl->params[i]);
-            funEnv->define(funDecl->params[i], std::move(argValues[i]));
-        }
-
-        // 压入调用栈
-        // BUG-DBG-4 fix: 使用 effectiveName 而非 node.name，与 callClosureValue (L195) 一致。
-        // 原实现使用 node.name（调用变量名），闭包赋值给不同变量时显示变量名而非闭包名。
-        callStack_.emplace_back(effectiveName, funEnv, node.line, recursionDepth_);
-
-        // 切换环境
-        currentEnv_ = funEnv;
-
-        // 执行函数体（不求值返回值：无 return 语句时函数应返回 null）
-        executeFunctionBody(static_cast<Block&>(*funDecl->body));
     } catch (ReturnException& e) {
         result = std::move(e.returnValue);
     }

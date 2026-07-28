@@ -1046,3 +1046,121 @@ TEST(LspCliTest, VersionStringIsNonEmpty) {
 TEST(LspCliTest, ServerNameIsMinilangLsp) {
     EXPECT_EQ(serverName(), "minilang-lsp");
 }
+
+// ============================================================
+// 11. LSP 二期：references / rename / signatureHelp / semanticTokens
+// ============================================================
+
+namespace {
+/// LSP 二期共用源码：声明 + 3 处使用（print 读 / 赋值写 / 表达式读）
+const char* kRefSource = "var x = 1;\n"   // (0,4) 声明
+                         "print(x);\n"    // (1,6) 读
+                         "x = x + 1;\n";  // (2,0) 写 + (2,4) 读
+} // namespace
+
+TEST(LspPhase2Test, InitializeAdvertisesPhase2Capabilities) {
+    LspRequestHandler handler;
+    QJsonObject req;
+    req["jsonrpc"] = "2.0";
+    req["id"] = 1;
+    req["method"] = "initialize";
+    auto responses = handler.handleMessage(req);
+    ASSERT_EQ(responses.size(), 1u);
+    auto caps = responses[0].value("result").toObject().value("capabilities").toObject();
+    EXPECT_TRUE(caps.value("referencesProvider").toBool());
+    EXPECT_TRUE(caps.value("renameProvider").toBool());
+    EXPECT_TRUE(caps.contains("signatureHelpProvider"));
+    auto semTokens = caps.value("semanticTokensProvider").toObject();
+    EXPECT_TRUE(semTokens.value("full").toBool());
+    EXPECT_FALSE(semTokens.value("legend").toObject().value("tokenTypes").toArray().isEmpty());
+}
+
+TEST(LspPhase2Test, ReferencesFindsDeclarationAndUses) {
+    LspRequestHandler handler;
+    handler.handleMessage(makeDidOpen("file:///r.ml", kRefSource));
+
+    auto params = makeTextDocPositionParams("file:///r.ml", 0, 4);
+    QJsonObject ctx;
+    ctx["includeDeclaration"] = true;
+    params["context"] = ctx;
+    auto responses = handler.handleMessage(makeRequest(1, "textDocument/references", params));
+    ASSERT_EQ(responses.size(), 1u);
+    auto locations = responses[0].value("result").toArray();
+    // 声明(0,4) + 读(1,6) + 写(2,0) + 读(2,4) = 4 处
+    EXPECT_EQ(locations.size(), 4);
+
+    // includeDeclaration=false：仅 3 处使用
+    ctx["includeDeclaration"] = false;
+    params["context"] = ctx;
+    responses = handler.handleMessage(makeRequest(2, "textDocument/references", params));
+    ASSERT_EQ(responses.size(), 1u);
+    EXPECT_EQ(responses[0].value("result").toArray().size(), 3);
+}
+
+TEST(LspPhase2Test, RenameProducesWorkspaceEdit) {
+    LspRequestHandler handler;
+    handler.handleMessage(makeDidOpen("file:///r.ml", kRefSource));
+
+    auto params = makeTextDocPositionParams("file:///r.ml", 0, 4);
+    params["newName"] = "count";
+    auto responses = handler.handleMessage(makeRequest(1, "textDocument/rename", params));
+    ASSERT_EQ(responses.size(), 1u);
+    auto changes = responses[0].value("result").toObject().value("changes").toObject();
+    auto edits = changes.value("file:///r.ml").toArray();
+    EXPECT_EQ(edits.size(), 4);
+    EXPECT_EQ(edits[0].toObject().value("newText").toString().toStdString(), "count");
+}
+
+TEST(LspPhase2Test, RenameRejectsInvalidNewName) {
+    LspRequestHandler handler;
+    handler.handleMessage(makeDidOpen("file:///r.ml", kRefSource));
+
+    // 非法标识符与关键字均拒绝（result 为 null）
+    for (const char* bad : {"1bad", "a-b", "var", ""}) {
+        auto params = makeTextDocPositionParams("file:///r.ml", 0, 4);
+        params["newName"] = bad;
+        auto responses = handler.handleMessage(makeRequest(1, "textDocument/rename", params));
+        ASSERT_EQ(responses.size(), 1u);
+        EXPECT_TRUE(responses[0].value("result").isNull()) << "newName=" << bad;
+    }
+}
+
+TEST(LspPhase2Test, SignatureHelpInsideCall) {
+    LspRequestHandler handler;
+    handler.handleMessage(makeDidOpen("file:///s.ml", "fun add(a: int, b: int) -> int {\n"
+                                                      "  return a + b;\n"
+                                                      "}\n"
+                                                      "print(add(1, 2));\n"));
+
+    // 光标在 "print(add(1, |2))" 的第二参数处（0-based line 3, char 13）
+    auto responses =
+        handler.handleMessage(makeRequest(1, "textDocument/signatureHelp", makeTextDocPositionParams("file:///s.ml", 3, 13)));
+    ASSERT_EQ(responses.size(), 1u);
+    auto result = responses[0].value("result").toObject();
+    auto signatures = result.value("signatures").toArray();
+    ASSERT_EQ(signatures.size(), 1);
+    auto label = signatures[0].toObject().value("label").toString().toStdString();
+    EXPECT_NE(label.find("add("), std::string::npos);
+    EXPECT_EQ(signatures[0].toObject().value("parameters").toArray().size(), 2);
+    EXPECT_EQ(result.value("activeParameter").toInt(), 1); // 第二个参数
+}
+
+TEST(LspPhase2Test, SemanticTokensProducesDeltaEncodedData) {
+    LspRequestHandler handler;
+    handler.handleMessage(makeDidOpen("file:///t.ml", "var x = 1;\nprint(x);\n"));
+
+    QJsonObject params;
+    QJsonObject textDoc;
+    textDoc["uri"] = "file:///t.ml";
+    params["textDocument"] = textDoc;
+    auto responses = handler.handleMessage(makeRequest(1, "textDocument/semanticTokens/full", params));
+    ASSERT_EQ(responses.size(), 1u);
+    auto data = responses[0].value("result").toObject().value("data").toArray();
+    ASSERT_FALSE(data.isEmpty());
+    EXPECT_EQ(data.size() % 5, 0); // 5 元组差分编码
+    // 首 token 是 "var"：deltaLine=0 deltaChar=0 len=3 type=0(keyword)
+    EXPECT_EQ(data[0].toInt(), 0);
+    EXPECT_EQ(data[1].toInt(), 0);
+    EXPECT_EQ(data[2].toInt(), 3);
+    EXPECT_EQ(data[3].toInt(), 0);
+}

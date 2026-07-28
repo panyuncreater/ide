@@ -181,13 +181,18 @@ public:
     /// 返回声明位置（1-based MiniLang 位置），未找到返回 nullopt
     std::optional<LspPosition> findDefinition(const std::string& name) const;
 
+    /// LSP 二期：查找名称的全部引用位置（VarRef/FunCall/Assignment 目标）。
+    /// includeDeclaration=true 时同时包含声明位置。
+    /// 返回 LSP 0-based 位置列表（按行/列排序去重）。
+    std::vector<LspPosition> findReferences(const std::string& name, bool includeDeclaration) const;
+
     /// 获取所有顶层符号（用于 documentSymbol）
     const std::vector<LspSymbol>& symbols() const { return symbols_; }
 
     /// 获取补全列表（已声明的符号）
     std::vector<LspCompletionItem> completions() const;
 
-private:
+    /// LSP 二期：声明信息（公开供 semanticTokens/signatureHelp 分类查询）
     struct DeclInfo {
         std::string name;
         LspSymbolKind kind;
@@ -195,11 +200,24 @@ private:
         int column; // 1-based
         std::string detail;
     };
+    const std::vector<DeclInfo>& decls() const { return decls_; }
+
+    /// LSP 二期：按名查声明（未找到返回 nullptr）
+    const DeclInfo* findDecl(const std::string& name) const;
+
+private:
+    /// LSP 二期：引用位置（读/写使用点，不含声明）
+    struct RefInfo {
+        std::string name;
+        int line;   // 1-based
+        int column; // 1-based
+    };
 
     std::vector<DeclInfo> decls_;
+    std::vector<RefInfo> refs_;
     std::vector<LspSymbol> symbols_;
 
-    /// 递归遍历 AST 收集声明
+    /// 递归遍历 AST 收集声明（LSP 二期：同时收集引用）
     void collectDecls(ASTNode* node, bool inClass);
 
     /// 将 DeclInfo 转换为 LspSymbol（含 children）
@@ -324,6 +342,11 @@ private:
     QJsonValue handleDefinition(const QJsonObject& params);
     QJsonValue handleDocumentSymbol(const QJsonObject& params);
     QJsonValue handleFormatting(const QJsonObject& params);
+    // LSP 二期：references / rename / signatureHelp / semanticTokens
+    QJsonValue handleReferences(const QJsonObject& params);
+    QJsonValue handleRename(const QJsonObject& params);
+    QJsonValue handleSignatureHelp(const QJsonObject& params);
+    QJsonValue handleSemanticTokens(const QJsonObject& params);
 
     // 通知处理（无 id，可能返回需要发送的通知）
     std::vector<QJsonObject> handleInitialized();
@@ -384,5 +407,9 @@ std::string versionString();
 
 /// 返回 LSP 服务器名称
 std::string serverName();
+
+/// 运行 LSP 服务器主循环（供 lsp_entry.cpp 统一入口调用）
+/// 返回退出码：0=正常退出，1=异常退出
+int runLspServer();
 
 } // namespace minilang_lsp

@@ -38,11 +38,15 @@ bool PipelineRunner::runCompiler() {
     //   - StackVM 路径(useRegisterVM_=false): tryLoad/store，magic "MLBC"，扩展名 .mbc
     //   - RegisterVM 路径(useRegisterVM_=true): tryLoadRegister/storeRegister，
     //     magic "MLRC"，扩展名 .mrc（L17 新增，复用 L11 序列化层）
-    // 缓存 key = FNV-1a(source) + compilerMode(direct=0/IR=1)。
+    // 缓存 key = FNV-1a(source) + compilerMode(direct=0/IR=1) + optFlags（AUDIT-R3 P2-4）。
     if (bytecodeCacheEnabled_ && !lastSource_.empty()) {
         BytecodeCache::CacheKey key;
         key.source = lastSource_;
         key.compilerMode = compiler_.getUseIR() ? 1 : 0;
+        // AUDIT-R3 P2-4 fix: 优化开关入键——切换 irOptimize/irSSAOptimize 后
+        // 旧缓存不再命中，避免产出与当前优化配置不一致的字节码。
+        key.optFlags = static_cast<uint8_t>((compiler_.getIROptimize() ? 1 : 0) |
+                                            (compiler_.getIRSSAOptimize() ? 2 : 0));
         // mtime 暂不校验(PipelineRunner 不持有文件路径);依赖 source hash 失效
         key.mtime = 0;
 
@@ -119,7 +123,7 @@ PipelineRunner::PipelineResult PipelineRunner::runFrontendPipeline(const std::st
     try {
         if (!runLexer(source)) {
             result.status = PipelineStatus::LexerFailed;
-            result.diagnostics = &lexer_.getDiagnostics();
+            result.setDiagnostics(lexer_.getDiagnostics()); // AUDIT-R5 R7 fix: 自持快照
             cachePipelineResult(source, result);
             return result;
         }
@@ -134,7 +138,7 @@ PipelineRunner::PipelineResult PipelineRunner::runFrontendPipeline(const std::st
     try {
         if (!runParser()) {
             result.status = PipelineStatus::ParserFailed;
-            result.diagnostics = &parser_.getDiagnostics();
+            result.setDiagnostics(parser_.getDiagnostics()); // AUDIT-R5 R7 fix: 自持快照
             cachePipelineResult(source, result);
             return result;
         }

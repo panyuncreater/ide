@@ -164,6 +164,7 @@ public:
         size_t operator()(int64_t v) const { return kIntTag ^ std::hash<int64_t>{}(v); }
         size_t operator()(bool v) const { return kBoolTag ^ std::hash<bool>{}(v); }
         size_t operator()(double v) const {
+            if (v == 0.0) v = 0.0; // P0 fix: 规范化 -0.0 → +0.0，保证 hash 不变量
             uint64_t bits;
             std::memcpy(&bits, &v, sizeof(double));
             return kDoubleTag ^ std::hash<uint64_t>{}(bits);
@@ -180,8 +181,10 @@ public:
                     else if constexpr (std::is_same_v<T, bool>)
                         return kBoolTag ^ std::hash<bool>{}(v);
                     else {
+                        double dv = v;
+                        if (dv == 0.0) dv = 0.0; // P0 fix: 规范化 -0.0 → +0.0
                         uint64_t bits;
-                        std::memcpy(&bits, &v, sizeof(double));
+                        std::memcpy(&bits, &dv, sizeof(double));
                         return kDoubleTag ^ std::hash<uint64_t>{}(bits);
                     }
                 },
@@ -582,7 +585,15 @@ public:
         }
         thread_local std::unordered_map<const void*, Value> tlsCloned;
         tlsCloned.clear();
-        return cloneImpl(0, tlsCloned);
+        // Bug #42 fix: 异常时清理 thread_local 缓存，防止泄漏。
+        try {
+            Value result = cloneImpl(0, tlsCloned);
+            tlsCloned.clear(); // 释放临时引用
+            return result;
+        } catch (...) {
+            tlsCloned.clear();
+            throw;
+        }
     }
 
     // clone 递归深度上限（对齐 equals/toString 的 MAX_*_DEPTH）
@@ -600,26 +611,21 @@ public:
     // 标量类型（INT/FLOAT/BOOL/NULL）零开销：isPointer() 为 false 时跳过 addRef。
     static Value fromBitsBorrowed(uint64_t bits) {
         Value v;
-        std::memcpy(&v.box_, &bits, sizeof(uint64_t));
+        v.box_ = NaNBox::fromBits(bits);
         if (v.box_.isPointer()) {
             v.box_.asPtr<RefCounted>()->addRef();
         }
         return v;
     }
 
-    static uint64_t bitsOf(const Value& v) {
-        uint64_t bits;
-        std::memcpy(&bits, &v.box_, sizeof(uint64_t));
-        return bits;
-    }
+    static uint64_t bitsOf(const Value& v) { return v.box_.rawBits(); }
 
     /// 转移所有权（R143 JIT 辅助）：返回内部 raw bits 并将本 Value 置为 null，
     /// 避免析构时 release 释放堆对象。调用方拿到的 raw bits 成为唯一引用，
     /// 必须通过 fromBitsBorrowed 恢复为 Value（或最终释放）以避免泄漏。
     /// 用于 JIT 辅助函数返回字符串/数组等堆类型的 raw bits。
     static uint64_t detach(Value& v) {
-        uint64_t bits;
-        std::memcpy(&bits, &v.box_, sizeof(uint64_t));
+        uint64_t bits = v.box_.rawBits();
         v.box_ = NaNBox::null();
         return bits;
     }

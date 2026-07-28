@@ -113,6 +113,10 @@ constexpr OpCodeInfo kOpCodeInfo[] = {
     /* 80 OP_LEN                      */ {"OP_LEN", 1, false},                // R134: opcode(1B) 容器长度
     /* 81 OP_TYPE_TEST                */ {"OP_TYPE_TEST", 3, false}, // R134: opcode(1B) + typeIdx(2B) 软类型测试
     /* 82 OP_YIELD                    */ {"OP_YIELD", 1, false}, // R164: opcode(1B) yield 表达式（重放模式）
+    /* 83 OP_ADD_INT_SPEC              */ {"OP_ADD_INT_SPEC", 1, false},  // PERF: int+int 特化
+    /* 84 OP_SUB_INT_SPEC              */ {"OP_SUB_INT_SPEC", 1, false},  // PERF: int-int 特化
+    /* 85 OP_MUL_INT_SPEC              */ {"OP_MUL_INT_SPEC", 1, false},  // PERF: int*int 特化
+    /* 86 OP_LT_INT_SPEC               */ {"OP_LT_INT_SPEC", 1, false},   // PERF: int<int 特化
 };
 } // anonymous namespace
 
@@ -646,6 +650,22 @@ std::string BytecodeChunk::disassembleInstruction(size_t& offset) const {
     }
     case OpCode::OP_YIELD:
         str += "OP_YIELD";
+        offset += 1;
+        break;
+    case OpCode::OP_ADD_INT_SPEC:
+        str += "OP_ADD_INT_SPEC";
+        offset += 1;
+        break;
+    case OpCode::OP_SUB_INT_SPEC:
+        str += "OP_SUB_INT_SPEC";
+        offset += 1;
+        break;
+    case OpCode::OP_MUL_INT_SPEC:
+        str += "OP_MUL_INT_SPEC";
+        offset += 1;
+        break;
+    case OpCode::OP_LT_INT_SPEC:
+        str += "OP_LT_INT_SPEC";
         offset += 1;
         break;
     default:

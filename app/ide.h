@@ -140,6 +140,7 @@ private slots:
     void onFormat();
     void onCompileAnalysis();
     void onShowAstTree();
+    // Legacy: right-panel switching now driven by onRightPivotChanged
     void onRightTabChanged(int index);
 
     void onVmStep();
@@ -472,6 +473,10 @@ private:
     bool closing_ = false;
     int bottomPanelHeight_ = 220; // 第十二轮：输出面板默认高度，用户调整后记忆
     int codeFontSize_ = 11;       // 代码编辑器全局字号（默认 11pt），应用于所有编辑器标签页
+    // 拓展二期·教学：课堂演示模式状态（大字号+隐藏侧边栏+全屏，退出时恢复）
+    bool presentationMode_ = false;        // 是否处于演示模式
+    int prePresentationFontSize_ = 11;     // 进入演示前的字号（退出时恢复）
+    bool prePresentationMaximized_ = true; // 进入演示前是否最大化（退出时恢复）
     // R60-2 fix: 标记是否有已保存的 dock 布局。首次启动时为 false，
     // 面板首次打开时应用默认尺寸；有保存布局时由 restoreState 恢复，不覆盖。
     bool hasSavedLayout_ = false;

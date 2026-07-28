@@ -206,7 +206,10 @@ constexpr char kMagic[4] = {'M', 'L', 'B', 'C'};
 // L11: RegisterVM 预编译模块使用独立 magic "MLRC"（MiniLang Register Cache），
 // 与 StackVM "MLBC"（MiniLang Bytecode Cache）隔离，避免误加载错误格式。
 constexpr char kRegisterMagic[4] = {'M', 'L', 'R', 'C'};
-constexpr uint16_t kFormatVersion = 1;
+// AUDIT-R3 P2-4/P2-5 fix: 版本 1→2——(1) 头部 reserved 字节改为承载 optFlags
+// （优化开关入键）；(2) moduleExports 段改为无条件读写（移除 remaining()>=4
+// 启发式）。旧版本缓存由版本校验自然失效。
+constexpr uint16_t kFormatVersion = 3; // AUDIT-R6 F3: VMEnumVariantInfo.paramTypes + VMEnumInfo.typeParams
 constexpr size_t kHeaderSize = 32;
 constexpr const char* kCacheSubDir = "minilang_bytecache";
 
@@ -788,11 +791,24 @@ bool readBytecodeChunk(BufferReader& r, BytecodeChunk& chunk) {
 void writeEnumVariant(BufferWriter& w, const VMEnumVariantInfo& v) {
     w.writeString(v.name);
     w.writeI32(v.arity);
+    // AUDIT-R6 F3 fix: 序列化字段类型注解（kFormatVersion 2→3）
+    w.writeU32(static_cast<uint32_t>(v.paramTypes.size()));
+    for (const auto& t : v.paramTypes) {
+        w.writeString(t);
+    }
 }
 
 bool readEnumVariant(BufferReader& r, VMEnumVariantInfo& v) {
     v.name = r.readString();
     v.arity = r.readI32();
+    // AUDIT-R6 F3 fix: 反序列化字段类型注解
+    uint32_t tcnt = r.readU32();
+    if (!r.ok())
+        return false;
+    v.paramTypes.resize(tcnt);
+    for (uint32_t i = 0; i < tcnt; ++i) {
+        v.paramTypes[i] = r.readString();
+    }
     return r.ok();
 }
 
@@ -801,6 +817,11 @@ void writeEnumInfo(BufferWriter& w, const VMEnumInfo& e) {
     w.writeU32(static_cast<uint32_t>(e.variants.size()));
     for (const auto& v : e.variants) {
         writeEnumVariant(w, v);
+    }
+    // AUDIT-R6 F3 fix: 序列化泛型类型参数
+    w.writeU32(static_cast<uint32_t>(e.typeParams.size()));
+    for (const auto& t : e.typeParams) {
+        w.writeString(t);
     }
 }
 
@@ -814,7 +835,15 @@ bool readEnumInfo(BufferReader& r, VMEnumInfo& e) {
         if (!readEnumVariant(r, e.variants[i]))
             return false;
     }
-    return true;
+    // AUDIT-R6 F3 fix: 反序列化泛型类型参数
+    uint32_t tpCnt = r.readU32();
+    if (!r.ok())
+        return false;
+    e.typeParams.resize(tpCnt);
+    for (uint32_t i = 0; i < tpCnt; ++i) {
+        e.typeParams[i] = r.readString();
+    }
+    return r.ok();
 }
 
 // ============================================================
@@ -981,8 +1010,10 @@ bool readCompileResult(BufferReader& r, CompileResult& cr) {
     }
 
     // P2-11 预编译模块: moduleExports
-    // 向后兼容:若读取位置已达 payload 末尾,视为空 moduleExports(旧格式缓存)
-    if (r.remaining() >= 4) {
+    // AUDIT-R3 P2-5 fix: kFormatVersion 2 起无条件读取（writer 恒写入本段）——
+    // 原 remaining()>=4 启发式在未来追加尾部段时会把其他数据误读为导出表；
+    // 旧格式（无本段）缓存已被版本校验拒绝，无需兼容分支。
+    {
         uint32_t meCount = r.readU32();
         if (!r.ok())
             return false;
@@ -1329,7 +1360,8 @@ bool readRegisterCompileResult(BufferReader& r, RegisterCompileResult& cr) {
     }
 
     // L11: moduleExports
-    if (r.remaining() >= 4) {
+    // AUDIT-R3 P2-5 fix: 同 StackVM 路径，kFormatVersion 2 起无条件读取
+    {
         uint32_t meCount = r.readU32();
         if (!r.ok())
             return false;
@@ -1398,7 +1430,7 @@ std::optional<CompileResult> BytecodeCache::tryLoad(const CacheKey& key) {
     hr.readBytes(magic, 4);
     uint16_t version = hr.readU16();
     uint8_t mode = hr.readU8();
-    /*uint8_t reserved =*/hr.readU8();
+    uint8_t optFlags = hr.readU8(); // AUDIT-R3 P2-4 fix: reserved 字节现承载优化开关
     uint64_t srcHash = hr.readU64();
     int64_t srcMtime = hr.readI64();
     uint32_t payloadChecksum = hr.readU32();
@@ -1412,6 +1444,9 @@ std::optional<CompileResult> BytecodeCache::tryLoad(const CacheKey& key) {
     if (version != kFormatVersion)
         return std::nullopt;
     if (mode != key.compilerMode)
+        return std::nullopt;
+    // AUDIT-R3 P2-4 fix: 优化开关不匹配即失效（切换优化配置后旧缓存不可复用）
+    if (optFlags != key.optFlags)
         return std::nullopt;
     if (srcHash != hash)
         return std::nullopt;
@@ -1460,7 +1495,7 @@ void BytecodeCache::store(const CacheKey& key, const CompileResult& result) {
     header.writeBytes(kMagic, 4);
     header.writeU16(kFormatVersion);
     header.writeU8(key.compilerMode);
-    header.writeU8(0); // reserved
+    header.writeU8(key.optFlags); // AUDIT-R3 P2-4 fix: reserved 字节承载优化开关
     header.writeU64(srcHash);
     header.writeI64(key.mtime);
     header.writeU32(payloadChecksum);
@@ -1530,7 +1565,7 @@ std::optional<RegisterCompileResult> BytecodeCache::tryLoadRegister(const CacheK
     hr.readBytes(magic, 4);
     uint16_t version = hr.readU16();
     uint8_t mode = hr.readU8();
-    /*uint8_t reserved =*/hr.readU8();
+    uint8_t optFlags = hr.readU8(); // AUDIT-R3 P2-4 fix
     uint64_t srcHash = hr.readU64();
     int64_t srcMtime = hr.readI64();
     uint32_t payloadChecksum = hr.readU32();
@@ -1547,6 +1582,9 @@ std::optional<RegisterCompileResult> BytecodeCache::tryLoadRegister(const CacheK
     // 但为兼容历史调用方传入 0/1，此处放宽校验——只要 source hash 匹配即可。
     // 真正隔离由 magic + 扩展名保证。
     (void)mode;
+    // AUDIT-R3 P2-4 fix: 优化开关不匹配即失效
+    if (optFlags != key.optFlags)
+        return std::nullopt;
     if (srcHash != hash)
         return std::nullopt;
     if (key.mtime != 0 && srcMtime != 0 && srcMtime != key.mtime)
@@ -1589,7 +1627,7 @@ void BytecodeCache::storeRegister(const CacheKey& key, const RegisterCompileResu
     header.writeU16(kFormatVersion);
     // compiler_mode: RegisterVM 路径固定 2（与 storeRegisterToFile 一致，供调试识别）
     header.writeU8(2);
-    header.writeU8(0); // reserved
+    header.writeU8(key.optFlags); // AUDIT-R3 P2-4 fix
     header.writeU64(srcHash);
     header.writeI64(key.mtime);
     header.writeU32(payloadChecksum);

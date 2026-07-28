@@ -87,9 +87,12 @@ public:
     /// 设置日志文件输出路径（空字符串则关闭文件输出）
     // Bug fix: fileStream_ 由 flushBuffer() 在 ioMutex_ 下访问，setOutputFile()
     // 必须同时持有 ioMutex_ 才能避免与并发 flushBuffer() 产生数据竞争。
+    // Bug #87 fix: 统一锁顺序为 mutex_ → ioMutex_（与 log()/flush() 路径中
+    // 先持 mutex_ 再（通过 flushBuffer）持 ioMutex_ 的顺序一致），消除原实现
+    // 中 ioMutex_ → mutex_ 的反向加锁导致的潜在死锁。
     bool setOutputFile(const std::string& path) {
-        std::lock_guard<std::mutex> ioLock(ioMutex_); // 序列化 fileStream_ 访问
-        std::lock_guard<std::mutex> lock(mutex_);     // 序列化 activeBuffer_ 访问
+        std::lock_guard<std::mutex> lock(mutex_);     // 先持 mutex_（与 log 路径一致）
+        std::lock_guard<std::mutex> ioLock(ioMutex_); // 再持 ioMutex_ 操作 fileStream_
         if (fileStream_.is_open())
             fileStream_.close();
         if (path.empty())

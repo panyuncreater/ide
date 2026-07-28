@@ -157,3 +157,43 @@ target_link_libraries(minilang_compile PRIVATE
     minilang_core
     minilang_compile_options
 )
+
+# ================================================================
+# minilang: 统一命令行入口（单二进制子命令分发）
+# 通过 minilang <subcommand> 调用各 CLI 工具，类似 cargo/git 体验。
+# 原独立可执行文件仍保留（向后兼容）。
+# 包含所有 *_core.cpp + main.cpp + lsp_entry.cpp + dap_entry.cpp。
+# ================================================================
+add_executable(minilang
+    main.cpp
+    fmt_core.cpp
+    coverage_core.cpp
+    lint_core.cpp
+    doc_core.cpp
+    fuzz_core.cpp
+    pkg_core.cpp
+    compile_core.cpp
+    lsp_core.cpp
+    lsp_entry.cpp
+    dap_core.cpp
+    dap_entry.cpp
+)
+target_link_libraries(minilang PRIVATE
+    minilang_core
+    minilang_compile_options
+)
+
+# ================================================================
+# minilang_capi: libminilang 嵌入式 C API 静态库（拓展二期·平台）
+# 稳定 C ABI（capi/minilang_capi.h）：create/eval/get_output/get_error/
+# set_backend/destroy。嵌入方链接 minilang_capi + minilang_core
+#（及 Qt6::Core 传递依赖）。接口层由 tests/TestCApi.cpp 全覆盖。
+# ================================================================
+add_library(minilang_capi STATIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/../capi/minilang_capi.cpp
+)
+target_include_directories(minilang_capi PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_link_libraries(minilang_capi
+    PUBLIC minilang_core
+    PRIVATE minilang_compile_options
+)

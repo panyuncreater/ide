@@ -1,10 +1,14 @@
 #include "lexer/Lexer.h"
 #include "common/ErrorMessages.h" // P2-12: DiagCodes 常量
 #include "common/Utf8Utils.h"
+#include <algorithm> // PERF: std::lower_bound
 #include <array>
 #include <cctype>
 #include <charconv>
 #include <cmath>
+#include <cstring>  // PERF: std::strcmp for keyword lookup
+#include <optional> // PERF: lookupKeywordFast return type
+#include <string_view> // AUDIT-R4 BUG-07: 浮点上溢/下溢判定的尾数切片
 
 // ============================================================
 // Lexer 词法分析器实现
@@ -81,6 +85,74 @@ const std::unordered_map<std::string, TokenType>& Lexer::keywords() {
     return kw;
 }
 
+// PERF: 编译期排序关键字数组 + std::lower_bound 二分查找。
+// 对 37 个关键字最多 6 次比较，连续内存布局对 L1 cache 友好，
+// vs unordered_map 的 hash 计算 + 散列节点遍历（cache-unfriendly）。
+namespace {
+struct KeywordEntry {
+    const char* name;
+    TokenType type;
+};
+// 必须严格按字典序排列（std::lower_bound 前提）
+static constexpr KeywordEntry kSortedKeywords[] = {
+    {"and", TokenType::TK_AND},
+    {"array", TokenType::TK_ARRAY},
+    {"as", TokenType::TK_AS},
+    {"bool", TokenType::TK_BOOL},
+    {"break", TokenType::TK_BREAK},
+    {"case", TokenType::TK_CASE},
+    {"catch", TokenType::TK_CATCH},
+    {"class", TokenType::TK_CLASS},
+    {"continue", TokenType::TK_CONTINUE},
+    {"default", TokenType::TK_DEFAULT},
+    {"dict", TokenType::TK_DICT},
+    {"else", TokenType::TK_ELSE},
+    {"enum", TokenType::TK_ENUM},
+    {"export", TokenType::TK_EXPORT},
+    {"extends", TokenType::TK_EXTENDS},
+    {"false", TokenType::TK_FALSE},
+    {"finally", TokenType::TK_FINALLY},
+    {"float", TokenType::TK_FLOAT},
+    {"for", TokenType::TK_FOR},
+    {"from", TokenType::TK_FROM},
+    {"fun", TokenType::TK_FUN},
+    {"func", TokenType::TK_FUN},
+    {"function", TokenType::TK_FUN},
+    {"if", TokenType::TK_IF},
+    {"import", TokenType::TK_IMPORT},
+    {"int", TokenType::TK_INT},
+    {"match", TokenType::TK_MATCH},
+    {"not", TokenType::TK_NOT},
+    {"null", TokenType::TK_NULL},
+    {"or", TokenType::TK_OR},
+    {"print", TokenType::TK_PRINT},
+    {"return", TokenType::TK_RETURN},
+    {"string", TokenType::TK_STRING_TYPE},
+    {"super", TokenType::TK_SUPER},
+    {"throw", TokenType::TK_THROW},
+    {"true", TokenType::TK_TRUE},
+    {"try", TokenType::TK_TRY},
+    {"var", TokenType::TK_VAR},
+    {"while", TokenType::TK_WHILE},
+    {"yield", TokenType::TK_YIELD},
+};
+static constexpr size_t kSortedKeywordsCount = sizeof(kSortedKeywords) / sizeof(kSortedKeywords[0]);
+
+/// PERF: 二分查找关键字，返回 TokenType 或 nullopt。
+inline std::optional<TokenType> lookupKeywordFast(const std::string& text) {
+    const auto* begin = kSortedKeywords;
+    const auto* end = kSortedKeywords + kSortedKeywordsCount;
+    auto it = std::lower_bound(begin, end, text,
+        [](const KeywordEntry& entry, const std::string& key) {
+            return std::strcmp(entry.name, key.c_str()) < 0;
+        });
+    if (it != end && std::strcmp(it->name, text.c_str()) == 0) {
+        return it->type;
+    }
+    return std::nullopt;
+}
+} // anonymous namespace
+
 std::vector<Token> Lexer::scan(const std::string& source) {
     // P0 fix: 源码大小上限检查，防止恶意大文件导致 DoS
     if (source.size() > MAX_SOURCE_SIZE) {
@@ -128,7 +200,10 @@ std::vector<Token> Lexer::scan(const std::string& source) {
         start_ = current_;
         scanToken();
         // P0 fix: Token 数量上限检查，防止 Token 爆炸导致 OOM
-        if (tokens_.size() > MAX_TOKEN_COUNT) {
+        // AUDIT-R3 P0 fix: 比较运算符 > 改为 >=，与 scanToken 入口检查（>=）对齐。
+        // 原不一致导致 token 数恰好等于上限时：scanToken 拒绝消费输入（不推进
+        // current_）而本循环又不 break，形成死循环且每轮追加一条诊断（内存无界增长）。
+        if (tokens_.size() >= MAX_TOKEN_COUNT) {
             diagnostics_.addError("Token 数量超过上限 " + std::to_string(MAX_TOKEN_COUNT) +
                                       "，源代码可能包含过多 token",
                                   line_, currentColumn(), DiagSource::Lexer, DiagCodes::kTooManyTokens);
@@ -226,8 +301,7 @@ void Lexer::scanToken() {
     // 导致 tokens_ 容器指数级 realloc 触发 bad_alloc。
     // Hard Constraint #27: Lexer must check MAX_TOKEN_COUNT at start of scanToken().
     if (tokens_.size() >= MAX_TOKEN_COUNT) {
-        diagnostics_.addError("Token 数量超过上限 " + std::to_string(MAX_TOKEN_COUNT) + "，源代码可能包含过多 token",
-                              line_, currentColumn(), DiagSource::Lexer, DiagCodes::kTooManyTokens);
+        // Bug #41 fix: 不在此处报告诊断，由 scan() 主循环统一报告，避免重复。
         return;
     }
 
@@ -496,10 +570,10 @@ void Lexer::identifier() {
         return;
     }
 
-    // 查关键字表
-    auto it = keywords().find(text);
-    if (it != keywords().end()) {
-        TokenType type = it->second;
+    // 查关键字表（PERF: 使用二分查找替代 hash map）
+    auto kwType = lookupKeywordFast(text);
+    if (kwType.has_value()) {
+        TokenType type = *kwType;
         // true 和 false 有字面量值
         if (type == TokenType::TK_TRUE) {
             addToken(type, std::move(text), true); // A1 fix: variant bool
@@ -610,7 +684,54 @@ void Lexer::number() {
         double val = 0.0;
         auto [ptr, ec] = std::from_chars(text.data(), text.data() + text.size(), val);
         if (ec == std::errc::result_out_of_range) {
-            errorToken("浮点数溢出: " + text);
+            // AUDIT-R3 P2 fix: 区分下溢与上溢——from_chars 对两者均报 result_out_of_range。
+            // 下溢（如 1e-400、0.000...01）主流语言语义为钳制到 0.0，误报"溢出"会
+            // 拒绝合法的极小字面量。
+            // AUDIT-R4 BUG-07 fix: 原启发式"负指数或以 '0' 开头即下溢"会把 0.1e999
+            // 这类真实上溢字面量误判为下溢并静默钳制为 0.0。改为解析十进制数量级：
+            // 有效指数 = 显式指数 E + 首个非零尾数位相对小数点的幂次 p，
+            // 有效指数 < 0 → 下溢（钳制 0.0），否则 → 上溢（报错）。
+            // out_of_range 保证 |有效指数| > ~308，符号判定无歧义。
+            long long expVal = 0;
+            size_t ePos = text.find_first_of("eE");
+            if (ePos != std::string::npos) {
+                bool negExp = false;
+                size_t di = ePos + 1;
+                if (di < text.size() && (text[di] == '+' || text[di] == '-')) {
+                    negExp = (text[di] == '-');
+                    ++di;
+                }
+                for (; di < text.size() && isAsciiDigit(text[di]); ++di) {
+                    if (expVal < 1000000000) // 钳制防指数数字串本身溢出，足够判定符号
+                        expVal = expVal * 10 + (text[di] - '0');
+                }
+                if (negExp)
+                    expVal = -expVal;
+            }
+            // 首个非零尾数位相对小数点的幂次 p（"123.4" 的 '1' → p=2；"0.001" 的 '1' → p=-3）
+            std::string_view mant = std::string_view(text).substr(0, ePos == std::string::npos ? text.size() : ePos);
+            size_t dotPos = mant.find('.');
+            long long p = 0;
+            size_t firstSig = std::string::npos;
+            for (size_t i = 0; i < mant.size(); ++i) {
+                if (mant[i] >= '1' && mant[i] <= '9') {
+                    firstSig = i;
+                    break;
+                }
+            }
+            if (firstSig != std::string::npos) {
+                if (dotPos == std::string_view::npos || firstSig < dotPos) {
+                    size_t intEnd = (dotPos == std::string_view::npos) ? mant.size() : dotPos;
+                    p = static_cast<long long>(intEnd - firstSig) - 1;
+                } else {
+                    p = -static_cast<long long>(firstSig - dotPos);
+                }
+            }
+            if (expVal + p < 0) {
+                addToken(TokenType::TK_FLOAT_LIT, std::move(text), 0.0); // 下溢钳制到 0.0
+            } else {
+                errorToken("浮点数溢出: " + text);
+            }
         } else if (ec != std::errc() || ptr != text.data() + text.size()) {
             errorToken("浮点数格式错误: " + text);
         } else {
@@ -621,7 +742,13 @@ void Lexer::number() {
         int64_t val = 0;
         auto [ptr, ec] = std::from_chars(text.data(), text.data() + text.size(), val);
         if (ec == std::errc::result_out_of_range) {
-            errorToken("整数溢出: " + text);
+            // Bug #40 fix: 9223372036854775808 是 INT64_MIN 的绝对值，
+            // 存储为 INT64_MIN，后续一元负号会正确处理。
+            if (text == "9223372036854775808") {
+                addToken(TokenType::TK_INT_LIT, std::move(text), INT64_MIN);
+            } else {
+                errorToken("整数溢出: " + text);
+            }
         } else if (ec != std::errc() || ptr != text.data() + text.size()) {
             errorToken("整数格式错误: " + text);
         } else {
@@ -722,6 +849,12 @@ bool Lexer::handleInterpolation(int& startLine, int& startCol, std::string& valu
         return false;
     }
     interpDepth_++;
+    // AUDIT-R3 P2 fix: RAII 守卫替代手动配对递减——原实现中 4 处 MAX_TOKEN_COUNT
+    // 早退路径（return false）遗漏递减，与"错误退出时也减少深度"的契约矛盾。
+    struct InterpDepthGuard {
+        int& d;
+        ~InterpDepthGuard() { --d; }
+    } depthGuard{interpDepth_};
     // 发出前面的文本片段（TK_STRING_PART 表示插值字符串的一部分）
     TokenType partType = isInterp ? TokenType::TK_STRING_PART : TokenType::TK_STRING_LIT;
     // 如果是插值字符串的第一个片段，用 TK_STRING_LIT；后续片段用 TK_STRING_PART
@@ -810,13 +943,12 @@ bool Lexer::handleInterpolation(int& startLine, int& startCol, std::string& valu
         }
     }
     if (braceDepth > 0) {
-        interpDepth_--; // L-P1-1: 错误退出时也减少深度，保持计数器一致
+        // AUDIT-R3 P2 fix: interpDepth_ 递减由 InterpDepthGuard 析构统一处理
         errorToken("未终止的插值表达式（缺少 }）", startLine, startCol);
         return false;
     }
 
-    // L-P1-1: 本层插值已闭合，减少深度
-    interpDepth_--;
+    // L-P1-1: 本层插值已闭合（深度由 InterpDepthGuard 析构递减）
 
     // 继续扫描字符串剩余部分（标记为插值片段）
     start_ = current_;

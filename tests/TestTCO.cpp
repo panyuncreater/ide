@@ -180,10 +180,10 @@ TEST(TCOBasic, TailRecursionAccumulator) {
 
 TEST(TCOBasic, TailRecursionDeepVMNoDepthLimit) {
     // 深度 1000 > MAX_RECURSION_DEPTH (256)
-    // Interpreter 触发深度限制；VM 三路径因 TCO 不触发深度限制
+    // B1: Interpreter 尾调用蹦床落地后，四后端均不触发深度限制
     std::string src = "func sum(n, acc) { if (n == 0) { return acc; } return sum(n - 1, acc + n); }\n"
                       "print(sum(1000, 0));\n"; // 1+2+...+1000 = 500500
-    EXPECT_TRUE(isRecursionDepthError(runInterpreter(src))) << "Interpreter should hit depth limit";
+    EXPECT_EQ(runInterpreter(src), "500500") << "Interpreter should TCO via trampoline (B1)";
     EXPECT_EQ(runStackVM(src), "500500") << "StackVM should TCO and return result";
     EXPECT_EQ(runStackVM_IR(src), "500500") << "StackVM_IR should TCO and return result";
     EXPECT_EQ(runRegVM(src), "500500") << "RegisterVM should TCO and return result";
@@ -191,10 +191,10 @@ TEST(TCOBasic, TailRecursionDeepVMNoDepthLimit) {
 
 TEST(TCOBasic, TailRecursionVeryDeep) {
     // 深度 10000，远超 MAX_RECURSION_DEPTH (256)
-    // 验证 TCO 后 VM 三路径仍正常返回（无栈溢出）
+    // 验证 TCO 后四后端均正常返回（无栈溢出，B1 蹦床覆盖 Interpreter）
     std::string src = "func sum(n, acc) { if (n == 0) { return acc; } return sum(n - 1, acc + n); }\n"
                       "print(sum(10000, 0));\n"; // 1+2+...+10000 = 50005000
-    EXPECT_TRUE(isRecursionDepthError(runInterpreter(src))) << "Interpreter should hit depth limit";
+    EXPECT_EQ(runInterpreter(src), "50005000") << "Interpreter should TCO via trampoline (B1)";
     EXPECT_EQ(runStackVM(src), "50005000") << "StackVM should TCO";
     EXPECT_EQ(runStackVM_IR(src), "50005000") << "StackVM_IR should TCO";
     EXPECT_EQ(runRegVM(src), "50005000") << "RegisterVM should TCO";
@@ -209,10 +209,10 @@ TEST(TCOBasic, TailRecursionFactorial) {
 
 TEST(TCOBasic, TailRecursionSingleParam) {
     // 单参数尾递归：return f(n-1) 是尾调用
-    // 倒数到 0 返回 "done"
+    // 倒数到 0 返回 "done"（B1：四后端均 TCO）
     std::string src = "func countdown(n) { if (n == 0) { return \"done\"; } return countdown(n - 1); }\n"
                       "print(countdown(500));\n"; // 深度 500 > 256
-    EXPECT_TRUE(isRecursionDepthError(runInterpreter(src)));
+    EXPECT_EQ(runInterpreter(src), "done");
     EXPECT_EQ(runStackVM(src), "done");
     EXPECT_EQ(runStackVM_IR(src), "done");
     EXPECT_EQ(runRegVM(src), "done");
@@ -288,13 +288,13 @@ TEST(TCONotApplied, TailCallInTryBlockNotTCO) {
 TEST(TCOApplied, MethodTailCallSelfCall) {
     // L15: 类方法 self_call 内的 return this.self_call() 现在可被 TCO 优化。
     // 保留 slot 0 (this) 和字段槽，仅覆盖参数槽，JUMP 回方法入口。
-    // VM 三路径不触发深度限制；Interpreter 仍触发（树遍历无 TCO）。
+    // VM 三路径与 Interpreter（B1 蹦床）均不触发深度限制。
     std::string src = "class Counter {\n"
                       "  func self_call(n) { if (n == 0) { return 0; } return this.self_call(n - 1); }\n"
                       "}\n"
                       "var c = Counter();\n"
                       "print(c.self_call(500));\n";
-    EXPECT_TRUE(isRecursionDepthError(runInterpreter(src)));
+    EXPECT_EQ(runInterpreter(src), "0");
     EXPECT_EQ(runStackVM(src), "0");
     EXPECT_EQ(runStackVM_IR(src), "0");
     EXPECT_EQ(runRegVM(src), "0");
@@ -313,7 +313,7 @@ TEST(TCOApplied, ClosureTailCallSelfRecursion) {
                       "  return inner(500);\n"
                       "}\n"
                       "print(outer());\n";
-    EXPECT_TRUE(isRecursionDepthError(runInterpreter(src)));
+    EXPECT_EQ(runInterpreter(src), "100");
     EXPECT_EQ(runStackVM(src), "100");
     EXPECT_EQ(runStackVM_IR(src), "100");
     EXPECT_EQ(runRegVM(src), "100");
@@ -328,7 +328,7 @@ TEST(TCOApplied, DefaultParamTailCallSelfRecursion) {
     // TCO 路径用默认值 m=0 填充缺失参数，JUMP 回函数入口。
     std::string src = "func f(n, m = 0) { if (n == 0) { return m; } return f(n - 1); }\n"
                       "print(f(500));\n";
-    EXPECT_TRUE(isRecursionDepthError(runInterpreter(src)));
+    EXPECT_EQ(runInterpreter(src), "0");
     EXPECT_EQ(runStackVM(src), "0");
     EXPECT_EQ(runStackVM_IR(src), "0");
     EXPECT_EQ(runRegVM(src), "0");
@@ -344,7 +344,7 @@ TEST(TCOApplied, MethodTailCallPreservesFields) {
                       "var c = Counter();\n"
                       "c.count = 42;\n"
                       "print(c.recurse(500));\n";
-    EXPECT_TRUE(isRecursionDepthError(runInterpreter(src)));
+    EXPECT_EQ(runInterpreter(src), "42");
     EXPECT_EQ(runStackVM(src), "42");
     EXPECT_EQ(runStackVM_IR(src), "42");
     EXPECT_EQ(runRegVM(src), "42");
@@ -357,7 +357,7 @@ TEST(TCOApplied, MethodTailCallWithAccumulator) {
                       "}\n"
                       "var a = Accumulator();\n"
                       "print(a.sum(500, 0));\n"; // 1+2+...+500 = 125250
-    EXPECT_TRUE(isRecursionDepthError(runInterpreter(src)));
+    EXPECT_EQ(runInterpreter(src), "125250");
     EXPECT_EQ(runStackVM(src), "125250");
     EXPECT_EQ(runStackVM_IR(src), "125250");
     EXPECT_EQ(runRegVM(src), "125250");

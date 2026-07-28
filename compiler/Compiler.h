@@ -2,6 +2,7 @@
 
 #include "Diagnostic.h"
 #include "ast/ASTNode.h"
+#include "common/ModulePath.h" // AUDIT-R5 R6 fix: 模块路径缓存键规范化单一事实源
 #include "common/RuntimeLimits.h"
 #include "common/TCO.h"         // TCO: 共享尾递归识别函数
 #include "common/TypeChecker.h" // A4 fix: TypeChecker stub 接入 pipeline
@@ -143,7 +144,12 @@ public:
 private:
     // ARCH-06: IR 中间层状态
     bool useIR_ = false;                 // 是否启用 IR 路径（实验性，默认关闭）
-    bool irOptimize_ = false;            // 是否启用 IR 优化 pass（方向二）
+    bool irOptimize_ = false;            // 是否启用 IR 优化 pass（方向二）。
+                                         // 拓展二期审计（2026-07-28）：尝试默认开启时发现
+                                         // PerfBenchmark.Ackermann_RegisterVM 挂死（>300s）——
+                                         // 深度互递归下 inlinePass/SSA 优化链存在真实缺陷，
+                                         // 默认开启前需先修复该问题（复现：setIROptimize(true)+
+                                         // setUseRegisterVM(true) 跑 ackermann(2,3)）。维持默认关。
     bool irSSAOptimize_ = true;          // L16: SSA 高级优化默认启用（GVN/LICM/内联，仅寄存器式后端）。
                                          //   仅当 irOptimize_=true 时生效。
                                          //   验证机制：ssaConstructPass 返回 false（无 LOCAL 变量需 PHI）时
@@ -205,6 +211,10 @@ private:
     int compileDepth_ = 0;
     static constexpr int MAX_COMPILE_DEPTH = RuntimeLimits::MAX_COMPILE_DEPTH;
     std::string currentClassName_; // B1 fix: 当前正在编译的类名（供 OP_SUPER_CALL 编码类上下文）
+    // AUDIT-R7 F5 fix: 当前是否直接处于类方法体编译中（emitMethodBody 置位，
+    // visitFunDecl 编译嵌套函数时清除）。供 visitReturnStmt 的 TCO isMethod 判据——
+    // 不能用 currentClassName_ 非空（它在嵌套函数内保留以支持 super 调用）。
+    bool compilingMethodBody_ = false;
 
     // break/continue 循环上下文栈
     // 每层循环编译时压入，记录 break 跳转目标（循环出口）和 continue 跳转目标（循环起始/更新）
@@ -254,6 +264,14 @@ private:
     // BUG-AUDIT-MOD-1: 模块导出名称集合（key=模块路径，value=该模块 export 的名称集合）
     // 对齐 InterpreterModules.cpp 的 export 检查——具名导入只能导入显式 export 的名称
     std::unordered_map<std::string, std::unordered_set<std::string>> moduleExports_;
+    // AUDIT-R5 R5 fix（快照导入）：模块导出名 → 模块内部槽位（内联期记录，detach 前）。
+    // 导入方从此槽位拷贝快照到自身新分配的槽位，实现与 Interpreter 一致的快照语义
+    //（模块内变异不经导入方名称可见）。run-once 路径的重复导入也从此处拷贝。
+    std::unordered_map<std::string, std::unordered_map<std::string, int>> moduleExportSlots_;
+    // AUDIT-R5 R5 fix：模块导出的“可变变量”名（仅 ExportStmt 包装的 VarDecl）。
+    // 快照只适用于变量导出；函数/类导出经名称解析（functionChunks_/类注册），
+    // 不拷贝不 detach（否则类实例化 OP_CLASS_NEW / 函数调用会因 varMap_ 重定向而损坏）。
+    std::unordered_map<std::string, std::unordered_set<std::string>> moduleExportVars_;
     // R99 enum 校验：编译期收集的 enum 元信息，compile() 完成时写入 CompileResult.enumInfos。
     // 直接路径在 visitEnumDecl 中收集，IR/RegVM 路径通过 irBuilder.takeEnumInfos() 获取。
     std::vector<VMEnumInfo> pendingEnumInfos_;
@@ -279,6 +297,20 @@ private:
     /// 普通顶层声明不算导出。对齐 InterpreterModules.cpp:172-188 的语义。
     /// 输出：moduleExports_[modulePath] = exports 集合
     void collectModuleExports(const std::string& modulePath, Block& moduleAst);
+
+    /// AUDIT-R5 R5 fix（快照导入）：记录模块导出名的内部槽位到 moduleExportSlots_。
+    /// 在槽位分配完成后（源码路径：preScan+collectModuleExports 之后；预编译路径：
+    /// loadPrecompiledModule 填充 moduleExports_ 之后）调用。
+    void recordModuleExportSlots(const std::string& modulePath);
+
+    /// AUDIT-R5 R5 fix：detach 模块导出名（使导入方可另分配新槽位承载快照副本）。
+    /// 在模块内联编译完成后调用一次（模块内部引用已按槽位索引固化，不受影响）。
+    void detachModuleExportSlots(const std::string& modulePath);
+
+    /// AUDIT-R5 R5 fix：为具名/全量导入 emit 快照拷贝（模块槽位 → 导入方新槽位）。
+    /// namespace 导入由 emitNamespaceDict 构造字典快照，此处跳过。
+    /// 循环导入未 detach 场景下 allocate 返回模块原槽位，自拷贝被跳过（保持既有共享行为）。
+    void emitImportSnapshotCopy(const std::string& modulePath, ImportStmt& node);
 
     /// P2-11 预编译模块：尝试加载 .minic 并合并到当前编译。
     /// 在 visitImportStmt 中优先调用，失败时返回 false 以回退到源码编译。
@@ -432,6 +464,10 @@ private:
         auto it = varTypes_.find(name);
         return it != varTypes_.end() ? &it->second : nullptr;
     }
+
+    /// PERF: 判断表达式是否可证明为整数类型（保守策略：仅当 100% 确定时返回 true）
+    /// 用于编译期决定是否发射类型特化算术操作码（OP_ADD_INT_SPEC 等）
+    bool isExprKnownInt(const ASTNode* expr) const;
 
     /// 2026-06-29: 发射 OP_TYPE_CHECK 指令（检查栈顶值是否兼容类型注解）
     void emitTypeCheck(const std::string& typeAnnotation, int line);

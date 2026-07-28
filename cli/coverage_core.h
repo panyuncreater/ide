@@ -53,6 +53,7 @@ struct CoverageOptions {
     bool showUncovered = true; ///< 高亮未覆盖行
     bool showCounts = false;   ///< 显示每行执行次数（默认仅 covered/uncovered）
     bool showSource = false;   ///< 在 text 输出中显示源码行内容
+    bool branch = false;       ///< 拓展二期：分支覆盖率（JUMP_IF_FALSE 双向统计）
     double failUnder = -1.0;   ///< 覆盖率阈值（0-100），低于则返回退出码 1；-1 表示不检查
 };
 
@@ -62,6 +63,14 @@ struct LineCoverage {
     bool executable = false; ///< 是否为可执行行（出现在 chunk.lines 中）
     bool covered = false;    ///< 是否被执行（lineCounts[line] > 0）
     uint64_t count = 0;      ///< 执行次数（covered=true 时 >0）
+};
+
+/// 拓展二期：单个分支点覆盖信息（每个 JUMP_IF_FALSE 两个 outcome）
+struct BranchCoverage {
+    int line = 0;               ///< 1-based 分支所在行（条件表达式行）
+    int id = 0;                 ///< 同行多分支时的序号（按 chunk/ip 顺序）
+    uint64_t trueCount = 0;     ///< 条件为真（fall-through）执行次数
+    uint64_t falseCount = 0;    ///< 条件为假（跳转）执行次数
 };
 
 /// 单文件覆盖率报告
@@ -76,6 +85,10 @@ struct FileCoverage {
     std::string errorMessage;        ///< 错误信息（ok=false 时有效）
     std::string errorPhase;          ///< 错误阶段："lex"/"parse"/"compile"/"run"/"io"
     std::string backendUsed;         ///< "StackVM" / "RegisterVM"
+    // 拓展二期：分支覆盖（opts.branch=true 时填充）
+    std::vector<BranchCoverage> branches; ///< 按 (line, id) 排序
+    int totalBranchOutcomes = 0;          ///< 分支 outcome 总数（每分支点 2）
+    int coveredBranchOutcomes = 0;        ///< 至少执行一次的 outcome 数
 };
 
 /// 多文件聚合报告

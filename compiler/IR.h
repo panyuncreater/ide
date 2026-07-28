@@ -35,11 +35,12 @@
  *   - IRBuilder/IRBackend 为抽象接口，便于未来添加新前端和新后端
  *
  * 安全约束：
- *   - CSE 默认 false（栈式 VM 后端不安全，CSE 替换 dest vreg 引用后
- *     原指令变为死指令但仍 emit，导致栈上残留未被 POP 的值，与
- *     BUG-IR-DCE-1 同源问题）。仅寄存器式后端可显式传 true 启用。
- *   - DCE 不能删除算术指令（除零/溢出副作用），仅删除无副作用的
- *     纯赋值/拷贝指令。
+ *   - Phase-5 fix: POP 指令现携带所消费的 vreg 操作数（对齐 IR spec `POP: [src_vreg]`），
+ *     使 DCE 能看到 POP 对 vreg 的消费关系。因此 DCE/CSE 现在对栈式 VM 后端也是安全的。
+ *   - DCE 不能删除带副作用的指令（除零/溢出/LOAD_GLOBAL 未定义等），
+ *     仅删除 isPureCompute() 为 true 的纯计算指令（LOAD_CONST/算术/比较/DUP 等）。
+ *   - CSE 安全性依赖于 POP-vreg 注解：CSE 替换 dest vreg 引用后原指令变为死代码，
+ *     DCE 可安全删除（POP 不引用它，而是引用替代品的 vreg）。
  *
  * @see Compiler AstIRBuilder BytecodeIRBackend RegisterBytecodeBackend
  */
@@ -662,6 +663,12 @@ private:
     std::vector<std::unique_ptr<Block>> moduleAsts_;   // 保留模块 AST
     // BUG-AUDIT-MOD-1: 模块导出名称集合（对齐 Compiler::moduleExports_）
     std::unordered_map<std::string, std::unordered_set<std::string>> moduleExports_;
+    // AUDIT-R5 R5 fix（快照导入）：模块导出名 → 模块内部全局槽位（内联期记录，detach 前）。
+    // 对齐 Compiler::moduleExportSlots_。导入方从此槽位拷贝快照到自身新分配的槽位。
+    std::unordered_map<std::string, std::unordered_map<std::string, int>> moduleExportSlots_;
+    // AUDIT-R5 R5 fix：模块导出的“可变变量”名（仅 VarDecl）。快照只适用于变量导出；
+    // 函数/类导出不拷贝不 detach（否则 varMap_ 重定向会损坏类实例化/函数调用）。
+    std::unordered_map<std::string, std::unordered_set<std::string>> moduleExportVars_;
     // L11 预编译模块（RegisterVM）：.minic 文件路径解析器
     // 仅 compileViaRegisterIR 路径转发；compileViaIR 不转发保持无预编译支持
     std::function<std::string(const std::string&)> precompiledModuleResolver_;
@@ -682,9 +689,13 @@ private:
     /// VM-IMPORT: 路径规范化与安全校验 + run-once 检查 + 循环依赖检测 + 深度保护
     /// 成功时 outPath 填入规范化路径，返回 kContinue / kAlreadyLoaded / kCircularLoading；
     /// 失败时设置 hasError_/errorMessage_/errorLine_ 并返回 kError。
-    ImportPathStatus resolveImportPath(ImportStmt& node, std::string& outPath);
+    /// BUG-M4 fix: outLoaderPath 保留大小写（供 loader/预编译解析器），outCacheKey 为去重键
+    //（Windows 小写折叠），供所有去重/隔离用途。
+    ImportPathStatus resolveImportPath(ImportStmt& node, std::string& outLoaderPath, std::string& outCacheKey);
     /// VM-IMPORT: 加载模块源码 + 解析为 AST + 模块隔离重命名
-    bool loadImportedModule(ImportStmt& node, const std::string& path, std::unique_ptr<Block>& outAst);
+    /// BUG-M4 fix: loaderPath 供 moduleLoader_（保留大小写），cacheKey 供 rename 隔离前缀。
+    bool loadImportedModule(ImportStmt& node, const std::string& loaderPath, const std::string& cacheKey,
+                            std::unique_ptr<Block>& outAst);
     /// VM-IMPORT: 具名导入验证（检查 node.names 是否在模块 export 集合中）
     void bindImportedNames(ImportStmt& node, const std::string& path);
     /// P2-11: 命名空间导入 IR 生成（import * as ns from "path"）
@@ -692,6 +703,16 @@ private:
     /// 然后 BUILD_DICT + DEFINE_GLOBAL(namespaceAlias)。
     /// 在 run-once 与首次加载路径均需调用。
     void emitNamespaceImportIR(ImportStmt& node, const std::string& path);
+
+    /// AUDIT-R5 R5 fix（快照导入）：记录模块导出名的内部全局槽位到 moduleExportSlots_。
+    /// 在槽位分配完成后（preScan+collect 之后 / 预编译分配之后）调用。
+    void recordModuleExportSlots(const std::string& path);
+    /// AUDIT-R5 R5 fix：detach 模块导出名（使导入方可另分配新槽位承载快照副本）。
+    /// 在模块内联 lowering 完成后调用一次（模块内部引用已按槽位索引固化）。
+    void detachModuleExportSlots(const std::string& path);
+    /// AUDIT-R5 R5 fix：为具名/全量导入 emit 快照拷贝 IR（LOAD_GLOBAL 模块槽 → DEFINE_GLOBAL 新槽），
+    /// 并更新 varMap_ 使导入方后续引用解析到新槽位。namespace 由 emitNamespaceImportIR 处理。
+    void emitImportSnapshotCopyIR(ImportStmt& node, const std::string& path);
 
     // 闭包 upvalue 追踪（限制1）
     struct UpvalueInfo {

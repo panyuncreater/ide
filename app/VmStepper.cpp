@@ -96,6 +96,7 @@ VmStepper::VmStepResult VmStepper::step() {
 
 /// 按当前单步模式（stepIn/Over/Out/Run）分派到对应推进策略。
 VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
+    assertMainThread(); // AUDIT-R4 BUG-14: 非 atomic 状态字段仅限主线程访问
     if (isVmRunning_)
         return VmStepResult::NOT_READY;
 
@@ -117,6 +118,11 @@ VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
             }
             isVmInitialized_ = true;
             vmLastPausedLine_ = 0;
+            // AUDIT-R5 BUG-06 fix: 清除 stop() 置位的条件求值停止标志。
+            // 原实现仅在 reset() 中清除，若用户 stop() 后直接再次步进/运行
+            //（不经 prepareRun → reset 路径），残留标志会短路 IdeController 注入的
+            // 条件求值器（isCondStopRequested 检查），所有条件断点静默失效。
+            vmCondStopRequested_.store(false, std::memory_order_relaxed);
         }
 
         isVmRunning_ = true;
@@ -138,10 +144,9 @@ VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
         // 之前未在该行暂停过（vmLastPausedLine_ 刚被重置为 0），则执行前先暂停。
         if (!vmBreakpoints_.isEmpty()) {
             int initLine = getCurrentLine();
-            if (checkBreakpointHit(initLine) && initLine != vmLastPausedLine_) {
-                // AUDIT-P3-ROUND50 fix: 预执行命中分支未递增 hitCount，与循环内断点
-                // 命中路径（L223-229）不一致。对齐循环内路径递增 hitCount。
-                vmBreakpointHitCounts_[initLine]++;
+            if (checkBreakpointHit(initLine) && initLine != vmLastPausedLine_ && breakpointGateAllows(initLine)) {
+                // AUDIT-P3-ROUND50 fix: 预执行命中分支的 hitCount 递增已内联到
+                // breakpointGateAllows（拓展二期：依赖链/命中条件统一门控）。
                 vmLastPausedLine_ = initLine;
                 isVmRunning_ = false;
                 return VmStepResult::PAUSED_AT_BREAKPOINT;
@@ -226,6 +231,13 @@ VmStepper::VmStepResult VmStepper::execStepRun() {
 // ============================================================
 
 /// STEP_IN 模式：行号或帧深度变化时暂停（R82 P1-2 fix 行级粒度）。
+/// BUG-94 note (P3): execStepIn / execStepOver / execStepOut 共享同一循环骨架——
+///   [pre-execution 断点检查] → [stepOnceActive] → [UI 让出/中断检查] →
+///   [VM_RUNTIME_ERROR / isActiveFinished / MAX_STEP_LOOP 检查] →
+///   [post-execution 行号追踪 + shouldPause 判定]。
+/// 三者仅在 shouldPause 判定（行号变化/帧深度比较/帧深度变浅）上有差异。
+/// 后续可考虑提取为模板方法 runStepLoop(shouldPauseFn) 消除重复，
+/// 当前 P3 级别仅做注释标记，避免高风险重构。
 VmStepper::VmStepResult VmStepper::execStepIn() {
     // STEP_IN/OVER/OUT: 同步执行（快速操作，不阻塞 UI）
     // P1-3 fix: VM 断点检查改为 pre-execution（执行前检查 IP 位置），
@@ -250,8 +262,8 @@ VmStepper::VmStepResult VmStepper::execStepIn() {
                 }
                 // 注：pre-execution 检查时不更新 vmLastSeenLine_，
                 // 留到 post-execution 统一更新，避免漏检
-                if (checkBreakpointHit(preLine) && (preLine != vmLastPausedLine_ || vmCrossedLine_)) {
-                    vmBreakpointHitCounts_[preLine]++;
+                if (checkBreakpointHit(preLine) && (preLine != vmLastPausedLine_ || vmCrossedLine_) &&
+                    breakpointGateAllows(preLine)) {
                     vmLastPausedLine_ = preLine;
                     vmCrossedLine_ = false;
                     isVmRunning_ = false;
@@ -359,6 +371,8 @@ VmStepper::VmStepResult VmStepper::execStepIn() {
 }
 
 /// STEP_OVER 模式：跳过函数调用，同帧深度时暂停（含 crossedDeeper 同行调用检测）。
+/// BUG-94 note (P3): 与 execStepIn / execStepOut 共享同一循环骨架（详见 execStepIn 注释），
+/// 仅 shouldPause 判定不同（同帧深度暂停 + crossedDeeper 同行调用检测）。
 VmStepper::VmStepResult VmStepper::execStepOver() {
     // STEP_IN/OVER/OUT: 同步执行（快速操作，不阻塞 UI）
     // P1-3 fix: VM 断点检查改为 pre-execution（执行前检查 IP 位置），
@@ -379,8 +393,8 @@ VmStepper::VmStepResult VmStepper::execStepOver() {
                 }
                 // 注：pre-execution 检查时不更新 vmLastSeenLine_，
                 // 留到 post-execution 统一更新，避免漏检
-                if (checkBreakpointHit(preLine) && (preLine != vmLastPausedLine_ || vmCrossedLine_)) {
-                    vmBreakpointHitCounts_[preLine]++;
+                if (checkBreakpointHit(preLine) && (preLine != vmLastPausedLine_ || vmCrossedLine_) &&
+                    breakpointGateAllows(preLine)) {
                     vmLastPausedLine_ = preLine;
                     vmCrossedLine_ = false;
                     isVmRunning_ = false;
@@ -502,6 +516,8 @@ VmStepper::VmStepResult VmStepper::execStepOver() {
 }
 
 /// STEP_OUT 模式：跳出当前帧，帧深度比起始更浅时暂停（栈底降级为跨行暂停）。
+/// BUG-94 note (P3): 与 execStepIn / execStepOver 共享同一循环骨架（详见 execStepIn 注释），
+/// 仅 shouldPause 判定不同（帧深度比起始更浅时暂停，栈底降级为跨行暂停）。
 VmStepper::VmStepResult VmStepper::execStepOut() {
     // STEP_IN/OVER/OUT: 同步执行（快速操作，不阻塞 UI）
     // P1-3 fix: VM 断点检查改为 pre-execution（执行前检查 IP 位置），
@@ -522,8 +538,8 @@ VmStepper::VmStepResult VmStepper::execStepOut() {
                 }
                 // 注：pre-execution 检查时不更新 vmLastSeenLine_，
                 // 留到 post-execution 统一更新，避免漏检
-                if (checkBreakpointHit(preLine) && (preLine != vmLastPausedLine_ || vmCrossedLine_)) {
-                    vmBreakpointHitCounts_[preLine]++;
+                if (checkBreakpointHit(preLine) && (preLine != vmLastPausedLine_ || vmCrossedLine_) &&
+                    breakpointGateAllows(preLine)) {
                     vmLastPausedLine_ = preLine;
                     vmCrossedLine_ = false;
                     isVmRunning_ = false;
@@ -645,6 +661,7 @@ VmStepper::VmStepResult VmStepper::execStepOut() {
 // 暂停条件命中时停止定时器并通过 vmRunPaused 信号通知 UI。
 // A1 fix: 通过 stepOnceActive() 等分派 helper 复用同一批处理逻辑。
 void VmStepper::runBatch() {
+    assertMainThread(); // AUDIT-R4 BUG-14: 非 atomic 状态字段仅限主线程访问
     // QT-R-01 fix: 每批执行 2000 步（约 1-2ms），在批与批之间 Qt 处理 UI 事件
     constexpr int BATCH_SIZE = 2000;
     // 总量上限 100 万步（与原同步模式一致），防止死循环程序无限消耗 CPU
@@ -685,8 +702,8 @@ void VmStepper::runBatch() {
                     if (preLine != vmLastSeenLine_) {
                         vmCrossedLine_ = true;
                     }
-                    if (checkBreakpointHit(preLine) && (preLine != vmLastPausedLine_ || vmCrossedLine_)) {
-                        vmBreakpointHitCounts_[preLine]++;
+                    if (checkBreakpointHit(preLine) && (preLine != vmLastPausedLine_ || vmCrossedLine_) &&
+                        breakpointGateAllows(preLine)) {
                         vmRunTimer_->stop();
                         vmLastPausedLine_ = preLine;
                         vmCrossedLine_ = false;
@@ -746,6 +763,7 @@ void VmStepper::runBatch() {
 
 /// 停止 VM 执行：中断运行循环并复位执行状态。
 void VmStepper::stop() {
+    assertMainThread(); // AUDIT-R4 BUG-14: 非 atomic 状态字段仅限主线程访问
     // QT-R-01 fix: 停止 RUN 模式定时器
     if (vmRunTimer_)
         vmRunTimer_->stop();
@@ -799,6 +817,27 @@ bool VmStepper::checkBreakpointHit(int line) {
     // AUDIT-BUG-D1 fix: 原返回 true 会导致条件断点被当作无条件断点，
     // 用户设置的条件被完全忽略。返回 false 更安全（不暂停而非总是暂停）。
     return false;
+}
+
+// 拓展二期：断点暂停前的统一门控（依赖链 → 计数 → 命中条件）
+// 语义与 DebugController::shouldPauseAtBreakpoint 的拓展二期分支、
+// DAP DebugSession::hitBreakpoint 对齐（三路径一致）。
+bool VmStepper::breakpointGateAllows(int line) {
+    // 1. 依赖断点链：依赖行断点从未命中过 → 本断点未激活（不计数不暂停）
+    auto depIt = vmBreakpointDependencies_.find(line);
+    if (depIt != vmBreakpointDependencies_.end() && depIt.value() > 0) {
+        if (vmBreakpointHitCounts_.value(depIt.value(), 0) <= 0) {
+            return false;
+        }
+    }
+    // 2. 到达即计数（原各调用点的递增已内联至此）
+    int count = ++vmBreakpointHitCounts_[line];
+    // 3. 命中条件：不满足则已计数但不暂停
+    auto hcIt = vmBreakpointHitConditions_.find(line);
+    if (hcIt != vmBreakpointHitConditions_.end() && !hcIt.value().empty()) {
+        return evalHitCondition(hcIt.value(), count);
+    }
+    return true;
 }
 
 // R104 Logpoint：处理 Logpoint 命中——输出日志、递增 hitCount

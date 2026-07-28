@@ -1729,3 +1729,69 @@ TEST(ExecutionTraceRecorderInterpreterRollback, RollbackAllowsContinueExecution)
     r.clear();
     r.setRecordingMode(RecordingMode::StringsOnly);
 }
+
+// ============================================================
+// 拓展二期：stepBack 单步后退（reverse step）
+// ------------------------------------------------------------
+// 语义：回滚到轨迹倒数第二个快照并丢弃末尾快照；连续调用持续后退。
+// ============================================================
+
+TEST(ExecutionTraceRecorderRollback, StepBackWalksBackwards) {
+    auto& r = traceRecorder();
+    r.clear();
+    r.setRecordingMode(RecordingMode::FullState);
+    r.startSession();
+
+    VmStepper stepper;
+    runStackVmFullState(stepper, "var x = 10; var y = 20; var z = 30;");
+
+    ASSERT_GT(r.size(), 2u);
+    size_t before = r.size();
+
+    EXPECT_TRUE(stepper.stepBack());
+    EXPECT_EQ(r.size(), before - 1); // 末尾"未来"快照被丢弃
+
+    EXPECT_TRUE(stepper.stepBack()); // 连续后退
+    EXPECT_EQ(r.size(), before - 2);
+
+    // 回退后可继续正向步进（record/replay 交替）
+    auto res = stepper.stepByMode(VmStepper::VmStepMode::STEP_IN);
+    EXPECT_NE(res, VmStepper::VmStepResult::NOT_READY);
+
+    r.endSession();
+    r.clear();
+    r.setRecordingMode(RecordingMode::StringsOnly);
+}
+
+TEST(ExecutionTraceRecorderRollback, StepBackFailsWithoutSnapshots) {
+    auto& r = traceRecorder();
+    r.clear();
+    r.setRecordingMode(RecordingMode::FullState);
+    r.startSession();
+
+    VmStepper stepper;
+    EXPECT_FALSE(stepper.stepBack()); // 无快照：拒绝
+
+    r.endSession();
+    r.clear();
+    r.setRecordingMode(RecordingMode::StringsOnly);
+}
+
+TEST(ExecutionTraceRecorderRollback, StepBackRegisterVmBackend) {
+    auto& r = traceRecorder();
+    r.clear();
+    r.setRecordingMode(RecordingMode::FullState);
+    r.startSession();
+
+    VmStepper stepper;
+    runRegisterVmFullState(stepper, "var a = 1; var b = 2;");
+
+    ASSERT_GT(r.size(), 1u);
+    size_t before = r.size();
+    EXPECT_TRUE(stepper.stepBack());
+    EXPECT_EQ(r.size(), before - 1);
+
+    r.endSession();
+    r.clear();
+    r.setRecordingMode(RecordingMode::StringsOnly);
+}

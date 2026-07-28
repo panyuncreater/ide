@@ -24,8 +24,6 @@ std::string NumberLiteral::nodeName() const {
 
 Value StringLiteral::getValue() const {
     // 字符串字面量直接封装为字符串语义的 Value（A1 fix: 按需构造，非破坏性）。
-    // 与 NumberLiteral 同理，字符串内容以 std::string 存储在 AST 中，
-    // 仅在需要时构造 Value，避免提前依赖 interpreter 层并支持 AST 重复遍历。
     return Value(value);
 }
 

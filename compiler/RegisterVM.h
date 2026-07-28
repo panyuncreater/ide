@@ -155,6 +155,15 @@ public:
     /// frameIndex 从 0 开始（0=栈底 main 帧）。越界或无 localRegNames 返回空映射。
     std::unordered_map<std::string, Value> getFrameLocalsAt(size_t frameIndex) const;
 
+    // ---- 拓展·调试器 setVariable：调试暂停时写变量（与 VM.h 镜像）----
+    /// 写入已存在的全局变量（globalSlots_ 优先，globals_ fallback）。
+    /// 不新建变量。@return true 写入成功；false 变量不存在
+    bool setGlobalValue(const std::string& name, const Value& val);
+
+    /// 写入指定帧的局部变量（按 resolveSlotName 反查寄存器，与 getFrameLocalsAt
+    /// 镜像）；未命中时回退 upvalue 写入。@return true 写入成功
+    bool setFrameLocalAt(size_t frameIndex, const std::string& name, const Value& val);
+
     /// R104 Function Breakpoint：在 REG_CALL 指令执行前查询被调用函数名。
     /// @return 若当前指令是 REG_CALL，返回常量池中的函数名；否则返回空字符串。
     std::string peekCalledFunctionName() const;
@@ -189,6 +198,15 @@ public:
     /// 步进回调
     void setStepCallback(std::function<void(const RegVMStepInfo&)> cb) { stepCallback_ = cb; }
     void setStepCallbackEnabled(bool enabled) { stepCallbackEnabled_ = enabled; }
+
+    /// P-7 perf: 内联步进通知（对齐 StackVM::notifyStep 的单 bool 快速路径）。
+    /// 仅检查 stepCallbackEnabled_（bool），省去 std::function 非空测试。
+    /// 调用方须保证 setStepCallback 在 setStepCallbackEnabled(true) 之前调用。
+    void notifyStep(size_t ip, RegOp opcode) {
+        if (!stepCallbackEnabled_)
+            return;
+        stepCallback_(RegVMStepInfo{ip, opcode, frames_.size()});
+    }
 
 private:
     // 寄存器帧
@@ -244,7 +262,17 @@ private:
     std::unordered_map<std::string, VMEnumInfo> enumRegistry_;
 
     // upvalue 支持
-    std::multimap<size_t, std::weak_ptr<VMUpvalue>> openUpvalues_;
+    // AUDIT-R5 R1 fix: 条目携带单调递增的开启序号（upvalueOpenSeq_）。
+    // REG_TRY_BEGIN 记录当时序号水位，异常展开时仅关闭 try 之后开启的 upvalue，
+    // 避免 Bug #47 的 regBase=0 方案把 try 之前创建、catch 后仍存活的闭包
+    // upvalue 一并提前关闭为快照（与 Interpreter/StackVM 的共享语义不一致）。
+    // 序号方案同时覆盖 Bug #47 的槽位复用场景（try 内嵌套作用域复用低槽位）。
+    struct OpenUpvalueEntry {
+        std::weak_ptr<VMUpvalue> uv;
+        uint64_t seq = 0; ///< 开启序号（插入时取 upvalueOpenSeq_++）
+    };
+    std::multimap<size_t, OpenUpvalueEntry> openUpvalues_;
+    uint64_t upvalueOpenSeq_ = 0; ///< AUDIT-R5 R1 fix: open upvalue 全局开启序号计数器
 
     // W3-2-Bug2 fix: 函数内定义的类的方法捕获的 upvalue（key = funName "Class.method"）。
     // 在 REG_DEFINE_CLASS 执行时（此时仍在定义类的外层函数帧中），为有 upvalue 描述符的方法
@@ -280,19 +308,30 @@ private:
     struct RegTryHandler {
         size_t catchIp;
         size_t frameIndex;
-        // BUG-EXC-5 fix: try 块开始时的寄存器数，catch 命中时关闭
-        // [registerBase, registerCount) 范围的 open upvalues，对齐 StackVM
-        // closeUpvaluesFrom(handler.stackBase)。try 块中声明的局部变量若被闭包捕获，
-        // 需在 catch 块覆盖前关闭 upvalue（拷贝值到 heap），防止 catch 块复用寄存器时
-        // 闭包读到错误值。
-        uint8_t registerBase = 0;
+        // AUDIT-R5 R1 fix: 替换原 registerBase 字段。历史方案演进：
+        //   · BUG-EXC-5：registerBase = try 开始时的 registerCount，但 try 内嵌套
+        //     作用域可能复用低于该水位的槽位，展开时漏关（Bug #47）；
+        //   · Bug #47：改 regBase=0 全关，又把 try 之前创建的闭包 upvalue 误关
+        //     为快照（catch 后闭包与变量不再共享，三后端语义不一致）。
+        // 现方案：记录 try 开始时的 upvalueOpenSeq_ 水位，catch 命中时仅关闭
+        // 本帧内序号 >= 水位（即 try 期间开启）的 upvalue，与槽位号无关，
+        // 同时解决两个历史缺陷。已知窄边缘：try 内创建的闭包若捕获 try 之前
+        // 的变量并在 throw 前逃逸，其 upvalue 会被关闭（StackVM 保持 open），
+        // 该边缘远窄于原 regBase=0 的全量误关。
+        uint64_t upvalueSeqFloor = 0;
     };
     std::vector<RegTryHandler> tryStack_;
     // P1-4 fix: 待捕获的异常值。throwException 设置，REG_LOAD_EXCEPTION 读取。
     // 替代原方案（固定写 R0 覆盖用户变量），避免破坏调用者寄存器。
     Value pendingException_;
     // AUDIT-P1.1 fix: break/continue finally 续跳机制（与 StackVM 对齐）。
-    std::vector<size_t> pendingJumpStack_;
+    // AUDIT-R7 F1 fix: 条目附带 frameIndex，REG_FINALLY_END 只消费本帧条目并惰性
+    // 丢弃已返回深帧残留（与 StackVM PendingJump 同构，防跨帧误跳）。
+    struct PendingJump {
+        size_t target;
+        size_t frameIndex;
+    };
+    std::vector<PendingJump> pendingJumpStack_;
 
     // R164 协程/生成器：重放模式状态（与 StackVM::VM 对齐，独立字段避免状态串扰）
     // currentCoroutineTargetYieldId_ >= 0 表示当前在协程重放上下文中（REG_YIELD 据此判定）。
@@ -333,23 +372,23 @@ private:
     // 在 fib(24) 基准中约 150-225 万次非内联调用，是 RegisterVM 慢于 StackVM 的主因。
     // 热路径（合法访问）内联，冷路径（越界）调用 runtimeError 后抛异常。
     Value& reg(uint8_t r) {
-        if (frames_.empty()) {
+        if (frames_.empty()) [[unlikely]] {
             runtimeError("RegisterVM::reg() on empty frames");
             throw std::runtime_error("RegisterVM: reg() on empty frames");
         }
         auto& frame = frames_.back();
-        if (r >= frame.registerCount) {
+        if (r >= frame.registerCount) [[unlikely]] {
             runtimeError("RegisterVM: register index out of range");
             throw std::runtime_error("RegisterVM: register index out of range");
         }
         return frame.registers[r];
     }
     const Value& reg(uint8_t r) const {
-        if (frames_.empty()) {
+        if (frames_.empty()) [[unlikely]] {
             throw std::runtime_error("RegisterVM: reg() on empty frames (const)");
         }
         const auto& frame = frames_.back();
-        if (r >= frame.registerCount) {
+        if (r >= frame.registerCount) [[unlikely]] {
             throw std::runtime_error("RegisterVM: register index out of range (const)");
         }
         return frame.registers[r];
@@ -363,11 +402,16 @@ private:
     /// 从对应帧读取当前值并标记为已关闭。用于帧弹出/异常展开时防止悬垂引用。
     /// 返回 VM_RUNTIME_ERROR 表示检测到 slot 越界（hasError_ 已设置，调用方应立即 return 传播错误）
     VMResult closeUpvaluesFrom(size_t fromSlot);
+    /// AUDIT-R5 R1 fix: 关闭 frameIdx 帧内开启序号 >= seqFloor 的 open upvalues
+    /// （即 try 开始后创建的），用于同帧 catch 命中时的精确关闭。
+    /// try 之前开启的 upvalue 保持 open，catch 后闭包与变量继续共享（对齐 StackVM）。
+    VMResult closeFrameUpvaluesSince(size_t frameIdx, uint64_t seqFloor);
     /// C-3 fix: 解码 uv->stackSlot（编码为 frameIdx*32+slot）返回指向目标寄存器的指针。
     /// 失败时调用 runtimeError 并返回 nullptr。仅用于 open upvalue（isClosed=false）。
     Value* resolveOpenUpvalueSlot(struct VMUpvalue& uv);
 
     // 指令执行分类
+    // PERF: HOT 方法标记 MINILANG_FORCE_INLINE，等效 computed goto 在 MSVC 上的替代方案。
     VMResult executeConstants(RegOp op, size_t& ip);
     VMResult executeArith(RegOp op, size_t& ip);
     VMResult executeCompare(RegOp op, size_t& ip);
@@ -417,6 +461,27 @@ private:
     VMResult executeCallImpl(size_t& ip, const std::string& funName, uint8_t argCount, uint8_t dstReg,
                              const SmallArgs<uint8_t>& argRegs, size_t returnOffset,
                              const Value* closureValue = nullptr, bool isMethodCall = false);
+
+    /// executeCallImpl 子阶段：函数名在 functionChunks_ 未命中时，
+    /// 依次尝试 input/higher-order(spawn,map,filter,...)/isBuiltinFunction/classInfo_ 构造调用，
+    /// 全部未命中则返回"未定义的函数"错误。始终返回 VM_OK 或 VM_RUNTIME_ERROR。
+    /// 仅在 !cachedChunk && it == functionChunks_.end() 时调用。
+    VMResult tryCallBuiltinOrClass(size_t& ip, const std::string& funName, uint8_t argCount, uint8_t dstReg,
+                                   const SmallArgs<uint8_t>& argRegs, size_t returnOffset);
+
+    /// executeCallImpl 子阶段：填充新帧的 upvalues。
+    /// 闭包调用（closureData 非空）从 closureData->upvalues 复制；
+    /// 方法调用（isMethodCall）从 methodUpvalues_ 查找并复制。
+    /// 两者均不命中则不填充（newFrame.upvalues 保持空）。
+    void populateCallFrameUpvalues(RegCallFrame& newFrame, const std::shared_ptr<VMClosureData>& closureData,
+                                   const std::string& funName, bool isMethodCall);
+
+    /// executeCallImpl 子阶段：格式化参数计数错误消息。
+    /// 方法调用时减去 this（首个寄存器），并使用"方法 X"/"构造函数 init"措辞；
+    /// 普通函数调用使用"函数 X"措辞。与 StackVM 路径错误消息对齐。
+    std::string formatParamError(bool isMethodCall, const std::string& funName, uint8_t argCount,
+                                 const RegBytecodeChunk& calleeChunk) const;
+
     VMResult executeReturnImpl(size_t& ip, Value result);
     /// R98 W2: 高阶函数闭包同步调用。手动构造 RegCallFrame + 内部指令循环，
     /// 执行闭包体直到帧弹出。返回值通过 returnReg=dstReg 写入调用者寄存器，

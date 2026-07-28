@@ -188,6 +188,38 @@ VMResult VM::executeContainerBuildOps(OpCode op, size_t& ip) {
         for (int i = argCount - 1; i >= 0; --i) {
             fields[i] = pop();
         }
+        // AUDIT-R6 F3 fix: 字段类型注解校验（对齐 Interpreter::visitEnumVariantExpr）。
+        // 原实现仅校验 arity，E.V("s") 对 V(int) 静默构造成功——与 Interpreter 报错不一致。
+        // 泛型类型参数运行时擦除（isTypeParameter 豁免）；实例继承链 fallback 对齐
+        // executeMiscTypeCheck 的 classInfo_ 查找模式。
+        for (size_t fi = 0; fi < fields.size() && fi < varInfo->paramTypes.size(); ++fi) {
+            const std::string& expectedType = varInfo->paramTypes[fi];
+            if (expectedType.empty() || minilang::isTypeParameter(expectedType, info.typeParams))
+                continue;
+            if (!minilang::typeMatchValue(fields[fi], expectedType)) {
+                bool inheritOk = false;
+                if (fields[fi].isInstance()) {
+                    auto classIt = classInfo_.find(fields[fi].className());
+                    int depth = 0;
+                    while (classIt != classInfo_.end() && depth < 64) {
+                        if (classIt->second.name == expectedType) {
+                            inheritOk = true;
+                            break;
+                        }
+                        if (classIt->second.superClassName.empty())
+                            break;
+                        classIt = classInfo_.find(classIt->second.superClassName);
+                        ++depth;
+                    }
+                }
+                if (!inheritOk) {
+                    return runtimeError(
+                        ErrorFormat::formatStd("enum variant '{}.{}' 第 {} 个参数类型不匹配：期望 {}，得到 {}",
+                                               enumName, variantName, fi + 1, expectedType, fields[fi].typeName()),
+                        DiagCodes::kTypeMismatch);
+                }
+            }
+        }
         push(Value::makeEnumVariant(enumName, variantName, std::move(fields)));
         notifyStep(ip, op);
         ip += 6;
@@ -976,8 +1008,8 @@ VMResult VM::executeMiscStackOps(OpCode op, size_t& ip) {
         } else if (v.isDict()) {
             len = static_cast<int64_t>(v.dictVal().size());
         } else if (v.isString()) {
-            // 字符串长度按 codepoint 计算（与 print/字符串索引语义一致）
-            len = static_cast<int64_t>(v.stringVal().size()); // UTF-8 字节数（与现有索引语义一致）
+            // 字符串长度按 codepoint 计算（与 RegisterVM REG_LEN / print/字符串索引语义一致）
+            len = static_cast<int64_t>(v.codepointCount());
         } else if (v.isTuple()) {
             len = static_cast<int64_t>(v.tupleVal().size());
         } else {
@@ -1216,10 +1248,11 @@ VMResult VM::executeMiscExceptionOps(OpCode op, size_t& ip) {
 
     case OpCode::OP_PUSH_JUMP_TARGET: {
         // AUDIT-P1.1 fix: push 跳转目标到 pendingJumpStack_，供 finally 末尾的 OP_FINALLY_END 取出。
+        // AUDIT-R7 F1 fix: 附带当前帧索引，使 FINALLY_END 能识别并丢弃跨帧残留。
         uint16_t target = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         if (target >= chunk.code.size())
             return runtimeError("OP_PUSH_JUMP_TARGET: 跳转目标越界");
-        pendingJumpStack_.push_back(target);
+        pendingJumpStack_.push_back({static_cast<size_t>(target), frames_.size() - 1});
         notifyStep(ip, op);
         ip += 3;
         break;
@@ -1228,9 +1261,16 @@ VMResult VM::executeMiscExceptionOps(OpCode op, size_t& ip) {
     case OpCode::OP_FINALLY_END: {
         // AUDIT-P1.1 fix: finally 块正常路径末尾。若 pendingJumpStack_ 非空，
         // 说明是 break/continue 触发的 finally，pop 目标并跳转；否则继续执行（正常完成）。
+        // AUDIT-R7 F1 fix: 只消费本帧条目——先惰性丢弃已返回深帧的残留（finally 体内
+        // return/TCO 跳过了其 FINALLY_END）；若栈顶属于更浅帧（调用方在途续跳，本帧
+        // 是 finally 体内被调函数）则不消费，视为正常完成继续执行。
         notifyStep(ip, op);
-        if (!pendingJumpStack_.empty()) {
-            size_t target = pendingJumpStack_.back();
+        size_t curFrameIdx = frames_.size() - 1;
+        while (!pendingJumpStack_.empty() && pendingJumpStack_.back().frameIndex > curFrameIdx) {
+            pendingJumpStack_.pop_back();
+        }
+        if (!pendingJumpStack_.empty() && pendingJumpStack_.back().frameIndex == curFrameIdx) {
+            size_t target = pendingJumpStack_.back().target;
             pendingJumpStack_.pop_back();
             if (target >= chunk.code.size())
                 return runtimeError("OP_FINALLY_END: 跳转目标越界");

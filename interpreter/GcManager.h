@@ -32,7 +32,8 @@
 //   - tracked_ 用 vector，aliveSet_ 用 unordered_set，注册/注销均 O(1)
 // ============================================================
 
-#include "interpreter/ValueTypes.h" // ValueType
+#include "common/MemoryInspectionAPI.h" // GcMode, GcPhase 枚举（ARCH-10 单一真相源）
+#include "interpreter/ValueTypes.h"     // ValueType
 #include <functional>
 #include <mutex>
 #include <unordered_set>
@@ -41,27 +42,9 @@
 struct RefCounted;
 struct Value;
 
-// R113 C 项：GC 阶段状态枚举——用于 MemoryModelPanel 实时展示当前 mark-sweep 进度。
-// collectCycle 是同步阻塞操作，currentPhase_ 在阶段切换时短暂变更，
-// collectCycle 结束后回归 Idle。UI 在 animTimer_ 周期内能观察到上次 GC 经历的阶段。
-enum class GcPhase : uint8_t {
-    Idle,       // 未在 GC 中（或上次 GC 已结束）
-    Marking,    // Phase 1: 从 roots 出发 mark 所有可达容器节点
-    Sweeping,   // Phase 2: 清扫 marked 中不存在但 aliveSet_ 中存在的循环孤岛
-    Finalizing, // Phase 3: 重建 tracked_ / aliveSet_，重置 marked 标志
-};
-
-// R135 GC 模式枚举——三种内存管理策略可切换，用于教学对比与性能基准。
-// 模式语义：
-//   RefCountOnly        - 纯引用计数，不注册 GcManager，循环引用会泄漏（基线对比用）
-//   RefCountWithCycleGc - 引用计数主导 + GC 仅回收循环孤岛（默认，项目历史模式）
-//   GcOnly              - GC 主导：sweep 阶段直接 delete 不可达对象（实验性）
-// 切换时机：仅在 Interpreter/VM 完全重置后切换（避免运行中切换导致状态不一致）
-enum class GcMode : uint8_t {
-    RefCountOnly = 0,
-    RefCountWithCycleGc = 1,
-    GcOnly = 2,
-};
+// 注：GcPhase / GcMode 枚举原定义在此处，ARCH-10 重构后迁移到
+// common/MemoryInspectionAPI.h 作为公共类型单一真相源，便于 GUI 面板
+// 通过 common/ 公共头文件获取枚举类型而无需直接依赖 interpreter/GcManager.h。
 
 class GcManager {
 public:
@@ -101,13 +84,29 @@ public:
     // BUG-003 fix: 设置增量 GC 触发回调（由 Interpreter 在构造时注册）
     // 回调内 Interpreter 收集当前根集（globalEnv_、callStack_ 各帧 env 等）
     // 并调用 collectCycle。回调可为空（无 Interpreter 时跳过增量触发）。
-    void setGcTriggerCallback(std::function<void()> cb);
+    // AUDIT-R3 P2-9 fix: 新增 owner 令牌——多 Interpreter 实例并存时，先构造者
+    // 析构时无条件置空会把后构造者（仍存活）的回调一并清掉，存活实例
+    // 失去增量 GC 触发。owner 默认 nullptr 保持既有调用方兼容。
+    void setGcTriggerCallback(std::function<void()> cb, const void* owner = nullptr);
+
+    /// AUDIT-R3 P2-9 fix: 仅当当前回调属于 owner 时才清除（析构路径专用）。
+    /// 若回调已被其他实例覆盖（owner 不匹配）则不动，保护存活实例的回调。
+    void clearGcTriggerCallbackIfOwner(const void* owner);
 
     // BUG-003 fix: 上次 GC 后累计分配的容器数（用于诊断/测试）
     size_t allocationsSinceLastGc() const;
 
+    // P0 fix: 语句边界安全触发待处理的增量 GC。
+    // registerTracked 中不再直接触发 GC（避免容器构造期间被误回收），
+    // 改为设置 pendingIncrementalGc_ 标志。Interpreter 在每条语句执行完毕后
+    // 调用此方法，此时容器已构造完成并加入 roots，GC 安全。
+    void checkPendingGc();
+
     // BUG-003 fix: 配置增量触发阈值（测试场景可调小以验证触发行为）
     void setGcAllocationThreshold(size_t threshold);
+
+    // ARCH-10: 增量触发阈值只读访问（供 MemoryInspectionAPI 反射到 GUI 教学面板）
+    size_t gcAllocationThreshold() const;
 
     // R113 C 项：GC 进度只读统计——供 MemoryModelPanel 实时展示上次 GC 经历的阶段
     // 与结果。collectCycle 同步阻塞，currentPhase_ 在阶段切换时短暂变更，结束后
@@ -146,6 +145,8 @@ public:
 
     private:
         std::function<void()> saved_;
+        // AUDIT-R3 P2-9 fix: 同步保存/恢复 owner 令牌，与 saved_ 保持一致
+        const void* savedOwner_ = nullptr;
     };
 
 private:
@@ -172,8 +173,13 @@ private:
     size_t allocationsSinceLastGc_ = 0;
     size_t gcAllocationThreshold_ = GC_ALLOCATION_THRESHOLD;
     std::function<void()> gcTriggerCallback_;
+    // AUDIT-R3 P2-9 fix: 当前回调的所有者令牌（如 Interpreter 实例指针），
+    // 供 clearGcTriggerCallbackIfOwner 判定回调归属；nullptr = 未指定所有者。
+    const void* gcTriggerOwner_ = nullptr;
     // 进行中标志：防止回调内 collectCycle → 析构 → registerTracked → 再触发 GC 的递归
     bool gcInProgress_ = false;
+    // P0 fix: 延迟增量 GC 触发标志——registerTracked 中设置，checkPendingGc() 中消费
+    bool pendingIncrementalGc_ = false;
 
     // R113 C 项：GC 进度统计（仅 collectCycle 内部写入，外部只读访问）
     GcPhase currentPhase_ = GcPhase::Idle;

@@ -47,7 +47,8 @@ enum class DiagSource {
     Formatter,
     IDE,
     TypeChecker, // 2026-06-29: 静态类型检查诊断
-    JIT          // P2-12: JIT 后端独立诊断来源（不再复用 VM/Compiler）
+    JIT,          // P2-12: JIT 后端独立诊断来源（不再复用 VM/Compiler）
+    Lint         // P1 #30 fix: Lint 规则诊断独立来源
 };
 
 /// 单条诊断信息
@@ -124,6 +125,8 @@ struct Diagnostic {
             return "类型检查";
         case DiagSource::JIT:
             return "JIT"; // P2-12
+        case DiagSource::Lint:
+            return "Lint"; // P1 #30 fix
         }
         return "未知";
     }

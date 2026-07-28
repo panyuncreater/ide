@@ -125,7 +125,7 @@ IdeController::IdeController(QObject* parent)
             auto& vars = env->localVariables();
             auto thisIt = vars.find("this");
             if (thisIt != vars.end() && thisIt->second.isInstance()) {
-                // unordered_map 是 node-based，rehash 不失效指针，env 生命周期内有效
+                // SmallMap 内联模式下指针在条目不增减时稳定，求值期间 env 不变
                 env->bindInstance(const_cast<Value*>(&thisIt->second));
             }
             tempInterp.setGlobalEnvironment(env);
@@ -360,7 +360,12 @@ std::vector<std::string> IdeController::getReplScopeVariableNames() const {
     // 顺序与 allVariables() 一致：父作用域在前，子作用域追加末尾。
     std::unordered_set<std::string> seen;
     while (env) {
-        const auto& locals = env->localVariables();
+        // BUG-64 fix (P2 线程安全): 原实现以 const 引用绑定 env->localVariables() 返回的
+        // SmallMap，遍历期间若 worker 线程修改/析构该 Environment（QueuedConnection 跨线程
+        // 调用本方法时与 worker 并发），引用会悬挂或读到撕裂状态。改为值拷贝快照
+        // (snapshotLocalVariables 返回 unordered_map by value)，遍历完全脱离原容器，
+        // 与 R53-1 shared_ptr 父链延长策略对齐，保证主线程遍历期间数据有效。
+        auto locals = env->snapshotLocalVariables();
         for (const auto& kv : locals) {
             if (seen.insert(kv.first).second) {
                 names.push_back(kv.first);

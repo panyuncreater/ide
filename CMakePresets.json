@@ -179,6 +179,51 @@
         "lhs": "${hostSystemName}",
         "rhs": "Linux"
       }
+    },
+    {
+      "name": "linux-gcc-asan",
+      "displayName": "Linux GCC Debug + ASan/UBSan",
+      "description": "GCC + Ninja Debug 构建，启用 Address + Undefined Sanitizer（CI 内存错误门禁）",
+      "inherits": "linux-gcc-debug",
+      "binaryDir": "${sourceDir}/out/build/linux-asan",
+      "cacheVariables": {
+        "MINILANG_SANITIZE": "both"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "linux-gcc-tsan",
+      "displayName": "Linux GCC Debug + Thread Sanitizer",
+      "description": "GCC + Ninja Debug 构建，启用 Thread Sanitizer（GUI 多线程竞态检测）",
+      "inherits": "linux-gcc-debug",
+      "binaryDir": "${sourceDir}/out/build/linux-tsan",
+      "cacheVariables": {
+        "MINILANG_SANITIZE": "thread"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "macos-clang-tsan",
+      "displayName": "macOS Clang Debug + Thread Sanitizer",
+      "description": "Clang + Ninja Debug 构建，启用 Thread Sanitizer（GUI 多线程竞态检测）",
+      "inherits": "macos-clang-debug",
+      "binaryDir": "${sourceDir}/out/build/macos-tsan",
+      "cacheVariables": {
+        "MINILANG_SANITIZE": "thread"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      }
     }
   ],
   "testPresets": [
@@ -257,6 +302,30 @@
     {
       "name": "linux-gcc-coverage",
       "configurePreset": "linux-gcc-coverage",
+      "output": {
+        "outputOnFailure": true,
+        "verbosity": "default"
+      },
+      "execution": {
+        "jobs": 4,
+        "timeout": 300
+      }
+    },
+    {
+      "name": "linux-gcc-tsan",
+      "configurePreset": "linux-gcc-tsan",
+      "output": {
+        "outputOnFailure": true,
+        "verbosity": "default"
+      },
+      "execution": {
+        "jobs": 4,
+        "timeout": 300
+      }
+    },
+    {
+      "name": "macos-clang-tsan",
+      "configurePreset": "macos-clang-tsan",
       "output": {
         "outputOnFailure": true,
         "verbosity": "default"

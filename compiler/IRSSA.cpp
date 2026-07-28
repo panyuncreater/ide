@@ -229,6 +229,27 @@ IRCFG::IRCFG(const IRFunction& ir) {
             }
             break;
         }
+
+        // BUGFIX-P2 #55: TRY_BEGIN 隐式异常边——TRY_BEGIN 不是终结指令（不改变块分割），
+        // 但它声明了 try 块的 catch handler。若块内任一指令抛异常，控制流跳转到 catch label。
+        // 扫描本节点所有指令，为每个 TRY_BEGIN 添加到 catch handler 块的隐式边。
+        for (size_t ii = node.startInstr; ii < node.endInstr; ++ii) {
+            const auto& scanInstr = blk.instructions[ii];
+            if (scanInstr.op == IROp::TRY_BEGIN && !scanInstr.operands.empty()) {
+                uint32_t catchLabel = scanInstr.operands[0].index;
+                auto cit = labelToNode_.find(catchLabel);
+                if (cit != labelToNode_.end()) {
+                    // 避免重复边
+                    bool alreadyExists = false;
+                    for (uint32_t s : node.succs) {
+                        if (s == cit->second) { alreadyExists = true; break; }
+                    }
+                    if (!alreadyExists) {
+                        node.succs.push_back(cit->second);
+                    }
+                }
+            }
+        }
     }
 
     // 阶段 3：从后继边构建前驱边
@@ -695,13 +716,9 @@ bool ssaConstructPass(IRFunction& ir) {
 
             if (instr.op == IROp::STORE_LOCAL && instr.operands.size() >= 2) {
                 uint32_t slot = instr.operands[0].index;
+                // Bug #86 fix: 上方循环已对所有 VIRTUAL 操作数（含 operands[1]）
+                // 统一应用 vregRepl，此处不再重复查找，避免双重替换语义错误。
                 uint32_t srcVReg = instr.operands[1].index;
-                // 应用替换后的 src
-                auto rit = vregRepl.find(srcVReg);
-                if (rit != vregRepl.end()) {
-                    instr.operands[1].index = rit->second;
-                    srcVReg = rit->second;
-                }
                 slotStacks[slot].push_back(srcVReg);
                 pushedSlots.push_back(slot);
             } else if (instr.op == IROp::LOAD_LOCAL && instr.operands.size() >= 2) {
@@ -793,39 +810,36 @@ bool ssaDestructPass(IRFunction& ir) {
     // 确保 STORE_LOCAL 插入在前驱块的正确位置（终结指令之前或 fall-through 块末尾）。
     IRCFG cfg(ir);
 
-    // 对每个块的 PHI 进行处理
-    // 由于插入 STORE_LOCAL 会改变索引，逐块处理并重建指令列表
+    // BUGFIX-P1 (#25): 两阶段处理，避免使用过期 CFG 索引。
+    // 原实现在处理每个 PHI 块时边收集边向前驱块插入 STORE_LOCAL，改变了指令
+    // 数量，但函数入口构建的 CFG 的 startInstr/endInstr 未更新；后续 PHI 若引用
+    // 已被修改的前驱块，会使用过期索引定位终结指令，导致 STORE_LOCAL 插入到
+    // 错误位置。修复：
+    //   阶段 1：在任何修改发生前，遍历所有 PHI，使用新鲜 CFG 收集待插入的
+    //           STORE_LOCAL 信息（目标块索引、终结指令位置、slot、源 vreg）。
+    //   阶段 2：按 (blockIdx, position) 降序插入，靠后的插入不会使靠前位置失效。
     bool modified = false;
-    for (auto& blk : ir.blocks) {
-        std::vector<IRInstruction> newInstrs;
-        newInstrs.reserve(blk.instructions.size());
 
-        // 收集本块的 PHI 指令
-        std::vector<const IRInstruction*> phis;
+    // 阶段 1：收集所有待插入的 STORE_LOCAL（此时 CFG 仍与当前 IR 一致）
+    struct PendingStore {
+        size_t blockIdx;
+        size_t position;
+        std::vector<std::pair<uint32_t, uint32_t>> stores; // (slot, vreg)
+    };
+    std::map<std::pair<size_t, size_t>, std::vector<std::pair<uint32_t, uint32_t>>> predStores;
+
+    for (const auto& blk : ir.blocks) {
         for (const auto& instr : blk.instructions) {
-            if (instr.op == IROp::PHI) {
-                phis.push_back(&instr);
-            }
-        }
-
-        if (phis.empty())
-            continue;
-
-        // 为每个前驱块收集需要插入的 STORE_LOCAL
-        // predStores[(blockIdx, insertBeforeIdx)] = list of (slot, vreg)
-        std::map<std::pair<size_t, size_t>, std::vector<std::pair<uint32_t, uint32_t>>> predStores;
-
-        for (const auto* phi : phis) {
-            if (phi->operands.size() < 2)
+            if (instr.op != IROp::PHI)
                 continue;
-            uint32_t destVReg = phi->operands[0].index;
-            (void)destVReg; // ssaDestructPass 不需要 dest，仅 slot 和 pred vreg
-            uint32_t slot = phi->operands[1].index;
+            if (instr.operands.size() < 2)
+                continue;
+            uint32_t slot = instr.operands[1].index;
 
             // 遍历 (pred_node_id, vreg) 对——pred_node_id 以 IMM_UINT 存储
-            for (size_t k = 2; k + 1 < phi->operands.size(); k += 2) {
-                uint32_t predNodeId = phi->operands[k].index;
-                uint32_t vreg = phi->operands[k + 1].index;
+            for (size_t k = 2; k + 1 < instr.operands.size(); k += 2) {
+                uint32_t predNodeId = instr.operands[k].index;
+                uint32_t vreg = instr.operands[k + 1].index;
 
                 if (predNodeId >= cfg.size())
                     continue;
@@ -834,11 +848,8 @@ bool ssaDestructPass(IRFunction& ir) {
                 size_t predBlockIdx = predNode.sourceBlockIdx;
                 const auto& predBlk = ir.blocks[predBlockIdx];
 
-                // 仅在 predNode 的指令范围 [startInstr, endInstr) 内搜索终结指令
-                // P2-10 fix3: 原 labelPos 方案从 LABEL 位置向前搜索至 IRBasicBlock 末尾，
-                // 跨越 CFG 节点边界。现在严格限制在 predNode 的指令范围内，确保
-                // fall-through 块（无终结指令）的 insertBefore = endInstr（节点末尾），
-                // 而非误入下一个 CFG 节点的终结指令。
+                // 仅在 predNode 的指令范围 [startInstr, endInstr) 内搜索终结指令。
+                // fall-through 块（无终结指令）的 insertBefore = endInstr（节点末尾）。
                 size_t insertBefore = predNode.endInstr;
                 for (size_t i = predNode.startInstr; i < predNode.endInstr; ++i) {
                     if (isTerminatorOp(predBlk.instructions[i].op)) {
@@ -849,35 +860,37 @@ bool ssaDestructPass(IRFunction& ir) {
                 predStores[{predBlockIdx, insertBefore}].push_back({slot, vreg});
             }
         }
+    }
 
-        // 在前驱块插入 STORE_LOCAL
-        // P2-10 fix: predStores 按 (blockIdx, insertBeforeIdx) 升序排列。对于单块 IR
-        // （AstIRBuilder 产出的常见形态），所有前驱在同一 ir.blocks[0] 中，若按
-        // 升序插入，低位置插入后高位置索引偏移导致后续 STORE_LOCAL 插入到错误位置，
-        // 破坏循环结构（如嵌套循环的 j<3 条件被覆盖）。
-        // 修复：按 insertBeforeIdx 降序处理，高位置先插入不影响低位置索引。
-        {
-            std::vector<std::pair<std::pair<size_t, size_t>, std::vector<std::pair<uint32_t, uint32_t>>>> sortedStores(
-                predStores.begin(), predStores.end());
-            std::sort(sortedStores.begin(), sortedStores.end(), [](const auto& a, const auto& b) {
-                if (a.first.first != b.first.first)
-                    return a.first.first > b.first.first; // blockIdx 降序（不同块互不影响）
-                return a.first.second > b.first.second;   // insertBeforeIdx 降序
-            });
-            for (auto& [key, stores] : sortedStores) {
-                auto& targetBlock = ir.blocks[key.first];
-                size_t insertBefore = key.second;
-                size_t offset = 0;
-                for (auto& [slot, vreg] : stores) {
-                    IRInstruction storeInstr(IROp::STORE_LOCAL, {IROperand::local(slot), IROperand::vreg(vreg)}, 0);
-                    targetBlock.instructions.insert(targetBlock.instructions.begin() + insertBefore + offset,
-                                                    std::move(storeInstr));
-                    ++offset;
-                }
+    // 阶段 2：按 (blockIdx, position) 降序插入 STORE_LOCAL。
+    // 降序保证靠后/靠高位置的插入不会使靠前/靠低位置的索引失效。
+    {
+        std::vector<PendingStore> sortedStores;
+        sortedStores.reserve(predStores.size());
+        for (auto& [key, stores] : predStores) {
+            sortedStores.push_back(PendingStore{key.first, key.second, std::move(stores)});
+        }
+        std::sort(sortedStores.begin(), sortedStores.end(), [](const PendingStore& a, const PendingStore& b) {
+            if (a.blockIdx != b.blockIdx)
+                return a.blockIdx > b.blockIdx; // blockIdx 降序（不同块互不影响）
+            return a.position > b.position;     // position 降序
+        });
+        for (auto& ps : sortedStores) {
+            auto& targetBlock = ir.blocks[ps.blockIdx];
+            size_t offset = 0;
+            for (auto& [slot, vreg] : ps.stores) {
+                IRInstruction storeInstr(IROp::STORE_LOCAL, {IROperand::local(slot), IROperand::vreg(vreg)}, 0);
+                targetBlock.instructions.insert(targetBlock.instructions.begin() + ps.position + offset,
+                                                std::move(storeInstr));
+                ++offset;
             }
         }
+    }
 
-        // 替换 PHI 为 LOAD_LOCAL
+    // 阶段 3：将所有 PHI 替换为 LOAD_LOCAL（不改变指令数量，不影响已插入位置）
+    for (auto& blk : ir.blocks) {
+        std::vector<IRInstruction> newInstrs;
+        newInstrs.reserve(blk.instructions.size());
         for (const auto& instr : blk.instructions) {
             if (instr.op == IROp::PHI) {
                 if (instr.operands.size() >= 2) {
@@ -1163,6 +1176,18 @@ bool inlinePass(IRModule& module) {
             if (instr.op == IROp::YIELD)
                 return false;
             ++count;
+        }
+        // BUGFIX-P2 #58: 若 callee 含 STORE_LOCAL 写入参数槽位（slot < arity），
+        // 说明参数被重新赋值。内联后参数映射（LOAD_LOCAL → 实参 vreg）无法正确
+        // 处理后续对同一参数的读取（会读到 caller 的槽位而非更新后的值），拒绝内联。
+        // STORE_LOCAL operands: [slot, src_vreg]，slot 在 operands[0]。
+        for (const auto& instr2 : instrs) {
+            if (instr2.op == IROp::STORE_LOCAL &&
+                !instr2.operands.empty() &&
+                instr2.operands[0].kind == IROperandKind::LOCAL_SLOT &&
+                instr2.operands[0].index < static_cast<uint32_t>(fn.arity)) {
+                return false; // 参数被重新赋值，不可内联
+            }
         }
         return count <= kInlineThreshold;
     };

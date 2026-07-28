@@ -41,9 +41,15 @@ void GcManager::registerTracked(RefCounted* obj) {
     }
     obj->gcTracked_ = true;
     // BUG-003 fix: 增量分配计数 + 阈值触发，避免长时间运行函数中循环引用累积
-    // 导致的内存峰值。checkIncrementalGc 内部有 gcInProgress_ 防递归保护。
+    // 导致的内存峰值。
+    // P0 fix: 不再直接调用 checkIncrementalGc()——容器构造函数体内调用
+    // registerTracked 时新容器尚未加入 roots，若此时触发 GC 会被误回收。
+    // 改为设置 pendingIncrementalGc_ 标志，由 Interpreter 在语句边界
+    // （构造完成后）调用 checkPendingGc() 安全触发。
     ++allocationsSinceLastGc_;
-    checkIncrementalGc();
+    if (!gcInProgress_ && allocationsSinceLastGc_ >= gcAllocationThreshold_ && gcTriggerCallback_) {
+        pendingIncrementalGc_ = true;
+    }
 }
 
 void GcManager::checkIncrementalGc() {
@@ -67,6 +73,16 @@ void GcManager::checkIncrementalGc() {
         throw;
     }
     gcInProgress_ = false;
+}
+
+void GcManager::checkPendingGc() {
+    // P0 fix: 供 Interpreter 在语句边界（容器构造完成后）调用。
+    // 若 registerTracked 期间累积了待触发的增量 GC 请求，此处安全执行。
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (pendingIncrementalGc_) {
+        pendingIncrementalGc_ = false;
+        checkIncrementalGc();
+    }
 }
 
 void GcManager::onDestroyed(RefCounted* obj) {
@@ -164,6 +180,20 @@ void GcManager::markValue(const Value& v, std::unordered_set<const void*>& marke
             }
             break;
         }
+        case ValueType::VAL_COROUTINE: {
+            // AUDIT-R3 P1-6 fix: 协程持有 args（调用参数）/currentValueBox（最近
+            // yield 值）/vmClosureBox（闭包值），均可能引用被跟踪容器。原实现
+            // 未遍历——仅通过挂起协程可达的循环容器在 mark 阶段不可达，
+            // sweep 会清空其元素，协程恢复后拿到被掉空的容器。
+            const auto* cd = cur->box_.asPtr<Value::CoroutineData>();
+            for (const auto& a : cd->args)
+                worklist.push_back(&a);
+            for (const auto& cv : cd->currentValueBox)
+                worklist.push_back(&cv);
+            for (const auto& cb : cd->vmClosureBox)
+                worklist.push_back(&cb);
+            break;
+        }
         case ValueType::VAL_STRING:
         case ValueType::VAL_INT:
             // 叶子节点，无子引用
@@ -236,6 +266,17 @@ void GcManager::collectCycle(const std::vector<const void*>& roots) {
                 for (const auto& f : fields) {
                     markValue(f, marked);
                 }
+                break;
+            }
+            case ValueType::VAL_COROUTINE: {
+                // AUDIT-R3 P1-6 fix: 协程作为根时，标记其持有的参数/yield 值/闭包值
+                const auto* cd = static_cast<const Value::CoroutineData*>(rootPtr);
+                for (const auto& a : cd->args)
+                    markValue(a, marked);
+                for (const auto& v : cd->currentValueBox)
+                    markValue(v, marked);
+                for (const auto& v : cd->vmClosureBox)
+                    markValue(v, marked);
                 break;
             }
             default:
@@ -372,9 +413,11 @@ void GcManager::collectCycle(const std::vector<const void*>& roots) {
     tracked_ = std::move(survivors);
     // AUDIT-P1-CORRECT fix: 用 survivors 重建 aliveSet_，维持不变量
     // （aliveSet_ = tracked_ 中仍存活的对象集合）。原实现仅 clear 未重建，
-    // 导致下一轮 collectCycle 的 Phase 2 将 survivors 误判为"已销毁"而跳过 sweep，
+    // 导致下一轮 collectCycle 的 Phase 2 将 survivors 误判为“已销毁”而跳过 sweep，
     // survivors 变为不可达循环孤岛时无法被回收 → 永久内存泄漏。
     aliveSet_.clear();
+    // PERF: 预分配桶数，避免重建时频繁 rehash（tracked_ 通常 1000+ 元素）。
+    aliveSet_.reserve(tracked_.size());
     for (RefCounted* obj : tracked_) {
         aliveSet_.insert(obj);
     }
@@ -397,6 +440,7 @@ void GcManager::reset() {
     // BUG-003 fix: 同步重置分配计数，避免 reset 后立即触发误增量 GC
     allocationsSinceLastGc_ = 0;
     gcInProgress_ = false;
+    pendingIncrementalGc_ = false; // P0 fix: 同步清除延迟触发标志
     // R133 fix: 同步重置 GC 统计计数器。reset() 语义为"完全重置"，
     // 但原实现遗漏 totalGcCount_/lastMarkedCount_/lastCollectedCount_，
     // 导致测试隔离失败（前序测试累计的统计值污染后续测试断言）。
@@ -412,6 +456,7 @@ void GcManager::reset() {
     // 后续后端执行触发 checkIncrementalGc 时调用悬垂回调 → UAF。
     // 配合 Interpreter 析构函数的清除（根因修复）双重保护。
     gcTriggerCallback_ = nullptr;
+    gcTriggerOwner_ = nullptr; // AUDIT-R3 P2-9 fix: owner 令牌同步清空
 }
 
 // P0-1 fix: 以下访问器全部加锁，消除 UI 线程读取与 worker 线程写入的数据竞争。
@@ -420,26 +465,42 @@ size_t GcManager::trackedCount() const {
     return tracked_.size();
 }
 
-void GcManager::setGcTriggerCallback(std::function<void()> cb) {
+void GcManager::setGcTriggerCallback(std::function<void()> cb, const void* owner) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     gcTriggerCallback_ = std::move(cb);
+    // AUDIT-R3 P2-9 fix: 记录所有者令牌（回调为空时同步清空 owner）
+    gcTriggerOwner_ = gcTriggerCallback_ ? owner : nullptr;
+}
+
+void GcManager::clearGcTriggerCallbackIfOwner(const void* owner) {
+    // AUDIT-R3 P2-9 fix: 仅当回调仍属于 owner 时才清除——若已被后构造的
+    // 实例覆盖，先构造者析构不得清掉存活实例的回调。
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (gcTriggerOwner_ == owner) {
+        gcTriggerCallback_ = nullptr;
+        gcTriggerOwner_ = nullptr;
+    }
 }
 
 // P2-9 fix: CallbackSuppressor 实现。
 // 构造时原子保存 gcTriggerCallback_ 并置空，析构时恢复。
 // 嵌套场景：每个实例独立持有 saved_ 副本，析构按栈序恢复，
 // 最内层析构恢复最外层 suppressor 置空前的回调（即 Interpreter 的回调）。
+// AUDIT-R3 P2-9 fix: owner 令牌随回调同步保存/恢复，保持归属一致。
 GcManager::CallbackSuppressor::CallbackSuppressor() {
     auto& gc = GcManager::instance();
     std::lock_guard<std::recursive_mutex> lock(gc.mutex_);
     saved_ = std::move(gc.gcTriggerCallback_);
+    savedOwner_ = gc.gcTriggerOwner_;
     gc.gcTriggerCallback_ = nullptr;
+    gc.gcTriggerOwner_ = nullptr;
 }
 
 GcManager::CallbackSuppressor::~CallbackSuppressor() {
     auto& gc = GcManager::instance();
     std::lock_guard<std::recursive_mutex> lock(gc.mutex_);
     gc.gcTriggerCallback_ = std::move(saved_);
+    gc.gcTriggerOwner_ = savedOwner_;
 }
 
 size_t GcManager::allocationsSinceLastGc() const {
@@ -450,6 +511,11 @@ size_t GcManager::allocationsSinceLastGc() const {
 void GcManager::setGcAllocationThreshold(size_t threshold) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     gcAllocationThreshold_ = threshold;
+}
+
+size_t GcManager::gcAllocationThreshold() const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    return gcAllocationThreshold_;
 }
 
 GcPhase GcManager::currentPhase() const {

@@ -63,6 +63,7 @@
  * 尚不支持（截至 R166）：
  *   - 运行时错误不可捕获：除零/溢出/类型错误等 runtimeError 不触发 try/catch
  *     （与 StackVM 行为一致：try/catch 仅捕获显式 throw，不捕获运行时错误）
+ *   - ARM64 移植（当前仅 x86-64）
  *
  * 教学价值：
  *   - 展示 JIT 编译原理：字节码 → 本地代码的直接映射
@@ -138,6 +139,8 @@
 
 #include "compiler/Bytecode.h"
 #include <asmjit/asmjit.h>
+#include <atomic>
+#include <cstddef> // offsetof
 #include <functional>
 #include <map>
 #include <memory>
@@ -277,10 +280,79 @@ struct JitContext {
     // R162: 名称变量映射（OP_DEFINE_VAR/OP_GET_VAR/OP_SET_VAR/OP_DELETE_VAR）
     // 指向 JITBackend::globals_（unordered_map<string, Value>），catch 变量等无 slot 的名称变量走此路径
     void* globalsPtr = nullptr; // offset 240: unordered_map<string, Value>* 名称变量表
-    // P2-9: JIT GC 集成采用 CallbackSuppressor 方案（非 safepoint 轮询），
-    //   JITBackend::execute() 入口抑制增量 GC 回调，无需 JIT 代码内轮询。
-    //   详见文件头部"GC 集成"章节与 GcManager::CallbackSuppressor。
+    // Safepoint GC 轮询机制（替代原 CallbackSuppressor 完全抑制方案）
+    // JIT 代码在 OP_LOOP 回边处轮询此标志，非零时调用 jitSafepointGc 收集 roots 并执行 GC。
+    // GcManager 的增量触发回调被重定向为设置此标志（而非直接调用 collectCycle）。
+    std::atomic<int>* gcNeededFlag = nullptr; // offset 248: 原子 GC 请求标志指针
 };
+
+// ============================================================
+// JIT codegen named constants
+// ------------------------------------------------------------
+// JitContext 字段偏移与 prologue 栈布局的命名常量。
+// JITCodeGen.cpp 通过硬编码偏移访问 JitContext 字段，此处提供命名常量
+// 替代魔法数字。下方 static_assert 在编译期验证与 offsetof 的一致性，
+// 任何 JitContext 字段重排都会立即在此捕获。
+// ============================================================
+namespace jit_offset {
+    constexpr int hasError = 8;
+    constexpr int globalSlots = 24;
+    constexpr int frames = 32;
+    constexpr int frameCount = 40;
+    constexpr int stackTop = 48;
+    constexpr int methodEntryPtr = 72;
+    constexpr int methodLocalCount = 80;
+    constexpr int callerBp = 96;
+    constexpr int chunkCallCounts = 104; // R150: per-chunk 调用计数数组指针
+    constexpr int hotThresholds = 112;   // R151: per-chunk 热点阈值数组指针
+    constexpr int recompiledFlags = 120; // R151: per-chunk 重编译标志数组指针
+    constexpr int typeFeedback = 128;
+    constexpr int lastMutatedReceiverPtr = 144;
+    constexpr int currentBp = 160;
+    constexpr int osrLoopCountsPtr = 168;      // R157: per-chunk 循环回边计数数组指针
+    constexpr int osrLoopThresholdsPtr = 176;  // R157: per-chunk OSR 阈值数组指针
+    constexpr int osrRecompiledFlagsPtr = 184; // R157: per-chunk OSR 已触发标志数组指针
+    constexpr int osrSavedBp = 192;
+    constexpr int osrSavedSp = 200;
+    constexpr int osrEntryPoint = 208;     // R158: OSR 入口点地址邮箱
+    constexpr int deoptEntryPoint = 216;   // R158: 反优化 Tier 1 入口点邮箱
+    constexpr int memberGetICPtr = 232;    // R160: inline cache 数组指针
+    constexpr int globalsPtr = 240;        // R162: 名称变量表指针
+    constexpr int gcNeededFlag = 248;      // Safepoint GC 请求标志指针
+} // namespace jit_offset
+static_assert(offsetof(JitContext, hasError) == jit_offset::hasError, "hasError offset");
+static_assert(offsetof(JitContext, globalSlots) == jit_offset::globalSlots, "globalSlots offset");
+static_assert(offsetof(JitContext, frames) == jit_offset::frames, "frames offset");
+static_assert(offsetof(JitContext, frameCount) == jit_offset::frameCount, "frameCount offset");
+static_assert(offsetof(JitContext, stackTop) == jit_offset::stackTop, "stackTop offset");
+static_assert(offsetof(JitContext, methodEntryPtr) == jit_offset::methodEntryPtr, "methodEntryPtr offset");
+static_assert(offsetof(JitContext, methodLocalCount) == jit_offset::methodLocalCount, "methodLocalCount offset");
+static_assert(offsetof(JitContext, callerBp) == jit_offset::callerBp, "callerBp offset");
+static_assert(offsetof(JitContext, chunkCallCounts) == jit_offset::chunkCallCounts, "chunkCallCounts offset");
+static_assert(offsetof(JitContext, hotThresholds) == jit_offset::hotThresholds, "hotThresholds offset");
+static_assert(offsetof(JitContext, recompiledFlags) == jit_offset::recompiledFlags, "recompiledFlags offset");
+static_assert(offsetof(JitContext, typeFeedback) == jit_offset::typeFeedback, "typeFeedback offset");
+static_assert(offsetof(JitContext, lastMutatedReceiverPtr) == jit_offset::lastMutatedReceiverPtr, "lastMutatedReceiverPtr offset");
+static_assert(offsetof(JitContext, currentBp) == jit_offset::currentBp, "currentBp offset");
+static_assert(offsetof(JitContext, osrLoopCountsPtr) == jit_offset::osrLoopCountsPtr, "osrLoopCountsPtr offset");
+static_assert(offsetof(JitContext, osrLoopThresholdsPtr) == jit_offset::osrLoopThresholdsPtr, "osrLoopThresholdsPtr offset");
+static_assert(offsetof(JitContext, osrRecompiledFlagsPtr) == jit_offset::osrRecompiledFlagsPtr, "osrRecompiledFlagsPtr offset");
+static_assert(offsetof(JitContext, osrSavedBp) == jit_offset::osrSavedBp, "osrSavedBp offset");
+static_assert(offsetof(JitContext, osrSavedSp) == jit_offset::osrSavedSp, "osrSavedSp offset");
+static_assert(offsetof(JitContext, osrEntryPoint) == jit_offset::osrEntryPoint, "osrEntryPoint offset");
+static_assert(offsetof(JitContext, deoptEntryPoint) == jit_offset::deoptEntryPoint, "deoptEntryPoint offset");
+static_assert(offsetof(JitContext, memberGetICPtr) == jit_offset::memberGetICPtr, "memberGetICPtr offset");
+static_assert(offsetof(JitContext, globalsPtr) == jit_offset::globalsPtr, "globalsPtr offset");
+static_assert(offsetof(JitContext, gcNeededFlag) == jit_offset::gcNeededFlag, "gcNeededFlag offset");
+
+// Prologue 栈布局常量
+// 48 = 5 个 callee-saved 寄存器 (r12/r13/r14/r15/rbx) × 8B + 8B 对齐填充
+// 8192 = 操作数栈 1024 × 8B
+constexpr int kJitCalleeSavedArea = 48;
+constexpr int kJitOperandStackBytes = 8192;
+// Windows x64 ABI shadow space / Linux 对齐填充
+constexpr int kJitWinShadowSpace = 32;
+constexpr int kJitLinuxCallAlign = 8;
 
 /// R160: Per-call-site inline cache entry for OP_MEMBER_GET
 /// 单态（monomorphic）inline cache：缓存 (Instance 内部指针, 字段 Value 指针)。
@@ -443,6 +515,16 @@ public:
         icMissCount_ = 0;
     }
 
+    /// 拓展二期·教学（字节码↔汇编对照）：启用汇编文本捕获。
+    /// 须在 execute 前调用；启用后 compileAllChunks 会在 CodeHolder 上挂
+    /// asmjit::StringLogger，捕获全部发射的 x86-64 汇编文本（含标签/注释）。
+    /// 仅覆盖主编译路径（lazy/特化重编译的独立 CodeHolder 不捕获，
+    /// 教学展示以首次全量编译为准）。
+    void setAsmCapture(bool enabled) { asmCaptureEnabled_ = enabled; }
+
+    /// 拓展二期：获取捕获的汇编文本（setAsmCapture(true) + execute 后有效）
+    const std::string& getCapturedAsm() const { return capturedAsm_; }
+
     /// R157: 触发 lazy compilation（jitCallByName 通过 backendPtr 调用）
     /// 在 lazyMode_ 为 true 且函数首次调用时触发，编译单个 chunk 到独立 CodeHolder。
     /// @param chunkName 待 lazy 编译的 chunk 名称
@@ -547,6 +629,111 @@ private:
     /// 设置编译错误（JIT 编译期间）
     void compileError(const std::string& msg);
 
+    // ============================================================
+    // JitFuncInfo：compileAllChunks 的 funcTable 条目类型
+    // ------------------------------------------------------------
+    // 原 compileAllChunks 局部 struct，提取到类定义供 emitCallDispatch helper 使用。
+    // 含入口 Label（OP_CALL jmp 目标）+ 元信息（localCount/arity/hasInnerClosures）。
+    // ============================================================
+    struct JitFuncInfo {
+        asmjit::Label entryLabel;
+        int localCount = 0;
+        int arity = 0;
+        int requiredArity = 0;                ///< R149: 必需参数个数（默认参数支持）
+        const BytecodeChunk* chunk = nullptr; ///< R155: OP_CLOSURE 构建闭包值时获取 chunkPtr 用
+        bool hasInnerClosures = false;        ///< R161 perf: 函数体是否含 OP_CLOSURE（fast path 门控）
+    };
+
+    // ============================================================
+    // JIT codegen 辅助函数（从 compileAllChunks 的 lambda 提取为成员函数）
+    // ------------------------------------------------------------
+    // 原 compileAllChunks 内嵌 25+ 个 lambda（~1100 行），新增 OpCode 支持需在
+    // 3000+ 行函数中定位，维护性差。现提取为独立成员函数，实现移至 JITCodeGenHelpers.cpp。
+    // 约定：所有 emit* 函数接收 asmjit::x86::Assembler& 和必要的 Label 参数
+    //（Label 是轻量 ID 包装，按值传递）。错误处理用的 epilogue 标签按值传递。
+    // 依赖成员状态的函数（emitCheckInt 用 currentChunkIdx_、emitMemberGet 用 nextCallSiteId_）
+    // 通过成员变量共享，无需额外参数。
+    // ============================================================
+    ///@{
+    void emitCallBinaryHelper(asmjit::x86::Assembler& a, asmjit::Label epilogue, void* fnPtr, bool needCtx,
+                              bool checkError);
+    void emitCallUnaryHelper(asmjit::x86::Assembler& a, void* fnPtr);
+    void emitCallOrderedCompare(asmjit::x86::Assembler& a, void* fnPtr, int64_t cmpType);
+    void emitBuildArray(asmjit::x86::Assembler& a, asmjit::Label epilogue, uint8_t count);
+    void emitIndexGet(asmjit::x86::Assembler& a, asmjit::Label epilogue);
+    void emitIndexSetLocal(asmjit::x86::Assembler& a, asmjit::Label epilogue, uint8_t slot);
+    void emitBuildDict(asmjit::x86::Assembler& a, asmjit::Label epilogue, uint8_t pairCount);
+    void emitBuildTuple(asmjit::x86::Assembler& a, asmjit::Label epilogue, uint8_t count);
+    void emitIndexSetGlobal(asmjit::x86::Assembler& a, asmjit::Label epilogue, int slot);
+    void emitClassNew(asmjit::x86::Assembler& a, asmjit::Label epilogue, const char* className, uint8_t argCount);
+    void emitInitField(asmjit::x86::Assembler& a, asmjit::Label epilogue, const char* fieldName);
+    void emitDefineClass(asmjit::x86::Assembler& a, asmjit::Label epilogue, const char* className,
+                         const char* superClassName);
+    void emitMemberGet(asmjit::x86::Assembler& a, asmjit::Label epilogue, const char* fieldName);
+    void emitMemberSetVar(asmjit::x86::Assembler& a, asmjit::Label epilogue, int slot, const char* fieldName);
+    void emitMemberSetLocal(asmjit::x86::Assembler& a, asmjit::Label epilogue, uint8_t slot, const char* fieldName);
+    void emitMethodCall(asmjit::x86::Assembler& a, asmjit::Label epilogue, const char* methodName, uint8_t argCount,
+                        uint8_t receiverLocalSlotByte, int receiverGlobalSlot, bool isSuperCall,
+                        const char* superClassName);
+    void emitCheckInt(asmjit::x86::Assembler& a, asmjit::x86::Gp val, asmjit::Label failLabel);
+    void emitRecordTypeFeedback(asmjit::x86::Assembler& a, asmjit::x86::Gp val, size_t chunkIdx);
+    void emitFloatBinaryArith(asmjit::x86::Assembler& a, int op, asmjit::Label failLabel, asmjit::Label endLabel,
+                              size_t chunkIdx, asmjit::Label divByZeroLabel = {});
+    void emitLen(asmjit::x86::Assembler& a, asmjit::Label epilogue);
+    void emitDupN(asmjit::x86::Assembler& a, uint8_t depth);
+    void emitLoadMutated(asmjit::x86::Assembler& a);
+    void emitIndexSet(asmjit::x86::Assembler& a, asmjit::Label epilogue);
+    void emitWritebackVar(asmjit::x86::Assembler& a, int slot);
+    void emitWritebackLocal(asmjit::x86::Assembler& a, uint8_t slot);
+    /// 扫描 chunk 统计 OP_MEMBER_GET 数量，累加到 nextCallSiteId_
+    void countMemberGetInChunk(const BytecodeChunk& chunk);
+    /// 扫描 chunk 收集 OP_DEFINE_CLASS 类名到 classNameSet_
+    void collectClassNamesFromChunk(const BytecodeChunk& chunk);
+
+    // ============================================================
+    // P0 重构：大型 OpCode case 提取为 emit* 子方法
+    // ------------------------------------------------------------
+    // 原 compileAllChunks 单函数 ~3930 行，圈复杂度 >200。按 OpCode 类别提取
+    // 大型 case（>70 行）为独立成员函数，实现移至 JITCodeGenHelpers.cpp。
+    // 约定：验证（操作数越界/常量池越界）保留在 case body，helper 仅负责 codegen。
+    // 需要编译期上下文（funcTable/jumpLabels/chunkIdx）的 helper 通过参数传入。
+    // ============================================================
+    ///@{
+    /// OP_CALL 代码生成（含 fast path / mailbox path 双路径分派）
+    /// @param funcIt funcTable 中命中的条目（调用前已验证非 end）
+    /// @param argCount 实参个数
+    /// @return true 走快速路径（ip += 4 由调用方处理），false 走 mailbox 路径
+    bool emitCallDispatch(asmjit::x86::Assembler& a, asmjit::Label epilogue, const JitFuncInfo& info,
+                          uint8_t argCount);
+    /// OP_CALL mailbox 路径（lazy mode / 有默认参数 / 有 upvalues / 有内部闭包）
+    void emitCallMailbox(asmjit::x86::Assembler& a, asmjit::Label epilogue, const char* funNamePtr, uint8_t argCount);
+    /// OP_CALL_EXPR 代码生成（闭包值调用，邮箱模式）
+    void emitCallExpr(asmjit::x86::Assembler& a, asmjit::Label epilogue, uint8_t argCount);
+    /// OP_RETURN 代码生成（含 close upvalue + 方法调用 writeBack + 帧恢复）
+    void emitReturn(asmjit::x86::Assembler& a, asmjit::Label epilogue);
+    /// OP_LOOP 代码生成（含 safepoint GC 轮询 + OSR 回边计数 + OSR 入口点生成）
+    /// @param jumpTarget 循环回边目标 Label（调用前已验证存在）
+    /// @param chunkIdx 当前 chunk 索引（OSR 计数器寻址用）
+    void emitLoop(asmjit::x86::Assembler& a, asmjit::Label epilogue, asmjit::Label jumpTarget, size_t chunkIdx);
+    /// OP_DIVIDE 代码生成（INT 原生路径 + FLOAT SSE2 路径 + 除零错误 + C++ 辅助回退）
+    void emitDivide(asmjit::x86::Assembler& a, asmjit::Label epilogue, size_t chunkIdx);
+    /// OP_MODULO 代码生成（INT 原生路径 + 除零错误 + C++ 辅助回退）
+    void emitModulo(asmjit::x86::Assembler& a, asmjit::Label epilogue, size_t chunkIdx);
+    /// OP_CLOSURE 代码生成（调用 jitCreateClosure 创建闭包值并压栈）
+    /// @param funNamePtr 函数名 C 字符串（指向 chunk.name，生命期跨 execute）
+    /// @param chunkPtr BytecodeChunk 指针（注册到闭包值）
+    /// @param upvalueCount upvalue 个数
+    /// @param upvalueDescs upvalue 描述符指针（指向字节码 ip+4）
+    void emitClosure(asmjit::x86::Assembler& a, asmjit::Label epilogue, const char* funNamePtr,
+                     const void* chunkPtr, uint8_t upvalueCount, const uint8_t* upvalueDescs);
+    ///@}
+
+    /// codegen 共享状态（原 compileAllChunks 局部变量，提取为成员供 helper 函数访问）
+    ///@{
+    uint64_t nextCallSiteId_ = 0; ///< OP_MEMBER_GET callSiteId 分配计数器（编译期，先统计后重置再分配）
+    size_t currentChunkIdx_ = 0;  ///< 当前编译的 chunk 索引（emitCheckInt/emitRecordTypeFeedback 反优化用）
+    ///@}
+
     asmjit::JitRuntime runtime_;        ///< JIT 内存分配器
     JitEntryFn currentEntry_ = nullptr; ///< R151: 当前已加载的 JIT 入口（execute 重复调用时释放旧代码）
     DiagnosticBag diagnostics_;         ///< 诊断包
@@ -601,6 +788,22 @@ private:
     /// R152: 特化版本 CodeHolder 持有的 JitEntryFn 内存所有权列表
     /// 析构时通过 runtime_.release 释放，避免内存泄漏
     std::vector<JitEntryFn> ownedSpecializedEntries_;
+
+    /// AUDIT-R4 BUG-12 fix: chunkName → 当前持有的特化代码块入口。
+    /// 同一 chunk 被重复特化时，旧块从 ownedSpecializedEntries_ 移入
+    /// retiredSpecializedEntries_，在下次 execute() 入口（无 JIT 代码运行的
+    /// 安全点）统一释放——原实现旧块滞留至析构，长会话反复去优化/再特化
+    /// 导致可执行内存单调增长。不在替换点立即释放：OSR 路径的特化发生
+    /// 在 JIT 执行期间，旧代码可能仍在本机调用栈上。
+    std::unordered_map<std::string, JitEntryFn> ownedSpecializedByChunk_;
+    std::vector<JitEntryFn> retiredSpecializedEntries_;
+
+    /// AUDIT-R4 BUG-12 fix: 登记新特化块所有权；若同名 chunk 已有旧块，
+    /// 将旧块退休（移入 retiredSpecializedEntries_ 待安全点释放）。
+    void registerSpecializedOwnership(const std::string& chunkName, JitEntryFn specializedEntry);
+
+    /// AUDIT-R4 BUG-12 fix: 在安全点（execute() 入口/析构）释放退休特化块。
+    void releaseRetiredSpecializedEntries();
 
     /// R152: 当前 CompileResult 引用（特化重编译时访问 chunk 数据用）
     /// execute() 入口赋值，compileChunkSpecialized 读取
@@ -662,7 +865,7 @@ public:
     /// R156: 闭包注册表（与 StackVM VM::functionClosures_ 对齐）
     /// OP_CLOSURE 时注册（jitCreateClosure 内部），OP_CALL 时查找提取 upvalues。
     /// 键是函数名，值是闭包值（含 VMClosureData.upvalues）。
-    /// StackVM executeCallFunction（VMCalls.cpp:632-637）通过此表传递 upvalues。
+    /// StackVM executeCallFunction（VMCalls.cpp executeCallFunction）通过此表传递 upvalues。
     std::unordered_map<std::string, Value> functionClosures_;
 
     /// R157: lazy compilation 模式标志（setLazyCompilation 设置）
@@ -763,7 +966,14 @@ public:
     /// R162: finally 续跳地址栈（与 StackVM pendingJumpStack_ 对齐）
     /// OP_PUSH_JUMP_TARGET push（JIT 代码地址），OP_FINALLY_END pop 并跳转。
     /// 异常传播时清空（异常中断 break/continue 续跳链）。
-    std::vector<void*> pendingJumpStack_;
+    /// AUDIT-R7 F1 fix: 条目附带 frameIndex，jitPopJumpTarget 只消费本帧条目并
+    /// 惰性丢弃已返回深帧残留（与三 VM 同构，防跨帧误跳——JIT 条目是机器地址，
+    /// 跨帧误跳后果更严重）。
+    struct JitPendingJump {
+        void* addr;
+        size_t frameIndex;
+    };
+    std::vector<JitPendingJump> pendingJumpStack_;
 
     /// R162: 名称变量表（与 StackVM globals_ 对齐）
     /// OP_DEFINE_VAR/OP_GET_VAR/OP_SET_VAR/OP_DELETE_VAR 操作此表
@@ -785,6 +995,10 @@ public:
     JitContext jitContext_; ///< 运行时上下文（传给 JIT 代码）
     std::string lastError_; ///< 最后的错误消息
     bool hasError_ = false; ///< 错误标志
+    std::atomic<int> gcNeededFlag_{0}; ///< Safepoint GC 请求标志（OP_LOOP 回边轮询）
+    // 拓展二期·教学：汇编文本捕获（setAsmCapture 启用，compileAllChunks 填充）
+    bool asmCaptureEnabled_ = false; ///< 是否在 CodeHolder 上挂 StringLogger
+    std::string capturedAsm_;        ///< 捕获的 x86-64 汇编文本
 };
 
 #endif // MINILANG_USE_JIT

@@ -14,7 +14,7 @@
 #include "interpreter/RuntimeExceptions.h"
 #include <iostream>
 #include <string>
-int main(int argc, char** argv) {
+int main(int /*argc*/, char** /*argv*/) { // W4 fix: 匿名参数抑制 C4100
     std::string src =
         "class A {\n"
         "  func foo() { super.bar(); }\n"

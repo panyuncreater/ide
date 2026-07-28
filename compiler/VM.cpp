@@ -5,6 +5,7 @@
 #include "common/RuntimeLimits.h"       // P3-14: NO_INDEX/NO_SLOT 哨兵常量
 #include "common/Utf8Utils.h"           // P0-4 fix: UTF-8 码位工具
 #include "interpreter/BuiltinMethods.h" // 共享纯函数层（len/contains/has）
+#include "interpreter/GcManager.h"      // AUDIT-R4 BUG-10: CallbackSuppressor
 #include "interpreter/NumericUtils.h"   // 共享溢出检查（B6 fix）
 #include <algorithm>
 #include <climits>
@@ -39,7 +40,11 @@ VM::VM() {
 
 void VM::push(const Value& val) {
     if (stack_.size() >= MAX_STACK_SIZE) {
-        runtimeError("栈溢出");
+        // AUDIT-R3 P1-1 fix: 改用 fatalError（不可捕获）——runtimeError 在活动 try
+        // 上下文中会转 throwException（改写 frame.ip 为 catchIp），而 push 是 void
+        // 语义、调用方（如 OP_CONSTANT）随后无条件 ip += n，执行点错位到
+        // catchIp+n——跳过 catch 首指令或落到指令中间解码垃圾操作码。
+        fatalError("栈溢出");
         return; // 溢出后不继续 push_back
     }
     stack_.push_back(val);
@@ -47,7 +52,7 @@ void VM::push(const Value& val) {
 
 void VM::push(Value&& val) {
     if (stack_.size() >= MAX_STACK_SIZE) {
-        runtimeError("栈溢出");
+        fatalError("栈溢出"); // AUDIT-R3 P1-1 fix: 同 const& 重载
         return;
     }
     stack_.push_back(std::move(val));
@@ -55,8 +60,11 @@ void VM::push(Value&& val) {
 
 Value VM::pop() {
     if (stack_.empty()) {
-        runtimeError("栈下溢");
-        hasError_ = true; // 栈下溢视为不可恢复错误
+        // AUDIT-R3 P2-1 fix: 改用 fatalError——原 runtimeError+hasError_ 组合在 try
+        // 上下文中先走 throwException（不写 diagnostics_、压入异常值、改写 ip）
+        // 再置 hasError_，导致 hasError() 为真但 getLastError() 返回空串，
+        // 且栈上残留异常值、ip 指向不再执行的 catchIp（状态不一致）。
+        fatalError("栈下溢");
         return Value::nullValue();
     }
     Value val = std::move(stack_.back());
@@ -80,11 +88,15 @@ const Value& VM::peek(size_t distance) const {
 
 Value& VM::peekRef(size_t distance) {
     // PERF-12 fix: 非 const peek 重载，允许直接修改栈槽
-    static Value nullSentinel; // 静态哨兵（与 const 版本一致）
+    // AUDIT-R3 P2-2 fix: 哨兵改为 thread_local 并在每次错误路径重置——原函数级
+    // static 可写 Value 被进程内所有 VM 实例共享，调用方忽略 hasError_ 继续写入
+    // 会污染全局哨兵，配合 R136 spawn 子线程构成跨实例写竞争。
+    static thread_local Value nullSentinel;
     if (distance >= stack_.size()) {
         Logger::Error(ErrorFormat::formatStd("VM 栈下溢: peekRef(distance={}) 但栈大小={}", distance, stack_.size()),
                       "VM");
         hasError_ = true;
+        nullSentinel = Value::nullValue(); // 重置，避免上次误写的脏值泄漏
         return nullSentinel;
     }
     return stack_[stack_.size() - 1 - distance];
@@ -93,12 +105,30 @@ Value& VM::peekRef(size_t distance) {
 void VM::popN(size_t n) {
     // PERF-12 fix: 批量 pop，一次 resize 替代多次 pop_back
     if (n > stack_.size()) {
-        runtimeError("栈下溢: popN");
-        hasError_ = true;
+        fatalError("栈下溢: popN"); // AUDIT-R3 P2-1 fix: 同 pop，不可捕获
         stack_.clear();
         return;
     }
     stack_.resize(stack_.size() - n);
+}
+
+// AUDIT-R3 P1-1/P2-1 fix: 不可捕获的内部不变量错误。
+// 与 runtimeError 的区别：跳过 try/catch 转换（不改写 frame.ip），直接
+// 置 hasError_ + 写 diagnostics_。用于 push/pop/popN/emplace 等 void 语义
+// 调用点——这些调用方无法感知"控制流已转移"，只能以终止执行兼容。
+VMResult VM::fatalError(const std::string& msg) {
+    hasError_ = true;
+    int errorLine = getCurrentLine();
+    int col = 0;
+    if (!frames_.empty()) {
+        const auto& frame = frames_.back();
+        if (frame.chunk && frame.ip < frame.chunk->columns.size()) {
+            col = frame.chunk->columns[frame.ip];
+        }
+    }
+    diagnostics_.addError(msg, errorLine, col, DiagSource::VM);
+    Logger::Error(ErrorFormat::formatWithLine(msg, errorLine), "VM");
+    return VMResult::VM_RUNTIME_ERROR;
 }
 
 VMResult VM::runtimeError(const std::string& msg, const std::string& diagCode) {
@@ -176,8 +206,7 @@ VMResult VM::throwException(Value thrownValue) {
             // 无更多帧 — 未捕获的异常
             // P2-5 fix: 限制异常值 toString 长度，防止循环引用对象导致超长输出
             std::string str = thrownValue.toString();
-            if (str.size() > 200)
-                str = str.substr(0, 200) + "...";
+            ErrorFormat::truncateForError(str);
             return runtimeError("未捕获的异常: " + str);
         }
 
@@ -658,6 +687,59 @@ std::unordered_map<std::string, Value> VM::getFrameLocalsAt(size_t frameIndex) c
     return result;
 }
 
+// ============================================================
+// 拓展·调试器 setVariable：调试暂停时写变量
+// ============================================================
+bool VM::setGlobalValue(const std::string& name, const Value& val) {
+    // 与 OP_*_VAR 写路径同查找链（globalSlots_ 优先，globals_ fallback）；
+    // 不新建变量，调试改值仅覆盖已存在的全局。
+    Value* target = resolveMutableGlobal(name);
+    if (!target)
+        return false;
+    *target = val;
+    return true;
+}
+
+bool VM::setFrameLocalAt(size_t frameIndex, const std::string& name, const Value& val) {
+    if (frameIndex >= frames_.size())
+        return false;
+    auto& frame = frames_[frameIndex];
+    if (!frame.chunk)
+        return false;
+    // 与 getFrameLocalsAt 镜像：先按 resolveSlotName(slot, ip) 反查局部槽位
+    const auto& chunk = *frame.chunk;
+    size_t bp = frame.basePointer;
+    size_t curIp = frame.ip;
+    for (size_t slot = 0; slot < static_cast<size_t>(chunk.localCount); ++slot) {
+        size_t stackIdx = bp + slot;
+        if (stackIdx >= stack_.size())
+            break;
+        if (chunk.resolveSlotName(slot, curIp) == name) {
+            stack_[stackIdx] = val;
+            return true;
+        }
+    }
+    // 槽位未命中：回退 upvalue（外层闭包变量）写入，与 getFrameLocalsAt
+    // 的 upvalue 读取分支镜像（closed 写 uv->value，open 写栈槽）
+    const auto& uvDescs = frame.chunk->upvalues;
+    for (size_t i = 0; i < uvDescs.size() && i < frame.upvalues.size(); ++i) {
+        if (uvDescs[i].name != name)
+            continue;
+        auto& uv = frame.upvalues[i];
+        if (!uv)
+            continue;
+        if (uv->isClosed) {
+            uv->value = val;
+            return true;
+        }
+        if (uv->stackSlot < stack_.size()) {
+            stack_[uv->stackSlot] = val;
+            return true;
+        }
+    }
+    return false;
+}
+
 void VM::setOutputCallback(std::function<void(const std::string&)> callback) {
     outputCallback_ = callback;
 }
@@ -902,7 +984,9 @@ VMResult VM::writeBackReceiver(uint16_t receiverVarIdx, uint8_t receiverLocalSlo
         }
         const std::string& recvName = chunk.constants[receiverVarIdx].stringVal();
         auto gsIt = globalNameToSlot_.find(recvName);
-        if (gsIt != globalNameToSlot_.end()) {
+        // AUDIT-R3 P2-3 fix: 补 slot 范围校验，与 resolveMutableGlobal 防御口径一致
+        if (gsIt != globalNameToSlot_.end() && gsIt->second >= 0 &&
+            gsIt->second < static_cast<int>(globalSlots_.size())) {
             globalSlots_[gsIt->second] = std::move(mutatedObj);
         } else {
             globals_[recvName] = std::move(mutatedObj);
@@ -1005,8 +1089,11 @@ VMResult VM::dispatchArrayBuiltin(const Value& obj, BuiltinMethod method, const 
         int64_t ri = args[0].intVal();
         // P2-9 fix: 使用 getMutableArrayRef 统一 COW 变异模式
         auto& arr = getMutableArrayRef(mutableObj);
+        // AUDIT-R5 BUG-07 fix: 补齐“有效范围”后缀，对齐 Interpreter（BuiltinMethods.cpp）
+        // 与索引访问路径的统一格式，三后端错误文本一致。
         if (ri < 0 || static_cast<size_t>(ri) >= arr.size())
-            return runtimeError(ErrorFormat::formatStd("数组索引越界: {}", static_cast<long long>(ri)),
+            return runtimeError(ErrorFormat::formatStd("数组索引越界: {}, 有效范围 [0, {})",
+                                                       static_cast<long long>(ri), arr.size()),
                                 DiagCodes::kIndexOutOfBounds);
         arr.erase(arr.begin() + static_cast<size_t>(ri));
     } else {
@@ -1151,7 +1238,7 @@ VMResult VM::dispatchStringBuiltin(const Value& obj, BuiltinMethod method, const
 
 // ============================================================
 // R136 dispatchSyncObjectBuiltin - 同步对象方法分发
-// channel.send/recv/tryRecv/close, mutex.lock/unlock/tryLock,
+// channel.send/recv/tryRecv/recvTimeout/close, mutex.lock/unlock/tryLock,
 // rwlock.readLock/readUnlock/writeLock/writeUnlock/tryReadLock/tryWriteLock,
 // thread.join/detach/isJoinable
 // 同步对象内部状态通过 shared_ptr<Inner> 共享，方法调用不修改 Value 本身（无需 writeBack）
@@ -1179,7 +1266,8 @@ VMResult VM::dispatchSyncObjectBuiltin(const Value& obj, const std::string& meth
     } catch (const RuntimeError& e) {
         // 接收者仍在栈顶，需 pop 保持栈平衡
         pop();
-        return runtimeError(e.what());
+        // AUDIT-R6 B3 fix: 透传共享层的稳定诊断码（原实现丢弃 e.code）
+        return runtimeError(e.what(), e.code);
     }
 
     // P3-A1: 异常穿透检测
@@ -1236,8 +1324,8 @@ void VM::initExecution(const CompileResult& result) {
     // P3: 清除函数调用缓存（functionChunks_ 地址已变）
     // PERF-14 fix: unordered_map 替代数组，clear() 即可
     callCache_.clear();
-    // P2: 清除全局变量缓存
-    globalCache_.clear();
+    // P2: 递增全局变量版本号（使 per-chunk varCache_ 失效）
+    ++globalsVersion_;
     classInfo_.clear();
     // R99 enum 校验：加载 enum 元信息到 enumRegistry_ 供 OP_BUILD_ENUM_VARIANT 校验
     enumRegistry_.clear();
@@ -1325,10 +1413,10 @@ void VM::resetState() {
     // P1 fix: 重置 stepOnce 指令计数器
     // R97 #3 fix: 移除 lastAsciiStr* 重置（已迁移到 StringData::cachedIsAscii 持久缓存）
     stepInstructionCount_ = 0;
-    // V-P1-1 fix: 清理内联缓存，避免悬垂指针（callCache_/globalCache_ 指向已清空的容器）
+    // V-P1-1 fix: 递增版本号使 per-chunk varCache_ 失效（callCache_ 指向已清空的容器）
     // PERF-14 fix: unordered_map clear()
     callCache_.clear();
-    globalCache_.clear();
+    ++globalsVersion_;
     initialized_ = false;
     // R164 协程/生成器：重置重放模式状态
     currentCoroutineTargetYieldId_ = -1;
@@ -1387,22 +1475,28 @@ bool VM::restoreFromSnapshot(const std::vector<Value>& stackValues,
             }
             // 不创建新变量——回滚不应引入编译期未注册的变量
         }
-        // 同步失效 globalCache_ 中对应条目（避免命中旧值）
-        // globalCache_ 的 key 是 chunk 常量池字符串指针，无法按 name 直接清理，
-        // 但下次 lookup 时 generation 检查会捕获 globals_ size 变化。
-        // 由于回滚不改变 globals_ size（仅覆盖现有值），需要手动清理缓存。
-        // 简化：清空整个 globalCache_，下次 lookup 重建。
+        // 同步失效 per-chunk varCache_（递增版本号，下次 lookup 重建）
     }
-    globalCache_.clear();
+    ++globalsVersion_;
 
     // (4) 清理 openUpvalues_（slots >= 新栈大小的 open upvalue 已悬垂）
+    // AUDIT-R3 P1-2 fix: openUpvalues_ 按 stackSlot 升序，需清理的是尾部区间
+    // [lower_bound(newStackSize), end())。原实现从 begin()（最小 slot）开始且
+    // 首元素 slot < newStackSize 即 break——只要存在任一低位 open upvalue，
+    // 所有高位悬垂条目全部残留（后续 closeUpvaluesFrom 报 slot 越界错误，
+    // 或闭包读到回滚后被复用栈槽的错误值）。对齐 closeUpvaluesFrom 的
+    // lower_bound 定位；回滚后原栈值已不可用，标记 isClosed（保留默认值）
+    // 防止仍被闭包持有的 upvalue 悬垂读栈。
     size_t newStackSize = stack_.size();
-    while (!openUpvalues_.empty()) {
-        auto it = openUpvalues_.begin();
-        if (it->first >= newStackSize) {
-            openUpvalues_.erase(it);
-        } else {
-            break; // openUpvalues_ 按 stackSlot 排序，遇到 < newStackSize 即可停止
+    {
+        auto it = openUpvalues_.lower_bound(newStackSize);
+        while (it != openUpvalues_.end()) {
+            if (auto uv = it->second.lock()) {
+                if (!uv->isClosed) {
+                    uv->isClosed = true; // 无法拷值（栈已回滚），保留默认值防悬垂
+                }
+            }
+            it = openUpvalues_.erase(it);
         }
     }
 
@@ -1426,6 +1520,43 @@ bool VM::restoreFromSnapshot(const std::vector<Value>& stackValues,
     return true;
 }
 
+VMResult VM::popFrameAndPushReturn() {
+    // P1 dedup: 提取自 stepOnce() 和 execute() 中"chunk 执行完毕 → 弹帧"的防御性路径。
+    // 调用前需确认 ip >= chunk.code.size()（当前 chunk 已执行完毕）。
+    VMCallFrame& frame = currentFrame();
+    size_t returnIp = frame.returnIp;
+    size_t savedBp = frame.basePointer;
+    bool wasInit = frame.isInitCall;
+    // P1-5 fix: 记录帧索引并清理 tryStack_ handler
+    size_t returningFrameIdx = frames_.size() - 1;
+    // AUDIT-P2.5 fix: closeUpvaluesFrom 返回错误时立即终止返回，避免在损坏状态上继续
+    if (closeUpvaluesFrom(savedBp) != VMResult::VM_OK) // P1-5 fix: 关闭 open upvalues
+        return VMResult::VM_RUNTIME_ERROR;
+    frames_.pop_back();
+    while (!tryStack_.empty() && tryStack_.back().frameIndex >= returningFrameIdx) {
+        tryStack_.pop_back(); // P1-5 fix: 清理残留 handler
+    }
+    if (!frames_.empty()) {
+        currentFrame().ip = returnIp; // 恢复调用者 ip，避免重复执行调用指令
+        // V-P1-5 fix: 先截断栈清理 callee 残留局部变量，再 push 返回值
+        // AUDIT-BUG-V1 fix: wasInit 分支访问 stack_[savedBp] 需 savedBp < stack_.size()，
+        // 原条件 savedBp <= stack_.size() 允许 savedBp == top_ 触发 VMStack::operator[] abort。
+        if (savedBp <= stack_.size()) {
+            if (wasInit && savedBp < stack_.size()) {
+                Value thisVal = stack_[savedBp]; // 先拷出 this
+                stack_.resize(savedBp);          // 清理 callee 残留
+                push(std::move(thisVal));
+            } else {
+                stack_.resize(savedBp);
+                push(Value::nullValue());
+            }
+        } else {
+            push(Value::nullValue());
+        }
+    }
+    return VMResult::VM_OK;
+}
+
 VMResult VM::stepOnce() {
     // 帧已空 → 执行完毕
     if (frames_.empty())
@@ -1434,6 +1565,11 @@ VMResult VM::stepOnce() {
     // 已有错误 → 不再执行
     if (hasError_)
         return VMResult::VM_RUNTIME_ERROR;
+
+    // AUDIT-R4 BUG-10 fix: 单步执行期间同样抑制增量 GC 回调（同 execute()）。
+    // 分配仅发生在指令执行内，每步构造/析构 suppressor 的开销仅在调试
+    // 单步模式下发生（UI 驱动，非热路径）。
+    GcManager::CallbackSuppressor gcSuppressor;
 
     // P1 fix: stepOnce 累计指令预算检查，防止通过循环调用 stepOnce 绕过 DoS 防护
     // 注意：execute() 使用每次调用重新开始的局部计数器，而 stepOnce 使用成员
@@ -1456,38 +1592,7 @@ VMResult VM::stepOnce() {
 
     // 当前 chunk 执行完毕 → 弹帧（防御性路径，正常情况由 OP_RETURN 处理）
     if (ip >= chunk.code.size()) {
-        size_t returnIp = frame.returnIp;
-        size_t savedBp = frame.basePointer;
-        bool wasInit = frame.isInitCall;
-        // P1-5 fix: 记录帧索引并清理 tryStack_ handler
-        size_t returningFrameIdx = frames_.size() - 1;
-        // AUDIT-P2.5 fix: closeUpvaluesFrom 返回错误时立即终止返回，避免在损坏状态上继续
-        if (closeUpvaluesFrom(savedBp) != VMResult::VM_OK) // P1-5 fix: 关闭 open upvalues
-            return VMResult::VM_RUNTIME_ERROR;
-        frames_.pop_back();
-        while (!tryStack_.empty() && tryStack_.back().frameIndex >= returningFrameIdx) {
-            tryStack_.pop_back(); // P1-5 fix: 清理残留 handler
-        }
-        if (!frames_.empty()) {
-            currentFrame().ip = returnIp; // 恢复调用者 ip，避免重复执行调用指令
-            // V-P1-5 fix: 先截断栈清理 callee 残留局部变量，再 push 返回值
-            // 原代码直接 push 导致栈布局为 [调用者数据][callee 残留局部变量][返回值]
-            // AUDIT-BUG-V1 fix: wasInit 分支访问 stack_[savedBp] 需 savedBp < stack_.size()，
-            // 原条件 savedBp <= stack_.size() 允许 savedBp == top_ 触发 VMStack::operator[] abort。
-            if (savedBp <= stack_.size()) {
-                if (wasInit && savedBp < stack_.size()) {
-                    Value thisVal = stack_[savedBp]; // 先拷出 this
-                    stack_.resize(savedBp);          // 清理 callee 残留
-                    push(std::move(thisVal));
-                } else {
-                    stack_.resize(savedBp);
-                    push(Value::nullValue());
-                }
-            } else {
-                push(Value::nullValue());
-            }
-        }
-        return VMResult::VM_OK;
+        return popFrameAndPushReturn();
     }
 
     // L14: VM_EXCEPTION_THROW 表示异常被 try/catch 捕获，ip 已在 catchIp。
@@ -1503,8 +1608,23 @@ VMResult VM::stepOnce() {
 VMResult VM::execute(const CompileResult& result) {
     initExecution(result);
 
+    // AUDIT-R4 BUG-10 fix: VM 执行期间抑制增量 GC 触发回调。
+    // VM 操作数栈/全局槽上的临时 Value 不在 GcManager 的根集中（回调属
+    // Interpreter，仅收集环境链根）；若分配阈值在 VM 执行中途触发回调，
+    // 仅经 VM 栈可达的容器会被误判为不可达孤岛（默认模式子元素被掉空，
+    // GcOnly 模式直接 delete → UAF/双重释放）。与 JIT 路径的既有防护
+    // （JIT.cpp CallbackSuppressor + safepoint）对齐；抑制期间产生的循环
+    // 引用孤岛由下一轮 Interpreter execute() 入口的兜底 collectCycle 回收。
+    GcManager::CallbackSuppressor gcSuppressor;
+
     // S-02 fix: 指令执行预算，防止恶意字节码导致 DoS
     int64_t instructionCount = 0;
+    // PERF-03 fix: 在循环入口加载一次指令预算上限到局部变量，避免主循环每条指令
+    // 都执行 RuntimeConfig::instance().maxInstructions()（含 atomic load + 单例访问）。
+    // 语义等价性：RuntimeConfig 设计为执行前配置（教学场景可调），execute() 期间
+    // 不应被修改；下一次 execute() / stepOnce() 调用会读取最新值。stepOnce() 路径
+    // 仍逐次读取以支持 IDE 单步调试时实时调整预算。
+    const int64_t dynMaxInstr = RuntimeLimits::RuntimeConfig::instance().maxInstructions();
     while (!frames_.empty()) {
         VMCallFrame& frame = currentFrame();
         const BytecodeChunk& chunk = *frame.chunk;
@@ -1512,44 +1632,17 @@ VMResult VM::execute(const CompileResult& result) {
 
         if (ip >= chunk.code.size()) {
             // 当前 chunk 执行完毕 → 弹帧（防御性路径，正常情况由 OP_RETURN 处理）
-            size_t returnIp = frame.returnIp; // 保存调用者返回地址
-            size_t savedBp = frame.basePointer;
-            bool wasInit = frame.isInitCall;
-            // P1-5 fix: 记录帧索引并清理 tryStack_ handler
-            size_t returningFrameIdx = frames_.size() - 1;
-            // AUDIT-P2.5 fix: closeUpvaluesFrom 返回错误时立即终止返回，避免在损坏状态上继续
-            if (closeUpvaluesFrom(savedBp) != VMResult::VM_OK) // P1-5 fix: 关闭 open upvalues
-                return VMResult::VM_RUNTIME_ERROR;
-            frames_.pop_back();
-            while (!tryStack_.empty() && tryStack_.back().frameIndex >= returningFrameIdx) {
-                tryStack_.pop_back(); // P1-5 fix: 清理残留 handler
-            }
-            if (!frames_.empty()) {
-                currentFrame().ip = returnIp; // 恢复调用者 ip，避免重复执行调用指令
-                // V-P1-5 fix: 先截断栈清理 callee 残留局部变量，再 push 返回值
-                // AUDIT-BUG-V1 fix: wasInit 分支访问 stack_[savedBp] 需 savedBp < stack_.size()
-                if (savedBp <= stack_.size()) {
-                    if (wasInit && savedBp < stack_.size()) {
-                        Value thisVal = stack_[savedBp];
-                        stack_.resize(savedBp);
-                        push(std::move(thisVal));
-                    } else {
-                        stack_.resize(savedBp);
-                        push(Value::nullValue());
-                    }
-                } else {
-                    push(Value::nullValue());
-                }
-            }
+            VMResult r = popFrameAndPushReturn();
+            if (r != VMResult::VM_OK)
+                return r;
             continue;
         }
 
-        if (hasError_)
+        if (hasError_) [[unlikely]]
             return VMResult::VM_RUNTIME_ERROR;
         // S-02 fix: 检查指令预算
-        // L7 fix: 改为读取 RuntimeConfig 运行时配置（教学场景可调）
-        const int64_t dynMaxInstr = RuntimeLimits::RuntimeConfig::instance().maxInstructions();
-        if (++instructionCount > dynMaxInstr) {
+        // PERF-03 fix: dynMaxInstr 已在循环入口缓存到局部变量，避免每条指令 atomic load。
+        if (++instructionCount > dynMaxInstr) [[unlikely]] {
             // P2-12: 错误信息直接写入 diagnostics_（消除 lastError_ 字段）
             diagnostics_.addError(
                 ErrorFormat::formatStd("指令执行数超过上限 {}，疑似无限循环", static_cast<long long>(dynMaxInstr)), 0,
@@ -1588,7 +1681,7 @@ VMResult VM::executeOneInstruction() {
     // 字节码截断边界检查（OP_CLOSURE 为变长，需单独按 upvalue 计数展开）；
     // ④ 两级转发——先按指令类别 switch 到 executeXxxOps，再由各方法按具体 opcode 处理。
     // 两级拆分仅为可维护性（每类方法 < 200 行），不改变执行语义。
-    if (hasError_)
+    if (hasError_) [[unlikely]]
         return VMResult::VM_RUNTIME_ERROR;
     VMCallFrame& frame = currentFrame();
     const BytecodeChunk& chunk = *frame.chunk;
@@ -1603,11 +1696,11 @@ VMResult VM::executeOneInstruction() {
 
     // M-新2 fix: OP_CLOSURE 是变长指令，需要计算完整长度再做边界检查
     size_t instrSize = BytecodeChunk::instructionSize(op);
-    if (op == OpCode::OP_CLOSURE && ip + 3 < chunk.code.size()) {
+    if (op == OpCode::OP_CLOSURE && ip + 3 < chunk.code.size()) [[unlikely]] {
         uint8_t uvCount = chunk.code[ip + 3];
         instrSize = 4 + static_cast<size_t>(uvCount) * 2;
     }
-    if (ip + instrSize > chunk.code.size()) {
+    if (ip + instrSize > chunk.code.size()) [[unlikely]] {
         return runtimeError("字节码截断: 指令不完整");
     }
 
@@ -1629,6 +1722,10 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_DIVIDE:
     case OpCode::OP_MODULO:
     case OpCode::OP_NEGATE:
+    case OpCode::OP_ADD_INT_SPEC:
+    case OpCode::OP_SUB_INT_SPEC:
+    case OpCode::OP_MUL_INT_SPEC:
+    case OpCode::OP_LT_INT_SPEC:
         return executeArithOps(op, ip);
 
     // 比较与逻辑运算类
@@ -1863,6 +1960,61 @@ VMResult VM::executeArithOps(OpCode op, size_t& ip) {
         break;
     }
 
+    // PERF: 类型特化算术操作码——跳过运行时类型检查，编译器保证操作数均为 int
+    // AUDIT-R3 P1-3 fix: 补溢出检测（与通用路径 computeArith 的 IntOverflow 对齐）——
+    // 原实现直接原生 int64 运算：两个 INT48 范围值相乘可超 int64（有符号溢出 UB），
+    // 且与通用路径"运行时报错"的语义分叉（静默错误值）。成本仅一条分支。
+    case OpCode::OP_ADD_INT_SPEC: {
+        if (stack_.size() < 2)
+            return runtimeError("栈下溢：二元运算需要两个操作数");
+        Value& right = stack_.back();
+        Value& left = stack_[stack_.size() - 2];
+        if (OverflowCheck::addOverflow(left.intVal(), right.intVal()))
+            return runtimeError("整数运算溢出");
+        left = Value(left.intVal() + right.intVal());
+        stack_.pop_back();
+        notifyStep(ip, op);
+        ip += 1;
+        break;
+    }
+    case OpCode::OP_SUB_INT_SPEC: {
+        if (stack_.size() < 2)
+            return runtimeError("栈下溢：二元运算需要两个操作数");
+        Value& right = stack_.back();
+        Value& left = stack_[stack_.size() - 2];
+        if (OverflowCheck::subOverflow(left.intVal(), right.intVal())) // AUDIT-R3 P1-3
+            return runtimeError("整数运算溢出");
+        left = Value(left.intVal() - right.intVal());
+        stack_.pop_back();
+        notifyStep(ip, op);
+        ip += 1;
+        break;
+    }
+    case OpCode::OP_MUL_INT_SPEC: {
+        if (stack_.size() < 2)
+            return runtimeError("栈下溢：二元运算需要两个操作数");
+        Value& right = stack_.back();
+        Value& left = stack_[stack_.size() - 2];
+        if (OverflowCheck::mulOverflow(left.intVal(), right.intVal())) // AUDIT-R3 P1-3
+            return runtimeError("整数运算溢出");
+        left = Value(left.intVal() * right.intVal());
+        stack_.pop_back();
+        notifyStep(ip, op);
+        ip += 1;
+        break;
+    }
+    case OpCode::OP_LT_INT_SPEC: {
+        if (stack_.size() < 2)
+            return runtimeError("栈下溢：比较运算需要两个操作数");
+        Value& right = stack_.back();
+        Value& left = stack_[stack_.size() - 2];
+        left = Value(left.intVal() < right.intVal());
+        stack_.pop_back();
+        notifyStep(ip, op);
+        ip += 1;
+        break;
+    }
+
     default:
         return runtimeError(ErrorFormat::formatStd("未知操作码: {}", static_cast<int>(op)));
     }
@@ -2000,14 +2152,14 @@ VMResult VM::executeVarNameOps(OpCode op, size_t& ip) {
         const std::string& name = chunk.constants[idx].stringVal();
         Value val = pop();
         auto gsIt = globalNameToSlot_.find(name);
-        if (gsIt != globalNameToSlot_.end()) {
+        // AUDIT-R3 P2-3 fix: 补 slot 范围校验（同 resolveMutableGlobal）
+        if (gsIt != globalNameToSlot_.end() && gsIt->second >= 0 &&
+            gsIt->second < static_cast<int>(globalSlots_.size())) {
             globalSlots_[gsIt->second] = std::move(val);
         } else {
             globals_[name] = std::move(val);
-            // P0-8 fix: 插入新元素可能触发 unordered_map rehash，使已缓存的
-            // &it->second 指针失效。清除 globalCache_ 避免悬垂指针访问
-            // PERF-14 fix: unordered_map clear()
-            globalCache_.clear();
+            // P-1 perf: insert 可能触发 rehash，递增版本号使所有 per-chunk varCache_ 失效
+            ++globalsVersion_;
         }
         notifyStep(ip, op);
         ip += 3;
@@ -2020,39 +2172,39 @@ VMResult VM::executeVarNameOps(OpCode op, size_t& ip) {
             return runtimeError("常量池索引越界或类型错误");
         const std::string& name = chunk.constants[idx].stringVal();
 
-        // A2: slot-based global fast path
-        auto gsIt = globalNameToSlot_.find(name);
-        if (gsIt != globalNameToSlot_.end()) {
-            push(globalSlots_[gsIt->second]);
+        // P-1 perf: per-chunk 平坦数组缓存，按常量池索引直接寻址（O(1) 无哈希）。
+        // 替代原 globalNameToSlot_.find() + globalCache_.find() 双重哈希查找。
+        auto& varCache = chunk.varCache_;
+        if (varCache.size() <= idx)
+            varCache.resize(idx + 1);
+        auto& vc = varCache[idx];
+
+        if (vc.version == globalsVersion_ && vc.resolvedSlot != -2) {
+            // 缓存命中：直接按 slot 或指针读取
+            if (vc.resolvedSlot >= 0) {
+                push(globalSlots_[vc.resolvedSlot]);
+            } else {
+                push(*vc.valuePtr);
+            }
             notifyStep(ip, op);
             ip += 3;
             break;
         }
 
-        // P2 fix: 内联缓存快速路径（仅 fallback globals_）
-        // PERF-14 fix: unordered_map find O(1) 替代数组线性扫描
-        // MEM-05 fix: generation = (bucket_count() << 16) ^ size()，erase 后 size 变化触发失效
-        const std::string* namePtr = &name;
-        size_t curGen = (globals_.bucket_count() << 16) ^ globals_.size();
-        Value* cachedVal = nullptr;
-        auto ccIt = globalCache_.find(namePtr);
-        if (ccIt != globalCache_.end() && ccIt->second.generation == curGen) {
-            cachedVal = ccIt->second.valuePtr;
-        }
-
-        if (cachedVal) {
-            push(*cachedVal);
+        // 缓存未命中：解析并填充
+        auto gsIt = globalNameToSlot_.find(name);
+        // AUDIT-R3 P2-3 fix: 补 slot 范围校验（同 resolveMutableGlobal）
+        if (gsIt != globalNameToSlot_.end() && gsIt->second >= 0 &&
+            gsIt->second < static_cast<int>(globalSlots_.size())) {
+            vc = {gsIt->second, nullptr, globalsVersion_};
+            push(globalSlots_[gsIt->second]);
         } else {
             auto it = globals_.find(name);
             if (it != globals_.end()) {
-                // 写入缓存
-                globalCache_[namePtr] = {&it->second, curGen};
+                vc = {-1, &it->second, globalsVersion_};
                 push(it->second);
             } else {
                 // R97 #11 fix: 三后端 super 错误消息统一。
-                // Compiler::visitSuperExpr 在非方法上下文 emit OP_GET_VAR "this"，
-                // VM 在此回退到 GLOBAL_NAME 查找失败。原报 "未定义的变量: this"，
-                // 与 Interpreter "super 只能在类方法中使用" 不一致。统一为后者。
                 if (name == "this") {
                     return runtimeError(ErrorMessages::kSuperOutsideMethod);
                 }
@@ -2071,35 +2223,37 @@ VMResult VM::executeVarNameOps(OpCode op, size_t& ip) {
         const std::string& name = chunk.constants[idx].stringVal();
         Value val = pop();
 
-        // A2: slot-based global fast path
-        auto gsIt = globalNameToSlot_.find(name);
-        if (gsIt != globalNameToSlot_.end()) {
-            globalSlots_[gsIt->second] = std::move(val);
+        // P-1 perf: per-chunk 平坦数组缓存（同 OP_GET_VAR 路径）
+        auto& varCache = chunk.varCache_;
+        if (varCache.size() <= idx)
+            varCache.resize(idx + 1);
+        auto& vc = varCache[idx];
+
+        if (vc.version == globalsVersion_ && vc.resolvedSlot != -2) {
+            // 缓存命中
+            if (vc.resolvedSlot >= 0) {
+                globalSlots_[vc.resolvedSlot] = std::move(val);
+            } else {
+                *vc.valuePtr = std::move(val);
+            }
             notifyStep(ip, op);
             ip += 3;
             break;
         }
 
-        // P2 fix: 内联缓存快速路径（仅 fallback globals_）
-        // PERF-14 fix: unordered_map find O(1) 替代数组线性扫描
-        // MEM-05 fix: generation = (bucket_count() << 16) ^ size()
-        const std::string* namePtr = &name;
-        size_t curGen = (globals_.bucket_count() << 16) ^ globals_.size();
-        Value* cachedVal = nullptr;
-        auto ccIt = globalCache_.find(namePtr);
-        if (ccIt != globalCache_.end() && ccIt->second.generation == curGen) {
-            cachedVal = ccIt->second.valuePtr;
-        }
-
-        if (cachedVal) {
-            *cachedVal = std::move(val);
+        // 缓存未命中：解析并填充
+        auto gsIt = globalNameToSlot_.find(name);
+        // AUDIT-R3 P2-3 fix: 补 slot 范围校验（同 resolveMutableGlobal）
+        if (gsIt != globalNameToSlot_.end() && gsIt->second >= 0 &&
+            gsIt->second < static_cast<int>(globalSlots_.size())) {
+            vc = {gsIt->second, nullptr, globalsVersion_};
+            globalSlots_[gsIt->second] = std::move(val);
         } else {
             auto it = globals_.find(name);
             if (it == globals_.end()) {
                 return runtimeError("未定义的变量: " + name, DiagCodes::kUndefinedVariable);
             }
-            // 写入缓存
-            globalCache_[namePtr] = {&it->second, curGen};
+            vc = {-1, &it->second, globalsVersion_};
             it->second = std::move(val);
         }
         notifyStep(ip, op);
@@ -2113,15 +2267,14 @@ VMResult VM::executeVarNameOps(OpCode op, size_t& ip) {
             return runtimeError("常量池索引越界或类型错误");
         const std::string& name = chunk.constants[idx].stringVal();
         auto gsIt = globalNameToSlot_.find(name);
-        if (gsIt != globalNameToSlot_.end()) {
+        // AUDIT-R3 P2-3 fix: 补 slot 范围校验（同 resolveMutableGlobal）
+        if (gsIt != globalNameToSlot_.end() && gsIt->second >= 0 &&
+            gsIt->second < static_cast<int>(globalSlots_.size())) {
             globalSlots_[gsIt->second] = Value::nullValue();
         } else {
             globals_.erase(name);
-            // Bug fix: erase 可能不改变 bucket_count()，但会使已缓存指针悬垂
-            // 清除所有缓存条目以确保安全
-            // PERF-14 fix: unordered_map clear()
-            // MEM-05 fix: 即使不清空，generation 检测也会因 size() 变化而失效
-            globalCache_.clear();
+            // P-1 perf: erase 使已缓存 Value* 悬垂，递增版本号失效所有 per-chunk varCache_
+            ++globalsVersion_;
         }
         notifyStep(ip, op);
         ip += 3;

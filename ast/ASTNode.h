@@ -283,7 +283,7 @@ class StringLiteral : public ASTNode {
 public:
     std::string value;
 
-    StringLiteral(const std::string& v, int ln = 0, int col = 0) : ASTNode(ln, col), value(v) {
+    StringLiteral(std::string v, int ln = 0, int col = 0) : ASTNode(ln, col), value(std::move(v)) {
         nodeType = NodeType::NODE_STRING_LITERAL;
     }
 
@@ -365,8 +365,8 @@ public:
     std::string typeAnnotation;           // 类型注解（如 "int", "float", "int[]", "dict" 等）
     std::shared_ptr<ASTNode> initializer; // 可为 nullptr
 
-    VarDecl(const std::string& n, const std::string& typeAnn, std::shared_ptr<ASTNode> init, int ln = 0, int col = 0)
-        : ASTNode(ln, col), name(n), typeAnnotation(typeAnn), initializer(std::move(init)) {
+    VarDecl(std::string n, std::string typeAnn, std::shared_ptr<ASTNode> init, int ln = 0, int col = 0)
+        : ASTNode(ln, col), name(std::move(n)), typeAnnotation(std::move(typeAnn)), initializer(std::move(init)) {
         nodeType = NodeType::NODE_VAR_DECL;
     }
 
@@ -445,8 +445,8 @@ public:
     std::string name;
     std::shared_ptr<ASTNode> value;
 
-    Assignment(const std::string& n, std::shared_ptr<ASTNode> v, int ln = 0, int col = 0)
-        : ASTNode(ln, col), name(n), value(std::move(v)) {
+    Assignment(std::string n, std::shared_ptr<ASTNode> v, int ln = 0, int col = 0)
+        : ASTNode(ln, col), name(std::move(n)), value(std::move(v)) {
         nodeType = NodeType::NODE_ASSIGNMENT;
     }
 
@@ -460,7 +460,7 @@ class VarRef : public ASTNode {
 public:
     std::string name;
 
-    VarRef(const std::string& n, int ln = 0, int col = 0) : ASTNode(ln, col), name(n) {
+    VarRef(std::string n, int ln = 0, int col = 0) : ASTNode(ln, col), name(std::move(n)) {
         nodeType = NodeType::NODE_VAR_REF;
     }
 
@@ -609,7 +609,7 @@ public:
 
     /// 缓存：首次调用解析后存储 FunDecl 的 shared_ptr，后续调用跳过查找。
     /// A3 fix: 改为 shared_ptr 持有所有权，避免 AST 重建后缓存的裸指针悬垂。
-    std::shared_ptr<FunDecl> resolvedDecl;
+    std::weak_ptr<FunDecl> resolvedDecl; // Bug #11 fix: weak_ptr 避免递归函数引用环
     bool isResolved = false;
     int resolvedGen_ = -1; // M7: 缓存时的 funRegistry 代数，不匹配则失效
 

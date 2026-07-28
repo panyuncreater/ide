@@ -695,3 +695,101 @@ TEST(CoverageCliVersion, VersionString) {
     EXPECT_NE(v.find("minilang-coverage"), std::string::npos);
     EXPECT_NE(v.find("1.0.0"), std::string::npos);
 }
+
+// ============================================================
+// 拓展二期：分支覆盖率（--branch）
+// ============================================================
+
+namespace {
+/// 分支测试共用源码：if/else 两向 + 仅真向的 if
+const char* kBranchSource = "var i = 0;\n"
+                            "while (i < 4) {\n"        // 分支：真 4 次 + 假 1 次（退出）
+                            "  if (i < 2) {\n"          // 分支：真 2 次 + 假 2 次
+                            "    print(\"lo\");\n"
+                            "  } else {\n"
+                            "    print(\"hi\");\n"
+                            "  }\n"
+                            "  i = i + 1;\n"
+                            "}\n";
+} // namespace
+
+TEST(CoverageBranch, StackVmBothDirectionsCovered) {
+    minilang_coverage::CoverageOptions opts;
+    opts.branch = true;
+    auto fc = minilang_coverage::analyzeSource(kBranchSource, "<test>", opts);
+    ASSERT_TRUE(fc.ok) << fc.errorMessage;
+    ASSERT_FALSE(fc.branches.empty());
+    EXPECT_EQ(fc.totalBranchOutcomes, static_cast<int>(fc.branches.size()) * 2);
+    // 两个条件（while + if）均双向覆盖 → 全部 outcome 命中
+    EXPECT_EQ(fc.coveredBranchOutcomes, fc.totalBranchOutcomes);
+    // 验证计数语义：存在真/假均 >0 的分支
+    bool bothSeen = false;
+    for (const auto& bc : fc.branches) {
+        if (bc.trueCount > 0 && bc.falseCount > 0)
+            bothSeen = true;
+    }
+    EXPECT_TRUE(bothSeen);
+}
+
+TEST(CoverageBranch, OneSidedBranchReportedUncovered) {
+    minilang_coverage::CoverageOptions opts;
+    opts.branch = true;
+    // 条件恒真：假分支永不执行 → 至少一个 outcome 未覆盖
+    auto fc = minilang_coverage::analyzeSource("var x = 1;\nif (x < 10) {\n  print(x);\n}\n", "<test>", opts);
+    ASSERT_TRUE(fc.ok) << fc.errorMessage;
+    ASSERT_FALSE(fc.branches.empty());
+    EXPECT_LT(fc.coveredBranchOutcomes, fc.totalBranchOutcomes);
+    // 找到该分支：真>0，假==0
+    bool found = false;
+    for (const auto& bc : fc.branches) {
+        if (bc.trueCount > 0 && bc.falseCount == 0)
+            found = true;
+    }
+    EXPECT_TRUE(found);
+}
+
+TEST(CoverageBranch, RegisterVmMatchesStackVm) {
+    minilang_coverage::CoverageOptions stackOpts;
+    stackOpts.branch = true;
+    stackOpts.backend = minilang_coverage::Backend::StackVM;
+    auto stackFc = minilang_coverage::analyzeSource(kBranchSource, "<test>", stackOpts);
+    ASSERT_TRUE(stackFc.ok) << stackFc.errorMessage;
+
+    minilang_coverage::CoverageOptions regOpts;
+    regOpts.branch = true;
+    regOpts.backend = minilang_coverage::Backend::RegisterVM;
+    auto regFc = minilang_coverage::analyzeSource(kBranchSource, "<test>", regOpts);
+    ASSERT_TRUE(regFc.ok) << regFc.errorMessage;
+
+    // 三后端一致性：两后端分支覆盖结论一致（全覆盖）
+    EXPECT_EQ(stackFc.coveredBranchOutcomes, stackFc.totalBranchOutcomes);
+    EXPECT_EQ(regFc.coveredBranchOutcomes, regFc.totalBranchOutcomes);
+    EXPECT_FALSE(regFc.branches.empty());
+}
+
+TEST(CoverageBranch, LcovContainsBrdaRecords) {
+    minilang_coverage::CoverageOptions opts;
+    opts.branch = true;
+    auto fc = minilang_coverage::analyzeSource(kBranchSource, "test.ml", opts);
+    ASSERT_TRUE(fc.ok) << fc.errorMessage;
+    std::string lcov = minilang_coverage::formatFileLcov(fc);
+    EXPECT_NE(lcov.find("BRDA:"), std::string::npos);
+    EXPECT_NE(lcov.find("BRF:"), std::string::npos);
+    EXPECT_NE(lcov.find("BRH:"), std::string::npos);
+}
+
+TEST(CoverageBranch, DisabledByDefaultNoBranchData) {
+    minilang_coverage::CoverageOptions opts; // branch 默认 false
+    auto fc = minilang_coverage::analyzeSource(kBranchSource, "<test>", opts);
+    ASSERT_TRUE(fc.ok) << fc.errorMessage;
+    EXPECT_TRUE(fc.branches.empty());
+    EXPECT_EQ(fc.totalBranchOutcomes, 0);
+    std::string lcov = minilang_coverage::formatFileLcov(fc);
+    EXPECT_EQ(lcov.find("BRDA:"), std::string::npos);
+}
+
+TEST(CoverageBranch, ParseArgsRecognizesBranchFlag) {
+    const char* argv[] = {"minilang-coverage", "--branch", "a.ml"};
+    auto args = minilang_coverage::parseArgs(3, const_cast<char**>(argv));
+    EXPECT_TRUE(args.options.branch);
+}

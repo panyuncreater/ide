@@ -53,10 +53,36 @@ public:
     };
 
     /// C9 fix: 前端管线结果
+    /// AUDIT-R5 R7 fix (BUG-5): diagnostics 原为指向 lexer_/parser_ 内部 DiagnosticBag
+    /// 的裸指针，源码级缓存命中返回旧 PipelineResult 时，后续新一次前端管线运行
+    /// 会改写 lexer_/parser_ 内部状态，使外部持有的诊断内容被静默改写（版本错位）。
+    /// 改为自持快照 diagnosticsStorage（值拷贝），diagnostics 指向该内部副本；
+    /// 拷贝/赋值时重指向自身副本，保持调用方 `result.diagnostics->...` API 不变，
+    /// 且快照免疫后续 lexer_/parser_ 改写与 PipelineResult 拷贝。
     struct PipelineResult {
         PipelineStatus status = PipelineStatus::OK;
         std::string errorMessage;                   ///< 异常消息（status != OK 时有效）
-        const DiagnosticBag* diagnostics = nullptr; ///< 错误诊断包指针
+        DiagnosticBag diagnosticsStorage;           ///< 自持诊断快照（AUDIT-R5 R7 fix）
+        const DiagnosticBag* diagnostics = nullptr; ///< 指向 diagnosticsStorage 或 nullptr
+
+        PipelineResult() = default;
+        PipelineResult(const PipelineResult& o)
+            : status(o.status), errorMessage(o.errorMessage), diagnosticsStorage(o.diagnosticsStorage),
+              diagnostics(o.diagnostics ? &diagnosticsStorage : nullptr) {}
+        PipelineResult& operator=(const PipelineResult& o) {
+            if (this != &o) {
+                status = o.status;
+                errorMessage = o.errorMessage;
+                diagnosticsStorage = o.diagnosticsStorage;
+                diagnostics = o.diagnostics ? &diagnosticsStorage : nullptr;
+            }
+            return *this;
+        }
+        /// 设置诊断快照并重指向内部副本（替代原 `diagnostics = &bag` 裸指针赋值）
+        void setDiagnostics(const DiagnosticBag& bag) {
+            diagnosticsStorage = bag;
+            diagnostics = &diagnosticsStorage;
+        }
     };
 
     /// C9 fix: 统一前端管线（Lexer + Parser），消除重复。
@@ -78,6 +104,10 @@ public:
     // ---- 状态访问 ----
     const std::vector<Token>& lastTokens() const { return lastTokens_; }
     const CompileResult& lastCompileResult() const { return lastCompileResult_; }
+    /// ARCH-10: 最近一次 runFrontendPipeline 的源码（供 BackendComparePanel 等
+    /// 教学面板通过 BackendExecutionService 重新触发三后端执行，无需直接依赖
+    /// Compiler/VM 内部头文件）。若未运行过前端管线则为空。
+    const std::string& lastSource() const { return lastSource_; }
     /// 返回 AST 根节点（shared_ptr 共享所有权，worker 线程可安全持有）
     std::shared_ptr<Block> astRoot() const { return astRoot_; }
     /// AST 根节点裸指针（仅供主线程同步访问，不延长生命周期）

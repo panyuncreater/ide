@@ -52,6 +52,17 @@ public:
     /// 获取断点命中次数
     int getBreakpointHitCount(int line) const override;
 
+    // ---- 拓展二期：命中条件（hit condition）+ 依赖断点链 ----
+    /// 设置命中条件（"N"/"== N"/">= N"/"> N"/"% N"，空=清除）。
+    /// 变更时重置该行 hitCount（对齐 setBreakpointCondition 语义）。
+    void setBreakpointHitCondition(int line, const std::string& expr);
+    std::string getBreakpointHitCondition(int line) const;
+
+    /// 设置依赖断点链：仅当 depLine 的断点至少命中过一次后，
+    /// line 的断点才激活（depLine <= 0 清除依赖）。
+    void setBreakpointDependency(int line, int depLine);
+    int getBreakpointDependency(int line) const;
+
     /// 设置条件表达式求值回调（由 IDE 设置，接收条件字符串，返回 bool）
     // A5 fix: 委托给 DebugEvaluator，DebugController 不再直接持有回调
     void setConditionEvaluator(std::function<bool(const std::string&)> evaluator) override;
@@ -177,6 +188,15 @@ public:
     /// 设置变量快照回调（由主窗口设置）
     void setVariableCallback(std::function<std::vector<VariableSnapshot>()> cb);
 
+    /// 拓展二期：变量写回调（由 DebugCoordinator 注册，内部调用
+    /// Interpreter 当前 Environment::set 沿作用域链写入）。
+    void setVariableWriteCallback(std::function<bool(const std::string&, const Value&)> cb);
+
+    /// 拓展二期：调试暂停时写变量（setVariable）。
+    /// 仅 isPaused() 时有效（worker 阻塞在 pauseCV_，GUI 线程写 Environment
+    /// 是安全窗口）。@return true 写入成功；false 未暂停/变量不存在/无回调
+    bool setVariableValue(const std::string& name, const Value& value);
+
     /// 设置调用栈回调
     void setCallStackCallback(std::function<std::vector<CallStackEntry>()> cb);
 
@@ -224,8 +244,13 @@ private:
     std::unique_ptr<DebugEvaluator> evaluator_{std::make_unique<DebugEvaluator>()};
     // P0-9 fix: 跨线程读写的标量字段改为 atomic，避免数据竞争
     std::atomic<int> currentDepth_{0};        // 当前调用深度（worker 写，UI 读）
-    int stepOverDepth_ = 0;                   // stepOver 时的调用深度（mutex 保护）
-    int stepOutDepth_ = 0;                    // stepOut 时的调用深度（mutex 保护）
+    // AUDIT-R4 BUG-16 fix: stepOverDepth_/stepOutDepth_/tempBreakpointLine_ 改为
+    // atomic<int>——reset() 在 terminate 防御路径用 try_lock，获锁失败时原实现
+    // 跳过这些非原子字段的重置，残留旧值使下次调试会话首次单步行为异常。
+    // atomic 化后 reset() 可无条件重置；复合更新仍在 pauseMutex_ 内进行
+    // （atomic 在锁内读写合法），不改变既有同步语义。
+    std::atomic<int> stepOverDepth_{0};       // stepOver 时的调用深度
+    std::atomic<int> stepOutDepth_{0};        // stepOut 时的调用深度
     std::atomic<int> lastPausedLine_{-1};     // 上次暂停的行号（worker 写，UI 读）
     std::atomic<int> lastPausedDepth_{-1};    // 上次暂停时的调用深度
     std::atomic<int> lastSeenLine_{-1};       // C3 fix: checkBreak 上次看到的行号
@@ -239,7 +264,8 @@ private:
     // R98 runToCursor: 一次性临时断点。runToCursor 设置后由 checkBreak 慢速路径检测，
     // 命中即清除并暂停。与 breakpoints_ 独立存储避免影响用户断点（BreakpointConditionPanel
     // 显示/编辑不应感知临时断点）。由 pauseMutex_ 保护（worker 线程在 checkBreak 中读取）。
-    int tempBreakpointLine_ = -1; // -1 表示无临时断点；>0 为目标行号
+    // AUDIT-R4 BUG-16 fix: 同 stepOverDepth_，atomic 化使 reset() 获锁失败时仍可重置。
+    std::atomic<int> tempBreakpointLine_{-1}; // -1 表示无临时断点；>0 为目标行号
     // R98 runToCursor: 原子快速路径标志（与 hasBreakpoints_ 同级），临时断点存在时为 true。
     // checkBreak 快速路径必须同时检查 hasBreakpoints_ 和 hasTempBreakpoint_ 才能无锁返回。
     std::atomic<bool> hasTempBreakpoint_{false};
@@ -268,6 +294,8 @@ private:
 
     std::function<std::vector<VariableSnapshot>()> variableCallback_;
     std::function<std::vector<CallStackEntry>()> callStackCallback_;
+    // 拓展二期：变量写回调（setVariableValue 用，与 variableCallback_ 同锁保护）
+    std::function<bool(const std::string&, const Value&)> variableWriteCallback_;
 
     // AUDIT-P1 fix: 活跃 callback 计数，用于析构时等待正在执行的 callback 完成（RCU 优雅期模式）。
     // getVariableSnapshot/getCallStack 在锁外调用 cb() 期间增减此计数，

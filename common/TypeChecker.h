@@ -30,6 +30,7 @@
 #include "Diagnostic.h"
 #include "interpreter/Value.h" // 2026-06-29: typeMatchValue 需要 Value 类型
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 // 前向声明全局命名空间下的 AST 节点（避免在 minilang 命名空间内
@@ -202,11 +203,57 @@ struct TypeInfo {
 
     bool isNumeric() const { return kind == TypeKind::INT || kind == TypeKind::FLOAT; }
 
-    /// 类型兼容性检查（预留，当前动态类型语义下默认兼容）
-    /// 未来实现严格的子类型/转换规则
-    bool isCompatible(const TypeInfo& /*other*/) const {
-        // ARCH-10 预留：动态类型阶段，所有类型默认兼容
-        return true;
+    /// 类型兼容性检查：判断 other 类型的值是否可赋给 this 类型的变量。
+    /// 规则：UNKNOWN/ANY 兼容一切；float 接受 int（数值提升）；
+    /// ARRAY/DICT/INSTANCE 按 className/typeArgs 递归检查；其余严格匹配。
+    bool isCompatible(const TypeInfo& other) const {
+        // UNKNOWN 或 ANY 兼容一切（保守假设 / 通配符）
+        if (kind == TypeKind::UNKNOWN || kind == TypeKind::ANY)
+            return true;
+        if (other.kind == TypeKind::UNKNOWN || other.kind == TypeKind::ANY)
+            return true;
+        // null 兼容所有类型（MiniLang 动态语言惯例）
+        if (other.kind == TypeKind::NULL_T)
+            return true;
+        // float 接受 int（数值提升）
+        if (kind == TypeKind::FLOAT && other.kind == TypeKind::INT)
+            return true;
+        // 同类型直接兼容
+        if (kind == other.kind) {
+            // INSTANCE 需要类名匹配
+            if (kind == TypeKind::INSTANCE)
+                return className.empty() || other.className.empty() || className == other.className;
+            return true;
+        }
+        return false;
+    }
+
+    /// 从类型注解字符串构造 TypeInfo
+    static TypeInfo fromAnnotation(const std::string& ann) {
+        if (ann.empty())
+            return TypeInfo{TypeKind::UNKNOWN};
+        if (ann == "int")
+            return TypeInfo{TypeKind::INT};
+        if (ann == "float")
+            return TypeInfo{TypeKind::FLOAT};
+        if (ann == "bool")
+            return TypeInfo{TypeKind::BOOL};
+        if (ann == "string")
+            return TypeInfo{TypeKind::STRING};
+        if (ann == "null")
+            return TypeInfo{TypeKind::NULL_T};
+        if (ann == "array")
+            return TypeInfo{TypeKind::ARRAY};
+        if (ann == "dict")
+            return TypeInfo{TypeKind::DICT};
+        // 以 [] 结尾的数组元素类型
+        if (ann.size() >= 2 && ann.substr(ann.size() - 2) == "[]")
+            return TypeInfo{TypeKind::ARRAY};
+        // fun(...) 函数类型
+        if (ann.size() >= 5 && ann.substr(0, 4) == "fun(")
+            return TypeInfo{TypeKind::CLOSURE};
+        // 其他视为实例类型（类名）
+        return TypeInfo{TypeKind::INSTANCE, ann};
     }
 
     /// 类型字符串表示（用于诊断信息）
@@ -288,12 +335,14 @@ public:
     MiniLangTypeChecker() = default;
     ~MiniLangTypeChecker() override = default;
 
-    /// 类型检查 pass（2026-06-29: 实现基础字面量类型检查，见 TypeChecker.cpp）
-    /// 检查 VarDecl/Assignment 的字面量初始化器是否匹配类型注解，不匹配则产生警告
+    /// 类型检查 pass（2026-07-25: 基础类型推断 + 字面量检查 + 函数返回类型检查）
     DiagnosticBag check(const Block& program) override;
 
-    /// 推断变量类型（当前返回 UNKNOWN，未来实现实际推断）
+    /// 推断变量类型（基于上次 check() 运行的符号表）
     TypeInfo inferType(const std::string& name) const override;
+
+private:
+    std::unordered_map<std::string, TypeInfo> lastWalkerTypeInfos_; // check() 后保留的符号表
 };
 
 } // namespace minilang

@@ -48,8 +48,10 @@ int main(int argc, char* argv[]) {
         bool anyError = false;
         for (const auto& file : args.files) {
             FuzzSummary s = processFile(file, args.options);
-            if (s.crashes < 0) {
-                std::fprintf(stderr, "错误: 无法读取文件 %s\n", file.c_str());
+            // BUG-93 fix: 改用 ok 标志检查文件错误（替代 crashes<0 哨兵值）
+            if (!s.ok) {
+                std::fprintf(stderr, "错误: 无法读取文件 %s (%s)\n", file.c_str(),
+                             s.errorMessage.c_str());
                 anyError = true;
                 continue;
             }

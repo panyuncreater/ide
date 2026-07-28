@@ -49,7 +49,7 @@ CheckOptions:
   - key: readability-function-cognitive-complexity.Threshold
     value: '50'
 
-WarningsAsErrors: ''
+WarningsAsErrors: 'bugprone-*,performance-*'
 HeaderFilterRegex: '^(?!(Qt|clang|llvm|gtest|gmock)).*\.h$'
 
 FormatStyle: file

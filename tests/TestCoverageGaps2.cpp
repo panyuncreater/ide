@@ -548,7 +548,7 @@ TEST(CircularImportGaps2, FourLayerCycleWithPartialExport) {
 // 第二组：并发原语边界（方向 3：channel/spawn/mutex）
 // ============================================================
 
-// channel 无 timeout API；tryRecv 是唯一非阻塞接收路径，空通道立即返回 null 不阻塞
+// tryRecv 是非阻塞接收路径，空通道立即返回 null 不阻塞（带超时等待见 recvTimeout）
 TEST(ConcurrencyGaps2, ChannelTryRecvEmptyReturnsNull) {
     std::string src = "var ch = channel();"
                       "var v = ch.tryRecv();"
@@ -575,6 +575,67 @@ TEST(ConcurrencyGaps2, ChannelRecvOnClosedReturnsNull) {
     EXPECT_EQ(runStackVM(src), expected);
     EXPECT_EQ(runStackVM_IR(src), expected);
     EXPECT_EQ(runRegVM(src), expected);
+}
+
+// ============================================================
+// channel.recvTimeout(ms) 超时接收 API（testing.md 覆盖方向 4 落地）
+// 语义：等待至多 ms 毫秒；有消息返回消息，超时或已关闭且无消息返回 null。
+// 四后端经 handleSyncObjectMethod 单点分发，语义天然一致。
+// ============================================================
+
+// 队列已有消息：recvTimeout 立即返回消息不等待
+TEST(ConcurrencyGaps2, ChannelRecvTimeoutBufferedReturnsValue) {
+    std::string src = "var ch = channel();"
+                      "ch.send(42);"
+                      "print(ch.recvTimeout(1000));";
+    std::string expected = "42";
+    EXPECT_EQ(runInterpreter(src), expected);
+    EXPECT_EQ(runStackVM(src), expected);
+    EXPECT_EQ(runStackVM_IR(src), expected);
+    EXPECT_EQ(runRegVM(src), expected);
+}
+
+// 空通道：recvTimeout 等满短超时后返回 null（有界阻塞，不永久挂起）
+TEST(ConcurrencyGaps2, ChannelRecvTimeoutEmptyReturnsNull) {
+    std::string src = "var ch = channel();"
+                      "print(ch.recvTimeout(10));";
+    std::string expected = "null";
+    EXPECT_EQ(runInterpreter(src), expected);
+    EXPECT_EQ(runStackVM(src), expected);
+    EXPECT_EQ(runStackVM_IR(src), expected);
+    EXPECT_EQ(runRegVM(src), expected);
+}
+
+// 已关闭且无消息：recvTimeout 立即返回 null（不等满超时，与 recv 关闭语义对齐）
+TEST(ConcurrencyGaps2, ChannelRecvTimeoutClosedReturnsNull) {
+    std::string src = "var ch = channel();"
+                      "ch.close();"
+                      "print(ch.recvTimeout(60000));";
+    std::string expected = "null";
+    EXPECT_EQ(runInterpreter(src), expected);
+    EXPECT_EQ(runStackVM(src), expected);
+    EXPECT_EQ(runStackVM_IR(src), expected);
+    EXPECT_EQ(runRegVM(src), expected);
+}
+
+// 参数校验：负数/非整数/超上限均报错，四后端错误行为一致（均带 runtime 标记）
+TEST(ConcurrencyGaps2, ChannelRecvTimeoutInvalidArgErrors) {
+    auto isRuntimeErr = [](const std::string& out, const char* keyword) {
+        return out.find("<runtime:") != std::string::npos && out.find(keyword) != std::string::npos;
+    };
+    std::string srcNeg = "var ch = channel(); ch.recvTimeout(-1);";
+    EXPECT_TRUE(isRuntimeErr(runInterpreter(srcNeg), "负数")) << runInterpreter(srcNeg);
+    EXPECT_TRUE(isRuntimeErr(runStackVM(srcNeg), "负数")) << runStackVM(srcNeg);
+    EXPECT_TRUE(isRuntimeErr(runStackVM_IR(srcNeg), "负数")) << runStackVM_IR(srcNeg);
+    EXPECT_TRUE(isRuntimeErr(runRegVM(srcNeg), "负数")) << runRegVM(srcNeg);
+
+    std::string srcType = "var ch = channel(); ch.recvTimeout(\"x\");";
+    EXPECT_TRUE(isRuntimeErr(runInterpreter(srcType), "整数")) << runInterpreter(srcType);
+    EXPECT_TRUE(isRuntimeErr(runStackVM(srcType), "整数")) << runStackVM(srcType);
+
+    std::string srcOver = "var ch = channel(); ch.recvTimeout(60001);";
+    EXPECT_TRUE(isRuntimeErr(runInterpreter(srcOver), "上限")) << runInterpreter(srcOver);
+    EXPECT_TRUE(isRuntimeErr(runStackVM(srcOver), "上限")) << runStackVM(srcOver);
 }
 
 // spawn 闭包内 throw，join 时主线程 try/catch 应捕获异常。

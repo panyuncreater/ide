@@ -13,7 +13,8 @@
 //   - 每个变体 challengeGoal 非空
 //   - description 含差异说明（包含"差异"关键词）
 //
-// 注：BugHuntVariantLibrary::variants() 实现位于 gui/BugHuntPanel.cpp，
+// 注：BugHuntVariantLibrary::variants() 实现位于 gui/BugHuntVariantLibrary.cpp
+//（已从 BugHuntPanel.cpp 拆分为独立编译单元以避免 IdeController 依赖），
 //     需在 tests/CMakeLists.txt 中显式加入该源文件才能链接通过。
 // ============================================================
 

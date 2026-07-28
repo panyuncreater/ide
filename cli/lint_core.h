@@ -40,6 +40,8 @@ struct CliArgs {
     LintOptions options;                      ///< Lint 选项（规则开关 + 阈值）
     OutputFormat format = OutputFormat::Text; ///< 输出格式（默认 Text）
     bool quiet = false;                       ///< 仅输出错误，不输出警告
+    bool fix = false;                         ///< --fix：应用自动修复并回写文件
+    bool fixDryRun = false;                   ///< --fix-dry-run：仅打印修复后源码不回写
     bool showHelp = false;                    ///< 显示帮助
     bool showVersion = false;                 ///< 显示版本
     bool parseError = false;                  ///< 参数解析失败
@@ -66,13 +68,46 @@ struct LintSourceResult {
 };
 
 /// lint 源码字符串
-/// 完整管线：source → Lexer::scan → Parser::parse → LintPass::analyze
-/// 失败时返回 ok=false + errorPhase + errorMessage
 LintSourceResult lintSource(const std::string& source, const LintOptions& opts);
+
+// ============================================================
+// 拓展二期：--fix 自动修复（结构化修复）
+// ------------------------------------------------------------
+// 策略：删除 AST 节点后用 Formatter 重新输出整个文件（往返等价性
+// 基础设施已有审计锁），天然保证语法安全——不做文本级行删除
+// （无区间信息，多语句同行/跨行语句会破坏语法）。
+//
+// 可修复规则（单轮，不迭代）：
+//   - lint-unused-variable：删除声明语句（仅当初始化器无调用/写
+//     副作用；参数不删——签名兼容）
+//   - lint-dead-code：删除 return/break/continue 后的不可达语句
+//   - lint-unused-function：删除未被调用的函数声明
+// 副作用保守判定：子树含 FunCall/MethodCall/Assignment/IndexAssign/
+// MemberAssign 则跳过（skippedCount 计数）。
+// ============================================================
+
+/// --fix 结果
+struct FixResult {
+    bool ok = false;          ///< 源码可解析且修复完成（含"无可修复项"）
+    std::string fixedSource;  ///< 修复后源码（removedCount==0 时等于格式化后原源码）
+    int removedCount = 0;     ///< 实际删除的节点数
+    int skippedCount = 0;     ///< 因副作用保守跳过的可修复诊断数
+    std::string errorMessage; ///< 错误信息（ok=false 时）
+    std::string errorPhase;   ///< "lex"/"parse"/"format"
+};
+
+/// 对源码应用自动修复（见上方策略说明）
+FixResult applyFixes(const std::string& source, const LintOptions& opts);
 
 /// 处理单个文件
 /// 读取文件 → lint → 按 format 格式化输出
 LintProcessResult processFile(const std::string& path, const LintOptions& opts, OutputFormat format, bool quiet);
+
+/// 拓展二期：--fix 模式处理单个文件。
+/// 读文件 → applyFixes → dryRun=false 时回写文件（仅当有删除），
+/// dryRun=true 时修复后源码放入 output 不回写。
+/// output 附带修复摘要（删除/跳过计数）。
+LintProcessResult processFileFix(const std::string& path, const LintOptions& opts, bool dryRun);
 
 /// 解析命令行参数
 /// 支持选项：--quiet / --rule <name> / --max-complexity <N>

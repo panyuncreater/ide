@@ -34,7 +34,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(MINILANG_WERROR "Treat warnings as errors" OFF)
 option(MINILANG_W4 "Enable MSVC /W4 warning level and release /wd4996 (requires warning cleanup)" OFF)
 # 修复问题 17：ccache 支持
-option(MINILANG_USE_CCACHE "Use ccache/sccache to accelerate builds" OFF)
+option(MINILANG_USE_CCACHE "Use ccache/sccache to accelerate builds" ON)
 if(MINILANG_USE_CCACHE)
     find_program(CCACHE_PROGRAM ccache)
     if(NOT CCACHE_PROGRAM)
@@ -52,7 +52,7 @@ endif()
 # 启用后将 minilang_core 的多个 .cpp 合并为单个 TU 编译，减少 PCH 重复加载与
 # 模板实例化开销。适用于 CI 与首次冷构建；增量构建时关闭以获得更细的依赖分析粒度。
 # 选项声明：在 minilang_core 目标创建后应用 UNITY_BUILD 属性。
-option(MINILANG_UNITY_BUILD "Batch-compile minilang_core as a single translation unit (cold build speedup)" OFF)
+option(MINILANG_UNITY_BUILD "Batch-compile minilang_core as a single translation unit (cold build speedup)" ON)
 
 # C1: Ninja 响应文件 — 当源文件较多时通过 .rsp 文件传递编译参数，
 # 避免 Windows 命令行 32K 限制与减少进程启动开销。
@@ -140,6 +140,32 @@ if(MINILANG_ENABLE_LTO)
     set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
 endif()
 
+# PERF: Profile-Guided Optimization (PGO) 两趟构建支持。
+# 第一趟：-DMINILANG_PGO_GENERATE=ON 构建并运行代表性工作负载生成 profile 数据。
+# 第二趟：-DMINILANG_PGO_USE=ON 利用 profile 数据指导优化（典型收益 10-30%）。
+# 仅对 MSVC 和 GCC/Clang 生效；Release 构建专用。
+option(MINILANG_PGO_GENERATE "Enable PGO instrumentation (pass 1: generate profile data)" OFF)
+option(MINILANG_PGO_USE "Enable PGO optimization (pass 2: use profile data)" OFF)
+if(MINILANG_PGO_GENERATE)
+    if(MSVC)
+        add_compile_options(/GL)
+        add_link_options(/LTCG /GENPROFILE)
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        add_compile_options(-fprofile-generate)
+        add_link_options(-fprofile-generate)
+    endif()
+    message(STATUS "PGO instrumentation enabled (MINILANG_PGO_GENERATE)")
+elseif(MINILANG_PGO_USE)
+    if(MSVC)
+        add_compile_options(/GL)
+        add_link_options(/LTCG /USEPROFILE)
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        add_compile_options(-fprofile-use -fprofile-correction)
+        add_link_options(-fprofile-use)
+    endif()
+    message(STATUS "PGO optimization enabled (MINILANG_PGO_USE)")
+endif()
+
 # C3: VM 解释循环热路径 profiling — 启用后 VM 记录每条 opcode 的执行计数，
 # 用于识别热路径并指导手动内联/特殊化优化。默认 OFF（避免 ~1ns/指令的计数开销）。
 # 用法：cmake -DMINILANG_VM_PROFILING=ON ...，运行后调用 vm.getOpCodeProfile() 取统计。
@@ -182,6 +208,11 @@ set(CMAKE_AUTORC ON)
 # 没有独立 .git（仅有 gitlink），其 CMakeLists 的 git_describe 自动检测会失败；
 # 当前 pin 为 5.0.0（与 ads 子模块 checkout commit 对应，见 .gitmodules 记录）。
 # 移除 FORCE 以便需要时可用 -DADS_VERSION=x.y.z 覆盖；更新 ads 子模块需同步此值。
+#
+# vcpkg 替代路径：若通过 vcpkg 提供 ADS，将下方 add_subdirectory 替换为：
+#   find_package(ads REQUIRED)
+# 并将 target_link_libraries 中的 qtadvanceddocking-qt6 改为 ads::qtadvanceddocking。
+# 注：vcpkg port 名为 "qtadvanceddocking"，参见 vcpkg.json 中的 feature 配置。
 # ============================================================
 set(ADS_VERSION "5.0.0" CACHE STRING "Pinned ADS version (submodule: git describe unavailable)")
 set(BUILD_STATIC ON CACHE BOOL "Build ADS as static library" FORCE)
@@ -197,6 +228,13 @@ add_subdirectory(third_party/ads)
 # git describe 返回 1.0-4-g8503e72（基线 tag 1.0）。当前 pin 为 1.0
 # （见 .gitmodules 记录）。更新 QFluentKit 子模块需同步此值。
 # 注：QFluentKit 未收录 vcpkg，仅以 submodule 方式提供。
+#
+# TODO(上游追踪): macOS arm64 链接问题通过 patches/qfluentkit-local-fixes.patch 临时解决。
+# 补丁内容：(1) using Base::Base 改为显式构造函数（arm64 clang 不生成继承构造符号）
+#              (2) InlineSpinBoxBase 方法内联化
+#              (3) QFluentExample 子目录注释掉
+#              (4) 安装条件增加顶层源码目录判断
+# 待上游修复后可移除补丁。相关讨论：https://github.com/user/QFluentKit/issues/TBD
 # ============================================================
 set(QFLUENTKIT_VERSION "1.0" CACHE STRING "Pinned QFluentKit version (submodule: tag 1.0)")
 set(_saved_install_prefix "${CMAKE_INSTALL_PREFIX}")
@@ -213,9 +251,24 @@ unset(_saved_install_prefix)
 # ASMJIT_VERSION 固定：asmjit 上游采用 rolling 发布（无正式版本 tag），
 # 子模块跟随 master 分支，当前 pin commit 0bd5787（见 .gitmodules 记录）。
 # vcpkg 中的 asmjit 端口以日期版本发布，可作替代来源。
+#
+# vcpkg 替代路径：若通过 vcpkg 提供 asmjit，将下方 add_subdirectory 替换为：
+#   find_package(asmjit CONFIG REQUIRED)
+# 并将 target_link_libraries 中的 asmjit 改为 asmjit::asmjit。
+#
+# 平台限制：当前 JIT 代码生成仅支持 x86-64 架构。
+# 非 x86-64 平台（如 Apple Silicon Mac）自动禁用 JIT，回退到 StackVM 解释执行。
+# 教学平台 ARM64 支持尚未实现，待 asmjit ARM64 后端成熟后追加。
 # ============================================================
 set(ASMJIT_VERSION "master-0bd5787" CACHE STRING "Pinned asmjit version (submodule: master, rolling)")
 option(MINILANG_USE_JIT "Enable JIT backend (asmjit)" ON)
+# 平台检测：JIT 代码生成仅支持 x86-64，非 x64 平台自动禁用
+if(MINILANG_USE_JIT)
+    if(NOT (CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64"))
+        message(STATUS "JIT disabled: current platform '${CMAKE_SYSTEM_PROCESSOR}' is not x86-64 (JIT code generation requires x86-64)")
+        set(MINILANG_USE_JIT OFF CACHE BOOL "" FORCE)
+    endif()
+endif()
 if(MINILANG_USE_JIT)
     set(ASMJIT_STATIC ON CACHE BOOL "Build asmjit as static library" FORCE)
     set(ASMJIT_TEST OFF CACHE BOOL "Build asmjit tests" FORCE)
@@ -223,6 +276,16 @@ if(MINILANG_USE_JIT)
     add_subdirectory(third_party/asmjit)
     add_compile_definitions(MINILANG_USE_JIT)
     message(STATUS "JIT backend enabled (asmjit ${ASMJIT_VERSION})")
+endif()
+
+# ARM64 JIT 后端（实验性 PoC，默认 OFF）
+# 仅实现 Phase 1 PoC：基本算术 + 控制流 + 局部/全局变量（对齐 x86-64 R138-R140），
+# 无函数调用/类/闭包/异常/GC 集成，无单元测试覆盖。不建议生产使用，
+# 仅供后续 ARM64 教学平台移植参考。详见 docs/adr/ADR-006-jit-backend.md。
+option(MINILANG_USE_JIT_A64 "Enable ARM64 JIT backend (asmjit a64, EXPERIMENTAL PoC)" OFF)
+if(MINILANG_USE_JIT_A64)
+    add_compile_definitions(MINILANG_USE_JIT_A64)
+    message(WARNING "MINILANG_USE_JIT_A64 is an EXPERIMENTAL PoC: limited opcode coverage, no tests, no GC/closure/exception support. Not for production use.")
 endif()
 
 # ============================================================
@@ -280,6 +343,14 @@ target_link_libraries(minilang_ide PRIVATE
 # PCH 可减少重复解析开销（增量构建 -10~20%）。
 minilang_enable_pch(minilang_ide ${CMAKE_CURRENT_SOURCE_DIR})
 
+# C2 (P3-A2): GUI 源文件预存警告豁免。
+# gui/ 目录 146 个文件含大量历史代码，存在 C4456/C4189/C4100 等 W4 警告，
+# 待后续面板注册表迁移时逐步清理。不影响 minilang_core 的 /W4 /WX 基线。
+if(MSVC)
+    set_source_files_properties(${MINILANG_GUI_SOURCES} PROPERTIES
+        COMPILE_OPTIONS "/wd4456;/wd4189;/wd4100;/wd4458;/wd4996")
+endif()
+
 # C2: 启用 QtCharts 时链接到 IDE 目标
 if(MINILANG_USE_QTCHARTS)
     target_link_libraries(minilang_ide PRIVATE Qt6::Charts)
@@ -328,7 +399,7 @@ endif()
 # test_harness 子目录（独立审计/压力测试工具）
 # 修复问题 3（test_harness 未集成 CMake）
 # ============================================================
-option(MINILANG_BUILD_TEST_HARNESS "Build MiniLang test harness (audit/stress tools)" OFF)
+option(MINILANG_BUILD_TEST_HARNESS "Build MiniLang test harness (audit/stress tools)" ON)
 if(MINILANG_BUILD_TEST_HARNESS)
     add_subdirectory(test_harness)
 endif()
@@ -410,7 +481,7 @@ endif()
 # Sanitizer 支持（跨平台）
 # 用法: cmake -DMINILANG_SANITIZE=address ...
 # ============================================================
-set(MINILANG_SANITIZE "" CACHE STRING "Enable sanitizer: address, undefined, both")
+set(MINILANG_SANITIZE "" CACHE STRING "Enable sanitizer: address, undefined, thread, both")
 if(MINILANG_SANITIZE)
     if(MINILANG_SANITIZE STREQUAL "address")
         if(MSVC)
@@ -429,6 +500,14 @@ if(MINILANG_SANITIZE)
         else()
             message(WARNING "MINILANG_SANITIZE=undefined has limited support on MSVC")
         endif()
+    elseif(MINILANG_SANITIZE STREQUAL "thread")
+        if(NOT MSVC)
+            target_compile_options(minilang_compile_options INTERFACE
+                -fsanitize=thread -fno-omit-frame-pointer)
+            target_link_options(minilang_compile_options INTERFACE -fsanitize=thread)
+        else()
+            message(WARNING "MINILANG_SANITIZE=thread is not supported on MSVC")
+        endif()
     elseif(MINILANG_SANITIZE STREQUAL "both")
         if(MSVC)
             target_compile_options(minilang_compile_options INTERFACE /fsanitize=address)
@@ -440,7 +519,7 @@ if(MINILANG_SANITIZE)
         endif()
     else()
         message(FATAL_ERROR "Unknown MINILANG_SANITIZE value: ${MINILANG_SANITIZE}"
-                " Supported: address, undefined, both")
+                " Supported: address, undefined, thread, both")
     endif()
 endif()
 

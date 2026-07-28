@@ -51,6 +51,19 @@ public:
     std::string getBreakpointCondition(int line) const { return debugger_->getBreakpointCondition(line); }
     int getBreakpointHitCount(int line) const { return debugger_->getBreakpointHitCount(line); }
 
+    // ---- 拓展二期：命中条件 + 依赖断点链 + 调试改值（转发 DebugController）----
+    void setBreakpointHitCondition(int line, const std::string& expr) {
+        debugger_->setBreakpointHitCondition(line, expr);
+    }
+    std::string getBreakpointHitCondition(int line) const { return debugger_->getBreakpointHitCondition(line); }
+    void setBreakpointDependency(int line, int depLine) { debugger_->setBreakpointDependency(line, depLine); }
+    int getBreakpointDependency(int line) const { return debugger_->getBreakpointDependency(line); }
+    /// 调试暂停时写变量（仅 isPaused 时生效，经 setVariableWriteCallback 写入
+    /// Interpreter 当前 Environment）
+    bool setVariableValue(const std::string& name, const Value& value) {
+        return debugger_->setVariableValue(name, value);
+    }
+
     // ---- 步进控制 ----
     void stepIn() { debugger_->stepIn(); }
     void stepOver() { debugger_->stepOver(); }

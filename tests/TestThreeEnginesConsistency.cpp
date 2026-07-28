@@ -2125,6 +2125,29 @@ TEST(ConsistencyDiff, AuditUpvalue_ClosedUpvalueReadPerservesSnapshot) {
     EXPECT_EQ(ri, rr);
 }
 
+// AUDIT-R5 R2 核实（回归锁）：闭包返回后经数组索引调用，三后端均为快照语义（一致）。
+// 工厂返回 [inc, get] 两个闭包（共享局部 count）；作用域退出后经 cs[0]() 递增、
+// cs[1]() 读取——Interpreter / StackVM(IR) / RegisterVM(IR) 均输出 "0"（count 关闭为初值快照，
+// inc 的写入经数组索引调用不跨闭包共享）。这与 Lua/JS/Python 的共享语义不同，
+// 但三后端一致——项目核心不变量是三后端一致而非匹配特定主流语言。
+// AUDIT-R5：本回归锁防止将“Interpreter 单边改为共享(得 "2")”误作修复（会破坏一致性）。
+TEST(ConsistencyDiff, AuditUpvalue_R2_MultiClosureSharedCounterAfterClose) {
+    std::string src = "fun makeCounter() {\n"
+                      "  var count = 0;\n"
+                      "  fun inc() { count = count + 1; return count; }\n"
+                      "  fun get() { return count; }\n"
+                      "  return [inc, get];\n" // 返回两个闭包（关闭 count）
+                      "}\n"
+                      "var cs = makeCounter();\n"
+                      "cs[0]();\n"        // inc
+                      "cs[0]();\n"        // inc
+                      "print(cs[1]());\n"; // get
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "0") << "关闭后经数组索引调用为快照语义（count 关闭为初值）";
+    EXPECT_EQ(ri, rs) << "多闭包共享捕获变量关闭后：Interpreter 与 StackVM(IR) 必须一致";
+    EXPECT_EQ(ri, rr) << "多闭包共享捕获变量关闭后：Interpreter 与 RegisterVM(IR) 必须一致";
+}
+
 // ---- #19 executeReturn 字段同步合并遍历 ----
 // 假设：合并遍历 modifiedThis.fields() 时同时写 caller this.fields() 与字段槽；
 //       字段顺序（unordered_map）不影响写回语义；fieldSlotIndex 未命中时仅跳过

@@ -480,6 +480,13 @@ TEST(AuditBatch2IRopt, LoopUnrollVregRenamingCorrectness) {
     uint32_t counterSlot = 0;
     uint32_t localSlot = 1;
 
+    // AUDIT-R3 P1-9 fix 配套：loopUnroll 现要求回溯验证计数器初值确为常量 0
+    //（LABEL 之前最近的 "LOAD_CONST 0 → STORE_LOCAL counterSlot" 序列），
+    // 与真实 lowering 的 "var i = 0;" 产物对齐；缺失则拒绝展开。
+    uint32_t vInit = ir.nextVReg++;
+    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{ IROperand::vreg(vInit), IROperand::constant(3) }, 1);
+    block.instructions.emplace_back(IROp::STORE_LOCAL, std::vector<IROperand>{ IROperand::local(counterSlot), IROperand::vreg(vInit) }, 1);
+
     block.instructions.emplace_back(IROp::LABEL, std::vector<IROperand>{ IROperand::label(startLabelIdx) }, 1);
     // LOAD_LOCAL slot=0 → vreg v0
     uint32_t v0 = ir.nextVReg++;

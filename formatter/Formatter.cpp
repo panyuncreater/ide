@@ -56,6 +56,14 @@ static std::string escapeStringContent(const std::string& s) {
         case '\v':
             escaped += "\\v";
             break;
+        case '{':
+            // AUDIT-R3 P1 fix: 字面 '{' 必须转义——Lexer 在字符串内将裸 '{' 无条件
+            // 视为插值起始（string() → handleInterpolation），且不支持 \\{ 转义。
+            // 若原样输出，含 \\x7b/\\u{7b} 转义的字符串经格式化后重新解析会报
+            // "未终止的插值表达式"或语义变为插值，破坏往返等价性。
+            // 输出为 \\x7b（Lexer handleHexEscape 可回读）。
+            escaped += "\\x7b";
+            break;
         default:
             // AUDIT-P3.12 fix: 处理多字节 UTF-8 字符（非 ASCII）
             if (c >= 0x80) {
@@ -228,6 +236,8 @@ static bool isSelfTerminating(ASTNode* node) {
     case NodeType::NODE_FUN_DECL:
     case NodeType::NODE_CLASS_DECL:
     case NodeType::NODE_BLOCK:
+    case NodeType::NODE_DESTRUCTURE_BINDING: // P1 #26 fix: 解构绑定自带 ';'，自终止，避免 formatBlock 双重分号
+    case NodeType::NODE_ENUM_DECL:           // P1 #29 fix: enum 以 '}' 结尾，自终止
     case NodeType::NODE_TRY_STMT: // P0 fix: try/catch 以 } 结尾，自终止
         return true;
     case NodeType::NODE_IMPORT_STMT: // P0 fix: visitImportStmt 已自行添加 ;
@@ -269,8 +279,9 @@ static std::string reindentBlockComment(const std::string& lexeme, const std::st
 
 /// 格式化任意 AST 节点：经 Visitor 模式分派到 visit*，带递归深度保护（超深返回占位），结果存入 lastFormatResult_。
 std::string Formatter::formatNode(ASTNode* node) {
+    // P2 #61 fix: 返回注释形式而非裸 "null"，避免与用户代码中的 null 字面量混淆
     if (!node)
-        return "null";
+        return "/* null-node */";
 
     // D5 fix: 递归深度保护，防止极端嵌套 AST 导致栈溢出
     if (formatDepth_ >= MAX_FORMAT_DEPTH)
@@ -491,6 +502,18 @@ void Formatter::visitThrowStmt(ThrowStmt& node) {
     return;
 }
 
+void Formatter::visitYieldExpr(YieldExpr& node) {
+    // AUDIT-R6 F7 fix: 补齐 R164 yield 表达式的 visitor 覆盖。原 Formatter 未 override
+    // visitYieldExpr，DefaultVisitor 空实现不写 lastFormatResult_，yield 节点被格式化为
+    // 上一节点的残留文本（往返不等价，生成器函数 format 后语义损坏）。
+    std::string result = "yield";
+    if (node.value) {
+        result += " " + formatNode(node.value.get());
+    }
+    lastFormatResult_ = result;
+    return;
+}
+
 void Formatter::visitTryStmt(TryStmt& node) {
     // P2 fix: visitBlock 以 " {" 开头，"try" 后无需额外空格
     // BUG-FE-AUDIT-1 fix: 同步 BUG-AUDIT-FINALLY-1 的 finally 语法支持。
@@ -545,7 +568,12 @@ void Formatter::visitTryStmt(TryStmt& node) {
 
 void Formatter::visitImportStmt(ImportStmt& node) {
     std::string result = "import ";
-    if (!node.importAll && !node.names.empty()) {
+    // AUDIT-R5 BUG-04 fix: 命名空间导入（import * as ns from "path";）原被退化
+    // 为裸 import，重新解析后 ns 绑定丢失，运行时报“未定义的变量: ns”——
+    // P2-11 新增语法后未同步 Formatter，破坏往返等价性且改变语义。
+    if (!node.namespaceAlias.empty()) {
+        result += "* as " + node.namespaceAlias + " from ";
+    } else if (!node.importAll && !node.names.empty()) {
         result += "{ ";
         for (size_t i = 0; i < node.names.size(); ++i) {
             if (i > 0)
@@ -810,6 +838,7 @@ std::string Formatter::formatIfStmt(IfStmt& node) {
 
 /// 格式化 while 语句：与 if 一致的单语句体/复合体策略，保持 AST 往返等价。
 std::string Formatter::formatWhileStmt(WhileStmt& node) {
+    if (!node.body) return "/* empty */"; // P1 #28 fix: 空指针保护
     // P1-D fix: 保留单语句体原貌（无花括号），避免往返后 AST 结构改变
     if (node.body->nodeType != NodeType::NODE_BLOCK) {
         std::string result = "while (" + formatNode(node.condition.get()) + ") ";
@@ -838,6 +867,7 @@ std::string Formatter::formatWhileStmt(WhileStmt& node) {
 /// 格式化 for 语句：输出 "for (init; cond; update) body"，空 update/cond 时省略空格，
 /// 单语句体与原貌一致、复合体包裹花括号。
 std::string Formatter::formatForStmt(ForStmt& node) {
+    if (!node.body) return "/* empty */"; // P1 #28 fix: 空指针保护
     // P1-D fix: 保留单语句体原貌（无花括号），避免往返后 AST 结构改变
     if (node.body->nodeType != NodeType::NODE_BLOCK) {
         std::string result = "for (";
@@ -885,14 +915,18 @@ std::string Formatter::formatForStmt(ForStmt& node) {
 /// 格式化函数声明：输出 "fun name(params): retType { body }"，参数支持类型标注与默认值，
 /// 函数体以 } 自终止，外部由 formatBlock 决定是否补前导空行。
 std::string Formatter::formatFunDecl(FunDecl& node) {
+    if (!node.body) return "/* empty */"; // P1 #28 fix: 空指针保护
     // PERF-27 fix: 预估输出大小（fun + name + params + body），避免反复 realloc
     std::string result;
     result.reserve(32 + node.params.size() * 16 + node.name.size());
     // R98 W3: 匿名 lambda（name 为空）格式化为 `fun(params)`，具名函数为 `fun name(params)`
+    // AUDIT-R6 F7b fix: 生成器函数保留 `fun*` 标记——原实现丢失 '*'，往返后
+    // 函数体内的 yield 变为非法语法（"yield 只能出现在 fun* 生成器函数体内"）。
+    const char* funKw = node.isGenerator ? "fun*" : "fun";
     if (node.name.empty()) {
-        result += "fun";
+        result += funKw;
     } else {
-        result += "fun " + node.name;
+        result += std::string(funKw) + " " + node.name;
     }
     // R163 泛型扩展：输出类型参数列表 <T, E, ...>（与 formatEnumDecl 一致）
     if (!node.typeParams.empty()) {
@@ -1202,11 +1236,16 @@ std::string Formatter::formatEnumDecl(EnumDecl& node) {
             }
             result += ")";
         }
-        // variant 是声明项，需自终止
-        result += ";";
-        // 同行行内注释
+        // AUDIT-R5 BUG-05 fix: variant 分隔符改为 ','——Parser::enumDecl 仅接受
+        // 逗号分隔（尾逗号可选，Parser.cpp L1210-1213），原输出 ';' 使所有
+        // enum 声明格式化后不可再解析（报“期望 variant 名称”），违反
+        // “formatter 不得输出不可再解析代码”约束。尾 variant 后的逗号合法（尾逗号可选）。
+        result += ",";
+        // P2 #62 known-limitation: EnumVariant 结构没有独立的 line 字段，
+        // 无法精确匹配每个 variant 前后的注释。当前仅在 enum 尾部
+        // （closingBraceLine 之前）统一输出残余注释。
+        // 待 AST 为 EnumVariant 添加 line 字段后可实现逐 variant 注释注入。
         std::string trailing;
-        // variant 无独立行号字段，复用 enum 声明行号；不强行匹配注释避免误注入
         (void)trailing;
         result += "\n";
     }

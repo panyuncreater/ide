@@ -1,13 +1,11 @@
 // ============================================================
-// TypeChecker.cpp — MiniLangTypeChecker 基础字面量类型检查实现
+// TypeChecker.cpp — MiniLangTypeChecker 基础类型推断 + 字面量类型检查实现
 // ------------------------------------------------------------
 // 2026-06-29: 接线 TypeChecker 产生警告（不再是死代码）
-// 实现范围：VarDecl + Assignment 的字面量初始化器类型注解检查
-//   - NumberLiteral(int) vs string/bool 注解 → 警告
-//   - StringLiteral vs int/float/bool 注解 → 警告
-//   - BoolLiteral vs int/float/string 注解 → 警告
-//   - NullLiteral → 通过（null 兼容所有类型）
-//   - 非字面量表达式 → 跳过（需运行时检查，由 OP_TYPE_CHECK 处理）
+// 2026-07-25: 扩展为基础类型推断引擎：
+//   - inferExprType: 从表达式推断 TypeInfo
+//   - 函数返回类型检查：FunDecl.returnType vs ReturnStmt 推断类型
+//   - 赋值类型兼容性：对所有可推断类型的右值检查兼容性
 // ============================================================
 
 #include "common/TypeChecker.h"
@@ -30,6 +28,72 @@ class LiteralTypeWalker : public DefaultVisitor {
 public:
     DiagnosticBag diagnostics;
     std::unordered_map<std::string, std::string> varTypes; // 变量名→类型注解
+    std::unordered_map<std::string, TypeInfo> varTypeInfos; // 变量名→推断类型
+    std::unordered_map<std::string, std::string> funcReturnTypes; // 函数名→返回类型注解
+
+    /// 从表达式 AST 节点推断类型
+    TypeInfo inferExprType(ASTNode* expr) {
+        if (!expr)
+            return TypeInfo{TypeKind::UNKNOWN};
+        // 字面量
+        if (auto* num = dynamic_cast<NumberLiteral*>(expr))
+            return TypeInfo{num->isFloat_ ? TypeKind::FLOAT : TypeKind::INT};
+        if (dynamic_cast<StringLiteral*>(expr))
+            return TypeInfo{TypeKind::STRING};
+        if (dynamic_cast<BoolLiteral*>(expr))
+            return TypeInfo{TypeKind::BOOL};
+        if (dynamic_cast<NullLiteral*>(expr))
+            return TypeInfo{TypeKind::NULL_T};
+        if (dynamic_cast<TupleLiteral*>(expr))
+            return TypeInfo{TypeKind::ARRAY}; // tuple 视为 array 子类型
+        // 变量引用：查符号表
+        if (auto* id = dynamic_cast<VarRef*>(expr)) {
+            auto it = varTypeInfos.find(id->name);
+            if (it != varTypeInfos.end())
+                return it->second;
+            return TypeInfo{TypeKind::UNKNOWN};
+        }
+        // 二元运算
+        if (auto* bin = dynamic_cast<BinaryOp*>(expr)) {
+            TypeInfo lhs = inferExprType(bin->left.get());
+            TypeInfo rhs = inferExprType(bin->right.get());
+            // 字符串拼接
+            if (bin->opType == BinOpType::BIN_ADD && (lhs.kind == TypeKind::STRING || rhs.kind == TypeKind::STRING))
+                return TypeInfo{TypeKind::STRING};
+            // 数值运算：有 float 则结果为 float
+            if (lhs.isNumeric() && rhs.isNumeric()) {
+                if (lhs.kind == TypeKind::FLOAT || rhs.kind == TypeKind::FLOAT)
+                    return TypeInfo{TypeKind::FLOAT};
+                return TypeInfo{TypeKind::INT};
+            }
+            // 比较运算符返回 bool
+            if (bin->opType == BinOpType::BIN_EQ || bin->opType == BinOpType::BIN_NEQ ||
+                bin->opType == BinOpType::BIN_LT || bin->opType == BinOpType::BIN_GT ||
+                bin->opType == BinOpType::BIN_LTE || bin->opType == BinOpType::BIN_GTE)
+                return TypeInfo{TypeKind::BOOL};
+            // 逻辑运算符返回操作数类型（MiniLang 短路返回原值）
+            if (bin->opType == BinOpType::BIN_AND || bin->opType == BinOpType::BIN_OR)
+                return lhs;
+            return TypeInfo{TypeKind::UNKNOWN};
+        }
+        // 一元运算
+        if (auto* unary = dynamic_cast<UnaryOp*>(expr)) {
+            TypeInfo operand = inferExprType(unary->operand.get());
+            if (unary->opType == UnaryOp::UnaryOpType::UOP_NEGATE)
+                return operand; // 保持数值类型
+            if (unary->opType == UnaryOp::UnaryOpType::UOP_NOT)
+                return TypeInfo{TypeKind::BOOL};
+            return operand;
+        }
+        // 函数调用：查函数返回类型注解
+        if (auto* call = dynamic_cast<FunCall*>(expr)) {
+            auto it = funcReturnTypes.find(call->name);
+            if (it != funcReturnTypes.end())
+                return TypeInfo::fromAnnotation(it->second);
+            return TypeInfo{TypeKind::UNKNOWN};
+        }
+        return TypeInfo{TypeKind::UNKNOWN};
+    }
 
     /// 检查单个变量声明的字面量类型匹配。
     /// 无注解或无初始化器时仅登记注解供后续 Assignment 复用；
@@ -40,34 +104,27 @@ public:
             // 无注解或无初始化器：仅记录注解供 Assignment 用
             if (!node.typeAnnotation.empty()) {
                 varTypes[node.name] = node.typeAnnotation;
+                varTypeInfos[node.name] = TypeInfo::fromAnnotation(node.typeAnnotation);
+            } else if (node.initializer) {
+                // 无注解但有初始化器：从初始化表达式推断类型
+                TypeInfo inferred = inferExprType(node.initializer.get());
+                if (inferred.kind != TypeKind::UNKNOWN)
+                    varTypeInfos[node.name] = inferred;
             }
             return;
         }
-        // 检查字面量初始化器
-        std::string actualType;
-        ASTNode* init = node.initializer.get();
-        if (auto* num = dynamic_cast<NumberLiteral*>(init)) {
-            actualType = num->isFloat_ ? TypeName::FLOAT : TypeName::INT;
-        } else if (dynamic_cast<StringLiteral*>(init)) {
-            actualType = TypeName::STRING;
-        } else if (dynamic_cast<BoolLiteral*>(init)) {
-            actualType = TypeName::BOOL;
-        } else if (dynamic_cast<NullLiteral*>(init)) {
-            actualType = TypeName::NULL_T; // null 兼容所有类型，不报
-        } else if (dynamic_cast<TupleLiteral*>(init)) {
-            actualType = TypeName::TUPLE; // R98 元组与解构：元组字面量
-        }
-        // 非字面量（变量引用、表达式等）→ 跳过，运行时检查
-        if (!actualType.empty() && actualType != TypeName::NULL_T) {
-            if (!typeMatchLiteral(actualType, node.typeAnnotation)) {
+        // 有注解+有初始化器：用 inferExprType 推断右值类型并检查兼容性
+        TypeInfo declaredType = TypeInfo::fromAnnotation(node.typeAnnotation);
+        TypeInfo actualType = inferExprType(node.initializer.get());
+        if (actualType.kind != TypeKind::UNKNOWN && actualType.kind != TypeKind::NULL_T) {
+            if (!declaredType.isCompatible(actualType)) {
                 diagnostics.addWarning("变量 " + node.name + " 类型注解为 " + node.typeAnnotation + "，但初始化值为 " +
-                                           actualType,
+                                           actualType.toString(),
                                        node.line, node.column, DiagSource::TypeChecker);
             }
         }
-        if (!node.typeAnnotation.empty()) {
-            varTypes[node.name] = node.typeAnnotation;
-        }
+        varTypes[node.name] = node.typeAnnotation;
+        varTypeInfos[node.name] = declaredType;
     }
 
     /// 访问变量声明：先执行字面量类型检查，再递归遍历初始化表达式
@@ -84,26 +141,13 @@ public:
     void visitAssignment(Assignment& node) override {
         auto it = varTypes.find(node.name);
         if (it != varTypes.end()) {
-            std::string actualType;
-            ASTNode* val = node.value.get();
-            if (auto* num = dynamic_cast<NumberLiteral*>(val)) {
-                actualType = num->isFloat_ ? TypeName::FLOAT : TypeName::INT;
-            } else if (dynamic_cast<StringLiteral*>(val)) {
-                actualType = TypeName::STRING;
-            } else if (dynamic_cast<BoolLiteral*>(val)) {
-                actualType = TypeName::BOOL;
-            } else if (dynamic_cast<NullLiteral*>(val)) {
-                // AUDIT-P2 fix: 对齐 checkVarDecl 的 NullLiteral 分支。
-                // null 兼容所有类型，actualType 设为 NULL_T 但 typeMatchLiteral
-                // 对 null 永远返回 true，不会误报。保持与 checkVarDecl 一致性。
-                actualType = TypeName::NULL_T;
-            } else if (dynamic_cast<TupleLiteral*>(val)) {
-                actualType = TypeName::TUPLE; // R98 元组与解构
-            }
-            if (!actualType.empty()) {
-                if (!typeMatchLiteral(actualType, it->second)) {
+            // 有类型注解：用 inferExprType 推断右值类型并检查兼容性
+            TypeInfo declaredType = TypeInfo::fromAnnotation(it->second);
+            TypeInfo actualType = inferExprType(node.value.get());
+            if (actualType.kind != TypeKind::UNKNOWN && actualType.kind != TypeKind::NULL_T) {
+                if (!declaredType.isCompatible(actualType)) {
                     diagnostics.addWarning("赋值给 " + node.name + " 类型注解为 " + it->second + "，但赋值值为 " +
-                                               actualType,
+                                               actualType.toString(),
                                            node.line, node.column, DiagSource::TypeChecker);
                 }
             }
@@ -117,11 +161,13 @@ public:
         // 防止内层块（if/while/for body）的变量类型注解污染外层。
         // visitFunDecl 已有此模式，此处对齐。
         auto saved = varTypes;
+        auto savedInfos = varTypeInfos; // P1 #27 fix: 同时保存/恢复 varTypeInfos，防止块作用域推断类型泄漏
         for (auto& stmt : node.statements) {
             if (stmt)
                 stmt->accept(*this);
         }
         varTypes = std::move(saved);
+        varTypeInfos = std::move(savedInfos);
     }
 
     void visitIfStmt(IfStmt& node) override {
@@ -129,12 +175,15 @@ public:
             node.condition->accept(*this);
         // AUDIT-BUG-E1 fix: then/else 分支是独立作用域
         auto saved = varTypes;
+        auto savedInfos = varTypeInfos; // P2 #63 fix: 对齐 visitBlock，同时保存/恢复 varTypeInfos
         if (node.thenBranch)
             node.thenBranch->accept(*this);
         varTypes = saved;
+        varTypeInfos = savedInfos; // P2 #63 fix: 恢复 then 分支前的类型推断状态
         if (node.elseBranch)
             node.elseBranch->accept(*this);
         varTypes = std::move(saved);
+        varTypeInfos = std::move(savedInfos); // P2 #63 fix: 恢复外层作用域
     }
 
     void visitWhileStmt(WhileStmt& node) override {
@@ -167,11 +216,50 @@ public:
     }
 
     void visitFunDecl(FunDecl& node) override {
-        // 保存外层 varTypes，函数体内独立作用域
-        auto saved = varTypes;
+        // 记录函数返回类型注解（供 inferExprType 查询）
+        if (!node.returnType.empty()) {
+            funcReturnTypes[node.name] = node.returnType;
+        }
+        // 保存外层 varTypes/varTypeInfos，函数体内独立作用域
+        auto savedVarTypes = varTypes;
+        auto savedVarTypeInfos = varTypeInfos;
+        // 注册参数类型到符号表
+        for (size_t i = 0; i < node.params.size() && i < node.paramTypes.size(); ++i) {
+            if (!node.paramTypes[i].empty()) {
+                varTypes[node.params[i]] = node.paramTypes[i];
+                varTypeInfos[node.params[i]] = TypeInfo::fromAnnotation(node.paramTypes[i]);
+            }
+        }
+        // 返回类型检查：如果有 returnType 注解，检查函数体中 ReturnStmt 的返回值类型
+        std::string currentReturnType;
+        if (!node.returnType.empty()) {
+            currentReturnType = node.returnType;
+        }
+        // 设置当前函数返回类型上下文（用于 visitReturnStmt）
+        auto savedReturnType = currentCheckingReturnType_;
+        currentCheckingReturnType_ = currentReturnType;
         if (node.body)
             node.body->accept(*this);
-        varTypes = std::move(saved);
+        currentCheckingReturnType_ = savedReturnType;
+        varTypes = std::move(savedVarTypes);
+        varTypeInfos = std::move(savedVarTypeInfos);
+    }
+
+    void visitReturnStmt(ReturnStmt& node) override {
+        // 检查返回值类型与当前函数的 returnType 注解是否兼容
+        if (!currentCheckingReturnType_.empty() && node.value) {
+            TypeInfo declaredReturn = TypeInfo::fromAnnotation(currentCheckingReturnType_);
+            TypeInfo actualReturn = inferExprType(node.value.get());
+            if (actualReturn.kind != TypeKind::UNKNOWN && actualReturn.kind != TypeKind::NULL_T) {
+                if (!declaredReturn.isCompatible(actualReturn)) {
+                    diagnostics.addWarning("函数返回类型注解为 " + currentCheckingReturnType_ +
+                                               "，但返回值为 " + actualReturn.toString(),
+                                           node.line, node.column, DiagSource::TypeChecker);
+                }
+            }
+        }
+        if (node.value)
+            node.value->accept(*this);
     }
 
     void visitClassDecl(ClassDecl& node) override {
@@ -211,6 +299,8 @@ public:
     }
 
 private:
+    std::string currentCheckingReturnType_; // 当前正在检查的函数返回类型
+
     // 字面量类型兼容性检查（编译期，仅字面量）
     /// 判断字面量实际类型 actual 是否兼容类型注解 annotation。
     /// 规则：无注解→兼容；int 注解只接受 int；float 注解接受 float 与 int（int 可提升）；
@@ -239,16 +329,19 @@ private:
 /// 以满足 DefaultVisitor 的 non-const 接口），仅收集 diagnostic 警告。
 /// 返回 DiagnosticBag，调用方据此向用户展示类型注解不匹配的警告。
 DiagnosticBag MiniLangTypeChecker::check(const Block& program) {
+    lastWalkerTypeInfos_.clear();
     LiteralTypeWalker walker;
     // const_cast: DefaultVisitor 需要 non-const 引用，但 walker 不修改 AST
     const_cast<Block&>(program).accept(walker);
+    lastWalkerTypeInfos_ = std::move(walker.varTypeInfos);
     return std::move(walker.diagnostics);
 }
 
-/// 按变量名推断类型（当前未实现，返回空 TypeInfo）。
-/// 预留接口：未来可基于 varTypes 表做上下文相关的类型推断；现阶段类型检查
-/// 仅依赖显式字面量注解，故此处返回空。
-TypeInfo MiniLangTypeChecker::inferType(const std::string& /*name*/) const {
+/// 按变量名推断类型（基于上次 check() 运行的符号表）。
+TypeInfo MiniLangTypeChecker::inferType(const std::string& name) const {
+    auto it = lastWalkerTypeInfos_.find(name);
+    if (it != lastWalkerTypeInfos_.end())
+        return it->second;
     return TypeInfo{};
 }
 

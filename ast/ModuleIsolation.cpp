@@ -5,6 +5,7 @@
 // ============================================================
 
 #include "ast/ModuleIsolation.h"
+#include "common/ModulePath.h" // AUDIT-R5 R6 fix: 模块路径缓存键规范化单一事实源
 #include <cstdint>
 #include <iomanip>
 #include <sstream>
@@ -53,42 +54,22 @@ ModuleTopLevelRenamer::ModuleTopLevelRenamer(const std::string& modulePath) : mo
 }
 
 std::string ModuleTopLevelRenamer::pathHash(const std::string& modulePath) {
-    // AUDIT-P2 fix: 在哈希前先 normalize 路径（\ → /、去除 ./ 前缀），
-    // 保证跨平台和不同调用路径的 hash 一致性。原实现直接对传入字符串做哈希，
-    // 依赖所有调用者自行 normalize（Compiler/IR/Interpreter 三处重复实现），
-    // 未来新增调用者若忘记 normalize 会导致模块隔离前缀不一致。
-    std::string normalized = modulePath;
-    for (char& c : normalized) {
-        if (c == '\\')
-            c = '/';
-    }
-    if (normalized.size() >= 2 && normalized[0] == '.' && normalized[1] == '/') {
-        normalized.erase(0, 2);
-    }
-    // AUDIT-P2-ROUND53 fix: 折叠连续 '/'，避免 "./a//b" 与 "./a/b" 产生不同 hash
-    // 导致同一模块被当作两个不同模块，__mod_<hash>__ 前缀不一致引发重命名解析失败。
-    std::string folded;
-    folded.reserve(normalized.size());
-    bool prevSlash = false;
-    for (char c : normalized) {
-        if (c == '/') {
-            if (!prevSlash)
-                folded.push_back(c);
-            prevSlash = true;
-        } else {
-            folded.push_back(c);
-            prevSlash = false;
-        }
-    }
-    normalized = std::move(folded);
-    // FNV-1a 32-bit hash，取低 32 位，输出 8 字符 hex
-    uint32_t h = 2166136261u;
+    // AUDIT-R5 R6 fix: 规范化改用 normalizeModulePathKey（common/ModulePath.h 单一
+    // 事实源），与 Interpreter/Compiler/AstIRBuilder 的缓存键规范化完全一致，
+    // 避免隔离前缀（__mod_<hash>__）与缓存键因规范化规则不同而不匹配。
+    // 原实现仅在此处折叠连续斜杠（AUDIT-P2-ROUND53），与其他三处不同；
+    // 现共享函数同时处理双斜杠折叠与 Windows 大小写折叠。
+    std::string normalized = normalizeModulePathKey(modulePath);
+    // AUDIT-R4 BUG-09 fix: FNV-1a 由 32 位升级为 64 位（输出 16 字符 hex）。
+    // 32 位哈希碰撞概率 2^-32，两个不同模块路径碰撞时隔离前缀相同，
+    // 非导出顶层符号跨模块串名且无任何诊断。64 位将碰撞概率降至 2^-64。
+    uint64_t h = 14695981039346656037ull;
     for (char c : normalized) {
         h ^= static_cast<uint8_t>(c);
-        h *= 16777619u;
+        h *= 1099511628211ull;
     }
     std::ostringstream oss;
-    oss << std::hex << std::setfill('0') << std::setw(8) << h;
+    oss << std::hex << std::setfill('0') << std::setw(16) << h;
     return oss.str();
 }
 
@@ -117,6 +98,19 @@ void ModuleTopLevelRenamer::collectNonExportTopLevelNames(Block& moduleAst) {
         // 跳过 ImportStmt（嵌套模块有自己的命名空间）
         if (stmt->nodeType == NodeType::NODE_IMPORT_STMT)
             continue;
+        // AUDIT-R6 F8 fix: 顶层解构绑定的每个名字也参与隔离重命名。原实现
+        // getTopLevelDeclName 不识别该节点，解构名以原名占据全局槽——导入方可用
+        // 原名直接读到模块内部值（实证：VM=7，Interpreter=未定义变量，三后端不一致），
+        // 且反向覆写导入方同名全局。解构名不可能被导出（export 仅包装
+        // VarDecl/FunDecl/ClassDecl），故无需 exportNames 豁免。
+        if (stmt->nodeType == NodeType::NODE_DESTRUCTURE_BINDING) {
+            auto* db = static_cast<DestructureBinding*>(stmt.get());
+            for (const auto& bn : db->names) {
+                renameMap_[bn] = prefix + bn;
+                scopeStack_.front().insert(bn);
+            }
+            continue;
+        }
         std::string n = getTopLevelDeclName(stmt.get());
         if (n.empty())
             continue;
@@ -427,6 +421,75 @@ void ModuleTopLevelRenamer::renameInNode(ASTNode* node) {
         }
         break;
     }
+    // ---- R98/R99/R164 新增节点（AUDIT-R5 BUG-09 fix）----
+    // 原 switch 缺失以下分支且无兜底递归，子表达式被整体跳过：模块内
+    // match/元组/enum variant/解构/yield 中对非导出顶层名的引用不被重命名，
+    // VM/IR 路径运行时报“未定义的变量”（与历史遗漏 FunDecl/ExportStmt 同模式）。
+    case NodeType::NODE_TUPLE_LITERAL: {
+        auto* n = static_cast<TupleLiteral*>(node);
+        for (const auto& e : n->elements) {
+            if (e)
+                renameInNode(e.get());
+        }
+        break;
+    }
+    case NodeType::NODE_DESTRUCTURE_BINDING: {
+        auto* n = static_cast<DestructureBinding*>(node);
+        if (n->initializer)
+            renameInNode(n->initializer.get());
+        // AUDIT-R6 F8 fix: 模块顶层解构名重命名（collectNonExportTopLevelNames 已入
+        // renameMap），内层解构名仍为局部变量不重命名（与 VarDecl 处理一致）。
+        // 登记用重命名后的名字，使后续引用解析一致。
+        if (!inClassBody_) {
+            for (auto& bn : n->names) {
+                if (scopeStack_.size() == 1 && renameMap_.count(bn)) {
+                    bn = renameMap_[bn];
+                }
+                defineInCurrentScope(bn);
+            }
+        }
+        break;
+    }
+    case NodeType::NODE_ENUM_DECL: {
+        auto* n = static_cast<EnumDecl*>(node);
+        // enum 名不参与重命名，仅登记作用域；variant 参数是类型注解，无表达式子节点。
+        defineInCurrentScope(n->name);
+        break;
+    }
+    case NodeType::NODE_ENUM_VARIANT_EXPR: {
+        auto* n = static_cast<EnumVariantExpr*>(node);
+        for (const auto& a : n->arguments) {
+            if (a)
+                renameInNode(a.get());
+        }
+        break;
+    }
+    case NodeType::NODE_YIELD_EXPR: {
+        auto* n = static_cast<YieldExpr*>(node);
+        if (n->value)
+            renameInNode(n->value.get());
+        break;
+    }
+    case NodeType::NODE_MATCH_EXPR: {
+        // 注：MatchPattern 复用 NODE_MATCH_EXPR 类型标记，但 pattern 仅经
+        // MatchExpr::cases 可达（本函数不以 pattern 为入口被调用），
+        // 此处 static_cast<MatchExpr*> 安全。
+        auto* n = static_cast<MatchExpr*>(node);
+        if (n->scrutinee)
+            renameInNode(n->scrutinee.get());
+        for (auto& c : n->cases) {
+            // 每个 case 引入新作用域：pattern 绑定变量局部于 guard 与 body
+            pushScope();
+            if (c.pattern)
+                collectMatchPatternBindings(c.pattern.get());
+            if (c.guard)
+                renameInNode(c.guard.get());
+            if (c.body)
+                renameInNode(c.body.get());
+            popScope();
+        }
+        break;
+    }
     // ---- 不处理的节点 ----
     case NodeType::NODE_IMPORT_STMT:
         // 嵌套 import 不递归（嵌套模块有自己的命名空间）
@@ -449,5 +512,20 @@ void ModuleTopLevelRenamer::renameInNode(ASTNode* node) {
     case NodeType::NODE_BREAK_STMT:
     case NodeType::NODE_CONTINUE_STMT:
         break;
+    }
+}
+
+// AUDIT-R5 BUG-09 fix: 递归登记 match pattern 的绑定变量到当前作用域。
+// VARIABLE 模式绑定 variableName；VARIANT/TUPLE/OR 递归 subPatterns；
+// LITERAL 模式的字面量（数字/字符串/布尔/null）无变量引用，无需处理。
+void ModuleTopLevelRenamer::collectMatchPatternBindings(const MatchPattern* pattern) {
+    if (!pattern)
+        return;
+    if (pattern->kind == MatchPatternKind::VARIABLE && !pattern->variableName.empty()) {
+        defineInCurrentScope(pattern->variableName);
+    }
+    for (const auto& sp : pattern->subPatterns) {
+        if (sp)
+            collectMatchPatternBindings(sp.get());
     }
 }

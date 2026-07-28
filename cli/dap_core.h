@@ -178,11 +178,28 @@ public:
 
     // ---- 断点管理 ----
 
-    /// 设置断点（全量替换）
+    /// 设置断点（全量替换，无条件）。保留旧 API：内部委托
+    /// setSourceBreakpoints（清空条件/命中条件/命中计数）。
     void setBreakpoints(const std::unordered_set<int>& lines);
+
+    /// DAP 二期：源断点（含条件表达式与命中条件）
+    struct SourceBreakpoint {
+        int line = 0;
+        std::string condition;    ///< 条件表达式（空=无条件），MiniLang 表达式语法
+        std::string hitCondition; ///< 命中条件："N"(==N) / "== N" / ">= N" / "> N" / "% N"(每 N 次)
+    };
+
+    /// DAP 二期：全量替换源断点（含条件/命中条件），重置命中计数。
+    void setSourceBreakpoints(const std::vector<SourceBreakpoint>& bps);
 
     /// 获取断点集合
     const std::unordered_set<int>& getBreakpoints() const { return breakpoints_; }
+
+    /// DAP 二期：查询断点命中计数（测试/诊断用）
+    int getBreakpointHitCount(int line) const {
+        auto it = bpHitCounts_.find(line);
+        return it != bpHitCounts_.end() ? it->second : 0;
+    }
 
     // ---- 步进控制 ----
 
@@ -230,6 +247,19 @@ public:
     };
     EvaluateResult evaluate(const std::string& expr, int frameId) const;
 
+    /// DAP 二期：setVariable 请求——调试暂停时修改变量值。
+    /// variablesReference 支持 Locals(1000+frameId) 与 Globals(2000) 作用域；
+    /// 容器子元素（Array/Dict/Instance 子引用）暂不支持。
+    /// valueText 解析规则：int / float / true / false / null / "带引号字符串"。
+    struct SetVariableResult {
+        bool ok = false;
+        std::string value;          ///< 写入后的字符串化值
+        std::string type;           ///< 类型名
+        int variablesReference = 0; ///< 容器子引用（标量为 0）
+        std::string message;        ///< 失败原因（ok=false 时）
+    };
+    SetVariableResult setVariable(int variablesReference, const std::string& name, const std::string& valueText);
+
     // ---- 输出回调 ----
 
     /// 设置输出回调（print 输出）
@@ -276,6 +306,12 @@ private:
     std::vector<Token> tokens_;
 
     std::unordered_set<int> breakpoints_;
+    // DAP 二期：条件断点/命中条件/命中计数（行号 → 元数据）。
+    // bpHitCounts_ 为 mutable：hitBreakpoint() 保持 const 签名（命中计数是
+    // 诊断状态而非会话逻辑状态，与 variableContainers_ 的 mutable 理由一致）。
+    std::unordered_map<int, std::string> bpConditions_;
+    std::unordered_map<int, std::string> bpHitConditions_;
+    mutable std::unordered_map<int, int> bpHitCounts_;
     std::string filePath_;
     std::string source_;
 
@@ -300,8 +336,21 @@ private:
     StepResult stepUntilLineChange(bool allowFrameDepthIncrease);
     StepResult stepUntilFrameDepthDecrease(size_t initialFrameCount);
 
-    /// 检查当前行是否命中断点
+    /// 检查当前行是否命中断点（DAP 二期：含条件求值与命中条件判定）
     bool hitBreakpoint() const;
+
+    /// DAP 二期：在临时 Interpreter 沙箱中求值条件表达式。
+    /// 注入当前栈顶帧 locals + 全局变量后执行 "var __dap_cond = (cond);"，
+    /// 读取结果 truthiness（与 IdeController 的 VM 条件断点求值同模式）。
+    /// 解析/求值失败视为条件不满足（不暂停，对齐 DebugEvaluator 语义）。
+    bool evalBreakpointCondition(const std::string& cond) const;
+
+    /// DAP 二期：命中条件判定。支持 "N"/"== N"/">= N"/"> N"/"% N"；
+    /// 解析失败时返回 true（视为无命中条件，不拦截）。
+    static bool hitConditionSatisfied(const std::string& expr, int count);
+
+    /// DAP 二期：setVariable 新值文本解析（int/float/bool/null/"string"）
+    static bool parseValueText(const std::string& text, Value& out);
 
     /// 将 Value 转换为 DAP Variable
     DapVariable toVariable(const std::string& name, const Value& val) const;
@@ -393,6 +442,7 @@ private:
     QJsonValue handleScopes(const QJsonObject& args);
     QJsonValue handleVariables(const QJsonObject& args);
     QJsonValue handleEvaluate(const QJsonObject& args);
+    QJsonValue handleSetVariable(const QJsonObject& args); // DAP 二期
     QJsonValue handleThreads(const QJsonObject& args);
     QJsonValue handleTerminate(const QJsonObject& args);
     QJsonValue handleDisconnect(const QJsonObject& args);
@@ -437,5 +487,9 @@ void printHelp();
 void printVersion();
 std::string versionString();
 std::string serverName();
+
+/// 运行 DAP 服务器主循环（供 dap_entry.cpp 统一入口调用）
+/// 返回退出码：0=正常退出
+int runDapServer();
 
 } // namespace minilang_dap

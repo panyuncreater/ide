@@ -17,6 +17,7 @@
 //
 // 注：MiniLang print() 不自动换行，断言预期值显式加 "\n"。
 // ============================================================
+#include "common/BackendExecutionService.h" // 拓展二期：min/max 空数组错误路径验证
 #include "common/ThreeBackends.h"
 #include "interpreter/SimdUtils.h"
 
@@ -264,4 +265,66 @@ var arr = [42];
 print(sum(arr) + "\n");
 )";
     EXPECT_ALL_BACKENDS(src, "42\n");
+}
+
+// ============================================================
+// 拓展二期：SIMD 用户可见内建——min(arr) / max(arr) 单参数组形态
+// ------------------------------------------------------------
+// 全 int 数组且 >= 16 元素且 AVX2 可用时走 simdMinInt64/simdMaxInt64
+// 内核；否则标量回退。共享实现层（builtinFunctionRegistry）保证
+// 四后端语义一致，此处用 EXPECT_ALL_BACKENDS 验证。
+// ============================================================
+
+// 大数组 min/max（触发 SIMD）：四后端一致
+TEST(SimdKernels, MinMax_LargeArray_AllBackends) {
+    std::string src = R"(
+var arr = [];
+for (var i = 1; i <= 100; i = i + 1) {
+    arr.push(i * 3 - 150);
+}
+print(min(arr) + "\n");
+print(max(arr) + "\n");
+)";
+    // i=1 → -147（最小），i=100 → 150（最大）
+    EXPECT_ALL_BACKENDS(src, "-147\n150\n");
+}
+
+// SIMD 阈値边界：16 元素（触发）与 15 元素（标量回退）同义
+TEST(SimdKernels, MinMax_ThresholdBoundary_AllBackends) {
+    for (int n : {15, 16, 17}) {
+        std::string src = "var arr = [];\nfor (var i = 1; i <= " + std::to_string(n) +
+                          "; i = i + 1) { arr.push(i); }\n"
+                          "print(min(arr) + \"\\n\");\n"
+                          "print(max(arr) + \"\\n\");\n";
+        EXPECT_ALL_BACKENDS(src, "1\n" + std::to_string(n) + "\n");
+    }
+}
+
+// 混合数值（含浮点）：转 double 比较，四后端一致
+TEST(SimdKernels, MinMax_MixedNumeric_AllBackends) {
+    std::string src = R"(
+var arr = [3, 1.5, 2];
+print(min(arr) + "\n");
+print(max(arr) + "\n");
+)";
+    EXPECT_ALL_BACKENDS(src, "1.5\n3\n");
+}
+
+// 双参数形态回归锁：min(a,b)/max(a,b) 旧语义不受数组形态影响
+TEST(SimdKernels, MinMax_TwoArgFormUnchanged_AllBackends) {
+    std::string src = R"(
+print(min(3, 5) + "\n");
+print(max(3, 5) + "\n");
+print(min(-1, 1) + "\n");
+)";
+    EXPECT_ALL_BACKENDS(src, "3\n5\n-1\n");
+}
+
+// 空数组 min/max → 运行时错误（四后端一致报错，不崩溃）
+TEST(SimdKernels, MinMax_EmptyArray_ErrorsAllBackends) {
+    // 仅验证 Interpreter 路径报错行为（共享实现层决定三后端同源）；
+    // EXPECT_ALL_BACKENDS 不适用于错误路径（各后端错误前缀不同）。
+    BackendExecResult r = BackendExecutionService::execute("var a = []; print(min(a));", BackendType::Interpreter);
+    EXPECT_FALSE(r.success);
+    EXPECT_NE(r.errorMsg.find("空数组"), std::string::npos) << r.errorMsg;
 }

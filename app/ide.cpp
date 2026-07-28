@@ -1,3 +1,13 @@
+// C2 (P3-A2): ide.cpp 警告豁免 — 该文件含 8500+ 行历史代码，
+// 以下 4 类 W4 警告为预存问题（不影响语义），待后续拆分时逐步修复。
+// 不影响其他编译单元的 /W4 /WX 基线。
+#ifdef _MSC_VER
+#pragma warning(disable : 4100) // unreferenced formal parameter
+#pragma warning(disable : 4458) // declaration hides class member
+#pragma warning(disable : 4189) // local variable initialized but not referenced
+#pragma warning(disable : 4996) // deprecated function (Qt 6.10 associatedWidgets)
+#endif
+
 #include "ide.h"
 #include "common/Logger.h"
 #include "common/RuntimeLimits.h"
@@ -6,6 +16,7 @@
 #include "gui/GuiTextUtils.h"
 #include "gui/I18n.h" // D2: i18n 翻译宏 mlTr
 #include "gui/PanelAnimator.h"
+#include "gui/ShareCodec.h" // 拓展二期·平台：代码片段分享链接编解码
 #include "gui/TeachingTheme.h" // P2 视觉一致性：info/success/warning/error/hint 语义色集中管理
 
 #include <QAbstractAnimation>
@@ -1160,6 +1171,25 @@ int Ide::createNewEditorTab(const QString& filePath, const QString& content) {
 
     // 第十三轮：CodeEditor 右键菜单 contextActionRequested 信号路由
     connect(data.editor, &CodeEditor::contextActionRequested, this, &Ide::handleEditorContextAction);
+
+    // 拓展二期·调试：hover 表达式求值——调试暂停态下悬停标识符/点链
+    // 即时展示「name = value : type」；非暂停态静默（不干扰编辑）。
+    // 复用 evaluateWatchExpression 的沙箱求值（含暂停态守卫/LRU AST 缓存）。
+    connect(data.editor, &CodeEditor::hoverEvaluateRequested, this,
+            [this](const QString& expression, const QPoint& globalPos) {
+                bool vmMode = controller_->isVmInitialized() || controller_->isVmRunning();
+                if (!vmMode && !controller_->isDebugPaused()) {
+                    return; // 非调试暂停态：静默，不弹提示
+                }
+                auto result = controller_->evaluateWatchExpression(expression.toStdString());
+                if (!result.ok) {
+                    return; // 求值失败（非变量/未定义）：静默
+                }
+                QToolTip::showText(globalPos, QStringLiteral("%1 = %2 : %3")
+                                                  .arg(expression)
+                                                  .arg(QString::fromUtf8(result.valueRepr.c_str()))
+                                                  .arg(QString::fromUtf8(result.typeName.c_str())));
+            });
 
     return idx;
 }
@@ -2541,6 +2571,47 @@ RoundMenu* Ide::buildEditMenu(QWidget* parent) {
         }
     });
     editMenu->addAction(gotoLineAct);
+
+    // 拓展二期·平台：代码片段分享链接（压缩+base64url 自包含链接，无需服务器）
+    editMenu->addSeparator();
+    auto* shareCopyAct = new QAction(mlTr("复制分享链接"), this);
+    connect(shareCopyAct, &QAction::triggered, this, [this]() {
+        ensureEditorVisible();
+        if (!codeEditor_)
+            return;
+        QString code = codeEditor_->toPlainText();
+        if (code.trimmed().isEmpty()) {
+            QMessageBox::information(this, mlTr("分享链接"), mlTr("当前编辑器为空，无可分享内容。"));
+            return;
+        }
+        QString url = ShareCodec::encode(code);
+        QApplication::clipboard()->setText(url);
+        QMessageBox::information(this, mlTr("分享链接"),
+                                 mlTr("分享链接已复制到剪贴板（%1 字符）。\n"
+                                      "接收方在「编辑 → 从分享链接导入」粘贴即可还原代码。")
+                                     .arg(url.size()));
+    });
+    editMenu->addAction(shareCopyAct);
+
+    auto* shareImportAct = new QAction(mlTr("从分享链接导入..."), this);
+    connect(shareImportAct, &QAction::triggered, this, [this]() {
+        bool ok = false;
+        QString url = QInputDialog::getMultiLineText(this, mlTr("从分享链接导入"),
+                                                     mlTr("粘贴 minilang://share/... 链接:"), QString(), &ok);
+        if (!ok || url.trimmed().isEmpty())
+            return;
+        QString code, err;
+        if (!ShareCodec::decode(url, code, err)) {
+            QMessageBox::warning(this, mlTr("导入失败"), err);
+            return;
+        }
+        // 导入到新标签页，不覆盖当前编辑器内容
+        ensureEditorVisible();
+        onNew();
+        if (codeEditor_)
+            codeEditor_->setPlainText(code);
+    });
+    editMenu->addAction(shareImportAct);
     return editMenu;
 }
 
@@ -2675,6 +2746,45 @@ RoundMenu* Ide::buildViewMenu(QWidget* parent) {
         codeFontSize_ = 11; // 重置到默认 11pt
         applyCodeFontSizeToAllEditors();
     });
+
+    // ---- 拓展二期·教学：课堂演示模式 ----
+    // 一键切换：大字号（18pt，投影仪后排可读）+ 隐藏资源管理器/调试/输出面板
+    // + 全屏，退出时恢复进入前的字号与窗口状态。快捷键 Ctrl+Alt+P。
+    viewMenu->addSeparator();
+    auto* presentationAction = new QAction(mlTr("课堂演示模式"), this);
+    presentationAction->setCheckable(true);
+    auto togglePresentation = [this, presentationAction]() {
+        presentationMode_ = !presentationMode_;
+        presentationAction->setChecked(presentationMode_);
+        if (presentationMode_) {
+            // 进入：记录现场 → 大字号 + 隐藏周边面板 + 全屏
+            prePresentationFontSize_ = codeFontSize_;
+            prePresentationMaximized_ = isMaximized();
+            codeFontSize_ = qBound(8, 18, 32);
+            applyCodeFontSizeToAllEditors();
+            if (fileTreeDock_)
+                fileTreeDock_->toggleView(false);
+            if (debugPanelDock_)
+                debugPanelDock_->toggleView(false);
+            hideBottomPanel();
+            showFullScreen();
+        } else {
+            // 退出：恢复字号与窗口状态（dock 由用户按需重新打开，
+            // 不强制恢复——避免覆盖演示中用户手动调整的布局）
+            codeFontSize_ = prePresentationFontSize_;
+            applyCodeFontSizeToAllEditors();
+            if (prePresentationMaximized_)
+                showMaximized();
+            else
+                showNormal();
+            if (fileTreeDock_)
+                fileTreeDock_->toggleView(true);
+        }
+    };
+    connect(presentationAction, &QAction::triggered, this, [togglePresentation](bool) { togglePresentation(); });
+    viewMenu->addAction(presentationAction);
+    auto* presentationSc = new QShortcut(Qt::CTRL | Qt::ALT | Qt::Key_P, this);
+    QObject::connect(presentationSc, &QShortcut::activated, this, [togglePresentation]() { togglePresentation(); });
 
     return viewMenu;
 }
@@ -6740,10 +6850,7 @@ void Ide::onCompileAnalysis() {
     loadVisualizationForTab(0);
 }
 
-/// 右侧面板标签页切换：按需刷新对应可视化内容。
 void Ide::onRightTabChanged(int index) {
-    // Legacy slot retained for header compatibility.
-    // Right-panel switching is now driven by onRightPivotChanged.
     Q_UNUSED(index);
 }
 

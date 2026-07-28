@@ -166,6 +166,8 @@ public:
     void visitContinueStmt(ContinueStmt& node) override;
     void visitTryStmt(TryStmt& node) override;
     void visitThrowStmt(ThrowStmt& node) override;
+    // AUDIT-R6 F7 fix: R164 yield 表达式（原缺失 override，yield 输出为残留文本）
+    void visitYieldExpr(YieldExpr& node) override;
     void visitImportStmt(ImportStmt& node) override;
     void visitExportStmt(ExportStmt& node) override;
     void visitInterpolatedString(InterpolatedString& node) override; // C5 fix

@@ -116,7 +116,9 @@ static void checkOutput(const std::string& id, const std::string& name,
     g_results.push_back(tr);
 }
 
-static void checkOutputContains(const std::string& id, const std::string& name,
+// W4 fix: 本工具的部分检查辅助函数仅在特定审计批次中使用，
+// [[maybe_unused]] 抑制 C4505（未引用已删除函数）与 /WX 冲突。
+[[maybe_unused]] static void checkOutputContains(const std::string& id, const std::string& name,
                                  const std::string& source, const std::string& expectedSubstring) {
     auto r = runCode(source);
     TestResult tr;
@@ -143,7 +145,7 @@ static void checkError(const std::string& id, const std::string& name,
 }
 
 // Multi-line output check: compare exact output (after trim)
-static void checkMultiOutput(const std::string& id, const std::string& name,
+[[maybe_unused]] static void checkMultiOutput(const std::string& id, const std::string& name,
                               const std::string& source, const std::vector<std::string>& expectedLines) {
     std::string expected;
     for (size_t i = 0; i < expectedLines.size(); i++) {

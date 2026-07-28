@@ -65,6 +65,26 @@ public:
     const Parser& parser() const { return pipeline_.parser(); }
     const Compiler& compiler() const { return pipeline_.compiler(); }
 
+    // ---- ARCH-10 子组件访问器 ----
+    // P2 Facade 瘦身：为需要细粒度操作的面板提供子组件直接引用，避免在 Facade
+    // 层堆砌纯透传方法。新面板优先通过这些访问器获取子组件引用，再调用子组件
+    // 的语义化方法；老面板的透传 API 保持向后兼容，不强制迁移。
+    // const 重载供 const IdeController& 上下文只读访问。
+    PipelineRunner& pipelineRunner() { return pipeline_; }
+    const PipelineRunner& pipelineRunner() const { return pipeline_; }
+    WorkerManager& workerManager() { return workerMgr_; }
+    const WorkerManager& workerManager() const { return workerMgr_; }
+    DebugCoordinator& debugCoordinator() { return debugCoord_; }
+    const DebugCoordinator& debugCoordinator() const { return debugCoord_; }
+    VmStepper& vmStepper() { return vmStepper_; }
+    const VmStepper& vmStepper() const { return vmStepper_; }
+    /// 共享所有权的 Interpreter（与 WorkerManager 共享），可能为 nullptr（构造早期）。
+    std::shared_ptr<Interpreter> interpreter() { return interpreter_; }
+    std::shared_ptr<const Interpreter> interpreter() const { return interpreter_; }
+    /// 共享所有权的 DebugController（与 WorkerManager 共享）。
+    std::shared_ptr<DebugController> debugController() { return debugger_; }
+    std::shared_ptr<const DebugController> debugController() const { return debugger_; }
+
     // ---- VM 状态访问（转发到 VmStepper）----
     // B6 fix: 语义化的 VM 调试状态快照接口（GUI 仅通过这些方法读取 VM 状态）
     // A1 fix: 栈式 VM 返回操作数栈；RegisterVM 返回寄存器窗口（同形 vector<Value>）
@@ -92,6 +112,16 @@ public:
     // BUG-DBG-6 fix: 暴露 VM 调用栈快照，供 GUI 在 VM 调试模式下显示调用栈
     std::vector<CallStackEntry> getVmCallStack() const { return vmStepper_.getCallStack(); }
 
+    /// 拓展二期：回溯调试单步后退（VM 路径，需 FullState 录制）。
+    /// reverse-continue 由调用方循环本方法或经 ReverseDebugTimelinePanel
+    /// 跳任意历史步实现。
+    bool debugStepBack() {
+        bool ok = vmStepper_.stepBack();
+        if (ok)
+            notifyVmStateChanged();
+        return ok;
+    }
+
     // ---- 调试接口（转发到 DebugCoordinator）----
     // OPT-1: setBreakpointCondition / setBreakpoints 变更后通知订阅面板。
     // 保持 inline：MagicCommands.cpp（minilang_core）依赖内联符号。
@@ -103,6 +133,43 @@ public:
     // P1-2: 断点查询接口（供 BreakpointConditionPanel 消费）
     QSet<int> getBreakpoints() const { return debugCoord_.getBreakpoints(); }
     std::string getBreakpointCondition(int line) const { return debugCoord_.getBreakpointCondition(line); }
+
+    // ---- 拓展二期：命中条件 + 依赖断点链 + 调试改值 ----
+    // 双路径同步设置（对齐 watchpoint 的 facade 模式：IdeController 同时设
+    // vmStepper_ 与 debugCoord_，确保路径切换后配置不丢失）。
+    void setBreakpointHitCondition(int line, const std::string& expr) {
+        debugCoord_.setBreakpointHitCondition(line, expr);
+        vmStepper_.setBreakpointHitCondition(line, expr);
+        notifyVmStateChanged();
+    }
+    std::string getBreakpointHitCondition(int line) const { return debugCoord_.getBreakpointHitCondition(line); }
+    void setBreakpointDependency(int line, int depLine) {
+        debugCoord_.setBreakpointDependency(line, depLine);
+        vmStepper_.setBreakpointDependency(line, depLine);
+        notifyVmStateChanged();
+    }
+    int getBreakpointDependency(int line) const { return debugCoord_.getBreakpointDependency(line); }
+
+    /// 调试暂停时修改变量值（自动分派活跃后端：Interpreter 调试暂停 →
+    /// DebugController 写回调；VM 已初始化且非运行 → VmStepper 双后端写入）。
+    /// @return true 写入成功；false 未处于可写状态或变量不存在
+    bool setDebugVariableValue(const std::string& name, const Value& value) {
+        if (isRunning() && isDebugRun()) {
+            if (!isDebugPaused())
+                return false;
+            bool ok = debugCoord_.setVariableValue(name, value);
+            if (ok)
+                notifyVmStateChanged();
+            return ok;
+        }
+        if (vmStepper_.isInitialized()) {
+            bool ok = vmStepper_.setVariableValue(name, value);
+            if (ok)
+                notifyVmStateChanged();
+            return ok;
+        }
+        return false;
+    }
     // BUG-DBG-AUDIT-2 fix: VM 模式活跃时分派到 VmStepper 的 hitCount，
     // 否则转发到 Interpreter 模式的 debugCoord_。原实现无条件转发到 debugCoord_，
     // 导致 VM 模式调试时 BreakpointConditionPanel::refreshLive 获取的 hitCount 始终为 0。
@@ -581,6 +648,9 @@ public:
     // ---- 状态访问（转发到 PipelineRunner）----
     const std::vector<Token>& lastTokens() const { return pipeline_.lastTokens(); }
     const CompileResult& lastCompileResult() const { return pipeline_.lastCompileResult(); }
+    /// ARCH-10: 最近一次 runFrontendPipeline 的源码（供 BackendComparePanel 等
+    /// 教学面板通过 BackendExecutionService 重新触发三后端执行）。
+    const std::string& lastSource() const { return pipeline_.lastSource(); }
     Block* astRoot() const { return pipeline_.astRootPtr(); }
     const DiagnosticBag& lexerDiagnostics() const { return pipeline_.lexerDiagnostics(); }
     const DiagnosticBag& parserDiagnostics() const { return pipeline_.parserDiagnostics(); }
@@ -640,14 +710,16 @@ private:
     };
     std::vector<VmStateChangedListener> vmStateChangedListeners_;
     void notifyVmStateChanged() {
-        // PERF-ROUND53 fix: 原实现每次拷贝整个 vector（含 std::function，可能触发堆分配）。
-        // removeVmStateChangedListener 仅将 fn 置 null（延迟清除，不 erase），
-        // addVmStateChangedListener 已 reserve 防止 realloc，迭代期间 vector 大小不变。
-        // 改用索引迭代避免拷贝。防御性检查 i < size() 应对理论上的回调期间 push_back。
-        const size_t n = vmStateChangedListeners_.size();
-        for (size_t i = 0; i < n; ++i) {
-            if (i < vmStateChangedListeners_.size() && vmStateChangedListeners_[i].fn)
-                vmStateChangedListeners_[i].fn();
+        // BUG-68 fix (P2 vector 重分配): 回调 fn() 可能在执行期间触发 add/removeVmStateChangedListener
+        // （例如面板在状态变更回调中注册/反注册自身或其他面板）。原索引迭代直接持有
+        // vmStateChangedListeners_ 引用，push_back 触发 realloc 会使正在迭代的元素引用失效（UAF），
+        // remove 延迟置 null 也会改变后续遍历语义。改为入口处值拷贝整个监听器列表，
+        // 在快照上迭代，彻底隔离回调对原 vector 的并发修改。std::function 拷贝成本可接受
+        // （监听器数量 <= 面板数 ~7），换取迭代期间的强安全保证。
+        auto listeners = vmStateChangedListeners_; // 值拷贝快照，避免迭代中原 vector 被修改/重分配
+        for (size_t i = 0; i < listeners.size(); ++i) {
+            if (listeners[i].fn)
+                listeners[i].fn();
         }
     }
 

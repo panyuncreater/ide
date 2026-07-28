@@ -106,6 +106,14 @@ ProcessResult processFile(const std::string& path, ProcessMode mode, const Forma
                 return result;
             }
             ofs << fmtResult.output;
+            // P1 #33 fix: 检测写入失败（磁盘满/权限等），flush 后检查流状态
+            ofs.flush();
+            if (!ofs.good()) {
+                result.ok = false;
+                result.errorPhase = "io";
+                result.errorMessage = "写入文件失败: " + path;
+                return result;
+            }
         }
         break;
     case ProcessMode::DryRun:
@@ -164,7 +172,7 @@ CliArgs parseArgs(int argc, char* argv[]) {
             }
             std::string style = argv[++i];
             if (style == "kr") {
-                args.options = FormatOptions(); // 默认 K&R
+                args.options.braceStyle = BraceStyle::SAME_LINE; // P1 #35 fix: K&R 仅设置括号风格，保留用户 --indent/--tabs
             } else if (style == "allman") {
                 args.options = FormatOptions::allman();
             } else if (style == "compact") {

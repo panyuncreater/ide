@@ -128,6 +128,16 @@ public:
         return box;
     }
 
+    /// 从原始 bits 构造（用于 JIT/序列化等需要位级操作的路径，如 Value::fromBitsBorrowed）。
+    /// 内部对 uint64_t 成员 bits_ 做 memcpy（uint64_t 可平凡拷贝），
+    /// 避免在 Value.h 中直接 memcpy 整个 NaNBox 对象触发 GCC -Wclass-memaccess。
+    /// 调用方需保证 bits 来自合法的 rawBits()/bitsOf()，否则解码行为未定义。
+    static NaNBox fromBits(uint64_t bits) {
+        NaNBox box;
+        std::memcpy(&box.bits_, &bits, sizeof(uint64_t));
+        return box;
+    }
+
     // ---- 类型查询 ----
 
     Tag tag() const {

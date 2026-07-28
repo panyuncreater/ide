@@ -65,6 +65,7 @@ enum class FuzzCategory : uint32_t {
 /// 模糊测试选项
 struct FuzzOptions {
     uint64_t seed = 0;                                                ///< 随机种子（0 = 时间派生）
+    bool seedSpecified = false;                                       ///< BUG-67 fix: 用户是否显式指定 --seed（区分 --seed 0 与未指定）
     int iterations = 100;                                             ///< 生成/变异迭代次数
     FuzzBackend backend = FuzzBackend::All;                           ///< 后端选择
     FuzzMode mode = FuzzMode::Generate;                               ///< 模式
@@ -101,6 +102,8 @@ struct FuzzResult {
 
 /// 批量模糊测试汇总
 struct FuzzSummary {
+    bool ok = true;                            ///< BUG-93 fix: 整体是否成功（替代 crashes=-1 哨兵值）
+    std::string errorMessage;                  ///< BUG-93 fix: ok=false 时的错误描述
     int totalRuns = 0;                         ///< 总执行次数
     int crashes = 0;                           ///< 崩溃次数
     int disagreements = 0;                     ///< 三后端分歧次数

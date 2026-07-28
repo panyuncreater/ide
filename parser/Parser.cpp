@@ -1,6 +1,7 @@
 #include "parser/Parser.h"
 #include "common/ErrorMessages.h" // P2-12: DiagCodes 常量
 #include "common/Logger.h"
+#include "interpreter/StringIntern.h"
 #include <unordered_set>
 
 // ============================================================
@@ -318,6 +319,12 @@ bool Parser::isFunTypeDeclStart() const {
 }
 
 std::string Parser::parseTypeAnnotation() {
+    // Bug #10 fix: 递归深度保护（dict[K:V] / fun(params):ret 递归调用自身）
+    if (parseDepth_ >= MAX_PARSE_DEPTH) {
+        throw ParseError("类型注解嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）", peek().line, peek().column);
+    }
+    DepthGuard guard{parseDepth_};
+
     // AUDIT-P2.7 fix: 支持 T? 可选类型、dict[K:V] 泛型字典、fun(params):ret 函数类型。
     //   Interpreter.typeMatch 已支持这三种格式的运行时类型检查，此处仅需生成对应字符串。
     const Token& typeTok = advance(); // 消耗类型关键字或标识符
@@ -603,7 +610,7 @@ std::unique_ptr<ASTNode> Parser::varDecl() {
     }
     consume(TokenType::TK_SEMICOLON, "期望 ';' 结束变量声明");
 
-    return std::make_unique<VarDecl>(name.lexeme, typeAnn, std::move(init), varTok.line, varTok.column);
+    return std::make_unique<VarDecl>(StringIntern::intern(name.lexeme), typeAnn, std::move(init), varTok.line, varTok.column);
 }
 
 std::unique_ptr<VarDecl> Parser::typedVarDecl(const std::string& typeAnn) {
@@ -615,7 +622,7 @@ std::unique_ptr<VarDecl> Parser::typedVarDecl(const std::string& typeAnn) {
     }
     consume(TokenType::TK_SEMICOLON, "期望 ';' 结束变量声明");
 
-    return std::make_unique<VarDecl>(name.lexeme, typeAnn, std::move(init), name.line, name.column);
+    return std::make_unique<VarDecl>(StringIntern::intern(name.lexeme), typeAnn, std::move(init), name.line, name.column);
 }
 
 std::unique_ptr<FunDecl> Parser::funDecl() {
@@ -692,7 +699,7 @@ std::unique_ptr<FunDecl> Parser::funDecl() {
     consume(TokenType::TK_LBRACE, "期望 '{'");
     auto body = block();
 
-    auto decl = std::make_unique<FunDecl>(name.lexeme, std::move(params), std::move(paramTypes), returnType,
+    auto decl = std::make_unique<FunDecl>(StringIntern::intern(name.lexeme), std::move(params), std::move(paramTypes), returnType,
                                           std::move(body), funTok.line, funTok.column);
     decl->typeParams = std::move(typeParams);
     // R164 协程/生成器：标记生成器函数（fun*），供 Interpreter/VM 在调用时
@@ -739,7 +746,7 @@ std::unique_ptr<FunDecl> Parser::typedFunDecl(const std::string& returnType) {
     consume(TokenType::TK_LBRACE, "期望 '{'");
     auto body = block();
 
-    auto decl = std::make_unique<FunDecl>(name.lexeme, std::move(params), std::move(paramTypes), returnType,
+    auto decl = std::make_unique<FunDecl>(StringIntern::intern(name.lexeme), std::move(params), std::move(paramTypes), returnType,
                                           std::move(body), name.line, name.column);
     // F10: 计算必需参数个数
     int reqCount = 0;
@@ -874,12 +881,12 @@ void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::s
         if (isTypeKeyword()) {
             pType = parseTypeAnnotation();
 
-            const Token& param = consume(TokenType::TK_IDENTIFIER, "期望参数名");
+            const Token& param = consumeIdentifierOrType("期望参数名");
             paramName = param.lexeme;
         } else if (isClassTypeDeclStart()) {
             // PARSE-02 fix: C 风格类类型参数: ClassName paramName 或 ClassName[] paramName
             pType = parseTypeAnnotation();
-            const Token& param = consume(TokenType::TK_IDENTIFIER, "期望参数名");
+            const Token& param = consumeIdentifierOrType("期望参数名");
             paramName = param.lexeme;
         } else if (isFunTypeDeclStart()) {
             // ROUND56 fix: 函数类型参数注解 fun(params):ret paramName
@@ -889,7 +896,7 @@ void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::s
             //   "期望参数名 但得到 'fun'"。此处复用 parseTypeAnnotation 生成
             //   "fun(...):ret" 字符串，与 declaration() 的 dict/fun 分支语义一致。
             pType = parseTypeAnnotation();
-            const Token& param = consume(TokenType::TK_IDENTIFIER, "期望参数名");
+            const Token& param = consumeIdentifierOrType("期望参数名");
             paramName = param.lexeme;
         } else {
             // 参数名在前面: a 或 a: int
@@ -912,7 +919,7 @@ void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::s
         if (!paramSet.insert(paramName).second) {
             throw ParseError("重复的参数名 '" + paramName + "'", peek().line, peek().column);
         }
-        params.push_back(paramName);
+        params.push_back(StringIntern::intern(paramName));
         paramTypes.push_back(pType);
 
         // F10: 解析默认参数值 = expr
@@ -986,7 +993,7 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
     // AUDIT-P2.8 fix: 记录闭合 '}' 所在行号，供 Formatter 注入类体末尾注释。
     int closingBraceLine = previous().line;
     auto decl =
-        std::make_unique<ClassDecl>(name.lexeme, superClassName, std::move(members), classTok.line, classTok.column);
+        std::make_unique<ClassDecl>(StringIntern::intern(name.lexeme), superClassName, std::move(members), classTok.line, classTok.column);
     decl->closingBraceLine = closingBraceLine;
     decl->typeParams = std::move(typeParams);
     return decl;
@@ -999,7 +1006,7 @@ std::string Parser::parseClassExtends() {
     if (match(TokenType::TK_EXTENDS) || match(TokenType::TK_COLON)) {
         // PARSE-03 fix: 父类名支持类型关键字（与类名声明一致）
         const Token& superName = consumeIdentifierOrType("期望父类名");
-        superClassName = superName.lexeme;
+        superClassName = StringIntern::intern(superName.lexeme);
     }
     return superClassName;
 }
@@ -1081,7 +1088,7 @@ void Parser::parseClassMembers(std::vector<std::shared_ptr<ASTNode>>& members) {
                     consume(TokenType::TK_LBRACE, "期望 '{'");
                     auto body = block();
 
-                    auto decl = std::make_unique<FunDecl>(firstTok.lexeme, std::move(params), std::move(paramTypes),
+                    auto decl = std::make_unique<FunDecl>(StringIntern::intern(firstTok.lexeme), std::move(params), std::move(paramTypes),
                                                           returnType, std::move(body), firstTok.line, firstTok.column);
                     // F10: 计算必需参数个数
                     int reqCount = 0;
@@ -1296,7 +1303,17 @@ std::unique_ptr<MatchExpr> Parser::matchExpr() {
             cases.push_back(std::move(mc));
         } catch (const ParseError& e) {
             diagnostics_.addError(e.what(), e.line, e.column, DiagSource::Parser, e.code);
+            // AUDIT-R6 F1 fix (P0): matchExpr 错误恢复死循环。synchronize() 在同步关键字
+            // （var/fun/class 等，BUG-PARSER-SYNC-1）处不消耗 token 直接返回，但本循环无法
+            // 处理这些关键字（既非 case/default 也非 '}'），裸 pattern 分支再次抛错→
+            // synchronize 仍不前进→死循环挂死（如 `match (1) { case n: { var f = 1; } }`，
+            // 用户写错 `case X:` 而非 `case X =>` 即触发）。修复：同步后无进展则强制
+            // 前进一个 token，保证循环收敛（'}'/EOF 由循环条件终止）。
+            int beforeSync = current_;
             synchronize();
+            if (current_ == beforeSync && !isAtEnd() && !check(TokenType::TK_RBRACE)) {
+                advance();
+            }
         }
     }
 
@@ -1337,6 +1354,12 @@ std::shared_ptr<MatchPattern> Parser::matchPattern() {
 }
 
 std::shared_ptr<MatchPattern> Parser::matchPrimaryPattern() {
+    // Bug #9 fix: 互递归深度保护（matchPattern <-> matchPrimaryPattern）
+    if (parseDepth_ >= MAX_PARSE_DEPTH) {
+        throw ParseError("模式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）", peek().line, peek().column);
+    }
+    DepthGuard guard{parseDepth_};
+
     const Token& tok = peek();
 
     // 1. 通配符 _
@@ -2161,11 +2184,11 @@ std::unique_ptr<ASTNode> Parser::call() {
                 }
                 consume(TokenType::TK_RPAREN, "期望 ')' 结束方法参数列表");
 
-                expr = std::make_unique<MethodCall>(std::move(expr), fieldName.lexeme, std::move(args), dot.line,
+                expr = std::make_unique<MethodCall>(std::move(expr), StringIntern::intern(fieldName.lexeme), std::move(args), dot.line,
                                                     dot.column);
             } else {
                 // 普通成员访问: obj.field
-                expr = std::make_unique<MemberAccess>(std::move(expr), fieldName.lexeme, dot.line, dot.column);
+                expr = std::make_unique<MemberAccess>(std::move(expr), StringIntern::intern(fieldName.lexeme), dot.line, dot.column);
             }
             continue;
         }
@@ -2300,14 +2323,14 @@ std::unique_ptr<ASTNode> Parser::primary() {
     // 标识符
     if (match(TokenType::TK_IDENTIFIER)) {
         const Token& tok = previous();
-        return std::make_unique<VarRef>(tok.lexeme, tok.line, tok.column);
+        return std::make_unique<VarRef>(StringIntern::intern(tok.lexeme), tok.line, tok.column);
     }
 
     // 类型关键字作为标识符使用（如 dict(), array(), int(), string() 等函数调用）
     if (match(TokenType::TK_DICT) || match(TokenType::TK_ARRAY) || match(TokenType::TK_INT) ||
         match(TokenType::TK_FLOAT) || match(TokenType::TK_BOOL) || match(TokenType::TK_STRING_TYPE)) {
         const Token& tok = previous();
-        return std::make_unique<VarRef>(tok.lexeme, tok.line, tok.column);
+        return std::make_unique<VarRef>(StringIntern::intern(tok.lexeme), tok.line, tok.column);
     }
 
     // 数组字面量 [e1, e2, e3]
@@ -2455,6 +2478,8 @@ void Parser::synchronize() {
     case TokenType::TK_STRING_TYPE:
     case TokenType::TK_DICT:
     case TokenType::TK_ARRAY:
+    case TokenType::TK_ENUM:   // Bug #39 fix: enum 作为同步点
+    case TokenType::TK_MATCH:  // Bug #39 fix: match 作为同步点
     case TokenType::TK_FROM: // AUDIT-P1-CORRECT fix: from 作为同步点，避免 import 错误恢复时吞掉 from
         return;
     default:
@@ -2507,6 +2532,8 @@ void Parser::synchronize() {
         case TokenType::TK_STRING_TYPE:
         case TokenType::TK_DICT:
         case TokenType::TK_ARRAY:
+        case TokenType::TK_ENUM:   // Bug #39 fix: enum 作为同步点
+        case TokenType::TK_MATCH:  // Bug #39 fix: match 作为同步点
         case TokenType::TK_FROM: // AUDIT-P1-CORRECT fix: from 作为同步点
             return;
         default:

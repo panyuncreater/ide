@@ -82,9 +82,14 @@ void RegisterBytecodeBackend::collectVRegLastUse(const IRFunction& ir) {
     // 后续 LOAD_MUTATED 通过 reg(lastMutatedReceiverReg_) 读取变异后的容器。
     // 如果 obj vreg 在 METHOD_CALL 后被释放并复用，LOAD_MUTATED 会读到错误值。
     // 但非变异方法调用（如 len/substr）没有 LOAD_MUTATED，无需延长。
+    // AUDIT-R4 BUG-02 fix: 与 pendingMutatedObjs 对齐为跨基本块保留——原实现
+    // 在每个块开头 clear()，若 METHOD_CALL 与其 LOAD_MUTATED 被块边界分隔
+    // （如 try handler 边、未来 IR 变换插入 LABEL），接收者寄存器会提前
+    // 释放被复用，LOAD_MUTATED 读脏值损坏变异写回。跨块保留仅使无
+    // LOAD_MUTATED 的旧条目被后续 LOAD_MUTATED 保守延长（寄存器多持有
+    // 一段时间，安全方向），不会产生错误释放。
     std::vector<uint32_t> pendingMethodCallObjs;
     for (const auto& block : ir.blocks) {
-        pendingMethodCallObjs.clear();
         for (const auto& instr : block.instructions) {
             bool isMutatingSet = (instr.op == IROp::MEMBER_SET || instr.op == IROp::INDEX_SET);
             bool isWriteback =
@@ -486,6 +491,34 @@ bool RegisterBytecodeBackend::lower(const IRFunction& ir) {
 bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const IRFunction& ir) {
     if (hasError_)
         return false;
+
+    // AUDIT-R4 BUG-05 fix: 操作数 kind 防御——CONSTANT kind 仅在以下白名单指令
+    // 的固定位置合法（LOAD_CONST/TYPE_CHECK/TYPE_TEST/BUILD_ENUM_VARIANT/
+    // ENUM_VARIANT_NAME 的常量池索引位）。其余指令的操作数若出现 CONSTANT
+    // kind（典型来源：copyPropagationPass 将 VIRTUAL 替换为常量索引），
+    // 下方各 lower* 会把常量索引误作 vreg 编号传入 vregToReg 读错寄存器
+    // （静默数据损坏）。此处快速失败转为干净的编译错误，在未来重新
+    // 启用复制传播而 lowering 未先支持常量物化时立即暴露而非静默读错。
+    switch (instr.op) {
+    case IROp::LOAD_CONST:
+    case IROp::TYPE_CHECK:
+    case IROp::TYPE_TEST:
+    case IROp::BUILD_ENUM_VARIANT:
+    case IROp::ENUM_VARIANT_NAME:
+        break; // 白名单：自身按固定位置解释 CONSTANT 操作数
+    default:
+        for (const auto& op : instr.operands) {
+            if (op.kind == IROperandKind::CONSTANT) {
+                Logger::Error("RegisterBytecodeBackend: 指令 " + std::to_string(static_cast<int>(instr.op)) +
+                                  " 含非法 CONSTANT 操作数（常量索引 " + std::to_string(op.index) +
+                                  "）——lowering 尚不支持常量物化，请先禁用复制传播",
+                              "RegIR");
+                hasError_ = true;
+                return false;
+            }
+        }
+        break;
+    }
 
     switch (instr.op) {
     // ---- 常量加载 ----

@@ -307,6 +307,32 @@ TEST(DebugAuditSandbox, ResetsRecursionDepth) {
     EXPECT_TRUE(result.boolVal());
 }
 
+TEST(DebugAuditSandbox, SuppressesOutputCallback) {
+    // AUDIT-R6 B2 fix: 条件断点沙箱内的 print 不得逃逸到程序输出回调，
+    // 且求值结束后回调必须恢复（主程序 print 照常输出）
+    auto ast = parseSource("var x = 1;");
+    ASSERT_NE(ast, nullptr);
+    Interpreter interp;
+    std::string captured;
+    interp.setOutputCallback([&captured](const std::string& s) { captured += s; });
+    interp.execute(*ast);
+
+    auto condAst = parseSource("print(\"LEAK\"); x == 1;");
+    ASSERT_NE(condAst, nullptr);
+    ASSERT_GE(condAst->statements.size(), 2u);
+    // 逐条求值（模拟条件表达式内含副作用调用）
+    EXPECT_NO_THROW(interp.evaluateCondition(condAst->statements[0].get()));
+    EXPECT_EQ(captured.find("LEAK"), std::string::npos)
+        << "沙箱内 print 不应逃逸到输出回调";
+
+    // 沙箱退出后回调应恢复：主程序 print 照常输出
+    auto printAst = parseSource("print(\"MAIN\");");
+    ASSERT_NE(printAst, nullptr);
+    interp.execute(*printAst);
+    EXPECT_NE(captured.find("MAIN"), std::string::npos)
+        << "沙箱退出后输出回调应恢复";
+}
+
 // ============================================================
 // BUG-DBG-4: callNamedFunction 使用变量名而非闭包名
 // ============================================================

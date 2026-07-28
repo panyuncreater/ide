@@ -39,6 +39,7 @@
 #include "Diagnostic.h"
 #include "ast/ASTNode.h"
 #include "common/IBackend.h" // ARCH-09 fix: 后端抽象接口
+#include "common/ModulePath.h" // AUDIT-R5 R6 fix: 模块路径缓存键规范化单一事实源
 #include "common/Result.h"   // R98 W2: invokeClosureSync 返回 Result<Value>
 #include "common/RuntimeLimits.h"
 #include "interpreter/BuiltinMethods.h" // R164 fix: handleCoroutineMethod 返回 BuiltinMethodResult
@@ -203,18 +204,11 @@ public:
     /// REPL 模块缓存刷新：清除指定模块的缓存，下次 import 将重新加载源码
     /// 场景：用户修改了模块源文件后希望在 REPL 中获取最新版本
     /// BUG-REPL-1 fix: 原实现直接用 path 查 erase，未做路径规范化。
-    /// visitImportStmt 会将 "\\" 转 "/" 并去除 "./" 前缀后存入 moduleCache_，
-    /// 导致用户用 "foo\\bar.mini" 或 "./foo.mini" 调用本方法时无法命中缓存。
-    /// 修复：与 visitImportStmt 保持一致的规范化（\→/，strip ./）。
+    /// AUDIT-R5 R6/BUG-M4 fix: 缓存键 = moduleCacheKey(normalizeModulePathKey(path))（
+    /// common/ModulePath.h 单一事实源），与 loadModuleOrGetCached 入键一致，
+    /// 含连续斜杠折叠与 Windows 小写折叠，否则 reload 无法命中缓存。
     void clearModuleCache(const std::string& path) {
-        std::string normalized = path;
-        for (char& c : normalized) {
-            if (c == '\\')
-                c = '/';
-        }
-        if (normalized.size() >= 2 && normalized[0] == '.' && normalized[1] == '/') {
-            normalized.erase(0, 2);
-        }
+        std::string normalized = moduleCacheKey(normalizeModulePathKey(path));
         moduleCache_.erase(normalized);
         moduleExports_.erase(normalized);
         moduleMtimes_.erase(normalized); // BUG-REPL-AUDIT-1 fix
@@ -385,7 +379,10 @@ private:
     // execute() 开头清空（旧环境链已销毁，池中 Environment 可能被新链引用作 parent）。
     std::vector<std::shared_ptr<Environment>> envPool_;
     // MEM-01 fix: shared_ptr 共享所有权，worker 线程持有的 Interpreter 保持 debugger 存活
-    std::shared_ptr<DebugController> debugger_; // 调试控制器（可为 nullptr）
+    // AUDIT-R4 BUG-15 fix: 改为 atomic<shared_ptr>——setDebugger() 在主线程写入，
+    // checkBreak()/visit* 在 worker 线程读取，原普通 shared_ptr 构成数据竞争（UB）。
+    // C++20 std::atomic<std::shared_ptr> 保证原子发布/读取，无需外部锁。
+    std::atomic<std::shared_ptr<DebugController>> debugger_; // 调试控制器（可为 nullptr）
     // QT-R-02 fix: debugMode_ 改为 atomic，消除主线程 setDebugMode() 与 worker 线程
     // checkBreak() 读操作之间的数据竞争。A6 fix 已确保主线程不在 worker 运行时
     // 调用 setDebugMode，但 atomic 提供额外的内存可见性保证和防御性保护。
@@ -402,7 +399,11 @@ private:
     // AUDIT-P1.2 fix: MAX_CONDITION_STEPS 迁移到 RuntimeLimits.h 统一管理。
     size_t evaluationStepCount_ = 0;
     static constexpr size_t MAX_CONDITION_STEPS = RuntimeLimits::MAX_CONDITION_STEPS;
-    std::function<void(const std::string&)> outputCallback_;       // 输出回调
+    // AUDIT-R4 P-3 fix: outputCallback_ 改用 shared_ptr 包裹——output() 每次 print
+    // 都需“锁内拷贝、锁外调用”（A6 防死锁模式），原 std::function 整体拷贝
+    // 含潜在堆分配，循环 print 密集的教学程序上每行输出一次。改为锁内拷贝
+    // shared_ptr（仅 refcount 递增，无堆分配），调用语义不变。
+    std::shared_ptr<const std::function<void(const std::string&)>> outputCallback_; // 输出回调
     std::function<std::string(const std::string&)> inputCallback_; // 输入回调（input() 函数）
     std::function<std::string(const std::string&)> moduleLoader_;  // F12: 模块加载回调
     // BUG-REPL-AUDIT-1 fix: 模块文件 mtime 检查回调
@@ -458,6 +459,56 @@ private:
     // 绝不会被 catch (ThrowException&) 误捕，自然穿透 try 块到达循环。
     enum class LoopFlow { None, Break, Continue };
     LoopFlow loopFlow_ = LoopFlow::None;
+
+    // ---- B1 TCO：Interpreter 尾调用蹦床上下文 ----
+    // 对齐三条 VM 路径的 TCO 帧复用：visitReturnStmt 在识别到自尾调用
+    //（TCO::identifyTailCall，与 VM 同一单一事实源）且不在 try 块内时，
+    // 求值实参后抛 TailCallSignal，由 callNamedFunction/invokeMethod 的蹦床
+    // 循环捕获并帧复用重新执行函数体，C++ 递归深度恒定。
+    // 安全不变量：
+    //   1. 仅蹦床调用点启用（tcoEnabled_=true）；其他 executeFunctionBody
+    //      调用点（init/生成器/callClosureValue/invokeClosureSync）置为
+    //      禁用，保证信号不跨边界逃逸。
+    //   2. tcoTryDepth_ > 0（return 在 try/catch/finally 内）时不 TCO，
+    //      保留 finally 语义路径（与 VM 的 tryDepth_==0 判据一致）。
+    //   3. 运行时重绑定校验：SelfFunction 要求调用名当前仍解析到正在
+    //      执行的 FunDecl；SelfMethod 要求动态分派（this 的类继承链）
+    //      仍命中当前 decl（子类 override 时回退普通调用，保持虚分派）。
+    FunDecl* tcoDecl_ = nullptr; // 当前蹦床执行的函数/方法声明
+    std::string tcoName_;        // 尾调用识别用简单名（不含类名前缀）
+    bool tcoIsMethod_ = false;   // 当前是否在类方法体内
+    bool tcoEnabled_ = false;    // 仅蹦床调用点为 true
+    int tcoTryDepth_ = 0;        // 当前函数体内 try 嵌套深度
+
+    // RAII：进入函数体前保存/设置 TCO 上下文，退出（含异常路径）恢复。
+    // 新函数体的 tcoTryDepth_ 从 0 开始（外层 try 不影响内层函数的 TCO，
+    // 与 VM 每函数独立编译的 tryDepth 语义一致）。
+    struct TcoScopeGuard {
+        Interpreter& in;
+        FunDecl* savedDecl;
+        std::string savedName;
+        bool savedIsMethod;
+        bool savedEnabled;
+        int savedTryDepth;
+        TcoScopeGuard(Interpreter& i, FunDecl* decl, const std::string& name, bool isMethod, bool enabled)
+            : in(i), savedDecl(i.tcoDecl_), savedName(std::move(i.tcoName_)), savedIsMethod(i.tcoIsMethod_),
+              savedEnabled(i.tcoEnabled_), savedTryDepth(i.tcoTryDepth_) {
+            in.tcoDecl_ = decl;
+            in.tcoName_ = name;
+            in.tcoIsMethod_ = isMethod;
+            in.tcoEnabled_ = enabled;
+            in.tcoTryDepth_ = 0;
+        }
+        ~TcoScopeGuard() {
+            in.tcoDecl_ = savedDecl;
+            in.tcoName_ = std::move(savedName);
+            in.tcoIsMethod_ = savedIsMethod;
+            in.tcoEnabled_ = savedEnabled;
+            in.tcoTryDepth_ = savedTryDepth;
+        }
+        TcoScopeGuard(const TcoScopeGuard&) = delete;
+        TcoScopeGuard& operator=(const TcoScopeGuard&) = delete;
+    };
 
     // R164 协程/生成器：当前重放的目标 yieldId。
     // -1 表示不在协程重放上下文（普通函数执行）；>=0 表示当前正在重放生成器函数体，
@@ -643,8 +694,8 @@ private:
             return;
         }
         if (!typeMatch(val, annotation)) {
-            runtimeError(ErrorFormat::format(ErrorMessages::kTypeAnnotationViolationFmt, annotation.c_str(),
-                                             val.typeName().c_str()),
+            runtimeError(ErrorFormat::formatStd(ErrorMessages::kTypeAnnotationViolationFmtStd, annotation,
+                                                  val.typeName()),
                          line, col, DiagCodes::kTypeMismatch);
         }
     }
@@ -743,13 +794,15 @@ private:
     /// 加载或获取缓存的模块环境。命中缓存时检查文件 mtime，失效则重新加载。
     /// 未命中时调用 loader 加载源码、Lexer/Parser 解析、隔离 env 执行模块顶层语句。
     /// 使用 ModuleEnvGuard RAII 守卫统一管理异常路径的状态恢复。
-    std::shared_ptr<Environment> loadModuleOrGetCached(const std::string& modulePath, ImportStmt& node,
+    std::shared_ptr<Environment> loadModuleOrGetCached(const std::string& loaderPath, const std::string& cacheKey,
+                                                       ImportStmt& node,
                                                        const std::function<std::string(const std::string&)>& loader,
                                                        const std::function<int64_t(const std::string&)>& mtimeChecker);
 
     /// 将模块导出名称导入到 currentEnv_。importAll=true 时导入全部导出名称；
     /// 否则按 node.names 列表原子性导入（先全验证后全定义，避免部分失败导致环境不一致）。
-    void importNamesFromModule(const std::string& modulePath, ImportStmt& node,
+    /// BUG-M4 fix: cacheKey 与 loadModuleOrGetCached 入键一致。
+    void importNamesFromModule(const std::string& cacheKey, ImportStmt& node,
                                std::shared_ptr<Environment>& moduleEnv);
 
     // ---- B1 fix: 闭包仅捕获自由变量（静态分析 AST）----

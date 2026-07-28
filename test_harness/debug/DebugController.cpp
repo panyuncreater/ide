@@ -12,6 +12,12 @@
 #include "DebugController.h"
 #include <algorithm>
 
+// 拓展二期修复：与生产版签名对齐的构造函数（忽略 parent）。
+// 提供 ??0DebugController@@QEAA@PEAVQObject@@@Z 符号，避免链接器
+// 为解析该符号从 minilang_core.lib 拉取真实 DebugController.cpp.obj
+// 导致 LNK2005（mocs_compilation 所在的 unity batch 引用此构造函数）。
+DebugController::DebugController(QObject* /*parent*/) {}
+
 // ── Step mode control ──────────────────────────────────────────────
 
 // 进入「单步进入」模式：每执行一条语句即暂停，并重置交叉帧标志开启新一轮步进。

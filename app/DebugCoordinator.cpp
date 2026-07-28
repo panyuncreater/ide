@@ -34,6 +34,7 @@ DebugCoordinator::~DebugCoordinator() {
         debugger_->stop();
         debugger_->setConditionEvaluator({});
         debugger_->setVariableCallback({});
+        debugger_->setVariableWriteCallback({}); // 拓展二期：写回调同样反注册
         debugger_->setCallStackCallback({});
         debugger_->waitCallbacksIdle(); // 等待所有 callback 完成后再析构
     }
@@ -123,6 +124,27 @@ void DebugCoordinator::setupDebug(const QSet<int>& breakpoints, const QMap<int, 
             Logger::Warning("变量快照回调发生未知异常", "Debugger");
         }
         return result;
+    });
+
+    // 拓展二期：变量写回调（setVariable）——调试暂停时 GUI 线程沿当前
+    // Environment 作用域链写入。仅在 DebugController::setVariableValue 确认
+    // isPaused() 后调用（worker 阻塞在 pauseCV_，写入是安全窗口）。
+    // Environment::set 沿作用域链查找并更新（含 boundInstance 字段回退），
+    // 找不到返回 false——调试改值不新建变量（与 VM 路径语义对齐）。
+    debugger_->setVariableWriteCallback([interpreter = interpreter_](const std::string& name,
+                                                                    const Value& value) -> bool {
+        try {
+            auto env = interpreter->currentEnvironmentShared();
+            if (!env)
+                return false;
+            return env->set(name, value);
+        } catch (const std::exception& e) {
+            Logger::Warning(std::string("变量写回调异常: ") + e.what(), "Debugger");
+            return false;
+        } catch (...) {
+            Logger::Warning("变量写回调发生未知异常", "Debugger");
+            return false;
+        }
     });
 
     debugger_->setCallStackCallback([interpreter = interpreter_]() -> std::vector<CallStackEntry> {

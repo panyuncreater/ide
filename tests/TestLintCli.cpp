@@ -502,3 +502,227 @@ TEST(LintCliHelpers, VersionString) {
     EXPECT_NE(v.find("minilang-lint"), std::string::npos);
     EXPECT_NE(v.find("R162"), std::string::npos);
 }
+
+// ============================================================
+// 拓展二期：--fix 结构化自动修复
+// ============================================================
+
+TEST(LintFix, RemovesUnusedVariable) {
+    minilang_lint::LintOptions opts;
+    auto r = minilang_lint::applyFixes("var unused = 1;\nvar x = 2;\nprint(x);\n", opts);
+    ASSERT_TRUE(r.ok) << r.errorMessage;
+    EXPECT_EQ(r.removedCount, 1);
+    EXPECT_EQ(r.fixedSource.find("unused"), std::string::npos);
+    EXPECT_NE(r.fixedSource.find("print(x)"), std::string::npos);
+}
+
+TEST(LintFix, KeepsVariableWithSideEffectInitializer) {
+    minilang_lint::LintOptions opts;
+    // 初始化器含函数调用：副作用保守，不删除
+    auto r = minilang_lint::applyFixes("fun f() { print(1); return 2; }\n"
+                                       "var unused = f();\n",
+                                       opts);
+    ASSERT_TRUE(r.ok) << r.errorMessage;
+    EXPECT_EQ(r.removedCount, 0);
+    EXPECT_EQ(r.skippedCount, 1);
+    EXPECT_NE(r.fixedSource.find("unused"), std::string::npos);
+}
+
+TEST(LintFix, RemovesDeadCodeAfterReturn) {
+    minilang_lint::LintOptions opts;
+    auto r = minilang_lint::applyFixes("fun g() {\n"
+                                       "  return 1;\n"
+                                       "  print(999);\n" // 不可达
+                                       "}\n"
+                                       "print(g());\n",
+                                       opts);
+    ASSERT_TRUE(r.ok) << r.errorMessage;
+    EXPECT_GE(r.removedCount, 1);
+    EXPECT_EQ(r.fixedSource.find("999"), std::string::npos);
+}
+
+TEST(LintFix, RemovesUnusedFunction) {
+    minilang_lint::LintOptions opts;
+    auto r = minilang_lint::applyFixes("fun neverCalled() { return 1; }\n"
+                                       "var x = 1;\nprint(x);\n",
+                                       opts);
+    ASSERT_TRUE(r.ok) << r.errorMessage;
+    EXPECT_GE(r.removedCount, 1);
+    EXPECT_EQ(r.fixedSource.find("neverCalled"), std::string::npos);
+}
+
+TEST(LintFix, FixedSourceStaysParsableAndLintCleaner) {
+    minilang_lint::LintOptions opts;
+    const std::string src = "var unused = 1;\n"
+                            "fun dead() { return 0; }\n"
+                            "var x = 2;\nprint(x);\n";
+    auto r = minilang_lint::applyFixes(src, opts);
+    ASSERT_TRUE(r.ok) << r.errorMessage;
+    EXPECT_EQ(r.removedCount, 2);
+    // 修复后源码必须仍可解析，且相关警告消失
+    auto relint = minilang_lint::lintSource(r.fixedSource, opts);
+    ASSERT_TRUE(relint.ok) << relint.errorMessage;
+    for (const auto& d : relint.lint.diagnostics.all()) {
+        EXPECT_NE(d.code, "lint-unused-variable");
+        EXPECT_NE(d.code, "lint-unused-function");
+    }
+}
+
+TEST(LintFix, ParseErrorReportsPhase) {
+    minilang_lint::LintOptions opts;
+    auto r = minilang_lint::applyFixes("var x = ;", opts);
+    EXPECT_FALSE(r.ok);
+    EXPECT_EQ(r.errorPhase, "parse");
+}
+
+TEST(LintFix, ParseArgsRecognizesFixFlags) {
+    const char* argv1[] = {"minilang-lint", "--fix", "a.mini"};
+    auto args1 = minilang_lint::parseArgs(3, const_cast<char**>(argv1));
+    EXPECT_TRUE(args1.fix);
+    EXPECT_FALSE(args1.fixDryRun);
+    const char* argv2[] = {"minilang-lint", "--fix-dry-run", "a.mini"};
+    auto args2 = minilang_lint::parseArgs(3, const_cast<char**>(argv2));
+    EXPECT_TRUE(args2.fixDryRun);
+}
+
+// ============================================================
+// 拓展二期：match 穷尽性检查（NonExhaustiveMatch）
+// ============================================================
+
+namespace {
+/// 检查诊断中是否含指定 code 的警告，返回首条匹配消息（无则空串）
+std::string findDiagByCode(const minilang_lint::LintSourceResult& r, const std::string& code) {
+    for (const auto& d : r.lint.diagnostics.all()) {
+        if (d.code == code)
+            return d.message;
+    }
+    return "";
+}
+} // namespace
+
+TEST(LintExhaustiveMatch, WarnsOnMissingVariant) {
+    minilang_lint::LintOptions opts;
+    auto r = minilang_lint::lintSource("enum Color { Red, Green, Blue }\n"
+                                       "var c = Color.Red;\n"
+                                       "var x = match (c) {\n"
+                                       "  case Color.Red => 1\n"
+                                       "  case Color.Green => 2\n"
+                                       "};\n"
+                                       "print(x);\n",
+                                       opts);
+    ASSERT_TRUE(r.ok) << r.errorMessage;
+    std::string msg = findDiagByCode(r, "lint-non-exhaustive-match");
+    ASSERT_FALSE(msg.empty());
+    EXPECT_NE(msg.find("Color.Blue"), std::string::npos); // 指名缺失 variant
+}
+
+TEST(LintExhaustiveMatch, NoWarnWhenAllVariantsCovered) {
+    minilang_lint::LintOptions opts;
+    auto r = minilang_lint::lintSource("enum Color { Red, Green }\n"
+                                       "var x = match (Color.Red) {\n"
+                                       "  case Color.Red => 1\n"
+                                       "  case Color.Green => 2\n"
+                                       "};\n"
+                                       "print(x);\n",
+                                       opts);
+    ASSERT_TRUE(r.ok) << r.errorMessage;
+    EXPECT_TRUE(findDiagByCode(r, "lint-non-exhaustive-match").empty());
+}
+
+TEST(LintExhaustiveMatch, NoWarnWithDefault) {
+    minilang_lint::LintOptions opts;
+    auto r = minilang_lint::lintSource("enum Color { Red, Green, Blue }\n"
+                                       "var x = match (Color.Red) {\n"
+                                       "  case Color.Red => 1\n"
+                                       "  default => 0\n"
+                                       "};\n"
+                                       "print(x);\n",
+                                       opts);
+    ASSERT_TRUE(r.ok) << r.errorMessage;
+    EXPECT_TRUE(findDiagByCode(r, "lint-non-exhaustive-match").empty());
+}
+
+TEST(LintExhaustiveMatch, GuardedCaseDoesNotCountAsCoverage) {
+    minilang_lint::LintOptions opts;
+    // Some 分支带 guard（可能失败）：不算覆盖 → 仍报 Some 与 None
+    auto r = minilang_lint::lintSource("enum Option { Some(int), None }\n"
+                                       "var x = match (Option.Some(1)) {\n"
+                                       "  case Option.Some(v) if v > 0 => v\n"
+                                       "};\n"
+                                       "print(x);\n",
+                                       opts);
+    ASSERT_TRUE(r.ok) << r.errorMessage;
+    std::string msg = findDiagByCode(r, "lint-non-exhaustive-match");
+    ASSERT_FALSE(msg.empty());
+    EXPECT_NE(msg.find("Option.Some"), std::string::npos);
+    EXPECT_NE(msg.find("Option.None"), std::string::npos);
+}
+
+TEST(LintExhaustiveMatch, LiteralSubPatternDoesNotCoverVariant) {
+    minilang_lint::LintOptions opts;
+    // Some(1) 只覆盖字面量 1，不算覆盖 Some → 报缺 Some
+    auto r = minilang_lint::lintSource("enum Option { Some(int), None }\n"
+                                       "var x = match (Option.Some(1)) {\n"
+                                       "  case Option.Some(1) => 10\n"
+                                       "  case Option.None => 0\n"
+                                       "};\n"
+                                       "print(x);\n",
+                                       opts);
+    ASSERT_TRUE(r.ok) << r.errorMessage;
+    std::string msg = findDiagByCode(r, "lint-non-exhaustive-match");
+    ASSERT_FALSE(msg.empty());
+    EXPECT_NE(msg.find("Option.Some"), std::string::npos);
+}
+
+TEST(LintExhaustiveMatch, CatchAllVariablePatternSuppresses) {
+    minilang_lint::LintOptions opts;
+    auto r = minilang_lint::lintSource("enum Color { Red, Green, Blue }\n"
+                                       "var x = match (Color.Red) {\n"
+                                       "  case Color.Red => 1\n"
+                                       "  case other => 0\n" // VARIABLE 兕底
+                                       "};\n"
+                                       "print(x);\n",
+                                       opts);
+    ASSERT_TRUE(r.ok) << r.errorMessage;
+    EXPECT_TRUE(findDiagByCode(r, "lint-non-exhaustive-match").empty());
+}
+
+TEST(LintExhaustiveMatch, OrPatternExpandsCoverage) {
+    minilang_lint::LintOptions opts;
+    auto r = minilang_lint::lintSource("enum Color { Red, Green, Blue }\n"
+                                       "var x = match (Color.Red) {\n"
+                                       "  case Color.Red or Color.Green or Color.Blue => 1\n"
+                                       "};\n"
+                                       "print(x);\n",
+                                       opts);
+    ASSERT_TRUE(r.ok) << r.errorMessage;
+    EXPECT_TRUE(findDiagByCode(r, "lint-non-exhaustive-match").empty());
+}
+
+TEST(LintExhaustiveMatch, NonEnumMatchNotChecked) {
+    minilang_lint::LintOptions opts;
+    // 整数 match（无 VARIANT pattern）：不做穷尽性检查
+    auto r = minilang_lint::lintSource("var x = match (5) {\n"
+                                       "  case 1 => 10\n"
+                                       "  case 2 => 20\n"
+                                       "};\n"
+                                       "print(x);\n",
+                                       opts);
+    ASSERT_TRUE(r.ok) << r.errorMessage;
+    EXPECT_TRUE(findDiagByCode(r, "lint-non-exhaustive-match").empty());
+}
+
+TEST(LintExhaustiveMatch, RuleCanBeDisabled) {
+    minilang_lint::LintOptions opts;
+    opts.disabledRules.insert(minilang_lint::LintRule::NonExhaustiveMatch);
+    auto r = minilang_lint::lintSource("enum Color { Red, Green }\n"
+                                       "var x = match (Color.Red) {\n"
+                                       "  case Color.Red => 1\n"
+                                       "};\n"
+                                       "print(x);\n",
+                                       opts);
+    ASSERT_TRUE(r.ok) << r.errorMessage;
+    EXPECT_TRUE(findDiagByCode(r, "lint-non-exhaustive-match").empty());
+    // parseRuleName 同步支持新规则名
+    EXPECT_EQ(minilang_lint::parseRuleName("NonExhaustiveMatch"), minilang_lint::LintRule::NonExhaustiveMatch);
+}

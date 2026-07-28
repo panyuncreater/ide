@@ -127,6 +127,50 @@ struct InstallResult {
     bool alreadyInstalled = false; ///< 包已安装（跳过）
     bool versionConflict = false;  ///< P2-11: 版本冲突（已安装不同版本）
     std::string conflictDetail;    ///< P2-11: 冲突详情
+    bool hashMismatch = false;     ///< 拓展二期: lockfile 哈希校验失败
+};
+
+// ============================================================
+// 拓展二期：Lockfile（minilang.lock）+ 内容哈希校验
+// ------------------------------------------------------------
+// 设计目标（与 npm package-lock / cargo Cargo.lock 同构的教学简化版）：
+//   1. 版本锁定：清单声明约束（如 ^1.0.0），lockfile 记录首次解析出的
+//      精确版本；后续 install 优先用锁定版本，保证可重现安装。
+//   2. 内容完整性：记录包目录的 SHA-256 内容哈希（相对路径+文件内容，
+//      排序后累积）；重新安装时若 registry 中同名同版本内容被篡改，
+//      哈希不匹配→安装失败并回滚，防供应链投毒。
+//   3. verify 命令：对照 lockfile 校验已安装包的完整性。
+// ============================================================
+
+/// Lockfile 条目：一个已锁定的包
+struct LockEntry {
+    std::string name;    ///< 包名
+    std::string version; ///< 锁定的精确版本
+    std::string hash;    ///< 内容哈希（"sha256:<hex>"）
+
+    bool operator==(const LockEntry&) const = default;
+};
+
+/// Lockfile（minilang.lock，JSON 格式）
+struct Lockfile {
+    std::vector<LockEntry> entries;
+
+    /// 按包名查找条目（未找到返回 nullptr）
+    const LockEntry* find(const std::string& name) const {
+        for (const auto& e : entries)
+            if (e.name == name)
+                return &e;
+        return nullptr;
+    }
+
+    bool operator==(const Lockfile&) const = default;
+};
+
+/// verify 命令结果
+struct VerifyResult {
+    bool ok = false;
+    std::vector<std::string> mismatches; ///< 每条：包名 + 不匹配原因
+    std::string errorMessage;
 };
 
 /// 列表结果
@@ -141,6 +185,7 @@ struct PkgConfig {
     std::string packagesDir = "minilang_packages"; ///< 包安装目录（项目级）
     std::string registryDir;                       ///< 本地仓库目录（可选）
     std::string manifestPath = "minilang.pkg";     ///< 清单文件路径
+    std::string lockfilePath = "minilang.lock";    ///< 拓展二期: lockfile 路径
 };
 
 /// 包管理器
@@ -193,6 +238,31 @@ public:
     /// 返回空 optional 表示包未安装或无版本信息
     std::optional<Version> getInstalledVersion(const std::string& pkgName) const;
 
+    // ---- 拓展二期：Lockfile ----
+
+    /// 加载 lockfile（文件不存在视为空 lockfile，返回 true）
+    /// path 为空时使用 config_.lockfilePath；解析失败返回 false
+    bool loadLockfile(const std::string& path = "", std::string* errorMessage = nullptr);
+
+    /// 保存 lockfile（JSON 格式）
+    bool saveLockfile(const std::string& path = "", std::string* errorMessage = nullptr) const;
+
+    /// 是否已加载 lockfile
+    bool hasLockfile() const { return lockfileLoaded_; }
+
+    /// 获取 lockfile（只读）
+    const Lockfile& lockfile() const { return lockfile_; }
+
+    /// 计算包目录的内容哈希（"sha256:<hex>"）。
+    /// 遍历目录下全部文件（按相对路径排序，'/' 统一分隔符），
+    /// 对每个文件累积哈希 “相对路径\n内容\0”，保证跨平台确定性。
+    /// 目录不存在返回空字符串。
+    static std::string computePackageHash(const std::string& pkgDir);
+
+    /// 拓展二期：对照 lockfile 校验已安装包的完整性。
+    /// 需先 loadLockfile；未加载时返回 errorMessage。
+    VerifyResult verifyInstalled() const;
+
     // ---- 列表 ----
 
     /// 列出已安装的包（扫描 packagesDir 下的 pkg.json 元数据）
@@ -219,6 +289,12 @@ private:
     PkgConfig config_;
     Manifest manifest_;
     bool manifestLoaded_ = false;
+    // 拓展二期：Lockfile 状态（install 成功后更新条目，由 CLI 层 save）
+    Lockfile lockfile_;
+    bool lockfileLoaded_ = false;
+
+    /// 拓展二期：更新/新增 lockfile 条目
+    void updateLockEntry(const std::string& name, const std::string& version, const std::string& hash);
 
     /// 获取包在 packagesDir 中的目录路径
     std::string resolvePackagePath(const std::string& pkgName) const;
@@ -254,11 +330,12 @@ private:
 
 /// CLI 参数
 struct CliArgs {
-    std::string command;           ///< 命令（install/list/init/add/help/version）
+    std::string command;           ///< 命令（install/list/init/add/verify/help/version）
     std::vector<std::string> args; ///< 命令参数
     std::string registryDir;       ///< --registry <dir>
     std::string packagesDir;       ///< --packages-dir <dir>
     std::string manifestPath;      ///< --manifest <path>
+    std::string lockfilePath;      ///< 拓展二期: --lockfile <path>
     bool noTransitive = false;     ///< --no-transitive（跳过传递依赖）
     bool showHelp = false;
     bool showVersion = false;
@@ -289,6 +366,9 @@ CommandResult processInit(const CliArgs& args);
 
 /// 处理 add 命令
 CommandResult processAdd(const CliArgs& args);
+
+/// 拓展二期：处理 verify 命令（对照 lockfile 校验已安装包哈希）
+CommandResult processVerify(const CliArgs& args);
 
 // ============================================================
 // 辅助函数

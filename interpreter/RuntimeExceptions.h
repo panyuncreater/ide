@@ -23,6 +23,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector> // B1 TCO: TailCallSignal 携带实参列表
 
 // ============================================================
 // 运行时异常
@@ -82,6 +83,20 @@ public:
     Value yieldValue;
 
     explicit YieldSignal(Value val) : std::runtime_error("yield"), yieldValue(std::move(val)) {}
+};
+
+/// B1 TCO：自尾调用信号——visitReturnStmt 识别 `return f(args)` /
+/// `return this.m(args)` 自尾调用后抛出（携带已求值的实参），由
+/// callNamedFunction / invokeMethod 的蹦床循环捕获并帧复用执行，
+/// 使深尾递归在恒定 C++ 栈深内完成（对齐 StackVM/RegisterVM 的 TCO）。
+/// 不是错误：仅在 TCO 上下文启用（tcoEnabled_）且不在 try 块内时抛出，
+/// 非蹦床的函数体执行点（init/生成器/闭包变量/高阶回调）显式禁用上下文，
+/// 保证信号不会逃逸出对应的蹦床边界。
+class TailCallSignal : public std::runtime_error {
+public:
+    std::vector<Value> args;
+
+    explicit TailCallSignal(std::vector<Value> a) : std::runtime_error("tailcall"), args(std::move(a)) {}
 };
 
 /// 调试终止异常（用户点击停止按钮时抛出）

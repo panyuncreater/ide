@@ -76,6 +76,10 @@ public:
         std::string source;       ///< 源码内容
         int64_t mtime = 0;        ///< 源码文件 mtime(毫秒);0 表示不校验 mtime
         uint8_t compilerMode = 0; ///< 0=直接编译, 1=IR 路径
+        /// AUDIT-R3 P2-4 fix: 优化开关位图（bit0=irOptimize, bit1=irSSAOptimize）。
+        /// 原缓存键不含优化配置，切换优化开关后旧缓存仍命中，产出与当前
+        /// 配置不一致的字节码。写入头部 reserved 字节，加载时比对不符即失效。
+        uint8_t optFlags = 0;
     };
 
     BytecodeCache();

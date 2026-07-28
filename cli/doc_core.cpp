@@ -91,6 +91,11 @@ DocProcessResult processFile(const std::string& path, minilang::doc::DocFormat f
     }
 
     // 3. 格式化输出
+    // BUG-69 fix (P2 冗余实例说明): 此处新建的 DocGenerator 仅用于调用 formatOutput()。
+    // 经核对 doc/DocGenerator.cpp:277，formatOutput() 是 const 方法，仅依赖构造期传入的
+    // format_ 成员，不读取 generate() 积累的内部状态（result_ / docComments_）。因此该实例
+    // 与 generateDoc() 内部的 DocGenerator 无状态耦合，新建实例是安全的；保留独立实例而非
+    // 复用，是为了让 processFile 不依赖 generateDoc 的内部实现细节（封装边界清晰）。
     minilang::doc::DocGenerator gen(format);
     result.ok = true;
     result.entryCount = static_cast<int>(docResult.doc.entries.size());

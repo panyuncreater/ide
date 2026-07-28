@@ -44,12 +44,17 @@ set(MINILANG_CORE_BASE_SOURCES
     ${MINILANG_ROOT_DIR}/common/BuiltinModules.cpp
     ${MINILANG_ROOT_DIR}/common/TypeChecker.cpp
     ${MINILANG_ROOT_DIR}/common/CrashHandler.cpp
+    # ARCH-10: 内存检视只读 API（GUI 面板通过此 API 访问 NaNBox/RefCounted/GcManager，
+    # 消除对 interpreter/ 内部头文件的直接依赖）
+    # 仅依赖 interpreter/* 内部头文件（与 base 已有强连通核心同层），保留在 base。
+    ${MINILANG_ROOT_DIR}/common/MemoryInspectionAPI.cpp
     ${MINILANG_ROOT_DIR}/ast/ASTNode.cpp
     ${MINILANG_ROOT_DIR}/ast/ModuleIsolation.cpp
     ${MINILANG_ROOT_DIR}/interpreter/Interpreter.cpp
     ${MINILANG_ROOT_DIR}/interpreter/InterpreterCalls.cpp
     ${MINILANG_ROOT_DIR}/interpreter/InterpreterClasses.cpp
     ${MINILANG_ROOT_DIR}/interpreter/InterpreterModules.cpp
+    ${MINILANG_ROOT_DIR}/interpreter/InterpreterCoroutine.cpp
     ${MINILANG_ROOT_DIR}/interpreter/BuiltinMethods.cpp
     ${MINILANG_ROOT_DIR}/interpreter/Value.cpp
     ${MINILANG_ROOT_DIR}/interpreter/GcManager.cpp
@@ -70,24 +75,58 @@ set(MINILANG_FRONTEND_SOURCES
 
 # --- minilang_backend：编译器/三后端（单向依赖 base + frontend） ---
 # compiler/*.cpp 变更最频繁（IR/VM/RegisterVM/JIT），独立成 target 加速增量编译
+# P1-2 拆分规划：待巨型文件拆分后新增的编译单元在此添加：
+#   JIT.cpp → JIT.cpp + JITCodeGen.cpp + JITTiering.cpp + JITRuntime.cpp + JITClosure.cpp
+#   IR.cpp  → IR.cpp + AstIRBuilder.cpp + BytecodeIRBackend.cpp + IROptPasses.cpp
+#   Compiler.cpp → Compiler.cpp + CompilerExpr.cpp + CompilerStmt.cpp + CompilerClass.cpp
+#   RegisterVM.cpp → RegisterVM.cpp + RegisterVMExec.cpp + RegisterVMCalls.cpp
 set(MINILANG_BACKEND_SOURCES
     ${MINILANG_ROOT_DIR}/compiler/Bytecode.cpp
     ${MINILANG_ROOT_DIR}/compiler/Compiler.cpp
+    ${MINILANG_ROOT_DIR}/compiler/CompilerExpr.cpp
+    ${MINILANG_ROOT_DIR}/compiler/CompilerStmt.cpp
+    ${MINILANG_ROOT_DIR}/compiler/CompilerClass.cpp
     ${MINILANG_ROOT_DIR}/compiler/VM.cpp
     ${MINILANG_ROOT_DIR}/compiler/VMCalls.cpp
     ${MINILANG_ROOT_DIR}/compiler/VMContainers.cpp
     ${MINILANG_ROOT_DIR}/compiler/IR.cpp
+    ${MINILANG_ROOT_DIR}/compiler/AstIRBuilder.cpp
+    ${MINILANG_ROOT_DIR}/compiler/BytecodeIRBackend.cpp
+    ${MINILANG_ROOT_DIR}/compiler/IROptPasses.cpp
     ${MINILANG_ROOT_DIR}/compiler/IRSSA.cpp
     ${MINILANG_ROOT_DIR}/compiler/RegisterBytecode.cpp
     ${MINILANG_ROOT_DIR}/compiler/RegisterBytecodeBackend.cpp
     ${MINILANG_ROOT_DIR}/compiler/RegisterVM.cpp
+    ${MINILANG_ROOT_DIR}/compiler/RegisterVMExec.cpp
+    ${MINILANG_ROOT_DIR}/compiler/RegisterVMCalls.cpp
     # P1-7: 字节码磁盘缓存（CompileResult 序列化，跳过重复编译）
     ${MINILANG_ROOT_DIR}/compiler/BytecodeCache.cpp
+    # ARCH-10: 后端执行服务中间层（GUI 面板通过此服务触发编译执行，
+    # 消除对 compiler/VM/RegisterVM/Interpreter/Lexer/Parser 内部头文件的直接依赖）
+    # 放在 backend 子库而非 base 的原因：依赖 lexer/parser/compiler/VM/RegisterVM，
+    # 这些均位于 frontend/backend 层，base 不应反向依赖；同时避免与 base 中
+    # CrashHandler.cpp（含 <windows.h>）在 Unity Build 同一 TU 中冲突——
+    # windows.h 经某些 SDK 链路引入的宏会污染 lexer/Token.h 的 TokenType/type 字段。
+    ${MINILANG_ROOT_DIR}/common/BackendExecutionService.cpp
 )
 
 # JIT 后端源文件（条件编译，MINILANG_USE_JIT = ON 时包含）
 if(MINILANG_USE_JIT)
-    list(APPEND MINILANG_BACKEND_SOURCES ${MINILANG_ROOT_DIR}/compiler/JIT.cpp)
+    list(APPEND MINILANG_BACKEND_SOURCES
+        ${MINILANG_ROOT_DIR}/compiler/JIT.cpp
+        ${MINILANG_ROOT_DIR}/compiler/JITCodeGen.cpp
+        ${MINILANG_ROOT_DIR}/compiler/JITCodeGenHelpers.cpp
+        ${MINILANG_ROOT_DIR}/compiler/JITRuntime.cpp
+        ${MINILANG_ROOT_DIR}/compiler/JITTiering.cpp
+        ${MINILANG_ROOT_DIR}/compiler/JITClosure.cpp
+    )
+endif()
+
+# ARM64 JIT 后端源文件（条件编译，MINILANG_USE_JIT_A64 = ON 时包含）
+if(MINILANG_USE_JIT_A64)
+    list(APPEND MINILANG_BACKEND_SOURCES
+        ${MINILANG_ROOT_DIR}/compiler/JITA64CodeGen.cpp
+    )
 endif()
 
 # --- minilang_guibridge：app 桥接层（含 SKIP_AUTOMOC） ---
@@ -109,6 +148,13 @@ set(MINILANG_CORE_SOURCES
 )
 
 # GUI 模块源文件（仅 minilang_ide 使用，不属于 core）
+# 新增教学面板时需手动添加 .cpp 到此列表（CMake 不使用 file(GLOB) 以遵循最佳实践）。
+# 面板注册流程参见 docs/development.md「新增教学面板指南」：
+#   1. 创建 gui/XxxPanel.cpp/.h
+#   2. 添加 .cpp 到此 MINILANG_GUI_SOURCES 列表
+#   3. 在 gui/PanelCatalog.cpp 注册面板元数据（id/label/emoji/category）
+#   4. 在 app/ide.cpp registerLazyTeachingPanels() 的对应 register*Panels helper 中
+#      调用 registrar("panel-id", mlTr("标题"), [this]() { ... return panel; })
 set(MINILANG_GUI_SOURCES
     gui/CodeEditor.cpp
     gui/CodeSnippetEngine.cpp
@@ -226,6 +272,8 @@ set(MINILANG_GUI_SOURCES
     gui/WatchpointPanel.cpp
     gui/ExecutionTimelinePanel.cpp
     gui/CrashReportDialog.cpp
+    # 拓展二期·平台：代码片段分享链接编解码（纯 Qt6::Core，可被测试目标链接）
+    gui/ShareCodec.cpp
 )
 
 # ============================================================
@@ -258,6 +306,22 @@ if(MSVC)
     endif()
     if(MINILANG_WERROR)
         target_compile_options(minilang_compile_options INTERFACE /WX)
+    endif()
+    # 拓展计划·基建：Release 构建生成 PDB 调试符号（崩溃报告符号化链路）。
+    # CrashHandler (R128) 崩溃时写 minidump (.dmp)，若 Release 无 PDB 则 .dmp
+    # 无法解析出源码级栈回溯。选 /Z7（调试信息嵌入 obj）而非 /Zi：
+    #   - /Zi 的 mspdbsrv 共享写 PDB 与 ccache 不兼容（CI 缓存失效）
+    #   - /Z7 下链接器仍由 /DEBUG 产出最终 PDB，效果等价
+    # /OPT:REF,ICF 恢复 /DEBUG 默认关闭的链接优化，二进制大小/性能不变。
+    # 配套：release.yml 上传符号包 + scripts/analyze_minidump.ps1 本地解析。
+    option(MINILANG_RELEASE_SYMBOLS "Generate PDB symbols in Release builds (crash report symbolication)" ON)
+    if(MINILANG_RELEASE_SYMBOLS)
+        target_compile_options(minilang_compile_options INTERFACE $<$<CONFIG:Release>:/Z7>)
+        target_link_options(minilang_compile_options INTERFACE
+            $<$<CONFIG:Release>:/DEBUG>
+            $<$<CONFIG:Release>:/OPT:REF>
+            $<$<CONFIG:Release>:/OPT:ICF>
+        )
     endif()
 else()
     # P1-6: GCC/Clang 警告级别。原实现非 MSVC 平台无任何警告标志，
@@ -325,16 +389,42 @@ if(NOT TARGET minilang_core)
     add_library(minilang_core_base OBJECT ${MINILANG_CORE_BASE_SOURCES})
     minilang_configure_object_target(minilang_core_base ${MINILANG_ROOT_DIR})
     target_link_libraries(minilang_core_base PUBLIC Qt6::Core)
+    # ARCH-10 Unity Build 修复：minilang_core_base 内 common/CrashHandler.cpp
+    # 包含 <windows.h>，经 SDK 链路引入的宏会污染 lexer/Token.h 的 TokenType
+    # 字段（Token::type 与 windows.h 中 #define type 冲突 → C3646 未知重写说明符）。
+    # 用 SKIP_UNITY_BUILD_INCLUSION 让 CrashHandler.cpp 独立编译（不进入 Unity batch），
+    # 避免 windows.h 宏污染 batch 内其他 TU。AUTOMOC 必须保持开启，因为
+    # debug/DebugController.h 包含 Q_OBJECT 宏，需要 moc 生成 metaObject/qt_metacall
+    # 等元对象实现（关闭 AUTOMOC 会导致 LNK2001: pausedAt/logpointLogged/staticMetaObject）。
+    set_source_files_properties(
+        ${MINILANG_ROOT_DIR}/common/CrashHandler.cpp
+        PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
+    # 拓展二期修复：debug/DebugController.cpp 必须独立编译（排除出 Unity batch）。
+    # test_harness/debug_test 依赖 MSVC「命令行 .obj 优先于 .lib 成员」规则用桩
+    # DebugController.cpp.obj 压制 lib 中的真实实现——链接器仅在符号未解析时才
+    # 拉取 lib 成员。若真实 DebugController 被 Unity 批入 unity_N_cxx.obj，与
+    # Interpreter 等必需符号同 obj，链接器为解析后者必然拉入该 obj → LNK2005。
+    # 独立编译后 lib 中的 DebugController.cpp.obj 不含其他必需符号，永不被拉取。
+    # 注：正确属性是 SKIP_UNITY_BUILD_INCLUSION（源文件级），UNITY_BUILD 是 target 级属性。
+    set_source_files_properties(
+        ${MINILANG_ROOT_DIR}/debug/DebugController.cpp
+        PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
 
     # --- minilang_frontend：前端工具集（依赖 base） ---
     add_library(minilang_frontend OBJECT ${MINILANG_FRONTEND_SOURCES})
     minilang_configure_object_target(minilang_frontend ${MINILANG_ROOT_DIR})
     target_link_libraries(minilang_frontend PUBLIC minilang_core_base)
+    # ARCH-10 Unity Build 修复：lexer/parser/formatter/lint/doc 均无 Q_OBJECT，
+    # 关闭 AUTOMOC 避免 mocs_compilation.cpp 污染 Unity batch（同 minilang_core_base）。
+    set_target_properties(minilang_frontend PROPERTIES AUTOMOC OFF)
 
     # --- minilang_backend：编译器/三后端（依赖 base + frontend） ---
     add_library(minilang_backend OBJECT ${MINILANG_BACKEND_SOURCES})
     minilang_configure_object_target(minilang_backend ${MINILANG_ROOT_DIR})
     target_link_libraries(minilang_backend PUBLIC minilang_core_base minilang_frontend)
+    # ARCH-10 Unity Build 修复：compiler/*.cpp 均无 Q_OBJECT，关闭 AUTOMOC
+    # 避免 mocs_compilation.cpp 污染 Unity batch（同 minilang_core_base）。
+    set_target_properties(minilang_backend PROPERTIES AUTOMOC OFF)
     # JIT 后端：链接 asmjit（条件依赖）
     if(MINILANG_USE_JIT)
         target_link_libraries(minilang_backend PUBLIC asmjit::asmjit)
@@ -379,6 +469,17 @@ if(NOT TARGET minilang_core)
                 UNITY_BUILD_CODE_BEFORE_INCLUDE "// Unity build block"
                 UNITY_BUILD_BATCH_SIZE 8)
         endforeach()
+        # ARCH-10 Unity Build 修复：CrashHandler.cpp 包含 <windows.h>，经 SDK 链路
+        # 拉入的宏（min/max/Polygon 等）会污染后续 #include "lexer/Token.h" 的
+        # TokenType / Token::type 字段（C3646 未知重写说明符）。即使已定义
+        # WIN32_LEAN_AND_MEAN + NOMINMAX + NOGDI 仍无法完全消除 windows.h 在
+        # Unity batch 内的副作用（windows.h 会引入其他 #define 与 using 声明）。
+        # 解法：将 CrashHandler.cpp 排除出 Unity batch，独立编译，使其副作用
+        # 不外溢到同 batch 的其他 .cpp。set_source_files_properties 在 target
+        # 级 UNITY_BUILD 之上对单文件覆盖。
+        set_source_files_properties(
+            ${MINILANG_ROOT_DIR}/common/CrashHandler.cpp
+            PROPERTIES UNITY_BUILD OFF)
         message(STATUS "Unity build enabled for minilang_core sub-libraries (cold build optimization, batch=8)")
     endif()
 

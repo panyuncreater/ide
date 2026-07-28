@@ -1177,3 +1177,239 @@ TEST(DapCliTest, ServerNameIsMinilangDap) {
 TEST(DapCliTest, VersionStringContainsR165) {
     EXPECT_NE(versionString().find("R165"), std::string::npos);
 }
+
+// ============================================================
+// 7. DAP 二期：条件断点 / 命中条件 / setVariable / attach
+// ============================================================
+
+namespace {
+/// DAP 二期测试共用源码：while 循环 5 轮
+/// 行 4 = 循环体首行（s = s + i;），每轮到达一次
+const char* kLoopSource = "var i = 0;\n"
+                          "var s = 0;\n"
+                          "while (i < 5) {\n"
+                          "  s = s + i;\n"
+                          "  i = i + 1;\n"
+                          "}\n"
+                          "print(s);\n";
+} // namespace
+
+TEST(DapPhase2Test, ConditionalBreakpointStopsWhenConditionTrue) {
+    DebugSession session;
+    session.launch(kLoopSource, "/test.ml");
+    std::vector<DebugSession::SourceBreakpoint> bps;
+    DebugSession::SourceBreakpoint bp;
+    bp.line = 4;
+    bp.condition = "i == 3";
+    bps.push_back(bp);
+    session.setSourceBreakpoints(bps);
+
+    StepResult r = session.doContinue();
+    ASSERT_EQ(r, StepResult::Ok);
+    // 条件 i == 3：前 3 轮（i=0,1,2）不停，停下时 i 应为 3
+    auto ev = session.evaluate("i", 0);
+    ASSERT_TRUE(ev.ok);
+    EXPECT_EQ(ev.value, "3");
+}
+
+TEST(DapPhase2Test, ConditionalBreakpointNeverTrueRunsToEnd) {
+    DebugSession session;
+    session.launch(kLoopSource, "/test.ml");
+    std::vector<DebugSession::SourceBreakpoint> bps;
+    DebugSession::SourceBreakpoint bp;
+    bp.line = 4;
+    bp.condition = "i > 100";
+    bps.push_back(bp);
+    session.setSourceBreakpoints(bps);
+
+    StepResult r = session.doContinue();
+    EXPECT_EQ(r, StepResult::Finished);
+    // 条件永假：不计入命中计数（对齐 DebugController 条件分支语义）
+    EXPECT_EQ(session.getBreakpointHitCount(4), 0);
+}
+
+TEST(DapPhase2Test, InvalidConditionTreatedAsNotHit) {
+    DebugSession session;
+    session.launch(kLoopSource, "/test.ml");
+    std::vector<DebugSession::SourceBreakpoint> bps;
+    DebugSession::SourceBreakpoint bp;
+    bp.line = 4;
+    bp.condition = "i ==="; // 语法错误：视为不命中，不崩溃
+    bps.push_back(bp);
+    session.setSourceBreakpoints(bps);
+
+    StepResult r = session.doContinue();
+    EXPECT_EQ(r, StepResult::Finished);
+}
+
+TEST(DapPhase2Test, HitConditionGreaterEqualSkipsEarlyHits) {
+    DebugSession session;
+    session.launch(kLoopSource, "/test.ml");
+    std::vector<DebugSession::SourceBreakpoint> bps;
+    DebugSession::SourceBreakpoint bp;
+    bp.line = 4;
+    bp.hitCondition = ">= 3";
+    bps.push_back(bp);
+    session.setSourceBreakpoints(bps);
+
+    StepResult r = session.doContinue();
+    ASSERT_EQ(r, StepResult::Ok);
+    // 第 3 次到达循环体才停：i 应为 2
+    auto ev = session.evaluate("i", 0);
+    ASSERT_TRUE(ev.ok);
+    EXPECT_EQ(ev.value, "2");
+    EXPECT_EQ(session.getBreakpointHitCount(4), 3);
+}
+
+TEST(DapPhase2Test, HitConditionModuloStopsEveryN) {
+    DebugSession session;
+    session.launch(kLoopSource, "/test.ml");
+    std::vector<DebugSession::SourceBreakpoint> bps;
+    DebugSession::SourceBreakpoint bp;
+    bp.line = 4;
+    bp.hitCondition = "% 2";
+    bps.push_back(bp);
+    session.setSourceBreakpoints(bps);
+
+    // 第一次 continue：第 2 次命中停（i=1）
+    ASSERT_EQ(session.doContinue(), StepResult::Ok);
+    auto ev = session.evaluate("i", 0);
+    ASSERT_TRUE(ev.ok);
+    EXPECT_EQ(ev.value, "1");
+    // 第二次 continue：第 4 次命中停（i=3）
+    ASSERT_EQ(session.doContinue(), StepResult::Ok);
+    ev = session.evaluate("i", 0);
+    ASSERT_TRUE(ev.ok);
+    EXPECT_EQ(ev.value, "3");
+}
+
+TEST(DapPhase2Test, HitCountIncrementsOncePerLineArrival) {
+    // 回归锁：doContinue 逐行跟踪后，同一断点行的多条指令不重复计数，
+    // 单行循环每轮重新命中（对齐 DebugController crossedLine 语义）
+    DebugSession session;
+    session.launch(kLoopSource, "/test.ml");
+    session.setBreakpoints({4});
+
+    int stops = 0;
+    while (stops < 10) {
+        StepResult r = session.doContinue();
+        if (r != StepResult::Ok)
+            break;
+        ++stops;
+    }
+    EXPECT_EQ(stops, 5);                             // 循环 5 轮，每轮停一次
+    EXPECT_EQ(session.getBreakpointHitCount(4), 5);  // 计数与停次一致（无重复递增）
+}
+
+TEST(DapPhase2Test, SetVariableGlobalChangesExecution) {
+    DebugSession session;
+    session.launch("var x = 1;\nvar y = 0;\ny = x + 1;\nprint(y);\n", "/test.ml");
+    session.setBreakpoints({3});
+    ASSERT_EQ(session.doContinue(), StepResult::Ok);
+
+    // 暂停在行 3（y = x + 1 执行前）：改 x = 41
+    auto r = session.setVariable(kGlobalsScopeReference, "x", "41");
+    ASSERT_TRUE(r.ok) << r.message;
+    EXPECT_EQ(r.value, "41");
+
+    // 继续执行：y = 41 + 1 = 42
+    StepResult cont = session.doContinue();
+    EXPECT_EQ(cont, StepResult::Finished);
+    EXPECT_NE(session.getOutput().find("42"), std::string::npos) << session.getOutput();
+}
+
+TEST(DapPhase2Test, SetVariableRejectsUnknownName) {
+    DebugSession session;
+    session.launch("var x = 1;\nprint(x);\n", "/test.ml");
+    session.setBreakpoints({2});
+    ASSERT_EQ(session.doContinue(), StepResult::Ok);
+
+    auto r = session.setVariable(kGlobalsScopeReference, "nonexistent", "1");
+    EXPECT_FALSE(r.ok);
+    EXPECT_FALSE(r.message.empty());
+}
+
+TEST(DapPhase2Test, SetVariableParsesTypedLiterals) {
+    DebugSession session;
+    session.launch("var a = 0;\nvar b = false;\nvar c = \"old\";\nprint(a);\n", "/test.ml");
+    session.setBreakpoints({4});
+    ASSERT_EQ(session.doContinue(), StepResult::Ok);
+
+    EXPECT_TRUE(session.setVariable(kGlobalsScopeReference, "a", "3.5").ok);
+    EXPECT_TRUE(session.setVariable(kGlobalsScopeReference, "b", "true").ok);
+    auto rc = session.setVariable(kGlobalsScopeReference, "c", "\"new\"");
+    ASSERT_TRUE(rc.ok);
+    EXPECT_EQ(rc.type, "string");
+    // 无法解析的文本拒绝（不支持任意表达式）
+    EXPECT_FALSE(session.setVariable(kGlobalsScopeReference, "a", "1 + 2").ok);
+}
+
+TEST(DapPhase2Test, InitializeAdvertisesPhase2Capabilities) {
+    DapRequestHandler handler;
+    auto responses = handler.handleMessage(makeDapRequest(1, "initialize"));
+    ASSERT_EQ(responses.size(), 1u);
+    QJsonObject caps = responses[0].value("body").toObject().value("capabilities").toObject();
+    EXPECT_TRUE(caps.value("supportsConditionalBreakpoints").toBool());
+    EXPECT_TRUE(caps.value("supportsHitConditionalBreakpoints").toBool());
+    EXPECT_TRUE(caps.value("supportsSetVariable").toBool());
+}
+
+TEST(DapPhase2Test, AttachBehavesLikeLaunch) {
+    DapRequestHandler handler;
+    QJsonObject attachArgs = makeLaunchArgs("var x = 1;\nprint(x);\n", "/test.ml");
+    auto responses = handler.handleMessage(makeDapRequest(1, "attach", attachArgs));
+    ASSERT_EQ(responses.size(), 1u);
+    EXPECT_TRUE(responses[0].value("success").toBool());
+    EXPECT_TRUE(handler.session().isLaunched());
+}
+
+TEST(DapPhase2Test, SetBreakpointsRequestParsesConditionFields) {
+    DapRequestHandler handler;
+    QJsonObject launchArgs = makeLaunchArgs(kLoopSource, "/test.ml");
+    handler.handleMessage(makeDapRequest(1, "launch", launchArgs));
+
+    QJsonObject bpArgs;
+    QJsonArray bpArray;
+    bpArray.append(QJsonObject{{"line", 4}, {"condition", "i == 2"}});
+    bpArgs["breakpoints"] = bpArray;
+    auto responses = handler.handleMessage(makeDapRequest(2, "setBreakpoints", bpArgs));
+    ASSERT_EQ(responses.size(), 1u);
+    EXPECT_TRUE(responses[0].value("success").toBool());
+    handler.handleMessage(makeDapRequest(3, "configurationDone"));
+
+    auto contResponses = handler.handleMessage(makeDapRequest(4, "continue"));
+    QJsonObject lastEvent = contResponses.back();
+    ASSERT_EQ(lastEvent.value("event").toString().toStdString(), "stopped");
+    // 条件 i == 2 命中时验证变量值
+    auto ev = handler.session().evaluate("i", 0);
+    ASSERT_TRUE(ev.ok);
+    EXPECT_EQ(ev.value, "2");
+}
+
+TEST(DapPhase2Test, SetVariableRequestViaHandler) {
+    DapRequestHandler handler;
+    QJsonObject launchArgs = makeLaunchArgs("var x = 1;\nvar y = 0;\ny = x + 1;\nprint(y);\n", "/test.ml");
+    handler.handleMessage(makeDapRequest(1, "launch", launchArgs));
+    QJsonObject bpArgs;
+    QJsonArray bpArray;
+    bpArray.append(QJsonObject{{"line", 3}});
+    bpArgs["breakpoints"] = bpArray;
+    handler.handleMessage(makeDapRequest(2, "setBreakpoints", bpArgs));
+    handler.handleMessage(makeDapRequest(3, "configurationDone"));
+    handler.handleMessage(makeDapRequest(4, "continue"));
+
+    QJsonObject svArgs;
+    svArgs["variablesReference"] = kGlobalsScopeReference;
+    svArgs["name"] = "x";
+    svArgs["value"] = "41";
+    auto responses = handler.handleMessage(makeDapRequest(5, "setVariable", svArgs));
+    ASSERT_EQ(responses.size(), 1u);
+    EXPECT_TRUE(responses[0].value("success").toBool());
+    EXPECT_EQ(responses[0].value("body").toObject().value("value").toString().toStdString(), "41");
+
+    // 失败路径：未知变量 → success=false
+    svArgs["name"] = "nope";
+    responses = handler.handleMessage(makeDapRequest(6, "setVariable", svArgs));
+    ASSERT_EQ(responses.size(), 1u);
+    EXPECT_FALSE(responses[0].value("success").toBool());
+}

@@ -42,6 +42,22 @@ static std::string formatTwice(const std::string& source) {
 }
 
 // ============================================================
+// AUDIT-R6 F7: yield 表达式往返等价性
+// ------------------------------------------------------------
+// 原 Formatter 未 override visitYieldExpr，DefaultVisitor 空实现不写
+// lastFormatResult_，yield 节点被格式化为上一节点的残留文本。
+// ============================================================
+
+TEST(FormatterAuditR6, YieldExprPreserved) {
+    std::string src = "fun* gen() { yield 1; yield 2; }";
+    std::string result = formatSource(src);
+    EXPECT_NE(result.find("yield 1"), std::string::npos) << "实际: " << result;
+    EXPECT_NE(result.find("yield 2"), std::string::npos) << "实际: " << result;
+    // 往返稳定：二次格式化结果一致
+    EXPECT_EQ(formatSource(result), result);
+}
+
+// ============================================================
 // BUG-F-01: 多行块注释缩进
 // ------------------------------------------------------------
 // 多行块注释的后续行应使用格式化后的 indent，而非继承源码原始缩进。

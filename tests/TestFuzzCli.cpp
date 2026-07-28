@@ -234,6 +234,7 @@ TEST(FuzzCliRunBatch, SeedReproducibility) {
 TEST(FuzzCliRunBatch, SummarySeedSet) {
     FuzzOptions opts;
     opts.seed = 12345;
+    opts.seedSpecified = true;  // Bug #67 fix: 必须显式标记种子已指定
     opts.iterations = 3;
     opts.quiet = true;
     opts.dumpCrashes = false;
@@ -260,7 +261,10 @@ TEST(FuzzCliProcessFile, ValidFile) {
 TEST(FuzzCliProcessFile, NonExistentFile) {
     FuzzOptions opts;
     FuzzSummary s = processFile("nonexistent_file_xyz.ml", opts);
-    EXPECT_EQ(s.crashes, -1); // 文件错误标记
+    // BUG-93 fix: 文件错误改用 ok/errorMessage 字段（替代 crashes=-1 哨兵值）
+    EXPECT_FALSE(s.ok);
+    EXPECT_FALSE(s.errorMessage.empty());
+    EXPECT_EQ(s.crashes, 0); // crashes 不再被置为负数
 }
 
 TEST(FuzzCliProcessFile, RuntimeErrorFile) {

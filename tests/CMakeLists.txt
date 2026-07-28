@@ -86,6 +86,10 @@ add_executable(minilang_tests
     # OPT-2: 三后端随机程序差分回归测试（模板化生成 + 固定种子可复现）
     TestThreeEnginesFuzz.cpp
     TestLexerParserAudit.cpp
+    # 多行字符串字面量回归锁（Lexer 跨行扫描/CRLF 规范化 + 四后端一致 + Formatter 往返）
+    TestMultilineString.cpp
+    # B1: Interpreter 尾调用蹦床（trampoline）回归锁（消除三后端最后一个已知设计差异）
+    TestInterpreterTCO.cpp
     TestCompilerAudit.cpp
     TestCompilerIRIsolationAudit.cpp
     TestIRAudit.cpp
@@ -193,6 +197,22 @@ add_executable(minilang_tests
     # 第三档 P2-3：ExceptionFlowLibrary/ClosureInspectorLibrary
     ${MINILANG_ROOT_DIR}/gui/ExceptionFlowPanel.cpp
     ${MINILANG_ROOT_DIR}/gui/ClosureInspectorPanel.cpp
+    # 拓展二期·教学：课程内容外部化——CourseSystemPanel.cpp 依赖 Qt6::Widgets
+    # （与上方 MemoryModelPanel/IRTransformPanel 同模式），不依赖 IdeController.cpp
+    # 符号（setController 内联），可安全加入测试目标以测 CourseSystemLibrary
+    # 的文件 IO / 批量序列化。
+    ${MINILANG_ROOT_DIR}/gui/CourseSystemPanel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestCourseSystem.cpp
+    # 拓展二期·教学：判题隐藏测试集——ExerciseGraderPanel.cpp 依赖 Qt6::Widgets +
+    # BackendExecutionService（minilang_core），不依赖 IdeController.cpp 符号，
+    # 加入测试目标以用三后端真实运行自校验题库全部用例（含隐藏用例）。
+    ${MINILANG_ROOT_DIR}/gui/ExerciseGraderPanel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestExerciseGrader.cpp
+    # 拓展二期·平台：libminilang C API——capi/minilang_capi.cpp 仅依赖
+    # BackendExecutionService（minilang_core），纯 C ABI 层，直接编入测试目标
+    # 验证全部导出符号（与 cli/*_core.cpp 同模式）。
+    ${MINILANG_ROOT_DIR}/capi/minilang_capi.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestCApi.cpp
     # 高价值改进方向 Top 3：拆分独立 Library.cpp 避免引入 IdeController 依赖
     ${MINILANG_ROOT_DIR}/gui/BugHuntVariantLibrary.cpp
     # 功能 6：学习路径地图——LearnerProgress.cpp 与 LearningPathData.cpp 为独立编译单元，
@@ -212,6 +232,11 @@ add_executable(minilang_tests
     # 仅依赖标准库（std::string / std::vector），不依赖 Qt Widgets / IdeController，
     # 可安全加入测试目标。TokenPuzzlePanel.cpp 依赖 Qt6::Widgets，不加入。
     ${MINILANG_ROOT_DIR}/gui/TokenPuzzleData.cpp
+    # 拓展二期·平台：分享链接编解码——ShareCodec.cpp 为独立编译单元（仅依赖
+    # Qt6::Core 的 QString/QByteArray），不依赖 IdeController / Qt6::Widgets，
+    # 可安全加入测试目标。
+    ${MINILANG_ROOT_DIR}/gui/ShareCodec.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestShareCodec.cpp
     # N5 fix: PanelCatalog.cpp for TeachingTreePanel audit tests
     ${MINILANG_ROOT_DIR}/gui/PanelCatalog.cpp
     # 功能 4：AST 节点搭建玩具——AstToyLevels.cpp 为独立编译单元（仅依赖
@@ -289,6 +314,8 @@ add_executable(minilang_tests
     # 验证整数算术子集（OP_INT/ADD/SUB/MUL/NEGATE/PRINT/POP/RETURN/NULL/TRUE/FALSE）。
     # 条件编译：MINILANG_USE_JIT=OFF 时仅注册 skip 占位测试，确保 CTest 一致性。
     ${CMAKE_CURRENT_SOURCE_DIR}/TestJIT.cpp
+        # testing.md 覆盖方向 #1：JIT 字符串方法/enum+match/并发原语/模块降级与 StackVM 一致性
+        ${CMAKE_CURRENT_SOURCE_DIR}/TestJITCoverageGaps.cpp
     # P2-11 子项 4 内建标准库模块测试：BuiltinModuleRegistry API +
     # Compiler/Interpreter 路径对 `import "std/math|string|list"` 的拦截执行。
     # 链接 minilang_core 获取 BuiltinModules.cpp 符号。
@@ -303,6 +330,15 @@ add_executable(minilang_tests
     # P3-19 覆盖率缺口定向补充测试第二批：循环导入深层嵌套/并发原语边界/IR 优化 pass 验证。
     ${CMAKE_CURRENT_SOURCE_DIR}/TestCoverageGaps2.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/TestL14RuntimeErrorCatch.cpp
+    # P3-IR-TEST IR 模块专用单元测试：AstIRBuilder / BytecodeIRBackend / RegisterBytecodeBackend
+    # 各 AST 节点→IR 指令映射 + IR→StackVM/RegVM 字节码 lowering + 寄存器分配边界
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestAstIRBuilder.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestBytecodeIRBackend.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestRegisterBytecodeBackend.cpp
+    # 覆盖率审计补充：SpellChecker 拼写纠错单元测试（header-only，无额外链接依赖）
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestSpellChecker.cpp
+    # 覆盖率审计补充：MemoryInspectionAPI 契约测试（NaNBox 编解码/GC 统计/堆检视）
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestMemoryInspectionAPI.cpp
 )
 
 target_link_libraries(minilang_tests PRIVATE
@@ -405,3 +441,86 @@ if(NOT COMMAND minilang_deploy_qt_runtime)
 endif()
 minilang_deploy_qt_runtime(minilang_tests)
 minilang_deploy_qt_runtime(minilang_perf_test)
+
+# ============================================================
+# minilang_app_tests — App 编排层线程安全测试（独立可执行目标）
+# ------------------------------------------------------------
+# 覆盖率审计 P1：DebugCoordinator / WorkerManager / PipelineRunner /
+# InterpreterWorker 此前零测试。这些类依赖 QThread + QObject 信号槽，
+# 且 IdeController.cpp 不被 minilang_tests 链接（避免拉入完整 GUI 依赖链），
+# 故单独建目标，仅链接 app/ 编排层 + minilang_core。
+# ============================================================
+find_package(Qt6 COMPONENTS Test QUIET)
+
+add_executable(minilang_app_tests
+    main.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestAppOrchestration.cpp
+    ${MINILANG_ROOT_DIR}/app/DebugCoordinator.cpp
+    ${MINILANG_ROOT_DIR}/app/WorkerManager.cpp
+    ${MINILANG_ROOT_DIR}/app/InterpreterWorker.cpp
+    ${MINILANG_ROOT_DIR}/app/PipelineRunner.cpp
+)
+
+target_link_libraries(minilang_app_tests PRIVATE
+    minilang_core
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Widgets
+    Qt6::Test
+    gtest
+    minilang_compile_options
+)
+
+if(MSVC)
+    target_link_options(minilang_app_tests PRIVATE /STACK:8388608)
+    target_link_libraries(minilang_app_tests PRIVATE dbghelp)
+endif()
+
+gtest_discover_tests(minilang_app_tests
+    DISCOVERY_MODE PRE_TEST
+    PROPERTIES
+        TIMEOUT 300
+)
+minilang_deploy_qt_runtime(minilang_app_tests)
+
+# ============================================================
+# minilang_gui_smoke — GUI 控件冒烟测试（可选目标）
+# ------------------------------------------------------------
+# 覆盖率审计 P2：CodeEditor 等 GUI 控件此前无 QTest 冒烟。
+# 依赖 CodeEditor.cpp 及其 GUI 组件链，单独建目标避免污染主测试。
+# ============================================================
+add_executable(minilang_gui_smoke
+    main.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestGuiSmoke.cpp
+    ${MINILANG_ROOT_DIR}/gui/CodeEditor.cpp
+    # LNK2019 fix: CodeEditor.cpp calls CodeSnippetEngine::matchTrigger/expand/snippets
+    ${MINILANG_ROOT_DIR}/gui/CodeSnippetEngine.cpp
+)
+
+target_include_directories(minilang_gui_smoke PRIVATE
+    ${MINILANG_ROOT_DIR}/third_party/QFluentKit/QFluent/src
+    ${MINILANG_ROOT_DIR}/third_party/QFluentKit/QFluent/src/QFluent
+)
+
+target_link_libraries(minilang_gui_smoke PRIVATE
+    minilang_core
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Widgets
+    QFluent
+    gtest
+    minilang_compile_options
+)
+
+if(MSVC)
+    target_link_options(minilang_gui_smoke PRIVATE /STACK:8388608)
+    target_link_libraries(minilang_gui_smoke PRIVATE dbghelp)
+endif()
+
+gtest_discover_tests(minilang_gui_smoke
+    DISCOVERY_MODE PRE_TEST
+    PROPERTIES
+        TIMEOUT 120
+)
+minilang_deploy_qt_runtime(minilang_gui_smoke)
+minilang_deploy_qfluent_runtime(minilang_gui_smoke)

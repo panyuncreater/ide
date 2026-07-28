@@ -160,6 +160,16 @@ public:
     }
 
     // ---- 控制 ----
+    /// 拓展二期：丢弃 idx 及之后的全部快照（回溯调试 stepBack 用：
+    /// 回滚到历史步后丢弃"未来"步，使连续 stepBack 可持续后退，
+    /// 且后续重新执行的录制不与旧轨迹混杂）。
+    void truncateFrom(size_t idx) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (idx < snapshots_.size()) {
+            snapshots_.erase(snapshots_.begin() + static_cast<std::ptrdiff_t>(idx), snapshots_.end());
+        }
+    }
+
     /// 清空所有快照（重置录制会话）
     void clear() {
         std::lock_guard<std::mutex> lock(mutex_);

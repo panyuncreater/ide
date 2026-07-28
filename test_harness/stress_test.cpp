@@ -584,7 +584,7 @@ static std::vector<TestCase> buildTests() {
 
     // 验证: 递归汉诺塔 4 盘共 2^4-1=15 步
     T("T094", "汉诺塔",
-      R"(var moves = 0; fun hanoi(n, from, to, aux) { if (n == 1) { moves = moves + 1; return; } hanoi(n - 1, from, aux, to); moves = moves + 1; hanoi(n - 1, aux, to, from); } hanoi(4, "A", "C", "B"); print(moves);)",
+      R"(var moves = 0; fun hanoi(n, src, to, aux) { if (n == 1) { moves = moves + 1; return; } hanoi(n - 1, src, aux, to); moves = moves + 1; hanoi(n - 1, aux, to, src); } hanoi(4, "A", "C", "B"); print(moves);)",
       "15", "recursion+function+branching+variable+global_state");
 
     // 验证: 用字典标记 b 的元素求 a 与 b 的交集

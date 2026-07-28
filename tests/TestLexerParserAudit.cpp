@@ -113,10 +113,12 @@ TEST(LexerAudit, Int64MaxBoundary) {
 }
 
 TEST(LexerAudit, Int64MaxOverflow) {
-    // INT64_MAX + 1 = 9223372036854775808 应溢出报错
+    // Bug #40 fix: 9223372036854775808 被接受为 INT64_MIN 的绝对值，
+    // 后续一元负号会正确处理为 INT64_MIN。
     auto tokens = scanTokens("9223372036854775808");
     ASSERT_EQ(tokens.size(), 1u);
-    EXPECT_EQ(tokens[0].type, TokenType::TK_ERROR);
+    EXPECT_EQ(tokens[0].type, TokenType::TK_INT_LIT);
+    EXPECT_EQ(tokens[0].literalInt(), INT64_MIN);
 }
 
 TEST(LexerAudit, FloatWithZeroMantissa) {

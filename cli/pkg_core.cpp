@@ -8,7 +8,9 @@
 // ============================================================
 #include "cli/pkg_core.h"
 
+#include <QCryptographicHash>
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -41,11 +43,13 @@ std::string helpString() {
   list                列出已安装的包
   init [name]         初始化 minilang.pkg 清单文件
   add <package>       添加依赖到清单并安装
+  verify              对照 minilang.lock 校验已安装包的完整性（哈希）
 
 选项:
   --registry <dir>        指定本地 registry 目录
   --packages-dir <dir>    指定包安装目录（默认 minilang_packages）
   --manifest <path>       指定清单文件路径（默认 minilang.pkg）
+  --lockfile <path>       指定 lockfile 路径（默认 minilang.lock）
   --no-transitive         安装清单依赖时跳过传递依赖（默认安装传递依赖）
   --help                  显示帮助信息
   --version               显示版本信息
@@ -80,7 +84,13 @@ std::string helpString() {
   minilang-pkg add math-utils@1.0.0
   minilang-pkg install
   minilang-pkg install --no-transitive
+  minilang-pkg verify
   minilang-pkg list
+
+Lockfile (minilang.lock):
+  install 成功后自动生成/更新，记录每个包的精确版本与 SHA-256 内容哈希：
+    - 版本锁定：清单约束（如 ^1.0.0）首次解析后锁定，后续 install 可重现
+    - 哈希校验：重新安装时若 registry 内容与锁定哈希不一致→失败并回滚
 
 退出码:
   0  成功
@@ -308,12 +318,23 @@ std::string PackageManager::findInRegistry(const std::string& pkgName, const std
     }
 
     // 否则查找版本子目录，取第一个（按名称排序，最新版本优先）
-    QStringList filters;
-    filters << "1.*" << "0.*" << "2.*" << "3.*";
+    // P1 #34 fix: 按语义版本数值比较选取最新版本（字典序会把 9.x 误排在 10.x 之后，
+    // 且原 filters 仅覆盖 0-3 主版本）。复用 Version::parse + operator>。
     QDir::Filters dirFilters = QDir::Dirs | QDir::NoSymLinks | QDir::NoDotAndDotDot;
-    QStringList entries = pkgDir.entryList(filters, dirFilters, QDir::Name | QDir::Reversed);
-    if (!entries.isEmpty()) {
-        QDir versionDir = pkgDir.filePath(entries.first());
+    QStringList entries = pkgDir.entryList(dirFilters);
+    bool found = false;
+    Version bestVersion;
+    QString bestEntry;
+    for (const QString& entry : entries) {
+        Version ver = Version::parse(entry.toStdString());
+        if (!found || ver > bestVersion) {
+            found = true;
+            bestVersion = ver;
+            bestEntry = entry;
+        }
+    }
+    if (found) {
+        QDir versionDir = pkgDir.filePath(bestEntry);
         return versionDir.absolutePath().toStdString();
     }
 
@@ -413,6 +434,18 @@ InstallResult PackageManager::install(const std::string& packageSpec) {
     // 确定安装来源
     std::string srcPath;
 
+    // 拓展二期：lockfile 版本锁定——若已加载 lockfile 且存在该包条目，
+    // 且请求版本为空/约束（非精确版本），用锁定的精确版本替换，
+    // 保证可重现安装（同 npm ci 语义的教学简化版）。
+    const LockEntry* lockEntry = lockfileLoaded_ ? lockfile_.find(pkgInfo.name) : nullptr;
+    if (lockEntry && !lockEntry->version.empty() && pkgInfo.source.substr(0, 5) != "file:") {
+        const std::string& ver = pkgInfo.version;
+        bool isExact = !ver.empty() && ver != "*" && ver[0] != '^' && ver[0] != '~' && ver[0] != '>' && ver[0] != '<';
+        if (!isExact) {
+            pkgInfo.version = lockEntry->version;
+        }
+    }
+
     // file: 协议
     if (pkgInfo.source.substr(0, 5) == "file:") {
         srcPath = pkgInfo.source.substr(5);
@@ -473,8 +506,27 @@ InstallResult PackageManager::install(const std::string& packageSpec) {
         }
     }
 
+    // 拓展二期：内容哈希计算与 lockfile 校验。
+    // 若 lockfile 中已有该包哈希且与本次安装内容不一致，判定为
+    // registry 内容被篡改：删除已复制的包目录（不留不可信内容）并报错。
+    std::string newHash = computePackageHash(dstPath);
+    if (lockEntry && !lockEntry->hash.empty() && !newHash.empty() && lockEntry->hash != newHash) {
+        QDir(QString::fromStdString(dstPath)).removeRecursively();
+        result.hashMismatch = true;
+        result.errorMessage = "哈希校验失败: 包 " + pkgInfo.name + " 的内容与 lockfile 记录不一致\n" +
+                              "  锁定: " + lockEntry->hash + "\n  实际: " + newHash +
+                              "\n  （registry 内容可能被篡改，已回滚安装）";
+        return result;
+    }
+
     result.ok = true;
     result.installPath = dstPath;
+
+    // 拓展二期：安装成功后更新 lockfile 条目（新包首次锁定，
+    // 已有条目保持哈希一致时刷新版本记录）。由 CLI 层 saveLockfile 落盘。
+    if (lockfileLoaded_ && !newHash.empty()) {
+        updateLockEntry(pkgInfo.name, result.version, newHash);
+    }
     return result;
 }
 
@@ -550,12 +602,15 @@ std::string PackageManager::resolveModule(const std::string& modulePath) const {
         // 自动补 .mini 后缀
         QString candidate = packagesDir.filePath(qModulePath);
         if (QFile::exists(candidate)) {
-            return QDir(candidate).absolutePath().toStdString();
+            // BUG-70 fix: QDir(candidate).absolutePath() 把 candidate 当目录处理，返回的是
+            // 其父目录路径而非文件本身；改用 QFileInfo::absoluteFilePath() 取文件绝对路径。
+            return QFileInfo(candidate).absoluteFilePath().toStdString();
         }
         if (!candidate.endsWith(".mini", Qt::CaseInsensitive)) {
             QString withExt = candidate + ".mini";
             if (QFile::exists(withExt)) {
-                return QDir(withExt).absolutePath().toStdString();
+                // BUG-70 fix: 同上，QFileInfo::absoluteFilePath() 返回文件绝对路径。
+                return QFileInfo(withExt).absoluteFilePath().toStdString();
             }
         }
         return {};
@@ -570,14 +625,16 @@ std::string PackageManager::resolveModule(const std::string& modulePath) const {
     // 优先查找 packagesDir/modulePath/modulePath.mini
     QString entryFile = pkgDir.filePath(qModulePath + ".mini");
     if (QFile::exists(entryFile)) {
-        return QDir(entryFile).absolutePath().toStdString();
+        // BUG-70 fix: 同上，QFileInfo::absoluteFilePath() 返回文件绝对路径。
+        return QFileInfo(entryFile).absoluteFilePath().toStdString();
     }
 
     // 兜底：查找 packagesDir/modulePath 下任意 .mini 文件
     QStringList miniFiles = pkgDir.entryList({"*.mini"}, QDir::Files);
     if (!miniFiles.isEmpty()) {
         QString first = pkgDir.filePath(miniFiles.first());
-        return QDir(first).absolutePath().toStdString();
+        // BUG-70 fix: 同上，QFileInfo::absoluteFilePath() 返回文件绝对路径。
+        return QFileInfo(first).absoluteFilePath().toStdString();
     }
 
     return {};
@@ -632,6 +689,14 @@ CliArgs parseArgs(int argc, char* argv[]) {
             }
             args.manifestPath = QString::fromLocal8Bit(argv[++i]).toStdString();
             i++;
+        } else if (arg == "--lockfile") {
+            if (i + 1 >= argc) {
+                args.parseError = true;
+                args.errorMessage = "--lockfile 需要参数";
+                return args;
+            }
+            args.lockfilePath = QString::fromLocal8Bit(argv[++i]).toStdString();
+            i++;
         } else if (arg.startsWith("--")) {
             args.parseError = true;
             args.errorMessage = "未知选项: " + arg.toStdString();
@@ -668,6 +733,13 @@ CliArgs parseArgs(int argc, char* argv[]) {
                 return args;
             }
             args.manifestPath = QString::fromLocal8Bit(argv[++i]).toStdString();
+        } else if (arg == "--lockfile") {
+            if (i + 1 >= argc) {
+                args.parseError = true;
+                args.errorMessage = "--lockfile 需要参数";
+                return args;
+            }
+            args.lockfilePath = QString::fromLocal8Bit(argv[++i]).toStdString();
         } else if (arg == "--no-transitive") {
             args.noTransitive = true;
         } else if (arg == "--help" || arg == "-h") {
@@ -720,6 +792,9 @@ CommandResult processCommand(const CliArgs& args) {
         return processInit(args);
     } else if (args.command == "add") {
         return processAdd(args);
+    } else if (args.command == "verify") {
+        // 拓展二期：对照 lockfile 校验已安装包完整性
+        return processVerify(args);
     } else {
         result.exitCode = 2;
         result.output = "未知命令: " + args.command + "\n\n" + helpString();
@@ -738,6 +813,9 @@ PkgConfig buildConfig(const CliArgs& args) {
     if (!args.manifestPath.empty()) {
         config.manifestPath = args.manifestPath;
     }
+    if (!args.lockfilePath.empty()) {
+        config.lockfilePath = args.lockfilePath;
+    }
     return config;
 }
 
@@ -745,6 +823,15 @@ CommandResult processInstall(const CliArgs& args) {
     CommandResult result;
     PkgConfig config = buildConfig(args);
     PackageManager pm(config);
+
+    // 拓展二期：加载 lockfile（不存在视为空；解析失败报错，
+    // 避免在损坏的锁定状态上继续安装）
+    std::string lockError;
+    if (!pm.loadLockfile("", &lockError)) {
+        result.exitCode = 2;
+        result.output = "错误: " + lockError;
+        return result;
+    }
 
     // 如果无参数，安装清单中所有依赖
     if (args.args.empty()) {
@@ -783,6 +870,14 @@ CommandResult processInstall(const CliArgs& args) {
         } else if (anyWarning) {
             result.exitCode = 1;
         }
+        // 拓展二期：安装无失败时落盘 lockfile（锁定本次解析的版本+哈希）
+        if (allOk) {
+            std::string saveError;
+            if (!pm.saveLockfile("", &saveError)) {
+                result.exitCode = 2;
+                result.output += "\n错误: 保存 lockfile 失败: " + saveError;
+            }
+        }
         return result;
     }
 
@@ -799,6 +894,12 @@ CommandResult processInstall(const CliArgs& args) {
                 result.output += "@" + installResult.version;
             }
             result.output += " -> " + installResult.installPath;
+            // 拓展二期：新安装成功后落盘 lockfile
+            std::string saveError;
+            if (!pm.saveLockfile("", &saveError)) {
+                result.exitCode = 2;
+                result.output += "\n错误: 保存 lockfile 失败: " + saveError;
+            }
         }
     } else {
         result.exitCode = 2;
@@ -882,6 +983,14 @@ CommandResult processAdd(const CliArgs& args) {
     PkgConfig config = buildConfig(args);
     PackageManager pm(config);
 
+    // 拓展二期：加载 lockfile（与 processInstall 同步，保证 add 也受锁定/校验约束）
+    std::string lockError;
+    if (!pm.loadLockfile("", &lockError)) {
+        result.exitCode = 2;
+        result.output = "错误: " + lockError;
+        return result;
+    }
+
     // 加载现有清单（如果存在）
     std::string manifestError;
     if (QFile::exists(QString::fromStdString(config.manifestPath))) {
@@ -927,12 +1036,59 @@ CommandResult processAdd(const CliArgs& args) {
         result.output += " 到清单";
         if (!installResult.alreadyInstalled) {
             result.output += " 并安装 -> " + installResult.installPath;
+            // 拓展二期：新安装成功后落盘 lockfile
+            std::string lockSaveError;
+            if (!pm.saveLockfile("", &lockSaveError)) {
+                result.exitCode = 2;
+                result.output += "\n错误: 保存 lockfile 失败: " + lockSaveError;
+            }
         } else {
             result.output += "（包已安装）";
         }
     } else {
         result.exitCode = 2;
         result.output = "已添加依赖到清单，但安装失败: " + installResult.errorMessage;
+    }
+    return result;
+}
+
+// ============================================================
+// 拓展二期：verify 命令——对照 lockfile 校验已安装包完整性
+// ============================================================
+CommandResult processVerify(const CliArgs& args) {
+    CommandResult result;
+    PkgConfig config = buildConfig(args);
+    PackageManager pm(config);
+
+    if (!QFile::exists(QString::fromStdString(config.lockfilePath))) {
+        result.exitCode = 2;
+        result.output = "错误: lockfile 不存在: " + config.lockfilePath + "（先执行 install 生成）";
+        return result;
+    }
+
+    std::string lockError;
+    if (!pm.loadLockfile("", &lockError)) {
+        result.exitCode = 2;
+        result.output = "错误: " + lockError;
+        return result;
+    }
+
+    VerifyResult verify = pm.verifyInstalled();
+    if (!verify.errorMessage.empty()) {
+        result.exitCode = 2;
+        result.output = "错误: " + verify.errorMessage;
+        return result;
+    }
+
+    if (verify.ok) {
+        result.output = "校验通过: " + std::to_string(pm.lockfile().entries.size()) + " 个包与 lockfile 一致";
+    } else {
+        result.exitCode = 2;
+        std::string output = "校验失败:\n";
+        for (const auto& m : verify.mismatches) {
+            output += "  [不匹配] " + m + "\n";
+        }
+        result.output = output;
     }
     return result;
 }
@@ -1238,6 +1394,125 @@ std::vector<InstallResult> PackageManager::installAllWithTransitive() {
     }
 
     return results;
+}
+
+// ============================================================
+// 拓展二期：Lockfile + 内容哈希实现
+// ============================================================
+
+std::string PackageManager::computePackageHash(const std::string& pkgDir) {
+    QDir dir(QString::fromStdString(pkgDir));
+    if (!dir.exists())
+        return {};
+
+    // 收集全部文件的相对路径（'/' 统一分隔符）并排序，保证确定性
+    QStringList relPaths;
+    QDirIterator it(dir.absolutePath(), QDir::Files | QDir::NoSymLinks, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        QString filePath = it.next();
+        relPaths.append(dir.relativeFilePath(filePath));
+    }
+    relPaths.sort();
+
+    QCryptographicHash hasher(QCryptographicHash::Sha256);
+    for (const QString& rel : relPaths) {
+        QFile f(dir.filePath(rel));
+        if (!f.open(QIODevice::ReadOnly))
+            continue; // 不可读文件跳过（与安装复制行为一致）
+        // “相对路径\n内容\0”分隔，避免路径/内容拼接歧义
+                hasher.addData(QByteArrayView(rel.toUtf8()));
+                hasher.addData(QByteArrayView("\n", 1));
+                hasher.addData(QByteArrayView(f.readAll()));
+                hasher.addData(QByteArrayView("\0", 1));
+        f.close();
+    }
+    return "sha256:" + hasher.result().toHex().toStdString();
+}
+
+bool PackageManager::loadLockfile(const std::string& path, std::string* errorMessage) {
+    std::string lockPath = path.empty() ? config_.lockfilePath : path;
+    lockfile_ = Lockfile{};
+    lockfileLoaded_ = true; // 文件不存在视为空 lockfile（首次安装场景）
+
+    if (!QFile::exists(QString::fromStdString(lockPath)))
+        return true;
+
+    std::string content = readFile(lockPath);
+    QJsonParseError parseError;
+    QJsonDocument doc = QJsonDocument::fromJson(QByteArray::fromStdString(content), &parseError);
+    if (doc.isNull() || !doc.isObject()) {
+        lockfileLoaded_ = false;
+        if (errorMessage) {
+            *errorMessage = "lockfile 解析失败: " + lockPath + " (" + parseError.errorString().toStdString() + ")";
+        }
+        return false;
+    }
+
+    QJsonObject root = doc.object();
+    QJsonArray packages = root.value("packages").toArray();
+    for (const QJsonValue& v : packages) {
+        if (!v.isObject())
+            continue;
+        QJsonObject obj = v.toObject();
+        LockEntry entry;
+        entry.name = obj.value("name").toString().toStdString();
+        entry.version = obj.value("version").toString().toStdString();
+        entry.hash = obj.value("hash").toString().toStdString();
+        if (!entry.name.empty())
+            lockfile_.entries.push_back(std::move(entry));
+    }
+    return true;
+}
+
+bool PackageManager::saveLockfile(const std::string& path, std::string* errorMessage) const {
+    std::string lockPath = path.empty() ? config_.lockfilePath : path;
+
+    QJsonObject root;
+    root["lockfileVersion"] = 1;
+    QJsonArray packages;
+    for (const auto& e : lockfile_.entries) {
+        QJsonObject obj;
+        obj["name"] = QString::fromStdString(e.name);
+        obj["version"] = QString::fromStdString(e.version);
+        obj["hash"] = QString::fromStdString(e.hash);
+        packages.append(obj);
+    }
+    root["packages"] = packages;
+
+    QJsonDocument doc(root);
+    return writeFile(lockPath, doc.toJson(QJsonDocument::Indented).toStdString(), errorMessage);
+}
+
+void PackageManager::updateLockEntry(const std::string& name, const std::string& version, const std::string& hash) {
+    for (auto& e : lockfile_.entries) {
+        if (e.name == name) {
+            e.version = version;
+            e.hash = hash;
+            return;
+        }
+    }
+    lockfile_.entries.push_back({name, version, hash});
+}
+
+VerifyResult PackageManager::verifyInstalled() const {
+    VerifyResult result;
+    if (!lockfileLoaded_) {
+        result.errorMessage = "未加载 lockfile";
+        return result;
+    }
+    for (const auto& entry : lockfile_.entries) {
+        std::string pkgPath = resolvePackagePath(entry.name);
+        if (!QDir(QString::fromStdString(pkgPath)).exists()) {
+            result.mismatches.push_back(entry.name + ": 未安装（lockfile 中已锁定）");
+            continue;
+        }
+        std::string actual = computePackageHash(pkgPath);
+        if (!entry.hash.empty() && actual != entry.hash) {
+            result.mismatches.push_back(entry.name + ": 哈希不匹配（锁定 " + entry.hash + "，实际 " + actual + "）");
+        }
+    }
+    result.ok = result.mismatches.empty();
+    return result;
 }
 
 } // namespace minilang_pkg

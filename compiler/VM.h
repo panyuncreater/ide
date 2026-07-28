@@ -13,7 +13,7 @@
  *     closeUpvaluesFrom O(log n + k) 关闭
  *   - 异常处理：tryStack_ 搜索处理器，跨帧传播
  *   - 全局变量：slot-based（编译期分配）+ map-based（运行时 fallback）
- *   - 内联缓存：callCache_ / globalCache_ / methodCache_ 三级缓存
+ *   - 内联缓存：callCache_ / per-chunk varCache_ / methodCache_ 三级缓存
  *   - 单步调试：initExecution + stepOnce + VMStepInfo 回调
  *
  * 性能优化：
@@ -53,6 +53,19 @@
 #include <vector>
 
 // ============================================================
+// 跨平台强制内联宏（PERF: 消除两级 switch 的间接调用开销）
+// ============================================================
+#ifndef MINILANG_FORCE_INLINE
+#ifdef _MSC_VER
+#define MINILANG_FORCE_INLINE __forceinline
+#elif defined(__GNUC__) || defined(__clang__)
+#define MINILANG_FORCE_INLINE __attribute__((always_inline)) inline
+#else
+#define MINILANG_FORCE_INLINE inline
+#endif
+#endif
+
+// ============================================================
 // VM 虚拟机（简单栈机）
 // ============================================================
 
@@ -67,13 +80,10 @@ public:
     // P0 fix: 显式 value-initialize inline_ 数组——原 `= default` 在某些场景下
     // 跳过元素默认构造，导致栈上 NaNBox 是随机位模式（包括 0xFFFFFFFFFFFFFFFF），
     // 后续被 NaNBox::tag() 误判为合法 FLOAT（NaN）掩盖底层 UB。
-    SmallArgs() : sz_(0) {
-        for (size_t i = 0; i < N; ++i)
-            inline_[i] = T();
-    }
+    // PERF: 使用 std::fill_n 替代手动循环，编译器可向量化为 SIMD 批量写入。
+    SmallArgs() : sz_(0) { std::fill_n(inline_, N, T()); }
     explicit SmallArgs(size_t count) : sz_(count) {
-        for (size_t i = 0; i < N; ++i)
-            inline_[i] = T();
+        std::fill_n(inline_, N, T());
         if (count > N)
             heap_.resize(count);
     }
@@ -82,13 +92,13 @@ public:
     // P0 fix: assert 在 Release 被剥离，越界访问会读到栈垃圾（可能形成 0xFFFFFFFFFFFFFFFF），
     // 被当作合法 Value 使用。改为运行时 abort，与 VMStack 一致风格。
     T& operator[](size_t i) {
-        if (i >= sz_) {
+        if (i >= sz_) [[unlikely]] {
             std::abort();
         }
         return (sz_ <= N) ? inline_[i] : heap_[i];
     }
     const T& operator[](size_t i) const {
-        if (i >= sz_) {
+        if (i >= sz_) [[unlikely]] {
             std::abort();
         }
         return (sz_ <= N) ? inline_[i] : heap_[i];
@@ -104,6 +114,8 @@ public:
             inline_[sz_++] = v;
         } else {
             if (sz_ == N) {
+                // PERF: 预分配 2N 容量，避免 assign 后立即 push_back 触发二次重分配
+                heap_.reserve(N * 2);
                 heap_.assign(inline_, inline_ + N);
             }
             heap_.push_back(v);
@@ -179,9 +191,8 @@ public:
         // 原 `Value data_[CAPACITY];` 在某些编译器/场景下可能跳过元素默认构造，
         // 导致栈上 NaNBox 是随机位模式（包括 0xFFFFFFFFFFFFFFFF），后续读取
         // 会被 NaNBox::tag() 误判为合法 FLOAT（NaN），掩盖底层 UB。
-        for (size_t i = 0; i < CAPACITY; ++i) {
-            data_[i] = Value::nullValue();
-        }
+        // PERF: std::fill_n 替代手动循环，MSVC 可向量化为 rep stosd/AVX 批量写入。
+        std::fill_n(data_, CAPACITY, Value::nullValue());
     }
 
     // ---- 容量查询 ----
@@ -194,25 +205,25 @@ public:
     // （可能形成 0xFFFFFFFFFFFFFFFF 位模式，被 NaNBox 误判为合法 NaN float）。
     // 改为运行时 abort，与 RegisterVM::reg() 的 B3 fix 风格一致——显式失败优于静默继续。
     Value& operator[](size_t i) {
-        if (i >= top_) {
+        if (i >= top_) [[unlikely]] {
             std::abort();
         }
         return data_[i];
     }
     const Value& operator[](size_t i) const {
-        if (i >= top_) {
+        if (i >= top_) [[unlikely]] {
             std::abort();
         }
         return data_[i];
     }
     Value& back() {
-        if (top_ == 0) {
+        if (top_ == 0) [[unlikely]] {
             std::abort();
         }
         return data_[top_ - 1];
     }
     const Value& back() const {
-        if (top_ == 0) {
+        if (top_ == 0) [[unlikely]] {
             std::abort();
         }
         return data_[top_ - 1];
@@ -220,28 +231,32 @@ public:
 
     // ---- 栈操作 ----
     void push_back(const Value& v) {
-        if (top_ >= CAPACITY) {
+        if (top_ >= CAPACITY) [[unlikely]] {
             std::abort();
         }
         data_[top_++] = v;
     }
     void push_back(Value&& v) {
-        if (top_ >= CAPACITY) {
+        if (top_ >= CAPACITY) [[unlikely]] {
             std::abort();
         }
         data_[top_++] = std::move(v);
     }
     template <typename... Args> void emplace_back(Args&&... args) {
-        if (top_ >= CAPACITY) {
+        if (top_ >= CAPACITY) [[unlikely]] {
             std::abort();
         }
         data_[top_++] = Value(std::forward<Args>(args)...);
     }
     void pop_back() {
-        if (top_ == 0) {
+        if (top_ == 0) [[unlikely]] {
             std::abort();
         }
         --top_;
+        // PERF/MEM: 立即释放弹出槽位的引用，避免 RefCounted 对象延迟释放。
+        // 若该槽位是最后一个引用，则立即触发析构/回收，降低内存峰值。
+        // 开销：一次 Value 赋值（NaN-boxing 仅写 8 字节 + 条件 release）。
+        data_[top_] = Value::nullValue();
     }
 
     // ---- 批量操作 ----
@@ -249,8 +264,12 @@ public:
     // B6/P0 fix: resize 仅能缩小，原 assert Release 被剥离可能导致 top_ 虚增
     // 读到未初始化槽位（栈垃圾），改为运行时 abort。
     void resize(size_t n) {
-        if (n > top_) {
+        if (n > top_) [[unlikely]] {
             std::abort();
+        }
+        // PERF/MEM: 批量缩小时释放被弹出槽位的引用，与 pop_back 语义一致。
+        for (size_t i = n; i < top_; ++i) {
+            data_[i] = Value::nullValue();
         }
         top_ = n;
     }
@@ -396,6 +415,19 @@ public:
     /// frameIndex 从 0 开始（0=栈底 main 帧）。越界或无 localSlotNames 返回空映射。
     std::unordered_map<std::string, Value> getFrameLocalsAt(size_t frameIndex) const;
 
+    // ---- 拓展·调试器 setVariable：调试暂停时写变量 ----
+    /// 写入已存在的全局变量（globalSlots_ 优先，globals_ fallback，与
+    /// resolveMutableGlobal 同查找链）。不新建变量——调试改值不应创建
+    /// 编译期未注册的变量（与 restoreFromSnapshot 语义对齐）。
+    /// @return true 写入成功；false 变量不存在
+    bool setGlobalValue(const std::string& name, const Value& val);
+
+    /// 写入指定帧的局部变量（按 resolveSlotName 反查槽位，与 getFrameLocalsAt
+    /// 镜像）；槽位未命中时回退 upvalue 写入（closed 写 uv->value，open 写
+    /// 栈槽）。frameIndex 从 0 开始（0=栈底 main 帧）。
+    /// @return true 写入成功；false 帧越界/变量不在该帧
+    bool setFrameLocalAt(size_t frameIndex, const std::string& name, const Value& val);
+
     /// R104 Function Breakpoint：在 OP_CALL / OP_CALL_EXPR 指令执行前查询被调用函数名。
     /// 由 VmStepper 在 pre-execution 检测时调用，命中函数断点则暂停。
     /// @return 若当前指令是 OP_CALL/OP_CALL_EXPR，返回常量池中的函数名；否则返回空字符串。
@@ -450,16 +482,12 @@ private:
     // functionChunks_ 是 std::map 节点稳定，故 key 在 chunk 生命周期内有效）。
     std::unordered_map<const std::string*, const BytecodeChunk*> callCache_;
 
-    // P2 fix: 全局变量内联缓存
-    // PERF-14 fix: 改用 unordered_map 替代固定 32 项数组线性扫描。
-    // MEM-05 fix: generation 由原 bucket_count() 单一维度改为
-    // (bucket_count() << 16) ^ size() 组合，erase 不会改变 bucket_count 但会改变 size，
-    // 使缓存条目自动失效，避免命中已被 erase 的全局变量槽位。
-    struct GlobalCacheEntry {
-        Value* valuePtr = nullptr; // 指向 globals_ 中的 Value（rehash 后失效）
-        size_t generation = 0;     // globals_ 状态快照（检测 rehash / erase）
-    };
-    std::unordered_map<const std::string*, GlobalCacheEntry> globalCache_;
+    // P-1 perf: 全局变量结构修改版本号。
+    // 每次 globals_ 发生结构变更（insert 可能 rehash / erase 使迭代器失效）时递增。
+    // BytecodeChunk::varCache_ 条目通过比对 version 判断缓存的 Value* 是否仍有效。
+    // 替代原 globalCache_（unordered_map<const std::string*, GlobalCacheEntry>），
+    // 将每次变量访问的哈希查找降为 per-chunk 平坦数组 O(1) 下标访问。
+    uint32_t globalsVersion_ = 0;
     // R97 #3 fix: 移除 lastAsciiStr* 4 字段缓存，改为 StringData::cachedIsAscii 持久缓存。
     // 原实现按 (ptr, size, firstByte) 三重验证缓存上次 ASCII 判定结果，存在堆地址复用
     // 误命中风险（虽然概率极低）。新方案 isAscii 直接存在 StringData 内，与字符串生命周期
@@ -514,7 +542,16 @@ private:
     // break/continue 在 try-finally 内时，先 push 真实跳转目标到此栈，
     // 再 jump 到 finally 入口；finally 末尾的 OP_FINALLY_END 从此栈 pop 目标并跳转。
     // 异常传播时（throwException）清空此栈，因为异常中断了 break/continue 续跳链。
-    std::vector<size_t> pendingJumpStack_;
+    // AUDIT-R7 F1 fix: 条目附带 frameIndex（仿 tryStack_）。原裸 size_t 目标无帧归属：
+    // ① finally 体内 return 弹帧后残留目标被调用方 FINALLY_END 误弹，按调用方 chunk
+    // 解释偏移 → 任意误跳（实证：常量池索引越界/寄存器越界 C++ 异常逃逸）；
+    // ② finally 体内调用含 try-finally 的函数，被调函数的 FINALLY_END 误弹调用方
+    // 在途续跳目标。FINALLY_END 只消费本帧条目，并惰性丢弃已返回深帧的残留。
+    struct PendingJump {
+        size_t target;     // 本帧 chunk 内的续跳目标偏移
+        size_t frameIndex; // push 时的帧索引（frames_.size()-1）
+    };
+    std::vector<PendingJump> pendingJumpStack_;
     // S1 fix: 统一引用 common/RuntimeLimits.h，消除重复定义
     static constexpr size_t MAX_STACK_SIZE = RuntimeLimits::MAX_STACK_SIZE;
     static constexpr size_t MAX_FRAMES = RuntimeLimits::MAX_FRAMES;
@@ -568,7 +605,10 @@ private:
     /// PERF-13: VMStack 使用定长数组，emplace_back 直接写入栈槽。
     template <typename... Args> void emplace(Args&&... args) {
         if (stack_.size() >= MAX_STACK_SIZE) {
-            runtimeError("栈溢出");
+            // AUDIT-R3 P1-1 fix: 改用 fatalError（不可捕获）——runtimeError 的 try 转换
+            // 会改写 frame.ip 为 catchIp，而本 void 方法的调用方随后无条件 ip += n，
+            // 执行点错位到 catchIp+n（跳过 catch 首指令/落到指令中间解码垃圾）。
+            fatalError("栈溢出");
             return;
         }
         stack_.emplace_back(std::forward<Args>(args)...);
@@ -578,6 +618,12 @@ private:
     /// @param diagCode P2 fix: 稳定诊断码（如 "division-by-zero"），透传到 addError
     VMResult runtimeError(const std::string& msg, const std::string& diagCode = "");
 
+    /// AUDIT-R3 P1-1/P2-1 fix: 不可捕获的内部不变量错误（栈溢出/下溢等）。
+    /// 与 runtimeError 的区别：不走 try/catch 转换（不会改写 frame.ip 为 catchIp），
+    /// 直接置 hasError_ + 写 diagnostics_，保证 getLastError() 非空且 void 调用方
+    /// （push/pop/emplace）不会在控制流已转移的状态上继续推进 ip。
+    VMResult fatalError(const std::string& msg);
+
     /// F11: 抛出异常，搜索 try 处理器或跨帧传播
     VMResult throwException(Value thrownValue);
 
@@ -585,6 +631,14 @@ private:
     /// 用于异常展开和帧弹出时防止悬垂指针
     /// 返回 VM_RUNTIME_ERROR 表示检测到 slot 越界（hasError_ 已设置，调用方应立即 return 传播错误）
     VMResult closeUpvaluesFrom(size_t fromSlot);
+
+    /// P1 dedup: 弹出当前帧并 push 返回值。
+    /// stepOnce() 和 execute() 中"chunk 执行完毕 → 弹帧"的防御性路径完全重复，
+    /// 提取为单一方法消除 ~34 行 × 2 的重复代码。
+    /// 调用前需确认 ip >= chunk.code.size()（当前 chunk 已执行完毕）。
+    /// 返回 VM_OK 表示弹帧成功（调用方继续循环/返回 OK），
+    /// 返回 VM_RUNTIME_ERROR 表示 closeUpvaluesFrom 失败（调用方应立即返回传播错误）。
+    VMResult popFrameAndPushReturn();
 
     /// F10-fix: 为 init 方法填充缺失的默认参数，返回 true 表示成功
     /// argCount 会被更新为填充后的参数数量，默认值追加到 defaults 向量
@@ -707,9 +761,11 @@ private:
     const BytecodeChunk* findMethodChunk(const std::string& className, const std::string& methodName) const;
 
     /// 按指令类别执行指令（executeOneInstruction 内部转发）
-    VMResult executeConstantOps(OpCode op, size_t& ip);
-    VMResult executeArithOps(OpCode op, size_t& ip);
-    VMResult executeCompareOps(OpCode op, size_t& ip);
+    /// PERF: HOT 方法标记 __forceinline，让编译器将两级 switch 展平为单级，
+    /// 消除每条指令的间接函数调用开销（等效 computed goto 在 MSVC 上的替代方案）。
+    MINILANG_FORCE_INLINE VMResult executeConstantOps(OpCode op, size_t& ip);
+    MINILANG_FORCE_INLINE VMResult executeArithOps(OpCode op, size_t& ip);
+    MINILANG_FORCE_INLINE VMResult executeCompareOps(OpCode op, size_t& ip);
     VMResult executeVarOps(OpCode op, size_t& ip);
     VMResult executeCallOps(OpCode op, size_t& ip);
     VMResult executeContainerOps(OpCode op, size_t& ip);
@@ -743,7 +799,7 @@ private:
     /// 用于 TUPLE pattern 类型检查（不匹配时 fall through 而非抛错）。
     VMResult executeMiscTypeTest(OpCode op, size_t& ip);
     /// 无条件/条件跳转指令：OP_JUMP/OP_JUMP_IF_FALSE/OP_LOOP（共享 jump 目标越界检查模式）
-    VMResult executeMiscJumpOps(OpCode op, size_t& ip);
+    MINILANG_FORCE_INLINE VMResult executeMiscJumpOps(OpCode op, size_t& ip);
     /// 异常处理 + finally 跳转栈指令：OP_TRY_BEGIN/OP_TRY_END/OP_THROW/OP_PUSH_JUMP_TARGET/OP_FINALLY_END
     /// 共 5 个 case，围绕 tryStack_/pendingJumpStack_ 两个异常机制栈管理
     VMResult executeMiscExceptionOps(OpCode op, size_t& ip);
@@ -775,7 +831,7 @@ private:
     /// 整数槽全局变量指令：OP_GET_GLOBAL / OP_SET_GLOBAL / OP_DEFINE_GLOBAL / OP_DELETE_GLOBAL
     VMResult executeGlobalSlotOps(OpCode op, size_t& ip);
     /// 局部变量指令：OP_GET_LOCAL / OP_SET_LOCAL（含 fieldsModified 标记同步）
-    VMResult executeLocalOps(OpCode op, size_t& ip);
+    MINILANG_FORCE_INLINE VMResult executeLocalOps(OpCode op, size_t& ip);
     /// Upvalue 闭包指令：OP_GET_UPVALUE / OP_SET_UPVALUE / OP_CLOSE_UPVALUE（含 open/closed 双路径 + owningFrameIdx
     /// 字段同步）
     VMResult executeUpvalueOps(OpCode op, size_t& ip);
@@ -850,5 +906,8 @@ private:
                                Value& result);
 
     /// 执行单条指令的内部实现（供 execute() 和 stepOnce() 共用）
-    VMResult executeOneInstruction();
+    /// P-2 perf: __forceinline 提示 MSVC 尝试内联到 execute() 主循环，
+    /// 消除函数调用开销 + 允许编译器优化冗余帧获取和 hasError_ 检查。
+    /// 若函数体过大（>50 case switch），MSVC 会优雅忽略此提示。
+    __forceinline VMResult executeOneInstruction();
 };

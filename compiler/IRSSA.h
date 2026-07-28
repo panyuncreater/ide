@@ -190,7 +190,13 @@ public:
     /// 节点 n 是否在任一循环体内
     bool inLoop(uint32_t n) const { return inLoop_.count(n) > 0; }
     /// 节点 n 所属的循环索引列表（可能属于多个嵌套循环）
-    const std::vector<size_t>& loopsOf(uint32_t n) const { return loopsOf_.at(n); }
+    const std::vector<size_t>& loopsOf(uint32_t n) const {
+        // BUGFIX-P2 #54: 非循环节点不在 loopsOf_ 中，.at() 会抛 std::out_of_range。
+        // 改为返回静态空 vector 的 fallback，调用方可安全查询任意节点。
+        static const std::vector<size_t> empty;
+        auto it = loopsOf_.find(n);
+        return it != loopsOf_.end() ? it->second : empty;
+    }
 
 private:
     const IRCFG& cfg_;
