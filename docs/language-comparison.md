@@ -15,7 +15,7 @@
 | 字符串 | 不可变 + 拼接新建 | `char` 数组 | 不可变 | 不可变 |
 | 数组 | **COW（写时复制）** | 原生数组 | 引用语义 | 引用语义 |
 | 字典 | COW + key 必须 string | 无原生 | 引用语义 | `HashMap` |
-| 闭包 | 嵌套命名函数（不支持匿名函数表达式） | 不支持 | lambda + 嵌套函数 | lambda |
+| 闭包 | 嵌套命名函数 + 匿名 `fun(){}` 表达式 | 不支持 | lambda + 嵌套函数 | lambda |
 | 异常 | `try/catch/finally` + 字符串标签 | 无 | `try/except/finally` | `try/catch/finally` |
 | 类 | 单继承 + `init` 构造 | 无 | 多继承 | 单继承 + `interface` |
 | 模块系统 | `import "path"` + 循环依赖检测 | `#include` | `import` + `sys.path` | `import` + classpath |
@@ -48,7 +48,7 @@ MiniLang 是强类型语言，**类型注解一旦写出就强制**：`int x = 1
 字典同样是 COW，且**键强制为 `string`**。键不存在时返回 `null`（不报错）。与 Python（任意可哈希 key）、Java（`HashMap` 任意 key）不同，MiniLang 的 `{"key": val}` 写法决定了 key 字面量必须是字符串。
 
 ### 闭包
-MiniLang **只支持嵌套命名函数**作为闭包载体：`fun outer() { fun inner() {...} return inner; }`。**不支持**匿名函数表达式 `var f = fun() {};`（解析器会报「意外的 Token: 'fun'」），也不支持 Python/Java 的 `lambda`。需要把回调用具名函数声明再引用传递。
+MiniLang 支持两种闭包载体：**嵌套命名函数**（`fun outer() { fun inner() {...} return inner; }`）与**匿名函数表达式**（`var f = fun(x) { return x * 2; };`，R98 W3 引入）。匿名函数可内联作回调、可立即调用（IIFE），语义与 Python `lambda`（但允许多语句体）/ Java `() -> {}` 对应。
 
 ### 异常
 `try { ... } catch (e) { ... }` + 可选 `finally`。`throw` 可抛任意值（字符串最常见）。`catch` 参数独占 slot，防止覆盖外层变量。语义接近 Java，但异常标签是值而非类型。
@@ -124,32 +124,30 @@ var flag = (a and b);       // flag 可能是任意值，不是 bool！
 ```
 `and` / `or` **返回操作数原值**（非布尔），与 Python 一致，与 C/Java（返回 `bool`）不同。需要布尔结果时用 `not not (a and b)` 或显式比较。
 
-### 6. `var f = fun() {};` 报错（不支持匿名函数表达式，必须用嵌套命名函数）
+### 6. `fun` 后跟 `(` 是匿名函数表达式，后跟标识符是函数声明
 ```mini
-var f = fun() { print("hi"); };   // ❌ 报「意外的 Token: 'fun'」
-
-// ✅ 正确写法：命名函数声明 + 引用
-fun _f() { print("hi"); }
-var f = _f;
+var f = fun() { print("hi"); };   // ✅ 匿名函数表达式（lambda）
 f();
-```
-MiniLang **只支持命名函数**作为一等值。回调模式需用具名函数声明再传递引用，不能像 Python `lambda` / Java `() -> {}` 那样内联写匿名函数。
 
-### 7. `fun outer() { var x = 1; return fun() { return x; }; }` 同上
+fun g() { print("hi"); }          // ✅ 具名函数声明
+var h = g;                         // 命名函数也是一等值
+```
+两种写法都受支持（R98 W3 起）。注意 `fun name() {}` 不能出现在表达式位置（如 `var f = fun g() {};` 非法），匿名形式则不能带名字。
+
+### 7. 闭包两种写法等价
 ```mini
 fun outer() {
     var x = 1;
-    return fun() { return x; };   // ❌ 同样报错
+    return fun() { return x; };   // ✅ 匿名闭包
 }
 
-// ✅ 正确写法
-fun outer() {
+fun outer2() {
     var x = 1;
-    fun inner() { return x; }     // 命名嵌套函数捕获 x
+    fun inner() { return x; }     // ✅ 具名嵌套函数
     return inner;
 }
 ```
-闭包必须用具名嵌套函数，支持 3+ 层 upvalue 捕获。
+匿名与具名闭包均支持 3+ 层 upvalue 捕获，四后端语义一致。
 
 ### 8. `import "mod";` 路径相对当前文件（不是工作区根）
 ```mini

@@ -3,7 +3,7 @@
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-blue)
 ![Qt6](https://img.shields.io/badge/Qt-6-green)
 ![Build](https://img.shields.io/badge/build-passing-brightgreen)
-![Tests](https://img.shields.io/badge/tests-3464-brightgreen)
+![Tests](https://img.shields.io/badge/tests-3660-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 一个用 C++20 / Qt6 构建的轻量级教学型编程语言集成开发环境。通过从零实现一门完整编程语言（词法分析 → 解析 → 解释/编译 → 虚拟机）来教授编译原理与运行时设计的核心概念。
@@ -99,11 +99,11 @@ try {
 | `compiler/` | 字节码编译器、IR 中间表示层（含 SSA 基础设施：CFG/支配树/GVN/LICM/函数内联）、VM、BytecodeChunk |
 | `debug/` | DebugController（断点/单步/条件求值/变量快照） |
 | `formatter/` | 代码格式化器（Visitor 模式） |
-| `gui/` | Qt6 GUI 组件（编辑器/AST 视图/教学面板等） |
+| `gui/` | Qt6 GUI 组件（编辑器/AST 视图/40+ 教学面板，懒加载工厂 + `PanelCatalog` 元数据目录双注册模式，详见 [开发指南](docs/development.md#新增教学面板指南)） |
 | `app/` | IdeController（Facade）、WorkerManager、VmStepper、DebugCoordinator、PipelineRunner、Ide 主窗口 |
 | `common/` | Diagnostic、Logger、IBackend、TypeChecker |
 | `cli/` | 命令行工具：minilang-dap（DAP 调试适配器）、minilang-lsp（LSP 语言服务器）、minilang-fuzz（模糊测试）、minilang-pkg（包管理器） |
-| `tests/` | GoogleTest 单元测试（3464 个） |
+| `tests/` | GoogleTest 单元测试（3660 个） |
 | `docs/` | 架构文档、开发指南、设计决策记录 |
 
 ## 测试
@@ -119,7 +119,7 @@ try {
 cd out/build/debug && ctest -R LexerTest.* --verbose
 ```
 
-项目包含 **3464 个 GoogleTest 单元测试**（414 个测试套件），覆盖前端（Lexer/Parser）、解释器、编译器与虚拟机、IR 中间层（含 SSA 基础设施）、四后端一致性（Interpreter/StackVM/RegisterVM/JIT，含 JIT try/catch/throw 异常处理、try/catch 捕获 runtimeError、TCO 尾调用优化、enum variant 校验、match 无 default 抛异常、break/continue 循环外报错、循环导入延迟加载）、格式化器、LSP 语言服务器、DAP 调试适配器（含 pause 同步暂停）、包管理器（含 SemVer 版本约束 + 传递依赖）、教学面板数据完整性、教学面板 GUI 交互级 E2E（边界选择/按钮幂等/跨面板定时器隔离）、反向调试状态回滚等。覆盖率门槛 75%（Windows OpenCppCoverage + Linux gcovr）。
+项目包含 **3660 个 GoogleTest 单元测试**（415 个测试套件），覆盖前端（Lexer/Parser）、解释器、编译器与虚拟机、IR 中间层（含 SSA 基础设施）、四后端一致性（Interpreter/StackVM/RegisterVM/JIT，含 JIT try/catch/throw 异常处理、try/catch 捕获 runtimeError、TCO 尾调用优化、enum variant 校验、match 无 default 抛异常、break/continue 循环外报错、循环导入延迟加载、spawn 异常传播）、格式化器、LSP 语言服务器、DAP 调试适配器（含 pause 同步暂停）、包管理器（含 SemVer 版本约束 + 传递依赖）、教学面板数据完整性、教学面板 GUI 交互级 E2E（边界选择/按钮幂等/跨面板定时器隔离）、反向调试状态回滚等。覆盖率门槛 75%（Windows OpenCppCoverage + Linux gcovr）。
 
 ## 文档
 

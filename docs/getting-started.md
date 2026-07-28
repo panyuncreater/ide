@@ -191,10 +191,13 @@ for (var i = 0; i < 10; i = i + 1) {
 | `MINILANG_ENABLE_LTO` | ON | Release 构建启用链接时优化 |
 | `MINILANG_USE_CCACHE` | OFF | 启用 ccache 缓存 |
 | `MINILANG_W4` | OFF | MSVC /W4 警告级别 + 释放 /wd4996（windows-msvc-debug/release preset 默认 ON） |
-| `MINILANG_WERROR` | OFF | 将编译器警告视为错误（windows-msvc-debug/release preset 默认 ON） |
+| `MINILANG_WERROR` | OFF | 将编译器警告视为错误（所有平台 debug/release preset 默认 ON：MSVC /WX、GCC/Clang -Werror） |
+| `MINILANG_BUILD_PERF_TESTS` | ON | 构建性能基准测试目标 minilang_perf_test |
 | `MINILANG_BUILD_TESTS` | ON | 构建 GoogleTest 单元测试 |
 | `MINILANG_BUILD_TEST_HARNESS` | OFF | 构建审计/压测工具 |
 | `MINILANG_USE_QTCHARTS` | OFF | 使用 QtCharts 绘制柱状图（性能仪表盘等） |
+| `MINILANG_USE_JIT` | ON (x86-64) / OFF (其他) | JIT 后端（asmjit），仅 x86-64 平台启用；非 x86-64 自动禁用回退到 StackVM |
+| `MINILANG_USE_JIT_A64` | OFF | **实验性** ARM64 JIT 后端（PoC，仅基本算术+控制流，无测试覆盖，不建议生产使用） |
 | `MINILANG_SANITIZE` | `""` | Sanitizer：`address` / `undefined` / `both` |
 
 ```bash
@@ -218,10 +221,28 @@ ctest -R "VME2E\..*" --output-on-failure
 
 ## 调试技巧
 
-- **解释器调试**：在 IDE 中点击"调试"按钮，支持断点、单步、变量监视、调用栈
-- **VM 调试**：打开"VM 栈面板"查看字节码执行过程，支持单步执行
-- **IR 调试**：启用 IR 路径后打开"IR 可视化面板"，查看中间表示与优化效果
+- **解释器调试**：在 IDE 中点击“调试”按钮，支持断点、单步、变量监视、调用栈
+- **VM 调试**：打开“VM 栈面板”查看字节码执行过程，支持单步执行
+- **IR 调试**：启用 IR 路径后打开“IR 可视化面板”，查看中间表示与优化效果
 - **单元测试调试**：在 CLion/Qt Creator 中直接运行 GoogleTest 用例
+
+## CLI 工具链
+
+项目提供 9 个独立命令行工具，构建后位于对应构建目录下：
+
+| 工具 | 用途 | 示例 |
+|------|------|------|
+| `minilang-fmt` | 代码格式化 | `minilang-fmt --check src.ml` |
+| `minilang-lint` | 静态分析 (8 项检查规则) | `minilang-lint src.ml --format json` |
+| `minilang-coverage` | 行级覆盖率 (text/LCOV) | `minilang-coverage --backend both src.ml` |
+| `minilang-doc` | API 文档生成 (Markdown/HTML/JSON) | `minilang-doc src.ml --format html` |
+| `minilang-fuzz` | 三后端差分模糊测试 | `minilang-fuzz --mode mutate --seed 42` |
+| `minilang-lsp` | Language Server Protocol 实现 | 编辑器 stdio 连接 |
+| `minilang-dap` | Debug Adapter Protocol 实现 | VS Code launch.json 配置 |
+| `minilang-compile` | 预编译模块 (.minic) | `minilang-compile --module lib.ml` |
+| `minilang-pkg` | 包管理器 | `minilang-pkg install` |
+
+所有工具支持 `--help` 查看完整参数说明。退出码语义：0=成功、1=有警告、2=错误。
 
 ## 构建问题排查
 

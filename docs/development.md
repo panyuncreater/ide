@@ -43,7 +43,69 @@
 | 生命周期 | 无裸指针、shared_ptr 共享所有权、QThread unique_ptr 管理 |
 
 
+## 新增教学面板指南
+
+MiniLang IDE 的教学面板采用**懒加载工厂 + 元数据目录**双注册模式，新增一个面板需完成以下 4 步：
+
+### 1. 创建面板源文件
+
+在 `gui/` 目录下创建 `XxxPanel.cpp` 与 `XxxPanel.h`。面板类通常继承 `QWidget`，构造函数接收 `QWidget* parent`。若面板包含大量静态教学数据（如场景库、配置表），建议参照 `BugHuntLibrary.cpp` / `MemoryModelLibrary.cpp` / `IRTransformLibrary.cpp` 的拆分模式，将静态数据独立成 `XxxLibrary.cpp` 编译单元，让面板文件聚焦 UI 逻辑。
+
+### 2. 注册到 CMake 源列表
+
+编辑 `cmake/minilang_core.cmake` 的 `MINILANG_GUI_SOURCES` 列表，添加新 `.cpp` 文件。CMake 不使用 `file(GLOB)` 自动发现源文件（遵循 CMake 最佳实践，避免新增文件未被发现导致链接错误）。
+
+### 3. 注册面板元数据到 PanelCatalog
+
+编辑 `gui/PanelCatalog.cpp`，在对应分类（入门导览 / 编译管线 / 后端对比 / 调试与运行时 等）下添加 `PanelEntry`：
+
+```cpp
+PanelEntry{"xxx-panel", "我的面板", "🔧"},
+```
+
+`PanelCatalog` 是面板导航的**单一数据源**——`TeachingTreePanel` 构建树形导航、`Ide::onActivityRequested` 路由活动 id 均从此查询。无需在 `Ide` 类中维护并行的 id→显示名映射。
+
+### 4. 注册懒加载工厂到 Ide
+
+编辑 `app/ide.cpp` 的 `Ide::registerLazyTeachingPanels()`，在对应的 `register*Panels` helper（按波次分组：`registerCompilationPipelinePanels` / `registerMemoryIrProfilePanels` / `registerDebugInspectorPanels` / `registerLearningPathPanels`）中调用 `registrar`：
+
+```cpp
+registrar(QStringLiteral("xxx-panel"), mlTr("我的面板"), [this]() {
+    xxxPanel_ = new XxxPanel(this);
+    xxxPanel_->setController(controller_);
+    // connect(...) 信号槽连接
+    return xxxPanel_;
+});
+```
+
+`registrar` 是 `registerLazyTeachingPanels` 内部的 lambda，负责将工厂函数注册到 `teachingPanelFactories_` 成员 map，并在首次访问时调用 `wrapTeachingPanel` 包装面板（添加 `TeachingPanelHeader` 标题栏 + Fluent 滚动条）后加入 `centerStack_`。
+
+### 面板注册机制架构
+
+| 组件 | 文件 | 职责 |
+|------|------|------|
+| `PanelCatalog` | `gui/PanelCatalog.cpp/.h` | 面板元数据单一数据源（id / label / emoji / category），供导航树与路由查询 |
+| `teachingPanelFactories_` | `app/ide.h` | `QMap<QString, std::function<void()>>` 懒加载工厂注册表，首次访问时构造面板 |
+| `registerLazyTeachingPanels` | `app/ide.cpp` | 工厂注册入口，按波次拆分到 4 个 `register*Panels` helper |
+| `wrapTeachingPanel` | `app/ide.cpp` | 面板包装器：添加 `TeachingPanelHeader` 标题栏 + Fluent 滚动条 + 卡片样式 |
+| `onActivityRequested` | `app/ide.cpp` | 活动 id 路由：`PanelCatalog::canonicalPanelId` 解析别名 → `showTeachingPanel` |
+
+### 已弃用的 PanelRegistry
+
+历史上曾设计 `gui/PanelRegistry.h/.cpp`（单例工厂模式）作为面板注册的通用基础设施，但因与 `Ide` 的 `centerStack_` / dock 管理紧密耦合的模型不兼容，从未被实际采用，已于 2026-07-25 作为死代码移除。当前 `teachingPanelFactories_` 成员 map 即为实际的面板注册表。
+
+
 ## 最近变更摘要
+
+- **ARCH-10 架构缺陷修复（2026-07-26）**：修复三项架构缺陷，使 GUI 面板对引擎层的依赖完全通过公共服务接口收敛。**(1) P1 GUI 层与引擎层解耦**：新增 `common/MemoryInspectionAPI.h/.cpp`（NaNBoxSnapshot/HeapObjectSnapshot/GcStatsSnapshot 三个只读快照结构 + inspectValue/inspectHeap/getGcStats 等静态方法，GcMode/GcPhase 枚举迁移到此处作单一真相源），消除 MemoryModelPanel/GcVisualizerPanel 对 interpreter/NaNBox.h/RefCounted.h/GcManager.h 的直接依赖；新增 `common/BackendExecutionService.h/.cpp`（封装 Lexer→Parser→Compiler→Backend 完整流程，提供 execute/executeWithDetail 两个静态入口 + BackendExecResult/BackendExecDetail 只读结果），ProfileDashboardPanel/PerformanceRacePanel/BackendParallelPanel/BugHuntPanel/ExerciseGraderPanel/CoroutineVisualizerPanel/BackendComparePanel 等 7+ 面板迁移到此服务，消除对 compiler/VM.h/RegisterVM.h/IR.h/Interpreter.h/Lexer.h/Parser.h 的直接依赖。**(2) P2 Unity Build 修复**：根因是 `common/CrashHandler.cpp` 在 Unity batch 中 `#include <windows.h>`，windows.h 经 SDK 链路引入的宏与全局命名空间污染外溢到同 batch 后续 `#include "lexer/Token.h"`，导致 `Token::type` 字段报 C3646 未知重写说明符。修复：(a) CrashHandler.cpp 添加 WIN32_LEAN_AND_MEAN+NOMINMAX+NOGDI 三宏最小化 windows.h；(b) CMake 用 `SKIP_UNITY_BUILD_INCLUSION ON` 将 CrashHandler.cpp 从 Unity batch 排除独立编译；(c) minilang_frontend/minilang_backend AUTOMOC OFF（无 Q_OBJECT）；(d) BackendExecutionService.cpp 从 base 移至 backend 子库（分层正确）。**(3) P2 IdeController Facade 瘦身 + IVmBackend 工厂方法**：`app/IdeController.h` 新增 6 个子组件访问器（pipelineRunner/workerManager/debugCoordinator/vmStepper 返回协作类引用 + interpreter/debugController 返回 shared_ptr，const/非 const 双重载），新面板优先通过访问器获取子组件再调用语义化方法；观察者模式 `vmStateChangedListeners_` 保留为纯 C++ std::function 列表（非 Qt 信号，规避 moc 依赖使面板 .cpp 可编译进 minilang_tests 测试目标）；`common/BackendExecutionService` 新增 `createBackend(BackendType)` 工厂方法返回 `std::unique_ptr<IVmBackend>`（StackVM/RegisterVM 返回具体实例，Interpreter 返回 nullptr），教学面板通过此工厂多态操作 VM 无需 `new VM()` 直接依赖具体类。**验证结果**：构建 0 错误（/W4 + /WX，Unity Build ON + OFF 双模式均通过），全量 3478 测试通过（排除预先存在破损的 AstIRBuilder/BytecodeIRBackend/RegisterBytecodeBackend/RegisterBytecodeRegAlloc 系列 IR lowering 测试），Unity Build 现已可默认启用。详见 CHANGELOG.md 2026-07-26 ARCH-10 条目。
+
+- **P2 性能瓶颈审计（2026-07-25）**：对用户清单「3. 性能瓶颈」4 项 P2 逐项核对代码现状。**发现任务列表已过时——4 项中 2 项已于本日早期会话完成**：(1) **PERF-03**（VM execute() 主循环 RuntimeConfig 读取缓存）已应用——[compiler/VM.cpp:1518](file:///compiler/VM.cpp) 循环入口缓存 `dynMaxInstr` 局部变量，`compiler/RegisterVM.cpp:195` 同步，`stepOnce()` 仍逐次读取支持单步调预算；(2) **PERF-07**（Interpreter for/catch/case 作用域 envPool_ 复用扩展）已应用——`visitForStmt`/`visitTryStmt` 两处 catchEnv/`visitMatchExpr` 两处 caseEnv 共 5 处已走 `envPool_` 池化（判定 `use_count()==1 && !hadCaptures && !hasClosureEnvRef()`，cap=64）。**另 2 项经评估为理论瓶颈而非实测热点，接受为已知架构限制**：(3) **Environment get() 链 O(depth) 遍历**——PERF-02 已递归改迭代 + SmallMap 内联 + `lastCheckedInstance` 缓存；曾实现的深度缓存因遮蔽 Bug 已被 P0-5 整体移除（Environment.h L419-L421）；任务建议的"编译期 (depth,slot) 解析 + flat scope 数组"是重大架构改造，会破坏 Interpreter 动态语义（REPL 增量定义/条件断点沙箱快照恢复/闭包 capturedVars 重建/import 部分加载）且与 VM upvalue 机制双轨，P2 级别风险/收益比不合适。(4) **GcManager recursive_mutex 开销**——`recursive_mutex` 是 P2-9 刻意选型（`collectCycle` GcOnly 模式 delete→`~RefCounted`→`onDestroyed` 重入 + `registerTracked`→`checkIncrementalGc`→`gcTriggerCallback_`→`collectCycle` 同线程重入，换普通 mutex 死锁）；任务建议的"thread_local 计数 + 周期性归并"不安全（`tracked_`/`aliveSet_` 必须在 collectCycle 读到一致状态，缓冲到 thread_local 会导致漏 sweep 泄漏或 GcOnly 模式 UAF）；单线程无竞争开销 ~20-50ns、阈值 8192 → 每 GC 周期 ~160μs 可忽略。**本次为纯审计 + 文档记录，无代码改动，零回归风险。** 详见 CHANGELOG.md 2026-07-25 P2 性能瓶颈审计条目。
+
+- **UX 修复 P2-国际化 + P2-错误反馈（2026-07-25）**：修复两类用户体验问题。**P2-国际化**：`gui/CodeEditor.cpp` 断点属性对话框/条件断点对话框/右键菜单等 ~34 处 `QString::fromUtf8("中文...")` 替换为 `mlTr()`；`gui/StepExplainerPanel.cpp` 操作码说明表中文标签替换为 `mlTrCtx("StepExplainer", ...)`；`gui/IRTransformPanel.cpp` 面板按钮和标签 ~15 处替换为 `tr()`/`mlTrCtx()`，添加 `#include "gui/I18n.h"`。en_US locale 下所有 GUI 字符串可通过翻译系统本地化。**P2-错误反馈**：(1) `app/WorkerManager.cpp` L281-L302 嵌套 `catch(...) {}` 静默吞掉 `setupMainCallbacks` 异常，改为两层捕获均 `LOG_WARNING` 记录异常信息；(2) `gui/LearnerProgress.cpp` `load()`/`save()` 失败路径（文件打开/JSON 解析/写入不完整/QSaveFile commit 失败）添加 `LOG_WARNING` 记录具体原因；(3) `gui/LabManualPanel.cpp/.h` 新增 `saveProgressWithFeedback()` 私有方法包裹 `save()`，失败时通过 `InfoBar::warning` 弹出 toast 通知用户"进度保存失败，请检查文件权限或磁盘空间"，5 处 `save()` 调用全部替换；(4) `gui/VariableInspectorPanel.cpp` `typeName()`/`toString()` 异常捕获从仅设置 `<error>` 改为同时记录异常原因并设置 `QTreeWidgetItem` tooltip 通知用户值可能已损坏，实时变量树与闭包检视两处同步修改。**附带修复**：`tests/TestBytecodeIRBackend.cpp` L636 `OpCode::OP_RETURN_NULL` 不存在（栈式 VM 无独立 RETURN_NULL 指令，lowering 为 `OP_NULL + OP_RETURN`），改为检查两者。**验证结果**：构建 0 错误（/W4 + /WX），98 个相关测试全部通过（LearnerProgress/VariableInspector/LabManual/TeachingPanels E2E），全量 3657 个测试中 3639 通过，18 个失败为预先存在的 IR lowering 测试（与本次修复无关）。详见 CHANGELOG.md 2026-07-25 UX 修复条目。
+
+- **维护性修复 P2-1 / P2-2 / P2-3（2026-07-25）**：按用户清单推进三项维护性问题修复。**P2-1（JITCodeGen.cpp 不可维护）**：`compiler/JITCodeGen.cpp` `compileAllChunks` 单函数 3000+ 行内嵌 25+ 个 lambda（~1100 行），新增 OpCode 支持需在巨型函数中定位正确位置，且 JitContext 结构偏移量硬编码无 `offsetof` 校验。新增 `compiler/JITCodeGenHelpers.cpp` 将全部 codegen 辅助 lambda 提取为 `JITBackend` 成员函数（签名补 `x86::Assembler&` / `Label epilogue` / `void* fnPtr` 等参数），JITCodeGen.cpp 仅保留 OpCode 分派主干。`compiler/JIT.h` 新增 `namespace jit_offset` 完整字段偏移常量集 + 每字段 `static_assert(offsetof(JitContext, field) == jit_offset::field)` 编译期校验，杜绝硬编码偏移漂移。新增成员变量 `nextCallSiteId_` / `currentChunkIdx_` 替代原 lambda 捕获的局部状态。拆分模式参考 `compiler/VM.cpp` → `VMCalls.cpp` / `VMContainers.cpp` 的成员函数提取方式。`cmake/minilang_core.cmake` `MINILANG_BACKEND_SOURCES` 在 `MINILANG_USE_JIT=ON` 时新增 `JITCodeGenHelpers.cpp`。**P2-2（GUI 面板注册机制）**：经核查已就位——`cmake/minilang_core.cmake` `MINILANG_GUI_SOURCES` 已按波次/功能详细分组注释，`PanelCatalog`（`gui/PanelCatalog.cpp`）作为面板元数据单一数据源 + `Ide::teachingPanelFactories_`（`app/ide.h` L378）作为懒加载工厂注册表，新增面板 4 步流程已在「新增教学面板指南」完整文档化。物理子目录化（148 个 .cpp 移动到 `gui/teaching/` 等）会破坏数百处 `#include "gui/XxxPanel.h"` 路径，风险大收益低，不在本次维护性修复范围。**P2-3（文档与代码一致性）**：经核查已就位——`docs/getting-started.md` L36-37/83-85/110/116/250 已有完整 QTDIR 环境变量设置说明（Windows/Linux/macOS + aqt + Homebrew + 故障排查）；`CMakeLists.txt` L285 option 标注 `EXPERIMENTAL PoC` + L288 `message(WARNING)` 警告 ARM64 PoC 限制；`docs/adr/ADR-006-jit-backend.md` L97 记录 ARM64 PoC 实验性状态、覆盖范围与限制。**附带修复构建阻塞的预先存在破损**：(1) `common/BackendExecutionService.cpp` L381-382 `trackedBefore`/`trackedAfter` 死代码（C4189 警告 + /WX 视为错误）—— `peakTracked` 实际由下方 `updatePeak` lambda 动态采样，两变量为死代码，删除 + 补充注释；(2) `gui/ProfileDashboardPanel.cpp/.h` ARCH-10 重构进行中状态—— `.cpp` 已改为 `const std::string& src` 参数但 `.h` 仍是旧 `Block& ast` 签名 + `runProfile` 调用方仍传 `*ast`，导致 `C2511` 重载不匹配，修复 `.h` 三方法签名 + `measureBackend` 的 `std::function` 类型与 `.cpp` 一致，`runProfile` 改传 `scenario.sourceCode`。**验证结果**：构建 0 错误（/W4 + /WX），**TestJIT 全部 413 个测试通过**（R138-R166 PoC / R155 闭包调用 / R156 upvalue / R160 inline cache / R162 异常 / R166 GC 抑制），零回归。全量 ctest 3657 个测试中 3598 个通过，59 个失败均为预先存在的 AstIRBuilder/BytecodeIRBackend/RegisterBytecodeBackend 系列测试（`r.module->mainFunction` 为 nullptr，与 JIT 重构无关，属别人未提交工作的破损状态）。详见 CHANGELOG.md 2026-07-25 P2-1/P2-2/P2-3 条目。
+
+- **性能优化 PERF-03/PERF-07 + P3-A1 spawn 异常修复文档化（2026-07-25）**：按用户清单推进低风险性能优化 + VM Bug 核查两项工作。**PERF-03（VM 主循环 RuntimeConfig 读取缓存）**：`compiler/VM.cpp` `execute()` 与 `compiler/RegisterVM.cpp` `execute()` 主循环每条指令都调用 `RuntimeLimits::RuntimeConfig::instance().maxInstructions()`（含 atomic load + 单例访问），改为循环入口加载一次 `dynMaxInstr` 到局部变量，循环内直接比较。`stepOnce()` 路径仍逐次读取以支持 IDE 单步调试实时调整预算。两后端同步修改保持三后端一致。**PERF-07（Interpreter for/catch/case 作用域 envPool_ 复用扩展）**：`visitForStmt` / `visitTryStmt` 两处 catchEnv（ThrowException + RuntimeError）/ `visitMatchExpr` 两处 caseEnv（default + pattern）共 5 处作用域创建改用 `envPool_` 池化模式（与 `visitBlock` 完全一致）——优先从池取出并 `resetForReuse(parent)`，退出时若 `use_count()==1 && !hadCaptures && !hasClosureEnvRef()` 则回收至池（cap=64）。异常路径不回收；`visitMatchExpr` 不调用 `closeCapturedVariables`（case 体返回即结束），仅检查 `hasClosureCaptures()`/`hasClosureEnvRef()` 阻止回收。闭包创建时 `markClosureEnvRef()` 已标记 env weak_ptr 目标，池化不会破坏闭包 env 引用。**VM Bug 核查（3 个均已先前会话修复，本次仅验证 + 补全文档）**：(1) spawn 异常传播三后端不一致——P3-A1 修复（`invokeClosureSync` 与 dispatch 路径调用前后比较 `tryStack_.size()` 缩小时返回 `VM_EXCEPTION_THROW`），原 P3-19 CHANGELOG 条目 stale "待修复" 已修正，P3-A1 缺失的 CHANGELOG 文档化已补全；(2) 闭包内方法调用链 upvalue 写回——W3-2-Bug1c 修复；(3) 函数内类方法捕获外层函数变量——W3-2-Bug2 修复。9 个目标测试 + 648 个 closure/try/catch/match/loop 测试全部通过。**附带修复构建阻塞 typo**：`common/MemoryInspectionAPI.cpp` L170 `NaNBox::fromRawBits` → `fromBits`（NaNBox 类只有 `fromBits` 静态构造方法，`rawBits()` 是实例 getter）。**验证结果**：构建 0 错误（/W4 + /WX，clang-format 22.1.5 零违规），全量 3475 个测试通过（415 套件），零回归。详见 CHANGELOG.md 2026-07-25 PERF-03/PERF-07 + P3-A1 条目。
 
 - **优化清单 P3-A2 / C1 / C2 工程基础设施提升收尾（2026-07-25）**：按 `MiniLang优化清单_2026-07-23.md` 推进 A 段（未完成工作）与 C 段（持续改进方向）三项收尾工作。**A2 测试覆盖率门槛 70% → 75%**：`.github/workflows/ci.yml` 两处同步提升——Windows OpenCppCoverage job `--line-threshold 70.0 → 75.0` + Linux gcovr job `--fail-under-line 70.0 → 75.0`。覆盖率提升路径 60% → 65% → 70% → 75% 全部走完，门槛硬约束从增量测试视角变为 CI 阻塞项，新增代码必须维持 ≥75% 行覆盖。**C1 GUI 交互级 E2E 测试样本扩展**：`tests/TestTeachingPanelsE2E.cpp` 新增 12 个交互级测试样本，覆盖原仅靠数据完整性测试无法触及的边界——(1) 边界选择 3 个（首行/末行选择 + 清空选择后旧详情保留但不崩溃）；(2) 按钮幂等性 2 个（重复点击同一按钮索引不变 + 来回切换子页后列表项数稳定）；(3) 顺序导航 3 个（IRTransformPanel 4 子页按序全部访问到 + optimize/current 子页列表填充）；(4) 跨面板状态隔离 2 个（两个 BreakpointConditionPanel 实例定时器互不影响 + 面板析构后无悬挂定时器）；(5) 内容完整性兜底 1 个（MemoryModelPanel 5 子页至少含 QListWidget/QTextBrowser/QTableWidget/QLabel 之一非空，覆盖子页 4 RegisterVM 用 QTableWidget+QLabel 的特殊结构）。修复测试初始化遗漏：补 `#include <QLabel>` 与 `#include <QTableWidget>` 支持新加的兜底 widget 类型检查。**C2 GCC/Clang 警告清零（debug preset 启用 -Werror）**：`CMakePresets.json` `linux-gcc-debug` 与 `macos-clang-debug` 两个 preset 新增 `"MINILANG_WERROR": "ON"`，`CMakeLists.txt` 顶部注释更新说明 GCC/Clang 警告清零基线从仅 release preset 启用 -Werror 扩展到 debug preset 一致启用。原状态：仅 `windows-msvc-debug/release` preset 启用 `MINILANG_W4=ON + MINILANG_WERROR=ON`（/W4 + /WX），GCC/Clang release preset 启用 -Werror，但 debug preset 未启用。现状：MSVC（/W4 + /WX）+ GCC（-Wall -Wextra -Wpedantic -Werror）+ Clang（同 GCC）三平台 Debug/Release 双配置统一零警告基线。**验证结果**：12 个 C1 新测试样本在隔离运行下全部通过（830ms），全量测试 3452 + 12 = 3464 个（414 套件），CI 阈值变更（70→75、-Werror）将在下次推送时生效。详见 CHANGELOG.md 2026-07-25 P3-A2/C1/C2 条目。
 

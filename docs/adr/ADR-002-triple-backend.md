@@ -4,6 +4,8 @@
 
 Accepted. 自项目初始采用 Interpreter 基准后端，后续迭代新增 StackVM 和 RegisterVM。
 
+> **部分修订**：本 ADR 将 JIT 列为被拒绝方案，但自 R138 起 JIT 后端已作为第四套执行引擎落地，详见 [ADR-006](ADR-006-jit-backend.md)。当前项目实际为"四后端并存"。
+
 ## Background
 
 教学型语言 IDE 需要同时满足多个目标：
@@ -34,7 +36,7 @@ Accepted. 自项目初始采用 Interpreter 基准后端，后续迭代新增 St
 ### RegisterVM（寄存器式虚拟机）
 
 - IR → 寄存器式字节码 → 寄存器 VM 执行
-- 32 虚拟寄存器 R0-R31，59 条 RegOp 指令集
+- 32 虚拟寄存器 R0-R31，66 条 RegOp 指令集
 - IR 三地址码直接 lowering，减少栈操作开销
 - 通过 `setVM(true)` + `setUseRegisterVM(true)` 启用
 
@@ -55,4 +57,4 @@ Accepted. 自项目初始采用 Interpreter 基准后端，后续迭代新增 St
 
 - **单后端（仅 Interpreter）**：简单但无法展示编译优化，性能差
 - **双后端（Interpreter + StackVM）**：缺少寄存器式 VM 的教学对比
-- **JIT 编译**：复杂度过高，不适合教学场景
+- **JIT 编译**：复杂度过高，不适合教学场景（*注：后于 R138 采纳，见 ADR-006*）

@@ -248,9 +248,14 @@ TEST(TeachingPanelsXxx, IdUnique) {
 
 1. **槽位复用**：兄弟作用域的局部变量复用同一栈槽时，slot→name 映射中后声明的变量名覆盖先前的
 2. **IR 优化与栈式 VM**：复制传播和 CSE 在栈式 VM 后端默认禁用，因为与栈操作语义冲突
-3. **Ninja 依赖追踪**：修改 `Bytecode.h` 等核心头文件后可能需要全量重编译（删除 build 目录）
+3. **Ninja 依赖追踪**：修改 `Bytecode.h` 等核心头文件的符号签名（含追加默认参数）后，unity batch 可能残留 stale obj 导致 LNK2019/LNK1120。处置：运行 `scripts/fix_stale_objs.bat`（定向删除四个核心子库 obj + minilang_core.lib，无需全量重建）；`scripts/build.bat` 与 `scripts/run_tests.bat` 已内置链接失败自动清理+重试一次
 4. **测试污染**（已澄清，2026-07-25 P3-A6）：原以为是模块缓存污染，CHANGELOG 2026-07-24 条目确认实际是 `build_debug` 目录 stale binary 假失败，重新构建后通过。但审查发现 `Compiler::compileViaIR` 的状态重置不完整（缺 `moduleLoadingStack_` / `moduleExports_` 清理），与 `compileViaRegisterIR` 的 P2-B fix 不对称——P3-A6 已补齐该缺陷，三路径状态重置一致
 5. **VM 闭包 upvalue 解析缺口**（已修复，2026-07-24 W3-2-Bug）：原 StackVM/IR/RegisterVM 路径的两个 upvalue 缺口已修复——(a) 闭包内对捕获变量执行方法调用链（`b.data.push(4)`）的 upvalue 接收者写回；(b) 函数内定义的类方法捕获外层函数变量。修复方案：Compiler `emitMethodCallWriteback`/`visitMemberAssign`/`visitIndexAssign` 对 upvalue 基变量发射 `OP_WRITEBACK_MEMBER_UPVALUE`/`OP_WRITEBACK_INDEX_UPVALUE`；`emitMethodBody` 存储 upvalue 描述符，VM `OP_DEFINE_CLASS` 与 RegisterVM `REG_DEFINE_CLASS` 执行 `captureMethodUpvalues` 为有 upvalue 的方法创建 `VMClosureData`。详见 CHANGELOG.md W3-2-Bug 条目
+6. **闭包关闭后的快照语义**（AUDIT-R5 R2，已核实为三后端一致）：闭包返回/逃逸定义作用域后（只能经数组索引 `cs[0]()` 调用，因全局闭包变量调用 `var c=f(); c()` 不被 VM/IR 支持），**三后端均为快照语义**：多个闭包共享同一被捕获变量时，关闭后经一个闭包的写入不会对另一个闭包可见（Interpreter/StackVM/RegisterVM 均输出初值快照 `0`）。与 Lua/JS/Python 的共享闭包语义不同，但**三后端一致**——项目核心不变量是三后端一致而非匹配特定主流语言。（注：AUDIT-R5 初版曾误认为“Interpreter 快照 vs VM 共享”；实测推翻——该可运行模式下三后端本就一致（均 `0`），若将 Interpreter 单边改为共享（得 `2`）反而破坏一致性。由 `ConsistencyDiff.AuditUpvalue_R2_MultiClosureSharedCounterAfterClose` 回归锁。若今后需对齐 Lua/JS 共享语义，需**三后端同步**引入真共享 upvalue cell，属架构级改动。）
+7. **可变导出量的导入可见性差异**（AUDIT-R5 R5，已修复）：历史上 Interpreter 将导出值按值拷贝进导入方环境（快照语义），而 VM/IR 将模块内联编译进主程序、导出名直接共享同一全局槽（共享/实时语义）——实测确认三后端不一致：模块导出整型变量 `counter` 和修改它的函数 `inc`，主程序导入两者后调 `inc` 再打印 `counter`，Interpreter 输出导入时旧值 `0`，而 StackVM/StackVM-IR/RegisterVM-IR 输出修改后新值 `2`。**已统一到 Interpreter 基准（快照语义）**：VM/IR 在模块内联后记录导出「可变变量」的模块槽位并 `detachName` 释放其名称（`common` 之外的 `GlobalSlotAllocator::detachName`），导入方另分配新槽位并在导入点 emit `OP_GET_GLOBAL(模块槽)+OP_DEFINE_GLOBAL(新槽)` 拷贝快照（IR 路径同时更新 `varMap_`）；模块内部引用按槽位索引固化不受影响，模块内变异不再经导入方名称可见。**快照仅适用于变量导出**——函数/类导出经名称解析（`functionChunks_`/类注册），不拷贝不 detach（否则类实例化 `OP_CLASS_NEW`/函数调用会因 varMap_ 重定向而损坏），且函数/类不被重新赋值，共享与快照观测等价。命名空间导入（`import * as`）本就是快照字典，三后端一致。由 `VME2EImportSnapshot.*`（4 后端配置回归锁）守护。残余：循环导入的可变变量（未 detach，保持共享）与预编译 `.minic` 模块（无 AST 类别信息，变量集为空→快照无操作，保持共享）——均为极边缘/IDE 专用场景，且现有测试未覆盖该可观差异。
+8. **模块路径规范化与大小写去重**（AUDIT-R5 R6/BUG-M4/M5，已修复）：连续斜杠/`./`/`/./` 规范化已统一到 `common/ModulePath.h::normalizeModulePathKey` 单一事实源（Interpreter/Compiler/AstIRBuilder/pathHash/clearModuleCache 五处共用），修复 `a//b` 与 `a/b` 双重加载（BUG-M5）。大小写去重（BUG-M4）通过分离“缓存去重键”与“loader 请求路径”修复：`moduleCacheKey`（Windows 上 ASCII 小写折叠）作所有缓存/去重 map 键与 `pathHash` 输入，`normalizeModulePathKey`（保留大小写）供 `moduleLoader_`/`mtimeChecker`/预编译解析器。三后端（Interpreter/StackVM/RegisterVM）均已分离两个字段：Windows 上同一文件的不同大小写拼写去重为同一模块（避免双重加载），而大小写敏感的 loader（测试用 `std::unordered_map`、Linux/macOS 文件系统）仍收到原大小写路径。由 `VME2EImport.CaseInsensitiveDedupOnWindows`（Windows guarded）回归锁。
+9. **finally 内 break/continue 与待处理异常的交互**（AUDIT-R6 实证确认，**已修复** AUDIT-R6 B1）：原三后端行为均不正确且互不一致——Interpreter：异常继续传播且 break 标志残留，外层 catch 被截断；StackVM 非-IR：每轮泄漏异常值至“栈溢出”；IR 路径：finally 自链死循环。现已统一为 Java 式“finally 的控制流转移丢弃待处理异常/return”：Interpreter 在异常路径 runFinallyBlock 后若 loopFlow_ 被置位则吞掉异常；两个编译器的 emitFinallyBlock 在发射 finally 体期间暂时弹出自身 tryFinallyStack_ 条目（消除自链），异常副本用唯一临时全局暂存异常值（break 跳出时跳过 reload+rethrow 即丢弃，且无栈残留）。由 `AuditR6FinallyAbrupt` 套件 5 个四路径回归锁。**AUDIT-R7 F1 补充修复**：原残余限制①（“abrupt 替换 abrupt”时 pendingJumpStack_ 残留陈旧续跳目标）已实证为 P0（`try{break}finally{return}` 致 StackVM 常量池索引越界、RegisterVM 寄存器越界 C++ 异常逃逸宿主）并修复：三 VM + JIT 的 pendingJumpStack_ 条目附带 frameIndex（仿 tryStack_），FINALLY_END 只消费本帧条目、惰性丢弃已返回深帧残留、不碰更浅帧在途目标（同时修复 finally 体内调用含 try-finally 函数时被调函数误弹调用方目标的场景）。由 `AuditR7Regression.AbruptReplaceAbruptNoStaleJumpTarget` 与 `CalleeFinallyDoesNotStealCallerJumpTarget` 四路径回归锁。**残余窄化限制（P2）**：同帧内“abrupt 替换 abrupt”（如 `while{try{break}finally{continue}}`）仍可能残留同帧条目；递归中同一 try 站点 finally 体重入时异常暂存临时全局可能被内层覆盖。均为反模式叠加边角，优先级低。
+10. **Interpreter 无 TCO（尾调用优化）**（AUDIT-R7 确认的已知设计差异，**已修复 B1 2026-07-28**）：原深尾递归（`return f(n-1)` 形态）在三条 VM 路径经 TCO 帧复用恒定栈深完成，而 Interpreter 无帧复用机制，超过 256 层报“递归深度超过限制”。**B1 修复**：Interpreter 在 `visitReturnStmt` 引入蹦床（trampoline）——识别自尾调用（与 VM 共享 `TCO::identifyTailCall` 单一事实源）后抛 `TailCallSignal`，由 `callNamedFunction`/`invokeMethod` 的蹦床循环捕获并帧复用执行，SelfFunction/SelfMethod 均支持，四后端深尾递归行为一致。安全不变量：① 仅蹦床调用点启用上下文，init/生成器/闭包变量/高阶回调执行点显式禁用（信号不跨边界逃逸）；② try/catch/finally 内不 TCO（finally 语义保留，与 VM tryDepth 判据一致）；③ 运行时重绑定校验（名称遮蔽回退普通调用；子类 override 保持虚分派）。**连带修复 B1-Shadow（P1）**：三条 VM 路径编译期 TCO 判据缺少“函数名被局部变量遮蔽”检查（`fun f(n){ var f = other; return f(x); }` 被误判自递归 → 死循环至指令预算耗尽），Compiler 用 `currentLocals_`、AstIRBuilder 用 `varMap_` Kind::LOCAL 检查后回退普通调用。由 `InterpreterTCO.*`（13 个四后端用例）与更新后的 `TCOBasic/TCOApplied` 回归锁。
 
 ---
 
@@ -312,8 +317,8 @@ W3-2 轮次通过代码审查识别以下低覆盖区域，并添加定向测试
 | 类型注解违例 | `TypeViolationGaps` (2) | int←string / dict 值类型不匹配错误路径 | ✅ |
 | UTF-8 字符串索引 | `Utf8StringIndexGaps` (6) | 中文字符索引 / 混合 ASCII+中文 / emoji / 越界 | ✅ |
 | 类类型注解自动构造 | `ClassTypeAnnotationGaps` (2) | `var p: Point;` 等价 `Point()` 构造 | ✅ |
-| 闭包 upvalue 修改 | `ClosureUpvalueGaps` (3) | 捕获字段读取/修改/多闭包共享 | ⚠️ 1 个 VM bug 待修复 |
-| 类方法自由变量 | `ClassFreeVarGaps` (3) | 方法读/写全局变量 / 嵌套类捕获函数变量 | ⚠️ 1 个 VM bug 待修复 |
+| 闭包 upvalue 修改 | `ClosureUpvalueGaps` (3) | 捕获字段读取/修改/多闭包共享 | ✅（W3-2-Bug1c 修复） |
+| 类方法自由变量 | `ClassFreeVarGaps` (3) | 方法读/写全局变量 / 嵌套类捕获函数变量 | ✅（W3-2-Bug2 修复） |
 | enum variant 错误路径 | `EnumVariantErrorGaps` (3) | 未定义 variant / arity 不匹配 / 正常 variant | ✅ |
 | try-catch 闭包传播 | `TryCatchClosureGaps` (2) | catch 块引用外层变量 / finally+return | ✅ |
 | 循环寄存器分配 | `LoopRegisterGaps` (3) | 循环不变量保持 / 嵌套循环 / break+continue | ✅ |
@@ -326,7 +331,7 @@ P3-19 轮次针对「后续覆盖率提升方向」5 个点名的低覆盖区域
 |---------|---------|---------|------|
 | 模块系统循环导入深层嵌套 | `CircularImportGaps2` (2) | 3 层 a→b→c→a + 跨模块函数调用 / 4 层 a→b→c→d→a + 部分导出 | ✅ |
 | 并发原语 channel 边界 | `ConcurrencyGaps2` (2) | 空通道 tryRecv 非阻塞 / 关闭通道 recv 立即返回 null | ✅ |
-| 并发原语 spawn 异常传播 | `ConcurrencyGaps2` (1) | spawn 闭包 throw → join 异常传播 | ⚠️ 1 个 VM bug 待修复 |
+| 并发原语 spawn 异常传播 | `ConcurrencyGaps2` (1) | spawn 闭包 throw → join 异常传播 | ✅（P3-A1 修复） |
 | 并发原语 mutex 边界 | `ConcurrencyGaps2` (1) | 二次 lock 防护（tryLock 验证） | ✅ |
 | IR 优化 LICM | `LICMGaps2` (1) | 含 LOAD_CONST 循环不变量的 while 循环 LICM 外提 | ✅ |
 | IR 优化 GVN | `GVNGaps2` (1) | if/else 两分支等价表达式（42+1）跨块消除 | ✅ |
@@ -334,10 +339,10 @@ P3-19 轮次针对「后续覆盖率提升方向」5 个点名的低覆盖区域
 
 ### 后续覆盖率提升方向
 
-1. **JIT 后端**：浮点边界值（NaN/Infinity/-0.0/subnormal）、递归深度边界（256/257）、异常边角场景（re-throw / finally return）已在 P3-A3 R165 系列覆盖；仍待覆盖：R161 闭包-字段交互（被禁用待 V-P1-6 JIT 同步缺失 bug 修复后启用）、JIT 模块系统/并发原语/字符串方法/enum+match 表达式
+1. **JIT 后端**：浮点边界值（NaN/Infinity/-0.0/subnormal）、递归深度边界（256/257）、异常边角场景（re-throw / finally return）已在 P3-A3 R165 系列覆盖；R161 闭包-字段交互已随 V-P1-6 JIT 同步修复启用（R161Closure* 全部通过）；JIT 模块系统/并发原语/字符串方法/enum+match 已由 `TestJITCoverageGaps.cpp`（14 用例）锁定——字符串拼接/比较/索引与 StackVM 严格一致；字符串方法（jit-runtime 降级）、enum variant（OP_BUILD_ENUM_VARIANT 未实现）、channel/mutex/spawn（内建函数未注册）锁定为“StackVM 正确 + JIT 优雅降级不崩溃”，待 JIT 补全实现后断言自动收紧为一致性
 2. **模块系统**：预编译模块 `.minic` 序列化/反序列化边界（循环导入深层嵌套已在 P3-19 覆盖）
 3. **GUI 组件**：IdeController 生命周期、Worker 线程状态清理、教学面板交互逻辑
-4. **并发原语**：channel 超时 API（需先扩展 ChannelInner）、mutex 死锁检测、rwlock 写锁饥饿（spawn 异常传播已在 P3-A1 修复，三后端一致）
+4. **并发原语**：channel 超时 API（`recvTimeout(ms)`）已实现并四后端一致（`ConcurrencyGaps2` 覆盖）；mutex 死锁检测、rwlock 写锁饥饿仍待覆盖（spawn 异常传播已在 P3-A1 修复，三后端一致）
 5. **IR 优化**：LICM 嵌套循环、GVN 含副作用表达式不消除、级联内联（基础 LICM/GVN/inline 边界已在 P3-19 覆盖）
 
 ---

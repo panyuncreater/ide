@@ -59,8 +59,8 @@ MiniLang 维护四个执行后端并存策略：
 | 后端 | 类 | 特点 |
 |------|------|------|
 | Interpreter | `Interpreter` | 树遍历，基准实现，最易调试 |
-| StackVM | `VM` | 栈式字节码，75 条 OpCode，1024×8B 定长操作数栈 + 栈顶指针 |
-| RegisterVM | `RegisterVM` | 寄存器式字节码，59 条 RegOp，32 虚拟寄存器 R0-R31 |
+| StackVM | `VM` | 栈式字节码，87 条 OpCode，1024×8B 定长操作数栈 + 栈顶指针 |
+| RegisterVM | `RegisterVM` | 寄存器式字节码，66 条 RegOp，32 虚拟寄存器 R0-R31 |
 | JIT | `JITBackend` | 基于 asmjit 的本地机器码后端（x86-64），可选启用（`MINILANG_USE_JIT`） |
 
 三解释后端（Interpreter / StackVM / RegisterVM）必须保持语义一致性。IR 层作为可选中间表示，启用后在 lowering 前执行优化 pass。JIT 后端与 StackVM 共享 `BytecodeChunk` 输入，定位为"StackVM 的硬件加速器"，语义必须与三后端对齐。
@@ -166,10 +166,13 @@ export var MY_CONST = 42;
 
 ## 教学面板架构
 
-所有教学面板作为独立 `ads::CDockWidget` 注册到右侧 dock area，启动时默认隐藏，通过视图菜单切换显隐。面板分为两类：
+教学面板采用**注册表 + 惰性加载**架构（R132-A）：
 
-- **动态面板**：消费 `IdeController` 的实时数据（调用栈、变量检查器、字节码轨迹）
-- **静态面板**：Library 静态数据嵌入 .cpp，不依赖 IdeController（异常流、闭包检查器、IR 变换）
+- **元数据单一事实源**：`gui/PanelCatalog` 统一目录维护面板 id/显示名/分类/别名映射（`categories()`/`findById()`/`canonicalPanelId()`），导航树与路由共用同一份数据。
+- **惰性工厂注册表**：`Ide::registerLazyTeachingPanels` 启动时仅向 `teachingPanelFactories_[panelId]` 注册工厂 lambda（按 4 个波次 helper 分组），首次访问时才构造面板并加入 `centerStack_`，避免启动时全量构造 40+ 面板的子 widget 树/信号连接/高亮器。
+- **面板分两类**：动态面板消费 `IdeController` 实时数据（调用栈、变量检查器、字节码轨迹）；静态面板的 Library 数据嵌入 .cpp，不依赖 IdeController（异常流、闭包检查器、IR 变换）。
+
+新增面板的标准流程：PanelCatalog 登记元数据 → 对应波次 helper 中 `registrar(id, 标题, 工厂)` 一行注册，无需改动导航/路由/惰加载机制。
 
 ---
 

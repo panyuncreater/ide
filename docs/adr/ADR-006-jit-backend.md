@@ -93,7 +93,8 @@ JIT 生成的本地代码无法直接持有 C++ 对象引用（asmjit::Label 是
 - **性能**：JIT 相比 StackVM 在数值密集型基准上达 40-100x 加速（消除 dispatch loop 开销）
 - **维护成本**：JIT.cpp ~5000 行，是项目最复杂的单一模块；每个 OpCode 需手写机器码 emit
 - **一致性约束扩展**：四后端一致性（Interpreter / StackVM / RegisterVM / JIT），`EXPECT_FIVE_BACKENDS` 宏条件编译
-- **平台限制**：当前仅支持 x86-64（asmjit 的 ARM 后端未接入）；Windows x64 ABI 与 System V ABI 分支处理
+- **平台限制**：当前生产级支持仅 x86-64（asmjit 的 ARM 后端未接入）；Windows x64 ABI 与 System V ABI 分支处理
+- **ARM64 PoC**：`MINILANG_USE_JIT_A64` 选项提供实验性 ARM64 PoC（`JITA64CodeGen.cpp`，370 行），仅覆盖基本算术 + 控制流 + 局部/全局变量子集（对齐 x86-64 R138-R140），无函数调用/类/闭包/异常/GC 集成，无单元测试覆盖。默认 OFF，不建议生产使用，仅供后续 ARM64 教学平台移植参考
 
 ## Alternatives
 

@@ -24,32 +24,40 @@ MiniLang 的 `/` 对两个 `int` 操作数执行**截断向零**的整数除法�
 
 ### Q5: 如何写匿名函数？
 
-**MiniLang 不支持匿名函数表达式**。`var f = fun() {};` 会被解析器拒绝（报「意外的 Token: 'fun'」）。正确写法是用**命名函数声明**再传递引用：
+MiniLang 支持**匿名函数表达式（lambda）**：`fun(params) { body }` 可直接作为表达式使用（R98 W3 引入，四后端一致）：
 
 ```mini
-fun _myCallback(x) { print(x); }
-var f = _myCallback;       // 命名函数本身是一等值
-[1, 2, 3].forEach(_myCallback);
+var f = fun(x) { return x * 2; };   // 匿名函数赋值给变量
+print(f(21));                        // 42
+[1, 2, 3].forEach(fun(x) { print(x); });  // 内联回调
+print(fun(x) { return x + 1; }(41));       // 立即调用（IIFE）
 ```
 
-闭包同样必须用具名嵌套函数：`fun outer() { var x = 1; fun inner() { return x; } return inner; }`。
+匿名函数同样可作闭包捕获外层变量：`fun outer() { var x = 1; return fun() { return x; }; }`。具名嵌套函数写法（`fun inner() {...} return inner;`）仍然有效，两种风格等价。
 
 ### Q6: 如何创建多行字符串？
 
-MiniLang **没有专门的多行字符串语法**（不支持 Python 三引号 / Java 文本块之类的写法）。可用字符串拼接或数组 `join` 实现：
+MiniLang 的**普通双引号字符串字面量允许直接跨行**（无需 Python 三引号 / Java 文本块之类的专门语法），源码中的字面换行会保留在字符串值中（CRLF 自动规范化为 `\n`）：
+
+```mini
+var s = "line1
+line2
+line3";
+print(s);          // 输出三行
+```
+
+也可用 `\n` 转义拼接或数组 `join` 写法：
 
 ```mini
 var s = "line1\n" +
         "line2\n" +
         "line3";
-print(s);
 
-// 或用数组 join
 var lines = ["line1", "line2", "line3"];
 print(lines.join("\n"));
 ```
 
-字符串内的 `\n` 转义符会被解释为换行。
+注意：跨行字面量会原样保留缩进空格，需要左对齐的文本建议用 `\n` 拼接或 `join`。
 
 ---
 
@@ -98,13 +106,13 @@ print(lines.join("\n"));
 
 ## 教学面板
 
-### Q12: 21 个教学面板从哪里开始看？
+### Q12: 40+ 教学面板从哪里开始看？
 
 推荐路径：先打开「**学习路径地图面板**」（视图菜单，或 Ctrl+Shift+L 打开学习中心），按 5 阶段渐进式学习——阶段零「首次接触」全部无前置解锁，从 welcome 导览 / code-journey 信息图 / token-puzzle 拼图开始。完成前置活动后自动解锁后续。也可直接看「代码生命旅程信息面板」了解从源码到输出的完整管线，再按兴趣跳转。
 
 ### Q13: 如何打开学习路径地图？
 
-视图菜单 → 「学习路径地图」，或 ActivityBar 左侧「学习」入口（EDUCATION 图标）→ 弹出学习中心对话框选择活动。学习路径地图是中央导航枢纽，将所有教学面板与 28 个学习活动组织为 5 阶段（首次接触 / 编译前端 / 执行引擎 / 深入理解 / 实战训练），共 21 个教学面板。进度自动持久化（JSON 文件），无前置条件限制可自由访问。
+视图菜单 → 「学习路径地图」，或 ActivityBar 左侧「学习」入口（EDUCATION 图标）→ 弹出学习中心对话框选择活动。学习路径地图是中央导航枢纽，将所有教学面板与 28 个学习活动组织为 5 阶段（首次接触 / 编译前端 / 执行引擎 / 深入理解 / 实战训练），共 40+ 教学面板。进度自动持久化（JSON 文件），无前置条件限制可自由访问。
 
 ### Q14: BugHunt 的难度分级是什么意思？
 
