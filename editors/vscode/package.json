@@ -1,0 +1,107 @@
+{
+  "name": "minilang",
+  "displayName": "MiniLang",
+  "description": "MiniLang 语言支持：语法高亮 / LSP（补全、悬停、定义、引用、重命名、签名帮助、语义着色、格式化、诊断）/ DAP 调试（断点、条件断点、命中条件、单步、变量查看与修改）",
+  "version": "0.1.0",
+  "publisher": "minilang",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Debuggers"
+  ],
+  "activationEvents": [
+    "onLanguage:minilang",
+    "onDebug"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "minilang",
+        "aliases": [
+          "MiniLang",
+          "minilang"
+        ],
+        "extensions": [
+          ".mini",
+          ".ml"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "minilang",
+        "scopeName": "source.minilang",
+        "path": "./syntaxes/minilang.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "MiniLang",
+      "properties": {
+        "minilang.lspPath": {
+          "type": "string",
+          "default": "minilang_lsp",
+          "description": "minilang_lsp 可执行文件路径（构建产物在 out/build/<preset>/cli/ 下，或安装后的 bin/ 目录）"
+        },
+        "minilang.dapPath": {
+          "type": "string",
+          "default": "minilang_dap",
+          "description": "minilang_dap 可执行文件路径"
+        }
+      }
+    },
+    "debuggers": [
+      {
+        "type": "minilang",
+        "label": "MiniLang Debug",
+        "languages": [
+          "minilang"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "program"
+            ],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "要调试的 MiniLang 源文件（.mini）",
+                "default": "${file}"
+              }
+            }
+          },
+          "attach": {
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "要调试的 MiniLang 源文件（进程内模型：attach 等价 launch）",
+                "default": "${file}"
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "minilang",
+            "request": "launch",
+            "name": "调试当前 MiniLang 文件",
+            "program": "${file}"
+          }
+        ]
+      }
+    ]
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^3.0.0"
+  },
+  "scripts": {
+    "package": "vsce package"
+  }
+}

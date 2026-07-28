@@ -1,0 +1,82 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "MiniLang",
+  "scopeName": "source.minilang",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#constants" },
+    { "include": "#numbers" },
+    { "include": "#functions" },
+    { "include": "#operators" },
+    { "include": "#identifiers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.double-slash.minilang", "match": "//.*$" },
+        { "name": "comment.block.minilang", "begin": "/\\*", "end": "\\*/" }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.minilang",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        { "name": "constant.character.escape.minilang", "match": "\\\\." },
+        {
+          "name": "meta.embedded.interpolation.minilang",
+          "begin": "\\{",
+          "end": "\\}",
+          "patterns": [{ "include": "$self" }]
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.minilang",
+          "match": "\\b(if|else|while|for|return|break|continue|try|catch|finally|throw|match|case|default|yield)\\b"
+        },
+        {
+          "name": "keyword.declaration.minilang",
+          "match": "\\b(var|fun|class|extends|enum|import|from|export|as)\\b"
+        },
+        {
+          "name": "keyword.operator.logical.minilang",
+          "match": "\\b(and|or|not)\\b"
+        },
+        {
+          "name": "keyword.other.minilang",
+          "match": "\\b(print|super)\\b"
+        }
+      ]
+    },
+    "types": {
+      "name": "storage.type.minilang",
+      "match": "\\b(int|float|bool|string|dict|array)\\b"
+    },
+    "constants": {
+      "name": "constant.language.minilang",
+      "match": "\\b(true|false|null)\\b"
+    },
+    "numbers": {
+      "name": "constant.numeric.minilang",
+      "match": "\\b\\d+(\\.\\d+)?\\b"
+    },
+    "functions": {
+      "name": "entity.name.function.minilang",
+      "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=\\()"
+    },
+    "operators": {
+      "name": "keyword.operator.minilang",
+      "match": "(==|!=|<=|>=|=>|->|[+\\-*/%<>=])"
+    },
+    "identifiers": {
+      "name": "variable.other.minilang",
+      "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b"
+    }
+  }
+}
