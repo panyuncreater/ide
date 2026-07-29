@@ -110,6 +110,7 @@ minilang_architecture.png
 /*.py
 /*.i
 /_*.txt
+/_*.bat
 /build_*.txt
 /test_*.txt
 /check_deps*.bat
