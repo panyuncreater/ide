@@ -269,7 +269,7 @@ private:
     std::unordered_map<std::string, std::unordered_set<std::string>> moduleExports_;
     // AUDIT-R5 R5 fix（快照导入）：模块导出名 → 模块内部槽位（内联期记录，detach 前）。
     // 导入方从此槽位拷贝快照到自身新分配的槽位，实现与 Interpreter 一致的快照语义
-    //（模块内变异不经导入方名称可见）。run-once 路径的重复导入也从此处拷贝。
+    // （模块内变异不经导入方名称可见）。run-once 路径的重复导入也从此处拷贝。
     std::unordered_map<std::string, std::unordered_map<std::string, int>> moduleExportSlots_;
     // AUDIT-R5 R5 fix：模块导出的“可变变量”名（仅 ExportStmt 包装的 VarDecl）。
     // 快照只适用于变量导出；函数/类导出经名称解析（functionChunks_/类注册），

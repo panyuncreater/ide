@@ -332,8 +332,8 @@ bool LearnerProgressStore::save() const {
     if (written != static_cast<qint64>(payload.size())) {
         sf.cancelWriting();
         // P2-UX fix: 记录写入不完整原因（磁盘满/权限等）
-        LOG_WARNING("Progress save failed: incomplete write to " + path.toStdString() +
-                        " (wrote " + std::to_string(written) + " of " + std::to_string(payload.size()) + " bytes)",
+        LOG_WARNING("Progress save failed: incomplete write to " + path.toStdString() + " (wrote " +
+                        std::to_string(written) + " of " + std::to_string(payload.size()) + " bytes)",
                     "Progress");
         return false;
     }

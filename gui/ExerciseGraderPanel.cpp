@@ -262,9 +262,8 @@ void ExerciseGraderPanel::onExerciseSelected(int idx) {
                                                         : QString::fromUtf8(tc.name.c_str()));
         nameItem->setTextAlignment(Qt::AlignCenter);
         testTable_->setItem(i, 0, nameItem);
-        testTable_->setItem(i, 1,
-                            new QTableWidgetItem(tc.hidden ? QString::fromUtf8("（隐藏）")
-                                                           : QString::fromUtf8(tc.code.c_str())));
+        testTable_->setItem(
+            i, 1, new QTableWidgetItem(tc.hidden ? QString::fromUtf8("（隐藏）") : QString::fromUtf8(tc.code.c_str())));
         auto* expItem = new QTableWidgetItem(tc.hidden ? QString::fromUtf8("（隐藏）")
                                                        : QString::fromUtf8(tc.expectedOutput.c_str()));
         expItem->setTextAlignment(Qt::AlignCenter);

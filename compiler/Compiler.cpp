@@ -726,4 +726,3 @@ void Compiler::compileStatement(ASTNode* node) {
         chunk_.writeOp(OpCode::OP_POP, node->line);
     }
 }
-

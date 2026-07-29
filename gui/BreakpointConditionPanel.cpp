@@ -408,19 +408,17 @@ void BreakpointConditionPanel::refreshLive() {
         int hitCount = controller_->getBreakpointHitCount(line);
         // R104: 类型列（Line / Logpoint）
         BreakpointKind kind = controller_->getBreakpointKind(line);
-        QString kindText = (kind == BreakpointKind::Logpoint) ? QString::fromUtf8("日志断点")
-                                                              : QString::fromUtf8("行断点");
+        QString kindText =
+            (kind == BreakpointKind::Logpoint) ? QString::fromUtf8("日志断点") : QString::fromUtf8("行断点");
         std::string logMsg = controller_->getLogpointMessage(line);
 
         breakpointTable_->setItem(i, 0, new QTableWidgetItem(QString::number(line)));
         breakpointTable_->setItem(i, 1, new QTableWidgetItem(kindText));
         QString condDisplay;
         if (kind == BreakpointKind::Logpoint) {
-            condDisplay = logMsg.empty() ? QString::fromUtf8("（无日志消息）")
-                                         : QString::fromUtf8(logMsg.c_str());
+            condDisplay = logMsg.empty() ? QString::fromUtf8("（无日志消息）") : QString::fromUtf8(logMsg.c_str());
             if (!cond.empty())
-                condDisplay += QString::fromUtf8(" [if ") + QString::fromUtf8(cond.c_str()) +
-                               QString::fromUtf8("]");
+                condDisplay += QString::fromUtf8(" [if ") + QString::fromUtf8(cond.c_str()) + QString::fromUtf8("]");
         } else {
             condDisplay = cond.empty() ? QString::fromUtf8("（无条件）") : QString::fromUtf8(cond.c_str());
         }
@@ -453,8 +451,8 @@ void BreakpointConditionPanel::refreshLive() {
     std::sort(sortedFuncBps.begin(), sortedFuncBps.end());
     for (const auto& name : sortedFuncBps) {
         int hitCnt = controller_->getFunctionBreakpointHitCount(name);
-        QString itemText = QString::fromUtf8(name.c_str()) + QString::fromUtf8("  (命中: ") +
-                           QString::number(hitCnt) + QString::fromUtf8(")");
+        QString itemText = QString::fromUtf8(name.c_str()) + QString::fromUtf8("  (命中: ") + QString::number(hitCnt) +
+                           QString::fromUtf8(")");
         functionBpList_->addItem(itemText);
     }
 

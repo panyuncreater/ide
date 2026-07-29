@@ -104,7 +104,6 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
     // 用于 OP_RETURN 末帧返回的 epilogue 标签
     Label epilogue = a.new_label();
 
-
     // ---- C++ 辅助函数调用代码生成 lambda 已提取为成员函数 ----
     // 详见 JITCodeGenHelpers.cpp：emitCallBinaryHelper / emitCallUnaryHelper /
     // emitCallOrderedCompare / emitBuildArray / emitIndexGet / emitIndexSetLocal /
@@ -113,7 +112,6 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
     // emitMemberSetLocal / emitMethodCall / emitCheckInt / emitRecordTypeFeedback /
     // emitFloatBinaryArith / emitLen / emitDupN / emitLoadMutated / emitIndexSet /
     // emitWritebackVar / emitWritebackLocal
-
 
     // ---- 建立函数表：functionName → (entryLabel, localCount, arity) ----
     // R141: 编译期需要知道每个函数的 localCount（用于预分配局部变量栈槽）
@@ -512,7 +510,8 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
                 // C++ 辅助路径：调用 jitAddGeneric(left, right)
                 a.bind(genericAdd);
                 emitRecordTypeFeedback(a, x86::rax, chunkIdx);
-                emitCallBinaryHelper(a, epilogue, reinterpret_cast<void*>(&jitAddGeneric), /*needCtx*/ true, /*checkError*/ true);
+                emitCallBinaryHelper(a, epilogue, reinterpret_cast<void*>(&jitAddGeneric), /*needCtx*/ true,
+                                     /*checkError*/ true);
                 a.bind(addEnd);
                 ip += 1;
                 break;
@@ -563,7 +562,8 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
                 }
                 a.bind(genericSub);
                 emitRecordTypeFeedback(a, x86::rax, chunkIdx);
-                emitCallBinaryHelper(a, epilogue, reinterpret_cast<void*>(&jitSubGeneric), /*needCtx*/ true, /*checkError*/ true);
+                emitCallBinaryHelper(a, epilogue, reinterpret_cast<void*>(&jitSubGeneric), /*needCtx*/ true,
+                                     /*checkError*/ true);
                 a.bind(subEnd);
                 ip += 1;
                 break;
@@ -613,7 +613,8 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
                 }
                 a.bind(genericMul);
                 emitRecordTypeFeedback(a, x86::rax, chunkIdx);
-                emitCallBinaryHelper(a, epilogue, reinterpret_cast<void*>(&jitMulGeneric), /*needCtx*/ true, /*checkError*/ true);
+                emitCallBinaryHelper(a, epilogue, reinterpret_cast<void*>(&jitMulGeneric), /*needCtx*/ true,
+                                     /*checkError*/ true);
                 a.bind(mulEnd);
                 ip += 1;
                 break;

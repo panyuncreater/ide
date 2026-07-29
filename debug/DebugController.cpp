@@ -670,7 +670,6 @@ bool DebugController::checkFunctionBreakpoint(const std::string& functionName, i
     // 注：functionBreakpoints_ 由 pauseMutex_ 保护，但读取 emptiness 需要锁。
     // 此处先取锁内快照判断，避免漏检。
     FunctionBreakpointInfo snapshot;
-    bool matched = false;
     {
         std::lock_guard<std::mutex> lock(pauseMutex_);
         if (!running_ || stopped_)
@@ -679,7 +678,6 @@ bool DebugController::checkFunctionBreakpoint(const std::string& functionName, i
         if (it == functionBreakpoints_.end())
             return false;
         snapshot = it.value();
-        matched = true;
     }
 
     // 条件求值（锁外，避免持锁回调死锁）

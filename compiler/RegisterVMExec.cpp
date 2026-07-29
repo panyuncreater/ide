@@ -7,7 +7,6 @@
 //       executeCoroutineOps (REG_YIELD)。
 // ============================================================
 
-#include "compiler/RegisterVM.h"
 #include "common/ErrorFormat.h"
 #include "common/ErrorMessages.h"
 #include "common/Logger.h"
@@ -15,6 +14,7 @@
 #include "common/TypeChecker.h"
 #include "common/Utf8Utils.h"
 #include "compiler/RegisterBytecode.h"
+#include "compiler/RegisterVM.h"
 #include "interpreter/BuiltinMethods.h"
 #include "interpreter/NumericUtils.h"
 #include <algorithm>
@@ -242,7 +242,7 @@ arithDone:
 // ------------------------------------------------------------
 // 方法查找仿 executeMethodCallImpl 的继承链循环（含 methodCache），
 // 命中后直接复用 executeCallImpl 注入方法帧：fullArgRegs=[s1,s2]
-//（this=左操作数寄存器，arg=右操作数寄存器），returnReg=dst，
+// （this=左操作数寄存器，arg=右操作数寄存器），returnReg=dst，
 // returnOffset=4（REG_ADD 系列固定 4 字节）。方法 REG_RETURN 时
 // 结果自动写入调用者帧的 reg(dst)。
 // ============================================================
@@ -310,10 +310,9 @@ bool RegisterVM::tryOperatorOverload(size_t& ip, RegOp op, uint8_t dst, uint8_t 
     }
 
     // 与 Interpreter/StackVM 一致：运算符方法必须恰好 1 个参数
-    //（RegisterVM 方法 chunk 的 arity 含 this，故要求 arity==2）
+    // （RegisterVM 方法 chunk 的 arity 含 this，故要求 arity==2）
     auto chunkIt = functionChunks_.find(foundFunName);
-    if (chunkIt != functionChunks_.end() &&
-        (chunkIt->second.arity != 2 || chunkIt->second.requiredArity != 2)) {
+    if (chunkIt != functionChunks_.end() && (chunkIt->second.arity != 2 || chunkIt->second.requiredArity != 2)) {
         outResult = runtimeError(std::string("运算符方法 ") + dunderName + " 必须恰好接受 1 个参数");
         return true;
     }
@@ -332,7 +331,7 @@ bool RegisterVM::tryOperatorOverload(size_t& ip, RegOp op, uint8_t dst, uint8_t 
         frames_.back().isMethodCall = true;
         frames_.back().isInitCall = false;
         // receiverReg 保持 -1：运算符方法内 this 字段变异不写回接收者
-        //（与 Interpreter 左值拷贝/StackVM receiverLocalSlot=-1 语义一致）
+        // （与 Interpreter 左值拷贝/StackVM receiverLocalSlot=-1 语义一致）
     }
     ip = newIp;
     notifyStep(ip, op);
@@ -435,7 +434,8 @@ VMResult RegisterVM::executeVars(RegOp op, size_t& ip) {
             }
             const std::string& name = chunk.constants[nameIdx].stringVal();
             auto gsIt = globalNameToSlot_.find(name);
-            if (gsIt != globalNameToSlot_.end() && gsIt->second >= 0 && gsIt->second < static_cast<int>(globalSlots_.size())) {
+            if (gsIt != globalNameToSlot_.end() && gsIt->second >= 0 &&
+                gsIt->second < static_cast<int>(globalSlots_.size())) {
                 reg(dst) = globalSlots_[gsIt->second];
             } else {
                 auto it = globals_.find(name);
@@ -471,7 +471,8 @@ VMResult RegisterVM::executeVars(RegOp op, size_t& ip) {
             }
             const std::string& name = chunk.constants[nameIdx].stringVal();
             auto gsIt = globalNameToSlot_.find(name);
-            if (gsIt != globalNameToSlot_.end() && gsIt->second >= 0 && gsIt->second < static_cast<int>(globalSlots_.size())) {
+            if (gsIt != globalNameToSlot_.end() && gsIt->second >= 0 &&
+                gsIt->second < static_cast<int>(globalSlots_.size())) {
                 globalSlots_[gsIt->second] = reg(src);
             } else {
                 // 槽位表未命中，回退到 globals_ 名称表查找（已声明过的全局变量）
@@ -501,7 +502,8 @@ VMResult RegisterVM::executeVars(RegOp op, size_t& ip) {
             }
             const std::string& name = chunk.constants[nameIdx].stringVal();
             auto gsIt = globalNameToSlot_.find(name);
-            if (gsIt != globalNameToSlot_.end() && gsIt->second >= 0 && gsIt->second < static_cast<int>(globalSlots_.size())) {
+            if (gsIt != globalNameToSlot_.end() && gsIt->second >= 0 &&
+                gsIt->second < static_cast<int>(globalSlots_.size())) {
                 globalSlots_[gsIt->second] = reg(src);
             } else {
                 globals_[name] = reg(src);
@@ -1185,7 +1187,7 @@ VMResult RegisterVM::executeTryThrowOps(RegOp op, size_t& ip) {
         // 会漏关 try 内嵌套作用域复用的低槽位 upvalue；后改 regBase=0 全量关闭
         // 又把 try 之前创建的闭包 upvalue 误关为快照。现改为记录当前
         // upvalueOpenSeq_ 水位，catch 命中时仅关闭 try 期间开启的 upvalue
-        //（见 RegisterVM::closeFrameUpvaluesSince），与槽位号无关。
+        // （见 RegisterVM::closeFrameUpvaluesSince），与槽位号无关。
         tryStack_.push_back({catchOffset, frames_.size() - 1, upvalueOpenSeq_});
         ip += 3;
         break;
@@ -1281,7 +1283,8 @@ VMResult RegisterVM::executeWritebackOps(RegOp op, size_t& ip) {
             }
             const std::string& name = chunk.constants[nameIdx].stringVal();
             auto gsIt = globalNameToSlot_.find(name);
-            if (gsIt != globalNameToSlot_.end() && gsIt->second >= 0 && gsIt->second < static_cast<int>(globalSlots_.size())) {
+            if (gsIt != globalNameToSlot_.end() && gsIt->second >= 0 &&
+                gsIt->second < static_cast<int>(globalSlots_.size())) {
                 globalSlots_[gsIt->second] = mutated;
             } else {
                 globals_[name] = mutated;
@@ -1305,7 +1308,8 @@ VMResult RegisterVM::executeWritebackOps(RegOp op, size_t& ip) {
             }
             const std::string& name = chunk.constants[nameIdx].stringVal();
             auto gsIt = globalNameToSlot_.find(name);
-            if (gsIt != globalNameToSlot_.end() && gsIt->second >= 0 && gsIt->second < static_cast<int>(globalSlots_.size())) {
+            if (gsIt != globalNameToSlot_.end() && gsIt->second >= 0 &&
+                gsIt->second < static_cast<int>(globalSlots_.size())) {
                 globalSlots_[gsIt->second] = mutated;
             } else {
                 globals_[name] = mutated;
@@ -1425,9 +1429,9 @@ VMResult RegisterVM::executeTypeCheckOps(RegOp op, size_t& ip) {
                     break;
                 }
             }
-            return runtimeError(ErrorFormat::formatStd(ErrorMessages::kTypeAnnotationViolationFmtStd, annotation,
-                                                       val.typeName()),
-                                DiagCodes::kTypeMismatch);
+            return runtimeError(
+                ErrorFormat::formatStd(ErrorMessages::kTypeAnnotationViolationFmtStd, annotation, val.typeName()),
+                DiagCodes::kTypeMismatch);
         }
         ip += 4;
         break;

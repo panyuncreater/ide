@@ -9,8 +9,8 @@
 
 #ifdef MINILANG_USE_JIT
 
-#include "compiler/JITInternal.h"
 #include "common/RuntimeLimits.h"
+#include "compiler/JITInternal.h"
 #include "interpreter/Value.h"
 #include <algorithm>
 #include <cstdint>

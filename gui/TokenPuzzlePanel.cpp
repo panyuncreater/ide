@@ -10,7 +10,7 @@
 #include "gui/TokenPuzzlePanel.h"
 #include "gui/GuiTextUtils.h" // R75: monospaceFont() 跨机器字体回退链
 #include "gui/I18n.h"
-#include "gui/LearnerProgress.h" // P0-2 fix (F7): 关卡星级持久化
+#include "gui/LearnerProgress.h"      // P0-2 fix (F7): 关卡星级持久化
 #include "gui/ProgressSaveFeedback.h" // P2-UX fix: save 失败 toast 通知
 #include "gui/TokenPuzzleData.h"
 

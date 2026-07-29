@@ -119,11 +119,11 @@ private:
     QLabel* optSummary_ = nullptr;
     // 拓展二期·教学：IR 优化预测练习模式——开启后隐藏优化后 IR，
     // 学生先预测优化后指令数再提交揭示，强化对 pass 效果的主动思考
-    class QCheckBox* predictCheck_ = nullptr;    // 预测模式开关
-    class QSpinBox* predictSpin_ = nullptr;      // 预测的优化后指令数
-    QPushButton* predictSubmitBtn_ = nullptr;    // 提交预测按钮
-    QLabel* predictResultLabel_ = nullptr;       // 判定结果（✅/❌ + 讲解）
-    bool predictMode_ = false;                   // 当前是否处于预测模式
+    class QCheckBox* predictCheck_ = nullptr; // 预测模式开关
+    class QSpinBox* predictSpin_ = nullptr;   // 预测的优化后指令数
+    QPushButton* predictSubmitBtn_ = nullptr; // 提交预测按钮
+    QLabel* predictResultLabel_ = nullptr;    // 判定结果（✅/❌ + 讲解）
+    bool predictMode_ = false;                // 当前是否处于预测模式
 
     // 子页 3：当前源码 IR
     QTextBrowser* currentIrBrowser_ = nullptr;

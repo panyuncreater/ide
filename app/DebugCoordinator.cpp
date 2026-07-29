@@ -131,21 +131,21 @@ void DebugCoordinator::setupDebug(const QSet<int>& breakpoints, const QMap<int, 
     // isPaused() 后调用（worker 阻塞在 pauseCV_，写入是安全窗口）。
     // Environment::set 沿作用域链查找并更新（含 boundInstance 字段回退），
     // 找不到返回 false——调试改值不新建变量（与 VM 路径语义对齐）。
-    debugger_->setVariableWriteCallback([interpreter = interpreter_](const std::string& name,
-                                                                    const Value& value) -> bool {
-        try {
-            auto env = interpreter->currentEnvironmentShared();
-            if (!env)
+    debugger_->setVariableWriteCallback(
+        [interpreter = interpreter_](const std::string& name, const Value& value) -> bool {
+            try {
+                auto env = interpreter->currentEnvironmentShared();
+                if (!env)
+                    return false;
+                return env->set(name, value);
+            } catch (const std::exception& e) {
+                Logger::Warning(std::string("变量写回调异常: ") + e.what(), "Debugger");
                 return false;
-            return env->set(name, value);
-        } catch (const std::exception& e) {
-            Logger::Warning(std::string("变量写回调异常: ") + e.what(), "Debugger");
-            return false;
-        } catch (...) {
-            Logger::Warning("变量写回调发生未知异常", "Debugger");
-            return false;
-        }
-    });
+            } catch (...) {
+                Logger::Warning("变量写回调发生未知异常", "Debugger");
+                return false;
+            }
+        });
 
     debugger_->setCallStackCallback([interpreter = interpreter_]() -> std::vector<CallStackEntry> {
         std::vector<CallStackEntry> result;

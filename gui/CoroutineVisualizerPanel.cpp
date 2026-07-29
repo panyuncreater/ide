@@ -260,9 +260,9 @@ void CoroutineVisualizerPanel::onRunAllBackends() {
 namespace {
 
 /// 将服务层 BackendExecDetail 转换为面板内部 BackendExecResult（含 traceHtml）
-CoroutineVisualizerPanel::BackendExecResult
-convertDetailToPanelResult(const ::BackendExecDetail& sd, const QString& coroutineState,
-                           const QString& compileStageTemplate) {
+CoroutineVisualizerPanel::BackendExecResult convertDetailToPanelResult(const ::BackendExecDetail& sd,
+                                                                       const QString& coroutineState,
+                                                                       const QString& compileStageTemplate) {
     CoroutineVisualizerPanel::BackendExecResult r;
     r.output = QString::fromUtf8(sd.output.c_str());
     r.elapsedMs = static_cast<qint64>(sd.elapsedMs);
@@ -270,16 +270,15 @@ convertDetailToPanelResult(const ::BackendExecDetail& sd, const QString& corouti
     r.coroutineState = coroutineState;
 
     QString compileStage;
-    if (!sd.success && (sd.errorPrefix == "词法错误" || sd.errorPrefix == "语法错误" ||
-                         sd.errorPrefix == "编译错误")) {
+    if (!sd.success && (sd.errorPrefix == "词法错误" || sd.errorPrefix == "语法错误" || sd.errorPrefix == "编译错误")) {
         // 编译阶段错误
         QString errHtml = QString::fromUtf8(sd.errorMsg.c_str()).toHtmlEscaped();
         compileStage = QStringLiteral("❌ %1: %2").arg(QString::fromUtf8(sd.errorPrefix.c_str()), errHtml);
         r.status = mlTr("❌ ") + QString::fromUtf8(sd.errorPrefix.c_str()) + QString::fromUtf8(": ") +
                    QString::fromUtf8(sd.errorMsg.c_str());
         r.success = false;
-        r.traceHtml = buildTraceHtml(compileStage, QStringLiteral(""), r.coroutineState, r.instrCount, r.elapsedMs,
-                                     false);
+        r.traceHtml =
+            buildTraceHtml(compileStage, QStringLiteral(""), r.coroutineState, r.instrCount, r.elapsedMs, false);
         return r;
     }
 
@@ -298,8 +297,7 @@ convertDetailToPanelResult(const ::BackendExecDetail& sd, const QString& corouti
         r.status = mlTr("✅ 成功");
         r.success = true;
     }
-    r.traceHtml =
-        buildTraceHtml(compileStage, execStage, r.coroutineState, r.instrCount, r.elapsedMs, hasRuntimeError);
+    r.traceHtml = buildTraceHtml(compileStage, execStage, r.coroutineState, r.instrCount, r.elapsedMs, hasRuntimeError);
     return r;
 }
 

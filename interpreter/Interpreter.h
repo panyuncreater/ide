@@ -38,9 +38,9 @@
 
 #include "Diagnostic.h"
 #include "ast/ASTNode.h"
-#include "common/IBackend.h" // ARCH-09 fix: 后端抽象接口
+#include "common/IBackend.h"   // ARCH-09 fix: 后端抽象接口
 #include "common/ModulePath.h" // AUDIT-R5 R6 fix: 模块路径缓存键规范化单一事实源
-#include "common/Result.h"   // R98 W2: invokeClosureSync 返回 Result<Value>
+#include "common/Result.h"     // R98 W2: invokeClosureSync 返回 Result<Value>
 #include "common/RuntimeLimits.h"
 #include "interpreter/BuiltinMethods.h" // R164 fix: handleCoroutineMethod 返回 BuiltinMethodResult
 #include "interpreter/CallFrame.h"      // ARCH-02 fix: CallFrame 拆出，避免传递依赖
@@ -379,10 +379,13 @@ private:
     // execute() 开头清空（旧环境链已销毁，池中 Environment 可能被新链引用作 parent）。
     std::vector<std::shared_ptr<Environment>> envPool_;
     // MEM-01 fix: shared_ptr 共享所有权，worker 线程持有的 Interpreter 保持 debugger 存活
-    // AUDIT-R4 BUG-15 fix: 改为 atomic<shared_ptr>——setDebugger() 在主线程写入，
-    // checkBreak()/visit* 在 worker 线程读取，原普通 shared_ptr 构成数据竞争（UB）。
-    // C++20 std::atomic<std::shared_ptr> 保证原子发布/读取，无需外部锁。
-    std::atomic<std::shared_ptr<DebugController>> debugger_; // 调试控制器（可为 nullptr）
+    // AUDIT-R4 BUG-15 fix: setDebugger() 在主线程写入，checkBreak()/visit* 在 worker 线程读取，
+    // 原普通 shared_ptr 构成数据竞争（UB）。原方案用 std::atomic<std::shared_ptr>，
+    // 但 macOS Clang libc++ 要求 T 满足 is_trivially_copyable（shared_ptr 不满足），
+    // 编译失败。改用 mutex 保护的 shared_ptr——debugMode_ atomic<bool> 作为热路径 fast-path
+    // 短路，仅调试模式启用时才进入加锁读，热路径无锁开销。
+    std::shared_ptr<DebugController> debugger_; // 调试控制器（可为 nullptr）
+    mutable std::mutex debuggerMutex_;          // 保护 debugger_ 的读写
     // QT-R-02 fix: debugMode_ 改为 atomic，消除主线程 setDebugMode() 与 worker 线程
     // checkBreak() 读操作之间的数据竞争。A6 fix 已确保主线程不在 worker 运行时
     // 调用 setDebugMode，但 atomic 提供额外的内存可见性保证和防御性保护。
@@ -404,8 +407,8 @@ private:
     // 含潜在堆分配，循环 print 密集的教学程序上每行输出一次。改为锁内拷贝
     // shared_ptr（仅 refcount 递增，无堆分配），调用语义不变。
     std::shared_ptr<const std::function<void(const std::string&)>> outputCallback_; // 输出回调
-    std::function<std::string(const std::string&)> inputCallback_; // 输入回调（input() 函数）
-    std::function<std::string(const std::string&)> moduleLoader_;  // F12: 模块加载回调
+    std::function<std::string(const std::string&)> inputCallback_;                  // 输入回调（input() 函数）
+    std::function<std::string(const std::string&)> moduleLoader_;                   // F12: 模块加载回调
     // BUG-REPL-AUDIT-1 fix: 模块文件 mtime 检查回调
     std::function<int64_t(const std::string&)> moduleMtimeChecker_;
     // A6 fix: callback 跨线程 mutex 保护。同一 Interpreter 实例被 worker 线程（execute）
@@ -462,7 +465,7 @@ private:
 
     // ---- B1 TCO：Interpreter 尾调用蹦床上下文 ----
     // 对齐三条 VM 路径的 TCO 帧复用：visitReturnStmt 在识别到自尾调用
-    //（TCO::identifyTailCall，与 VM 同一单一事实源）且不在 try 块内时，
+    // （TCO::identifyTailCall，与 VM 同一单一事实源）且不在 try 块内时，
     // 求值实参后抛 TailCallSignal，由 callNamedFunction/invokeMethod 的蹦床
     // 循环捕获并帧复用重新执行函数体，C++ 递归深度恒定。
     // 安全不变量：
@@ -619,7 +622,7 @@ private:
     /// 拓展二期·语言（运算符重载）：instance 算术分派 __add/__sub/__mul/__div/__mod。
     /// 左操作数为 instance 且类（含继承链）定义了对应 dunder 方法时调用
     /// obj.__op(right) 并将返回值写入 out，返回 true；未定义返回 false
-    ///（调用方回退到原“算术运算需要数值类型”报错）。
+    /// （调用方回退到原“算术运算需要数值类型”报错）。
     /// 限制（MVP，三后端一致）：方法内不支持 super 调用；方法必须恰好 1 参。
     bool tryOperatorOverload(BinOpType opType, Value& left, Value& right, int line, int col, Value& out);
 
@@ -646,6 +649,15 @@ private:
     /// @return 类信息的 const 引用（成功路径）
     /// @note 失败路径抛出 RuntimeError 异常，不会返回
     const ClassInfo& lookupClassSafely(const std::string& name, const std::string& notFoundMsg, int line, int col);
+
+    /// 线程安全地获取 debugger_ 的 shared_ptr 副本。
+    /// AUDIT-R4 BUG-15 fix: 替代 std::atomic<std::shared_ptr>::load（macOS Clang 不支持）。
+    /// 调用方持引用期间 debugger 不会被分离。checkBreak 热路径由 debugMode_ atomic<bool>
+    /// 短路，仅调试模式启用时才调用此方法加锁读取。
+    std::shared_ptr<DebugController> debugger() const {
+        std::lock_guard<std::mutex> lock(debuggerMutex_);
+        return debugger_;
+    }
 
     /// 查找类的方法（含继承链）
     FunDecl* findMethod(const ClassInfo& cls, const std::string& methodName);
@@ -701,9 +713,9 @@ private:
             return;
         }
         if (!typeMatch(val, annotation)) {
-            runtimeError(ErrorFormat::formatStd(ErrorMessages::kTypeAnnotationViolationFmtStd, annotation,
-                                                  val.typeName()),
-                         line, col, DiagCodes::kTypeMismatch);
+            runtimeError(
+                ErrorFormat::formatStd(ErrorMessages::kTypeAnnotationViolationFmtStd, annotation, val.typeName()), line,
+                col, DiagCodes::kTypeMismatch);
         }
     }
 
@@ -809,8 +821,7 @@ private:
     /// 将模块导出名称导入到 currentEnv_。importAll=true 时导入全部导出名称；
     /// 否则按 node.names 列表原子性导入（先全验证后全定义，避免部分失败导致环境不一致）。
     /// BUG-M4 fix: cacheKey 与 loadModuleOrGetCached 入键一致。
-    void importNamesFromModule(const std::string& cacheKey, ImportStmt& node,
-                               std::shared_ptr<Environment>& moduleEnv);
+    void importNamesFromModule(const std::string& cacheKey, ImportStmt& node, std::shared_ptr<Environment>& moduleEnv);
 
     // ---- B1 fix: 闭包仅捕获自由变量（静态分析 AST）----
 

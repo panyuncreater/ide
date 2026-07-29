@@ -73,34 +73,34 @@ enum class GcMode : uint8_t {
 /// NaN-box 位模式快照（替代面板直接调用 NaNBox::fromInt(...).rawBits()）
 /// 所有字段为值类型，调用方无需依赖 NaNBox 类。
 struct NaNBoxSnapshot {
-    uint64_t bits = 0;        // 原始 64 位位模式
-    std::string bitsHex;      // "0x" + 16 位十六进制（带前导零）
-    std::string bitsBinary;   // 64 字符 "0/1" 字符串（最高位在索引 0）
-    std::string tagName;      // "FLOAT" / "INT" / "BOOL" / "NUL" / "POINTER"
-    int tagValue = -1;        // NaNBox::Tag 枚举值（0-4）；-1 表示未知
+    uint64_t bits = 0;      // 原始 64 位位模式
+    std::string bitsHex;    // "0x" + 16 位十六进制（带前导零）
+    std::string bitsBinary; // 64 字符 "0/1" 字符串（最高位在索引 0）
+    std::string tagName;    // "FLOAT" / "INT" / "BOOL" / "NUL" / "POINTER"
+    int tagValue = -1;      // NaNBox::Tag 枚举值（0-4）；-1 表示未知
 };
 
 /// 堆对象元信息快照（替代面板直接访问 RefCounted* p = v.asPointer(); p->type）
 struct HeapObjectSnapshot {
-    bool isPointer = false;             // 是否为堆指针类型
-    std::string structName;             // C++ 结构名（"ArrayData" / "DictData" / "InstanceData" 等）
-    std::string addressHex;             // "0x" + 16 位十六进制指针
-    size_t fieldCount = 0;              // 元素数/字段数（数组=元素数，字典/实例=字段数，闭包=capturedVars）
-    std::string valueTypeName;          // "VAL_INT" / "VAL_STRING" / "VAL_ARRAY" / ...
-    int valueType = -1;                 // ValueType 枚举值（与 Value::getType() 一致）
-    size_t refCount = 0;                // 引用计数（RefCounted::useCount()），仅 isPointer 时有效
+    bool isPointer = false;    // 是否为堆指针类型
+    std::string structName;    // C++ 结构名（"ArrayData" / "DictData" / "InstanceData" 等）
+    std::string addressHex;    // "0x" + 16 位十六进制指针
+    size_t fieldCount = 0;     // 元素数/字段数（数组=元素数，字典/实例=字段数，闭包=capturedVars）
+    std::string valueTypeName; // "VAL_INT" / "VAL_STRING" / "VAL_ARRAY" / ...
+    int valueType = -1;        // ValueType 枚举值（与 Value::getType() 一致）
+    size_t refCount = 0;       // 引用计数（RefCounted::useCount()），仅 isPointer 时有效
 };
 
 /// GC 统计快照（替代面板直接调用 GcManager::instance().trackedCount() 等）
 struct GcStatsSnapshot {
-    size_t trackedCount = 0;             // 当前 tracked 节点数
-    size_t totalGcCount = 0;             // 累计 GC 次数
-    size_t lastMarkedCount = 0;          // 上次 GC 标记的可达节点数
-    size_t lastCollectedCount = 0;       // 上次 GC 回收的孤岛数
-    GcMode mode = GcMode::RefCountWithCycleGc;       // 当前 GcMode
-    GcPhase phase = GcPhase::Idle;                   // 当前 GcPhase
-    size_t allocationsSinceLastGc = 0;   // 自上次 GC 后累计分配数
-    size_t allocationThreshold = 0;      // 增量触发阈值
+    size_t trackedCount = 0;                   // 当前 tracked 节点数
+    size_t totalGcCount = 0;                   // 累计 GC 次数
+    size_t lastMarkedCount = 0;                // 上次 GC 标记的可达节点数
+    size_t lastCollectedCount = 0;             // 上次 GC 回收的孤岛数
+    GcMode mode = GcMode::RefCountWithCycleGc; // 当前 GcMode
+    GcPhase phase = GcPhase::Idle;             // 当前 GcPhase
+    size_t allocationsSinceLastGc = 0;         // 自上次 GC 后累计分配数
+    size_t allocationThreshold = 0;            // 增量触发阈值
 };
 
 // ============================================================

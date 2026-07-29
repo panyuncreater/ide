@@ -120,7 +120,7 @@ VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
             vmLastPausedLine_ = 0;
             // AUDIT-R5 BUG-06 fix: 清除 stop() 置位的条件求值停止标志。
             // 原实现仅在 reset() 中清除，若用户 stop() 后直接再次步进/运行
-            //（不经 prepareRun → reset 路径），残留标志会短路 IdeController 注入的
+            // （不经 prepareRun → reset 路径），残留标志会短路 IdeController 注入的
             // 条件求值器（isCondStopRequested 检查），所有条件断点静默失效。
             vmCondStopRequested_.store(false, std::memory_order_relaxed);
         }

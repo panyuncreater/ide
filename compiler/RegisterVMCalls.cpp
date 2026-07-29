@@ -9,7 +9,6 @@
 //       createCoroutineValue, callCoroutineNext, dispatchCoroutineBuiltin。
 // ============================================================
 
-#include "compiler/RegisterVM.h"
 #include "common/ErrorFormat.h"
 #include "common/ErrorMessages.h"
 #include "common/Logger.h"
@@ -17,6 +16,7 @@
 #include "common/TypeChecker.h"
 #include "common/Utf8Utils.h"
 #include "compiler/RegisterBytecode.h"
+#include "compiler/RegisterVM.h"
 #include "interpreter/BuiltinMethods.h"
 #include "interpreter/NumericUtils.h"
 #include <algorithm>
@@ -97,7 +97,7 @@ VMResult RegisterVM::executeCallOps(RegOp op, size_t& ip) {
     case RegOp::REG_TAIL_CALL: {
         // L18 eng-tailcall: 互递归尾调用。布局同 REG_CALL（dst+nameIdx 2B+argCount+args），
         // 后随 REG_RETURN dst。目标可帧复用则 TCO，否则降级为普通 executeCallImpl
-        //（结果写 dst，返回后执行后随 REG_RETURN，语义与 CALL+RETURN 完全等价）。
+        // （结果写 dst，返回后执行后随 REG_RETURN，语义与 CALL+RETURN 完全等价）。
         uint8_t dst = chunk.code[ip + 1];
         uint16_t nameIdx = chunk.code[ip + 2] | (chunk.code[ip + 3] << 8);
         uint8_t argCount = chunk.code[ip + 4];
@@ -112,8 +112,8 @@ VMResult RegisterVM::executeCallOps(RegOp op, size_t& ip) {
 
         RegCallFrame& fr = frames_.back();
         auto itf = functionChunks_.find(funName);
-        bool canReuse = itf != functionChunks_.end() && !itf->second.isGenerator && !fr.isMethodCall &&
-                        !fr.chunk->isGenerator;
+        bool canReuse =
+            itf != functionChunks_.end() && !itf->second.isGenerator && !fr.isMethodCall && !fr.chunk->isGenerator;
         if (canReuse) {
             const RegBytecodeChunk& target = itf->second;
             if (argCount < target.requiredArity || argCount > target.arity) {
@@ -497,7 +497,8 @@ VMResult RegisterVM::executeCallImpl(size_t& ip, const std::string& funName, uin
         uint8_t adjustedArgCount = argCount;
         std::vector<Value> defaults;
         if (!fillDefaultArgs(calleeChunk, adjustedArgCount, funName, defaults)) {
-            return runtimeError(formatParamError(isMethodCall, funName, argCount, calleeChunk), DiagCodes::kArityMismatch);
+            return runtimeError(formatParamError(isMethodCall, funName, argCount, calleeChunk),
+                                DiagCodes::kArityMismatch);
         }
         // 创建新帧
         RegCallFrame newFrame;
@@ -594,8 +595,8 @@ VMResult RegisterVM::tryCallBuiltinOrClass(size_t& ip, const std::string& funNam
     if (isHigherOrderBuiltin(funName)) {
         // 构造闭包调用回调——dstReg 作为返回值中转寄存器（调用者已分配，
         // 闭包执行期间 caller 帧不执行指令，无副作用）
-        ClosureInvoker invoke = [this, dstReg, line](const Value& closure, const Value* a, size_t ac,
-                                                     int /*ln*/, int /*col*/) -> Result<Value> {
+        ClosureInvoker invoke = [this, dstReg, line](const Value& closure, const Value* a, size_t ac, int /*ln*/,
+                                                     int /*col*/) -> Result<Value> {
             Value res;
             VMResult r = invokeClosureSync(closure, a, ac, dstReg, line, 0, res);
             if (r != VMResult::VM_OK) {
@@ -709,8 +710,7 @@ VMResult RegisterVM::tryCallBuiltinOrClass(size_t& ip, const std::string& funNam
     if (classIt != classInfo_.end()) {
         return executeClassNewImpl(ip, funName, argCount, dstReg, argRegs);
     }
-    return runtimeError(ErrorFormat::formatStd(ErrorMessages::kUndefinedFunctionFmtStd, funName),
-                        "undefined-function");
+    return runtimeError(ErrorFormat::formatStd(ErrorMessages::kUndefinedFunctionFmtStd, funName), "undefined-function");
 }
 
 void RegisterVM::populateCallFrameUpvalues(RegCallFrame& newFrame, const std::shared_ptr<VMClosureData>& closureData,
@@ -988,7 +988,8 @@ VMResult RegisterVM::executeReturnImpl(size_t& ip, Value result) {
             // 写回到接收者的原始位置（全局变量）
             if (!receiverVarName.empty()) {
                 auto gsIt = globalNameToSlot_.find(receiverVarName);
-                if (gsIt != globalNameToSlot_.end() && gsIt->second >= 0 && gsIt->second < static_cast<int>(globalSlots_.size())) {
+                if (gsIt != globalNameToSlot_.end() && gsIt->second >= 0 &&
+                    gsIt->second < static_cast<int>(globalSlots_.size())) {
                     Value& globalVal = globalSlots_[gsIt->second];
                     if (globalVal.isInstance()) {
                         if (directReplace) {
@@ -1053,8 +1054,10 @@ VMResult RegisterVM::executeMethodCallImpl(size_t& ip, const std::string& method
     Value builtinResult;
     bool handled = callBuiltinMethod(obj, methodName, args, builtinResult);
     if (handled) {
-        if (hasError_) return VMResult::VM_RUNTIME_ERROR;
-        if (tryStack_.size() < savedTryStackSize) return VMResult::VM_EXCEPTION_THROW;
+        if (hasError_)
+            return VMResult::VM_RUNTIME_ERROR;
+        if (tryStack_.size() < savedTryStackSize)
+            return VMResult::VM_EXCEPTION_THROW;
         lastMutatedReceiverReg_ = objReg;
         reg(dstReg) = std::move(builtinResult);
         ip += 6 + argCount;
@@ -1072,11 +1075,15 @@ VMResult RegisterVM::executeMethodCallImpl(size_t& ip, const std::string& method
                 }
                 SmallArgs<uint8_t> fullArgRegs;
                 fullArgRegs.push_back(objReg);
-                for (uint8_t i = 0; i < argCount; ++i) fullArgRegs.push_back(argRegs[i]);
+                for (uint8_t i = 0; i < argCount; ++i)
+                    fullArgRegs.push_back(argRegs[i]);
                 size_t newIp = ip;
-                if (argCount >= 255) return runtimeError("方法调用参数数量超过上限");
-                VMResult cr = executeCallImpl(newIp, cachedFunName, argCount + 1, dstReg, fullArgRegs, 6u + argCount, nullptr, true);
-                if (cr != VMResult::VM_OK) return cr;
+                if (argCount >= 255)
+                    return runtimeError("方法调用参数数量超过上限");
+                VMResult cr = executeCallImpl(newIp, cachedFunName, argCount + 1, dstReg, fullArgRegs, 6u + argCount,
+                                              nullptr, true);
+                if (cr != VMResult::VM_OK)
+                    return cr;
                 if (!frames_.empty()) {
                     frames_.back().isMethodCall = true;
                     frames_.back().isInitCall = (methodName == "init");
@@ -1092,7 +1099,8 @@ VMResult RegisterVM::executeMethodCallImpl(size_t& ip, const std::string& method
         bool methodFound = false;
         for (int guard = 0; guard < 64 && !searchClass.empty(); ++guard) {
             auto classIt = classInfo_.find(searchClass);
-            if (classIt == classInfo_.end()) break;
+            if (classIt == classInfo_.end())
+                break;
             auto methodIt = classIt->second.methods.find(methodName);
             if (methodIt != classIt->second.methods.end()) {
                 foundFunName = methodIt->second;
@@ -1109,11 +1117,15 @@ VMResult RegisterVM::executeMethodCallImpl(size_t& ip, const std::string& method
         }
         SmallArgs<uint8_t> fullArgRegs;
         fullArgRegs.push_back(objReg);
-        for (uint8_t i = 0; i < argCount; ++i) fullArgRegs.push_back(argRegs[i]);
+        for (uint8_t i = 0; i < argCount; ++i)
+            fullArgRegs.push_back(argRegs[i]);
         size_t newIp = ip;
-        if (argCount >= 255) return runtimeError("方法调用参数数量超过上限");
-        VMResult cr = executeCallImpl(newIp, foundFunName, argCount + 1, dstReg, fullArgRegs, 6u + argCount, nullptr, true);
-        if (cr != VMResult::VM_OK) return cr;
+        if (argCount >= 255)
+            return runtimeError("方法调用参数数量超过上限");
+        VMResult cr =
+            executeCallImpl(newIp, foundFunName, argCount + 1, dstReg, fullArgRegs, 6u + argCount, nullptr, true);
+        if (cr != VMResult::VM_OK)
+            return cr;
         if (!frames_.empty()) {
             frames_.back().isMethodCall = true;
             frames_.back().isInitCall = (methodName == "init");
@@ -1165,14 +1177,17 @@ VMResult RegisterVM::executeClosureImpl(size_t& ip, const std::string& name, uin
 
 void RegisterVM::captureMethodUpvalues(const std::string& className) {
     auto classIt = classInfo_.find(className);
-    if (classIt == classInfo_.end()) return;
+    if (classIt == classInfo_.end())
+        return;
     RegCallFrame& frame = currentFrame();
     size_t currentFrameIdx = frames_.size() - 1;
     for (const auto& [methodName, funName] : classIt->second.methods) {
         auto chunkIt = functionChunks_.find(funName);
-        if (chunkIt == functionChunks_.end()) continue;
+        if (chunkIt == functionChunks_.end())
+            continue;
         const RegBytecodeChunk& chunk = chunkIt->second;
-        if (chunk.upvalues.empty()) continue;
+        if (chunk.upvalues.empty())
+            continue;
         auto closureData = std::make_shared<VMClosureData>();
         closureData->functionName = funName;
         closureData->upvalues.resize(chunk.upvalues.size());
@@ -1212,7 +1227,8 @@ VMResult RegisterVM::executeClassNewImpl(size_t& ip, const std::string& classNam
         std::string cur = className;
         for (int guard = 0; guard < 64 && !cur.empty(); ++guard) {
             auto it = classInfo_.find(cur);
-            if (it == classInfo_.end()) break;
+            if (it == classInfo_.end())
+                break;
             chain.push_back(cur);
             cur = it->second.parent;
         }
@@ -1250,7 +1266,8 @@ VMResult RegisterVM::executeClassNewImpl(size_t& ip, const std::string& classNam
         std::string searchClass = className;
         for (int guard = 0; guard < 64 && !searchClass.empty(); ++guard) {
             auto clsIt = classInfo_.find(searchClass);
-            if (clsIt == classInfo_.end()) break;
+            if (clsIt == classInfo_.end())
+                break;
             auto mIt = clsIt->second.methods.find("init");
             if (mIt != clsIt->second.methods.end()) {
                 info.resolvedInitFunName = mIt->second;
@@ -1269,11 +1286,15 @@ VMResult RegisterVM::executeClassNewImpl(size_t& ip, const std::string& classNam
     if (info.hasInit) {
         SmallArgs<uint8_t> fullArgRegs;
         fullArgRegs.push_back(dstReg);
-        for (uint8_t i = 0; i < argCount; ++i) fullArgRegs.push_back(argRegs[i]);
+        for (uint8_t i = 0; i < argCount; ++i)
+            fullArgRegs.push_back(argRegs[i]);
         size_t newIp = ip;
-        if (argCount >= 255) return runtimeError("类构造参数数量超过上限");
-        VMResult r = executeCallImpl(newIp, info.resolvedInitFunName, argCount + 1, dstReg, fullArgRegs, 5u + argCount, nullptr, true);
-        if (r != VMResult::VM_OK) return r;
+        if (argCount >= 255)
+            return runtimeError("类构造参数数量超过上限");
+        VMResult r = executeCallImpl(newIp, info.resolvedInitFunName, argCount + 1, dstReg, fullArgRegs, 5u + argCount,
+                                     nullptr, true);
+        if (r != VMResult::VM_OK)
+            return r;
         if (!frames_.empty()) {
             frames_.back().isMethodCall = true;
             frames_.back().isInitCall = true;
@@ -1282,7 +1303,8 @@ VMResult RegisterVM::executeClassNewImpl(size_t& ip, const std::string& classNam
         ip = newIp;
     } else {
         if (argCount > 0) {
-            return runtimeError(ErrorFormat::formatStd("类 {} 没有 init 方法，但传入了 {} 个参数", className, static_cast<int>(argCount)),
+            return runtimeError(ErrorFormat::formatStd("类 {} 没有 init 方法，但传入了 {} 个参数", className,
+                                                       static_cast<int>(argCount)),
                                 DiagCodes::kArityMismatch);
         }
         ip += 5 + argCount;
@@ -1292,14 +1314,19 @@ VMResult RegisterVM::executeClassNewImpl(size_t& ip, const std::string& classNam
 
 bool RegisterVM::fillDefaultArgs(const RegBytecodeChunk& chunk, uint8_t& argCount, const std::string& /*funName*/,
                                  std::vector<Value>& defaults) {
-    if (argCount >= chunk.arity) return true;
-    if (argCount < chunk.requiredArity) return false;
+    if (argCount >= chunk.arity)
+        return true;
+    if (argCount < chunk.requiredArity)
+        return false;
     for (size_t i = argCount; i < chunk.defaultConstIndices.size() + chunk.requiredArity; ++i) {
         size_t defaultIdx = i - chunk.requiredArity;
-        if (defaultIdx >= chunk.defaultConstIndices.size()) break;
+        if (defaultIdx >= chunk.defaultConstIndices.size())
+            break;
         uint16_t constIdx = chunk.defaultConstIndices[defaultIdx];
-        if (constIdx == RuntimeLimits::NO_INDEX) return false;
-        if (constIdx >= chunk.constants.size()) return false;
+        if (constIdx == RuntimeLimits::NO_INDEX)
+            return false;
+        if (constIdx >= chunk.constants.size())
+            return false;
         defaults.push_back(chunk.constants[constIdx]);
     }
     argCount = static_cast<uint8_t>(chunk.arity);
@@ -1315,43 +1342,74 @@ bool RegisterVM::callArrayBuiltinMethod(Value& obj, BuiltinMethod method, const 
     switch (method) {
     case BuiltinMethod::ARR_LEN: {
         auto r = executeSharedLen(obj, args.data(), args.size());
-        if (r.is_ok()) { result = r.value(); return true; }
-        runtimeError(r.error().message); return true;
+        if (r.is_ok()) {
+            result = r.value();
+            return true;
+        }
+        runtimeError(r.error().message);
+        return true;
     }
     case BuiltinMethod::ARR_PUSH:
-        if (args.size() != 1) { runtimeError("push 需要 1 个参数", DiagCodes::kArityMismatch); return true; }
+        if (args.size() != 1) {
+            runtimeError("push 需要 1 个参数", DiagCodes::kArityMismatch);
+            return true;
+        }
         obj.arrayVal().push_back(args[0]);
-        result = Value::nullValue(); return true;
+        result = Value::nullValue();
+        return true;
     case BuiltinMethod::ARR_POP: {
         auto& arr = obj.arrayVal();
-        if (arr.empty()) { runtimeError("对空数组调用 pop"); return true; }
-        result = arr.back(); arr.pop_back(); return true;
+        if (arr.empty()) {
+            runtimeError("对空数组调用 pop");
+            return true;
+        }
+        result = arr.back();
+        arr.pop_back();
+        return true;
     }
     case BuiltinMethod::ARR_CONTAINS: {
         auto r = executeSharedArrayContains(obj, args.data(), args.size());
-        if (r.is_ok()) { result = r.value(); return true; }
-        runtimeError(r.error().message); return true;
+        if (r.is_ok()) {
+            result = r.value();
+            return true;
+        }
+        runtimeError(r.error().message);
+        return true;
     }
     case BuiltinMethod::ARR_JOIN: {
         auto r = executeSharedArrayJoin(obj, args.data(), args.size());
-        if (r.is_ok()) { result = r.value(); return true; }
-        runtimeError(r.error().message); return true;
+        if (r.is_ok()) {
+            result = r.value();
+            return true;
+        }
+        runtimeError(r.error().message);
+        return true;
     }
     case BuiltinMethod::ARR_REMOVE: {
-        if (args.size() != 1) { runtimeError("remove 期望 1 个参数(索引)", DiagCodes::kArityMismatch); return true; }
-        if (!args[0].isInt()) { runtimeError("remove 参数必须是整数索引", DiagCodes::kTypeMismatch); return true; }
+        if (args.size() != 1) {
+            runtimeError("remove 期望 1 个参数(索引)", DiagCodes::kArityMismatch);
+            return true;
+        }
+        if (!args[0].isInt()) {
+            runtimeError("remove 参数必须是整数索引", DiagCodes::kTypeMismatch);
+            return true;
+        }
         int64_t ri = args[0].intVal();
         auto& arr = obj.arrayVal();
         if (ri < 0 || static_cast<size_t>(ri) >= arr.size()) {
             // AUDIT-R5 BUG-07 fix: 补齐“有效范围”后缀，对齐 Interpreter/StackVM 统一格式。
-            runtimeError(ErrorFormat::formatStd("数组索引越界: {}, 有效范围 [0, {})", static_cast<long long>(ri), arr.size()), DiagCodes::kIndexOutOfBounds);
+            runtimeError(
+                ErrorFormat::formatStd("数组索引越界: {}, 有效范围 [0, {})", static_cast<long long>(ri), arr.size()),
+                DiagCodes::kIndexOutOfBounds);
             return true;
         }
         arr.erase(arr.begin() + static_cast<size_t>(ri));
-        result = Value::nullValue(); return true;
+        result = Value::nullValue();
+        return true;
     }
     default:
-        runtimeError("数组没有方法 " + methodName, "undefined-function"); return true;
+        runtimeError("数组没有方法 " + methodName, "undefined-function");
+        return true;
     }
 }
 
@@ -1361,45 +1419,80 @@ bool RegisterVM::callDictBuiltinMethod(Value& obj, BuiltinMethod method, const s
     case BuiltinMethod::DICT_LEN:
     case BuiltinMethod::ARR_LEN: {
         auto r = executeSharedLen(obj, args.data(), args.size());
-        if (r.is_ok()) { result = r.value(); return true; }
-        runtimeError(r.error().message); return true;
+        if (r.is_ok()) {
+            result = r.value();
+            return true;
+        }
+        runtimeError(r.error().message);
+        return true;
     }
     case BuiltinMethod::DICT_KEYS: {
         auto r = executeSharedDictKeys(obj, args.data(), args.size());
-        if (r.is_ok()) { result = r.value(); return true; }
-        runtimeError(r.error().message); return true;
+        if (r.is_ok()) {
+            result = r.value();
+            return true;
+        }
+        runtimeError(r.error().message);
+        return true;
     }
     case BuiltinMethod::DICT_VALUES: {
         auto r = executeSharedDictValues(obj, args.data(), args.size());
-        if (r.is_ok()) { result = r.value(); return true; }
-        runtimeError(r.error().message); return true;
+        if (r.is_ok()) {
+            result = r.value();
+            return true;
+        }
+        runtimeError(r.error().message);
+        return true;
     }
     case BuiltinMethod::DICT_HAS: {
         auto r = executeSharedDictHas(obj, methodName, args.data(), args.size());
-        if (r.is_ok()) { result = r.value(); return true; }
-        runtimeError(r.error().message); return true;
+        if (r.is_ok()) {
+            result = r.value();
+            return true;
+        }
+        runtimeError(r.error().message);
+        return true;
     }
     case BuiltinMethod::DICT_GET: {
         auto r = executeSharedDictGet(obj, args.data(), args.size());
-        if (r.is_ok()) { result = r.value(); return true; }
-        runtimeError(r.error().message); return true;
+        if (r.is_ok()) {
+            result = r.value();
+            return true;
+        }
+        runtimeError(r.error().message);
+        return true;
     }
     case BuiltinMethod::DICT_REMOVE: {
-        if (args.size() != 1) { runtimeError("remove 期望 1 个参数(键)", DiagCodes::kArityMismatch); return true; }
+        if (args.size() != 1) {
+            runtimeError("remove 期望 1 个参数(键)", DiagCodes::kArityMismatch);
+            return true;
+        }
         auto dk = Value::dictKeyFromValue(args[0]);
-        if (!dk) { runtimeError(ErrorMessages::kDictKeyInvalidType, DiagCodes::kTypeMismatch); return true; }
+        if (!dk) {
+            runtimeError(ErrorMessages::kDictKeyInvalidType, DiagCodes::kTypeMismatch);
+            return true;
+        }
         obj.dictVal().erase(*dk);
-        result = Value::nullValue(); return true;
+        result = Value::nullValue();
+        return true;
     }
     case BuiltinMethod::DICT_SET: {
-        if (args.size() != 2) { runtimeError("set 期望 2 个参数(键, 值)", DiagCodes::kArityMismatch); return true; }
+        if (args.size() != 2) {
+            runtimeError("set 期望 2 个参数(键, 值)", DiagCodes::kArityMismatch);
+            return true;
+        }
         auto dk = Value::dictKeyFromValue(args[0]);
-        if (!dk) { runtimeError(ErrorMessages::kDictKeyInvalidType, DiagCodes::kTypeMismatch); return true; }
+        if (!dk) {
+            runtimeError(ErrorMessages::kDictKeyInvalidType, DiagCodes::kTypeMismatch);
+            return true;
+        }
         obj.dictVal()[*dk] = args[1];
-        result = Value::nullValue(); return true;
+        result = Value::nullValue();
+        return true;
     }
     default:
-        runtimeError("字典没有方法 " + methodName, "undefined-function"); return true;
+        runtimeError("字典没有方法 " + methodName, "undefined-function");
+        return true;
     }
 }
 
@@ -1409,62 +1502,107 @@ bool RegisterVM::callStringBuiltinMethod(Value& obj, BuiltinMethod method, const
     case BuiltinMethod::STR_LEN:
     case BuiltinMethod::ARR_LEN: {
         auto r = executeSharedLen(obj, args.data(), args.size());
-        if (r.is_ok()) { result = r.value(); return true; }
-        runtimeError(r.error().message); return true;
+        if (r.is_ok()) {
+            result = r.value();
+            return true;
+        }
+        runtimeError(r.error().message);
+        return true;
     }
     case BuiltinMethod::STR_UPPER: {
         auto r = executeSharedStrUpper(obj, args.data(), args.size());
-        if (r.is_ok()) { result = r.value(); return true; }
-        runtimeError(r.error().message); return true;
+        if (r.is_ok()) {
+            result = r.value();
+            return true;
+        }
+        runtimeError(r.error().message);
+        return true;
     }
     case BuiltinMethod::STR_LOWER: {
         auto r = executeSharedStrLower(obj, args.data(), args.size());
-        if (r.is_ok()) { result = r.value(); return true; }
-        runtimeError(r.error().message); return true;
+        if (r.is_ok()) {
+            result = r.value();
+            return true;
+        }
+        runtimeError(r.error().message);
+        return true;
     }
     case BuiltinMethod::STR_CONTAINS:
     case BuiltinMethod::ARR_CONTAINS: {
         auto r = executeSharedStrContains(obj, args.data(), args.size());
-        if (r.is_ok()) { result = r.value(); return true; }
-        runtimeError(r.error().message); return true;
+        if (r.is_ok()) {
+            result = r.value();
+            return true;
+        }
+        runtimeError(r.error().message);
+        return true;
     }
     case BuiltinMethod::STR_STARTS_WITH: {
         auto r = executeSharedStrStartsWith(obj, args.data(), args.size());
-        if (r.is_ok()) { result = r.value(); return true; }
-        runtimeError(r.error().message); return true;
+        if (r.is_ok()) {
+            result = r.value();
+            return true;
+        }
+        runtimeError(r.error().message);
+        return true;
     }
     case BuiltinMethod::STR_ENDS_WITH: {
         auto r = executeSharedStrEndsWith(obj, args.data(), args.size());
-        if (r.is_ok()) { result = r.value(); return true; }
-        runtimeError(r.error().message); return true;
+        if (r.is_ok()) {
+            result = r.value();
+            return true;
+        }
+        runtimeError(r.error().message);
+        return true;
     }
     case BuiltinMethod::STR_REPLACE: {
         auto r = executeSharedStrReplace(obj, args.data(), args.size());
-        if (r.is_ok()) { result = r.value(); return true; }
-        runtimeError(r.error().message); return true;
+        if (r.is_ok()) {
+            result = r.value();
+            return true;
+        }
+        runtimeError(r.error().message);
+        return true;
     }
     case BuiltinMethod::STR_SUBSTR: {
         auto r = executeSharedStrSubstr(obj, args.data(), args.size());
-        if (r.is_ok()) { result = r.value(); return true; }
-        runtimeError(r.error().message); return true;
+        if (r.is_ok()) {
+            result = r.value();
+            return true;
+        }
+        runtimeError(r.error().message);
+        return true;
     }
     case BuiltinMethod::STR_INDEX_OF: {
         auto r = executeSharedStrIndexOf(obj, args.data(), args.size());
-        if (r.is_ok()) { result = r.value(); return true; }
-        runtimeError(r.error().message); return true;
+        if (r.is_ok()) {
+            result = r.value();
+            return true;
+        }
+        runtimeError(r.error().message);
+        return true;
     }
     case BuiltinMethod::STR_SPLIT: {
         auto r = executeSharedStrSplit(obj, args.data(), args.size());
-        if (r.is_ok()) { result = r.value(); return true; }
-        runtimeError(r.error().message); return true;
+        if (r.is_ok()) {
+            result = r.value();
+            return true;
+        }
+        runtimeError(r.error().message);
+        return true;
     }
     case BuiltinMethod::STR_TRIM: {
         auto r = executeSharedStrTrim(obj, args.data(), args.size());
-        if (r.is_ok()) { result = r.value(); return true; }
-        runtimeError(r.error().message); return true;
+        if (r.is_ok()) {
+            result = r.value();
+            return true;
+        }
+        runtimeError(r.error().message);
+        return true;
     }
     default:
-        runtimeError("字符串没有方法 " + methodName, "undefined-function"); return true;
+        runtimeError("字符串没有方法 " + methodName, "undefined-function");
+        return true;
     }
 }
 
@@ -1486,11 +1624,16 @@ bool RegisterVM::callBuiltinMethod(Value& obj, const std::string& methodName, Sm
     if (obj.isCoroutine()) {
         return dispatchCoroutineBuiltin(obj, methodName, args, result);
     }
-    if (method == BuiltinMethod::UNKNOWN) return false;
-    if (obj.isArray()) return callArrayBuiltinMethod(obj, method, methodName, args, result);
-    if (obj.isDict()) return callDictBuiltinMethod(obj, method, methodName, args, result);
-    if (obj.isString()) return callStringBuiltinMethod(obj, method, methodName, args, result);
-    if (obj.isInstance()) return false;
+    if (method == BuiltinMethod::UNKNOWN)
+        return false;
+    if (obj.isArray())
+        return callArrayBuiltinMethod(obj, method, methodName, args, result);
+    if (obj.isDict())
+        return callDictBuiltinMethod(obj, method, methodName, args, result);
+    if (obj.isString())
+        return callStringBuiltinMethod(obj, method, methodName, args, result);
+    if (obj.isInstance())
+        return false;
     runtimeError("类型 " + obj.typeName() + " 不支持方法 " + methodName);
     return true;
 }
@@ -1504,11 +1647,13 @@ VMResult RegisterVM::createCoroutineValue(const RegBytecodeChunk& genChunk, cons
                                           const Value* closureValue) {
     std::vector<Value> args;
     args.reserve(argCount);
-    for (uint8_t i = 0; i < argCount; ++i) args.push_back(reg(argRegs[i]));
+    for (uint8_t i = 0; i < argCount; ++i)
+        args.push_back(reg(argRegs[i]));
     if (argCount < static_cast<uint8_t>(genChunk.arity)) {
         int missingCount = genChunk.arity - argCount;
         int defaultStartIdx = static_cast<int>(genChunk.defaultConstIndices.size()) - missingCount;
-        if (defaultStartIdx < 0) return runtimeError("生成器 " + funName + " 默认参数索引越界");
+        if (defaultStartIdx < 0)
+            return runtimeError("生成器 " + funName + " 默认参数索引越界");
         for (int i = defaultStartIdx; i < defaultStartIdx + missingCount; ++i) {
             uint16_t constIdx = genChunk.defaultConstIndices[i];
             if (constIdx == RuntimeLimits::NO_INDEX || constIdx >= genChunk.constants.size())
@@ -1525,7 +1670,10 @@ VMResult RegisterVM::createCoroutineValue(const RegBytecodeChunk& genChunk, cons
 bool RegisterVM::dispatchCoroutineBuiltin(Value& obj, const std::string& methodName, SmallArgs<Value>& args,
                                           Value& result) {
     if (methodName == "next") {
-        if (!args.empty()) { runtimeError("coroutine.next() 不接受参数", DiagCodes::kArityMismatch); return true; }
+        if (!args.empty()) {
+            runtimeError("coroutine.next() 不接受参数", DiagCodes::kArityMismatch);
+            return true;
+        }
         result = callCoroutineNext(obj);
         // AUDIT-R7 F6 fix: 无条件返回 true（已处理）。原 `return !hasError_` 在生成器
         // 体报错时返回 false，executeMethodCallImpl 误入后续分发分支，最终用
@@ -1534,7 +1682,10 @@ bool RegisterVM::dispatchCoroutineBuiltin(Value& obj, const std::string& methodN
         return true;
     }
     if (methodName == "done") {
-        if (!args.empty()) { runtimeError("coroutine.done() 不接受参数", DiagCodes::kArityMismatch); return true; }
+        if (!args.empty()) {
+            runtimeError("coroutine.done() 不接受参数", DiagCodes::kArityMismatch);
+            return true;
+        }
         auto* cd = obj.coroutineData();
         result = Value(cd->done);
         return true;
@@ -1549,7 +1700,10 @@ Value RegisterVM::callCoroutineNext(Value& coroVal) {
         return cd->currentValueBox.empty() ? Value::nullValue() : cd->currentValueBox.front();
     }
     const RegBytecodeChunk* genChunk = cd->regChunk;
-    if (!genChunk) { runtimeError("协程缺少生成器字节码块"); return Value::nullValue(); }
+    if (!genChunk) {
+        runtimeError("协程缺少生成器字节码块");
+        return Value::nullValue();
+    }
     if (frames_.size() >= MAX_FRAMES) {
         runtimeError(ErrorFormat::formatStd(ErrorMessages::kRecursionDepthExceededFmtStd, static_cast<int>(MAX_FRAMES)),
                      DiagCodes::kRecursionDepth);
@@ -1565,15 +1719,18 @@ Value RegisterVM::callCoroutineNext(Value& coroVal) {
     newFrame.returnReg = -1;
     newFrame.registerCount = static_cast<uint8_t>(
         genChunk->registerCount <= RegCallFrame::MAX_REGISTERS ? genChunk->registerCount : RegCallFrame::MAX_REGISTERS);
-    uint8_t argCount = static_cast<uint8_t>(std::min(cd->args.size(), static_cast<size_t>(std::numeric_limits<uint8_t>::max())));
-    for (uint8_t i = 0; i < argCount && i < newFrame.registerCount; ++i) newFrame.registers[i] = cd->args[i];
+    uint8_t argCount =
+        static_cast<uint8_t>(std::min(cd->args.size(), static_cast<size_t>(std::numeric_limits<uint8_t>::max())));
+    for (uint8_t i = 0; i < argCount && i < newFrame.registerCount; ++i)
+        newFrame.registers[i] = cd->args[i];
     if (argCount < static_cast<uint8_t>(genChunk->arity)) {
         int missingCount = genChunk->arity - argCount;
         int defaultStartIdx = static_cast<int>(genChunk->defaultConstIndices.size()) - missingCount;
         if (defaultStartIdx >= 0) {
             for (int i = defaultStartIdx; i < defaultStartIdx + missingCount; ++i) {
                 uint8_t regIdx = static_cast<uint8_t>(argCount + (i - defaultStartIdx));
-                if (regIdx >= newFrame.registerCount) break;
+                if (regIdx >= newFrame.registerCount)
+                    break;
                 uint16_t constIdx = genChunk->defaultConstIndices[i];
                 if (constIdx != RuntimeLimits::NO_INDEX && constIdx < genChunk->constants.size())
                     newFrame.registers[regIdx] = genChunk->constants[constIdx];
@@ -1581,11 +1738,13 @@ Value RegisterVM::callCoroutineNext(Value& coroVal) {
         }
     }
     for (uint8_t i = argCount; i < newFrame.registerCount; ++i) {
-        if (i >= genChunk->arity) newFrame.registers[i] = Value::nullValue();
+        if (i >= genChunk->arity)
+            newFrame.registers[i] = Value::nullValue();
     }
     if (!cd->vmClosureBox.empty()) {
         auto& closureVal = cd->vmClosureBox.front();
-        if (closureVal.isClosure() && closureVal.vmClosure()) newFrame.upvalues = closureVal.vmClosure()->upvalues;
+        if (closureVal.isClosure() && closureVal.vmClosure())
+            newFrame.upvalues = closureVal.vmClosure()->upvalues;
     }
     frames_.push_back(std::move(newFrame));
     currentCoroutineTargetYieldId_ = cd->currentYieldId;
@@ -1601,21 +1760,26 @@ Value RegisterVM::callCoroutineNext(Value& coroVal) {
         int64_t localInstrCount = 0;
         int64_t maxInstr = RuntimeLimits::RuntimeConfig::instance().maxInstructions();
         while (frames_.size() > savedFrameCount && !hasError_) {
-            if (++localInstrCount > maxInstr) { runtimeError("指令执行数超过上限，疑似无限循环"); break; }
+            if (++localInstrCount > maxInstr) {
+                runtimeError("指令执行数超过上限，疑似无限循环");
+                break;
+            }
             VMResult r = executeOneInstruction();
-            if (r == VMResult::VM_EXCEPTION_THROW) continue;
-            if (r != VMResult::VM_OK || hasError_) break;
+            if (r == VMResult::VM_EXCEPTION_THROW)
+                continue;
+            if (r != VMResult::VM_OK || hasError_)
+                break;
         }
-        if (hasError_) { needCleanup = true; }
-        else if (tryStack_.size() < savedTryStackSize) {
+        if (hasError_) {
+            needCleanup = true;
+        } else if (tryStack_.size() < savedTryStackSize) {
             // AUDIT-R7 F2 fix: 异常穿透——不置 done、不读邮箱、不清理（throwException
             // 已就位 catch 状态）。executeMethodCallImpl 的 savedTryStackSize 检测
             // 会返回 VM_EXCEPTION_THROW 让主循环继续 catch 块。
             currentCoroutineTargetYieldId_ = savedTargetYieldId;
             currentYieldExecutionCount_ = savedYieldExecCount;
             return Value::nullValue();
-        }
-        else {
+        } else {
             result = std::move(coroutineReturnValue_);
             coroutineReturnValue_ = Value::nullValue();
             normalReturn = true;
@@ -1625,7 +1789,8 @@ Value RegisterVM::callCoroutineNext(Value& coroVal) {
         cd->currentValueBox.clear();
         cd->currentValueBox.push_back(result);
         cd->currentYieldId++;
-        if (cd->currentYieldId >= cd->yieldCount) cd->done = true;
+        if (cd->currentYieldId >= cd->yieldCount)
+            cd->done = true;
         needCleanup = true;
     }
     if (normalReturn) {
@@ -1634,8 +1799,10 @@ Value RegisterVM::callCoroutineNext(Value& coroVal) {
         cd->currentValueBox.push_back(result);
     }
     if (needCleanup) {
-        while (frames_.size() > savedFrameCount) frames_.pop_back();
-        while (!tryStack_.empty() && tryStack_.back().frameIndex >= savedFrameCount) tryStack_.pop_back();
+        while (frames_.size() > savedFrameCount)
+            frames_.pop_back();
+        while (!tryStack_.empty() && tryStack_.back().frameIndex >= savedFrameCount)
+            tryStack_.pop_back();
         closeUpvaluesFrom(savedFrameCount * RegCallFrame::MAX_REGISTERS);
     }
     currentCoroutineTargetYieldId_ = savedTargetYieldId;

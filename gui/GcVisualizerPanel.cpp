@@ -72,7 +72,9 @@ QString htmlEscape(const std::string& s) {
 /// ARCH-10: 一次性获取 GC 统计快照的便捷包装。
 /// 替代 GcManager::instance().xxx() 直接调用，消除面板对 interpreter/GcManager.h 的依赖。
 /// 注意：每次调用都会获取 GcManager 内部锁，仅用于 UI 刷新或步骤采样（非热路径）。
-GcStatsSnapshot gcStats() { return MemoryInspectionAPI::getGcStats(); }
+GcStatsSnapshot gcStats() {
+    return MemoryInspectionAPI::getGcStats();
+}
 
 } // namespace
 
@@ -476,8 +478,8 @@ GcSimResult GcVisualizerPanel::runScenario(int idx) {
         }
         {
             auto s = gcStats();
-            result.steps.push_back({"collectCycle(空 roots)", s.trackedCount, s.lastMarkedCount, s.lastCollectedCount,
-                                    s.totalGcCount});
+            result.steps.push_back(
+                {"collectCycle(空 roots)", s.trackedCount, s.lastMarkedCount, s.lastCollectedCount, s.totalGcCount});
             result.expectationMet = s.lastCollectedCount > 0;
         }
         result.summary = result.expectationMet ? "✅ 期望达成：循环引用孤岛被 mark-sweep 成功回收，"
@@ -503,8 +505,7 @@ GcSimResult GcVisualizerPanel::runScenario(int idx) {
         }
         {
             auto s = gcStats();
-            result.steps.push_back(
-                {"构造三层循环并离开作用域", s.trackedCount, 0, 0, s.totalGcCount});
+            result.steps.push_back({"构造三层循环并离开作用域", s.trackedCount, 0, 0, s.totalGcCount});
         }
         {
             std::vector<const void*> emptyRoots;
@@ -512,8 +513,8 @@ GcSimResult GcVisualizerPanel::runScenario(int idx) {
         }
         {
             auto s = gcStats();
-            result.steps.push_back({"collectCycle(空 roots)", s.trackedCount, s.lastMarkedCount, s.lastCollectedCount,
-                                    s.totalGcCount});
+            result.steps.push_back(
+                {"collectCycle(空 roots)", s.trackedCount, s.lastMarkedCount, s.lastCollectedCount, s.totalGcCount});
             result.expectationMet = s.lastCollectedCount > 0;
         }
         result.summary = result.expectationMet ? "✅ 期望达成：三层循环整条链被 mark-sweep 回收，"
@@ -534,14 +535,13 @@ GcSimResult GcVisualizerPanel::runScenario(int idx) {
             arr.arrayVal().push_back(arr); // 自循环
             {
                 auto s = gcStats();
-                result.steps.push_back(
-                    {"构造自循环（arr 仍存活）", s.trackedCount, 0, 0, s.totalGcCount});
+                result.steps.push_back({"构造自循环（arr 仍存活）", s.trackedCount, 0, 0, s.totalGcCount});
             }
             std::vector<const void*> roots = {arr.gcRootPtr()};
             MemoryInspectionAPI::collectCycle(roots); // arr 作为 root 标记可达
             auto s = gcStats();
-            result.steps.push_back({"collectCycle(roots={arr})", s.trackedCount, s.lastMarkedCount,
-                                    s.lastCollectedCount, s.totalGcCount});
+            result.steps.push_back(
+                {"collectCycle(roots={arr})", s.trackedCount, s.lastMarkedCount, s.lastCollectedCount, s.totalGcCount});
             result.expectationMet = (s.lastCollectedCount == 0 && s.trackedCount >= 1);
             // arr 即将离开作用域：释放后仅剩自循环引用，refCount=1
         }

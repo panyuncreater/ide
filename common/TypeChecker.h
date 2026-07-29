@@ -198,8 +198,8 @@ enum class TypeKind {
 /// 类型信息（预留，未来扩展）
 struct TypeInfo {
     TypeKind kind = TypeKind::UNKNOWN;
-    std::string className;          // INSTANCE 类型的类名
-    std::vector<TypeInfo> typeArgs; // 泛型类型参数（ARRAY 的元素类型、CLOSURE 的参数/返回类型）
+    std::string className{};          // INSTANCE 类型的类名
+    std::vector<TypeInfo> typeArgs{}; // 泛型类型参数（ARRAY 的元素类型、CLOSURE 的参数/返回类型）
 
     bool isNumeric() const { return kind == TypeKind::INT || kind == TypeKind::FLOAT; }
 

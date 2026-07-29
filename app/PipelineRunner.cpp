@@ -45,8 +45,8 @@ bool PipelineRunner::runCompiler() {
         key.compilerMode = compiler_.getUseIR() ? 1 : 0;
         // AUDIT-R3 P2-4 fix: 优化开关入键——切换 irOptimize/irSSAOptimize 后
         // 旧缓存不再命中，避免产出与当前优化配置不一致的字节码。
-        key.optFlags = static_cast<uint8_t>((compiler_.getIROptimize() ? 1 : 0) |
-                                            (compiler_.getIRSSAOptimize() ? 2 : 0));
+        key.optFlags =
+            static_cast<uint8_t>((compiler_.getIROptimize() ? 1 : 0) | (compiler_.getIRSSAOptimize() ? 2 : 0));
         // mtime 暂不校验(PipelineRunner 不持有文件路径);依赖 source hash 失效
         key.mtime = 0;
 

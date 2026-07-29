@@ -105,7 +105,7 @@ namespace {
 
 Result<Value> checkExact(const char* name, size_t argCount, size_t expected, int line, int column) {
     if (argCount != expected) {
-        return Result<Value>::err(ErrorFormat::formatStd("{} 期望 {} 个参数，但传入了 {} 个",  name,  expected,  argCount),
+        return Result<Value>::err(ErrorFormat::formatStd("{} 期望 {} 个参数，但传入了 {} 个", name, expected, argCount),
                                   line, column);
     }
     return Result<Value>::ok(Value::nullValue());
@@ -115,7 +115,7 @@ Result<Value> checkRange(const char* name, size_t argCount, size_t minExpected, 
                          int column) {
     if (argCount < minExpected || argCount > maxExpected) {
         return Result<Value>::err(
-            ErrorFormat::formatStd("{} 期望 {}-{} 个参数，但传入了 {} 个",  name,  minExpected,  maxExpected,  argCount),
+            ErrorFormat::formatStd("{} 期望 {}-{} 个参数，但传入了 {} 个", name, minExpected, maxExpected, argCount),
             line, column);
     }
     return Result<Value>::ok(Value::nullValue());
@@ -197,7 +197,7 @@ Result<Value> executeSharedStrEndsWith(const Value& str, const Value* args, size
 Result<Value> executeSharedStrSubstr(const Value& str, const Value* args, size_t argCount, int line, int column) {
     if (argCount < 1 || argCount > 2) {
         return Result<Value>::err(
-            ErrorFormat::formatStd("substr 期望 1-2 个参数(起始[, 长度])，但传入了 {} 个",  argCount), line, column);
+            ErrorFormat::formatStd("substr 期望 1-2 个参数(起始[, 长度])，但传入了 {} 个", argCount), line, column);
     }
     if (!args[0].isInt()) {
         return Result<Value>::err("substr 起始位置必须是整数", line, column);
@@ -262,7 +262,7 @@ Result<Value> executeSharedStrIndexOf(const Value& str, const Value* args, size_
 // S1 fix: 共享 replace 实现 — 单遍构建 O(N)，消除 VM 侧 O(N²) Bug
 Result<Value> executeSharedStrReplace(const Value& str, const Value* args, size_t argCount, int line, int column) {
     if (argCount != 2) {
-        return Result<Value>::err(ErrorFormat::formatStd("replace 期望 2 个参数(旧串, 新串)，但传入了 {} 个",  argCount),
+        return Result<Value>::err(ErrorFormat::formatStd("replace 期望 2 个参数(旧串, 新串)，但传入了 {} 个", argCount),
                                   line, column);
     }
     const std::string& src = str.stringVal();
@@ -402,7 +402,7 @@ Result<Value> executeSharedDictValues(const Value& dict, const Value* /*args*/, 
 
 Result<Value> executeSharedDictGet(const Value& dict, const Value* args, size_t argCount, int line, int column) {
     if (argCount < 1 || argCount > 2) {
-        return Result<Value>::err(ErrorFormat::formatStd("get 期望 1-2 个参数(键[, 默认值])，但传入了 {} 个",  argCount),
+        return Result<Value>::err(ErrorFormat::formatStd("get 期望 1-2 个参数(键[, 默认值])，但传入了 {} 个", argCount),
                                   line, column);
     }
     // L4 fix: 字典键支持 string/int/bool/float
@@ -713,12 +713,12 @@ Result<Value> executeBuiltinRange(const Value* args, size_t argCount, int line, 
     }
     int64_t n = v.intVal();
     if (n < 0) {
-        return Result<Value>::err(ErrorFormat::formatStd("range 参数不能为负数: {}",  static_cast<long long>(n)), line,
+        return Result<Value>::err(ErrorFormat::formatStd("range 参数不能为负数: {}", static_cast<long long>(n)), line,
                                   column);
     }
     if (n > RuntimeLimits::MAX_RANGE) {
         return Result<Value>::err(
-            ErrorFormat::formatStd("range 参数超过上限 {}",  static_cast<long long>(RuntimeLimits::MAX_RANGE)), line,
+            ErrorFormat::formatStd("range 参数超过上限 {}", static_cast<long long>(RuntimeLimits::MAX_RANGE)), line,
             column);
     }
     std::vector<Value> elements;
@@ -849,9 +849,8 @@ Result<Value> executeBuiltinQmarkUnwrap(const Value* args, size_t argCount, int 
         return r;
     const Value& v = args[0];
     if (!v.isDict()) {
-        return Result<Value>::err("? 运算符要求 Result/Option 值（std/result 的 Ok/Err/Some/None），实际为 " +
-                                      v.typeName(),
-                                  line, column);
+        return Result<Value>::err(
+            "? 运算符要求 Result/Option 值（std/result 的 Ok/Err/Some/None），实际为 " + v.typeName(), line, column);
     }
     const auto& entries = v.dictVal();
     auto tagKey = Value::dictKeyFromValue(Value(std::string("tag")));
@@ -1114,8 +1113,7 @@ BuiltinMethodResult handleSyncObjectMethod(const std::string& method, Value& obj
         // 四后端经本共享函数分发，语义天然一致。
         if (method == "recvTimeout") {
             if (args.size() != 1) {
-                throw RuntimeError("channel.recvTimeout 期望 1 个参数，但传入了 " + std::to_string(args.size()) +
-                                       " 个",
+                throw RuntimeError("channel.recvTimeout 期望 1 个参数，但传入了 " + std::to_string(args.size()) + " 个",
                                    line, col, DiagCodes::kArityMismatch);
             }
             if (!args[0].isInt()) {
@@ -1386,7 +1384,7 @@ BuiltinMethodResult BuiltinMethods::handleArrayMethod(const std::string& method,
 
     if (method == "pop") {
         if (!args.empty())
-            throw RuntimeError(ErrorFormat::formatStd("pop 期望 0 个参数，但传入了 {} 个",  args.size()), line, col,
+            throw RuntimeError(ErrorFormat::formatStd("pop 期望 0 个参数，但传入了 {} 个", args.size()), line, col,
                                DiagCodes::kArityMismatch);
         // AUDIT-BUG-C5 fix: 空数组检查用 const 访问器避免 COW detach。
         // 非 const arrayVal() 在 refCount>1 时会 ensureUnique 深拷贝整个数组，
@@ -1405,9 +1403,9 @@ BuiltinMethodResult BuiltinMethods::handleArrayMethod(const std::string& method,
             throw RuntimeError("remove 参数必须是整数索引", line, col, DiagCodes::kTypeMismatch);
         int64_t idx = args[0].intVal();
         if (idx < 0 || static_cast<size_t>(idx) >= std::as_const(obj).arrayVal().size())
-            throw RuntimeError(ErrorFormat::formatStd("数组索引越界: {}, 有效范围 [0, {})",  static_cast<long long>(idx),
-                                                   
-                                                   std::as_const(obj).arrayVal().size()),
+            throw RuntimeError(ErrorFormat::formatStd("数组索引越界: {}, 有效范围 [0, {})", static_cast<long long>(idx),
+
+                                                      std::as_const(obj).arrayVal().size()),
                                line, col, DiagCodes::kIndexOutOfBounds);
         obj.arrayVal().erase(obj.arrayVal().begin() + static_cast<size_t>(idx));
         return BuiltinMethodResult(Value::nullValue(), /*objectModified=*/true);

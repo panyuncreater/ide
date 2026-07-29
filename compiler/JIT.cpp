@@ -34,17 +34,17 @@
 
 #ifdef MINILANG_USE_JIT
 
-#include "compiler/JITInternal.h"
 #include "common/Diagnostic.h"
 #include "common/ErrorFormat.h"
 #include "common/ErrorMessages.h"
 #include "common/RuntimeLimits.h"
+#include "compiler/JITInternal.h"
 #include "interpreter/GcManager.h"
 #include "interpreter/Value.h"
-#include <string>
-#include <vector>
-#include <unordered_map>
 #include <algorithm>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 using namespace jit_internal;
 
@@ -138,7 +138,8 @@ extern "C" void jitSafepointGc(JitContext* ctx) {
         int64_t* sp = ctx->stackTop;
         // 扫描当前栈上最多 1024 个槽位（操作数栈容量上限）
         int slotsToScan = 1024;
-        if (slotsToScan > 1024) slotsToScan = 1024; // 防御性上限钳制
+        if (slotsToScan > 1024)
+            slotsToScan = 1024; // 防御性上限钳制
         for (int i = 0; i < slotsToScan && sp; ++i, ++sp) {
             uint64_t ubits = static_cast<uint64_t>(*sp);
             uint64_t tag = ubits & jit_internal::JIT_TAG_FIELD_MASK;
@@ -317,9 +318,7 @@ JitResult JITBackend::execute(const CompileResult& result) {
         // 保存原回调，替换为设置标志的轻量回调
         GcManager::CallbackSuppressor gcSuppressor;
         // Suppressor 抑制回调后，我们重新设置一个轻量回调仅设置标志
-        GcManager::instance().setGcTriggerCallback([this]() {
-            gcNeededFlag_.store(1, std::memory_order_release);
-        });
+        GcManager::instance().setGcTriggerCallback([this]() { gcNeededFlag_.store(1, std::memory_order_release); });
         int64_t ret = entry(&jitContext_);
         (void)ret;
     }
@@ -393,68 +392,47 @@ namespace {
 // 任何字段重排/插入/删除都会破坏 ABI，必须同步更新
 // JITCodeGen.cpp 中的偏移常量。这组 static_assert 在编译期捕获不一致。
 // ============================================================
-static_assert(offsetof(JitContext, outputCallback) == 0,
-    "JitContext::outputCallback offset mismatch (expected 0)");
-static_assert(offsetof(JitContext, hasError) == 8,
-    "JitContext::hasError offset mismatch (expected 8)");
-static_assert(offsetof(JitContext, errorBuffer) == 16,
-    "JitContext::errorBuffer offset mismatch (expected 16)");
-static_assert(offsetof(JitContext, globalSlots) == 24,
-    "JitContext::globalSlots offset mismatch (expected 24)");
-static_assert(offsetof(JitContext, frames) == 32,
-    "JitContext::frames offset mismatch (expected 32)");
-static_assert(offsetof(JitContext, frameCount) == 40,
-    "JitContext::frameCount offset mismatch (expected 40)");
-static_assert(offsetof(JitContext, stackTop) == 48,
-    "JitContext::stackTop offset mismatch (expected 48)");
-static_assert(offsetof(JitContext, classInfoPtr) == 56,
-    "JitContext::classInfoPtr offset mismatch (expected 56)");
+static_assert(offsetof(JitContext, outputCallback) == 0, "JitContext::outputCallback offset mismatch (expected 0)");
+static_assert(offsetof(JitContext, hasError) == 8, "JitContext::hasError offset mismatch (expected 8)");
+static_assert(offsetof(JitContext, errorBuffer) == 16, "JitContext::errorBuffer offset mismatch (expected 16)");
+static_assert(offsetof(JitContext, globalSlots) == 24, "JitContext::globalSlots offset mismatch (expected 24)");
+static_assert(offsetof(JitContext, frames) == 32, "JitContext::frames offset mismatch (expected 32)");
+static_assert(offsetof(JitContext, frameCount) == 40, "JitContext::frameCount offset mismatch (expected 40)");
+static_assert(offsetof(JitContext, stackTop) == 48, "JitContext::stackTop offset mismatch (expected 48)");
+static_assert(offsetof(JitContext, classInfoPtr) == 56, "JitContext::classInfoPtr offset mismatch (expected 56)");
 static_assert(offsetof(JitContext, pendingFieldOrderPtr) == 64,
-    "JitContext::pendingFieldOrderPtr offset mismatch (expected 64)");
-static_assert(offsetof(JitContext, methodEntryPtr) == 72,
-    "JitContext::methodEntryPtr offset mismatch (expected 72)");
+              "JitContext::pendingFieldOrderPtr offset mismatch (expected 64)");
+static_assert(offsetof(JitContext, methodEntryPtr) == 72, "JitContext::methodEntryPtr offset mismatch (expected 72)");
 static_assert(offsetof(JitContext, methodLocalCount) == 80,
-    "JitContext::methodLocalCount offset mismatch (expected 80)");
+              "JitContext::methodLocalCount offset mismatch (expected 80)");
 static_assert(offsetof(JitContext, methodEntriesPtr) == 88,
-    "JitContext::methodEntriesPtr offset mismatch (expected 88)");
-static_assert(offsetof(JitContext, callerBp) == 96,
-    "JitContext::callerBp offset mismatch (expected 96)");
+              "JitContext::methodEntriesPtr offset mismatch (expected 88)");
+static_assert(offsetof(JitContext, callerBp) == 96, "JitContext::callerBp offset mismatch (expected 96)");
 static_assert(offsetof(JitContext, chunkCallCounts) == 104,
-    "JitContext::chunkCallCounts offset mismatch (expected 104)");
-static_assert(offsetof(JitContext, hotThresholds) == 112,
-    "JitContext::hotThresholds offset mismatch (expected 112)");
+              "JitContext::chunkCallCounts offset mismatch (expected 104)");
+static_assert(offsetof(JitContext, hotThresholds) == 112, "JitContext::hotThresholds offset mismatch (expected 112)");
 static_assert(offsetof(JitContext, recompiledFlags) == 120,
-    "JitContext::recompiledFlags offset mismatch (expected 120)");
-static_assert(offsetof(JitContext, typeFeedback) == 128,
-    "JitContext::typeFeedback offset mismatch (expected 128)");
-static_assert(offsetof(JitContext, backendPtr) == 136,
-    "JitContext::backendPtr offset mismatch (expected 136)");
+              "JitContext::recompiledFlags offset mismatch (expected 120)");
+static_assert(offsetof(JitContext, typeFeedback) == 128, "JitContext::typeFeedback offset mismatch (expected 128)");
+static_assert(offsetof(JitContext, backendPtr) == 136, "JitContext::backendPtr offset mismatch (expected 136)");
 static_assert(offsetof(JitContext, lastMutatedReceiverPtr) == 144,
-    "JitContext::lastMutatedReceiverPtr offset mismatch (expected 144)");
-static_assert(offsetof(JitContext, funcEntriesPtr) == 152,
-    "JitContext::funcEntriesPtr offset mismatch (expected 152)");
-static_assert(offsetof(JitContext, currentBp) == 160,
-    "JitContext::currentBp offset mismatch (expected 160)");
+              "JitContext::lastMutatedReceiverPtr offset mismatch (expected 144)");
+static_assert(offsetof(JitContext, funcEntriesPtr) == 152, "JitContext::funcEntriesPtr offset mismatch (expected 152)");
+static_assert(offsetof(JitContext, currentBp) == 160, "JitContext::currentBp offset mismatch (expected 160)");
 static_assert(offsetof(JitContext, osrLoopCountsPtr) == 168,
-    "JitContext::osrLoopCountsPtr offset mismatch (expected 168)");
+              "JitContext::osrLoopCountsPtr offset mismatch (expected 168)");
 static_assert(offsetof(JitContext, osrLoopThresholdsPtr) == 176,
-    "JitContext::osrLoopThresholdsPtr offset mismatch (expected 176)");
+              "JitContext::osrLoopThresholdsPtr offset mismatch (expected 176)");
 static_assert(offsetof(JitContext, osrRecompiledFlagsPtr) == 184,
-    "JitContext::osrRecompiledFlagsPtr offset mismatch (expected 184)");
-static_assert(offsetof(JitContext, osrSavedBp) == 192,
-    "JitContext::osrSavedBp offset mismatch (expected 192)");
-static_assert(offsetof(JitContext, osrSavedSp) == 200,
-    "JitContext::osrSavedSp offset mismatch (expected 200)");
-static_assert(offsetof(JitContext, osrEntryPoint) == 208,
-    "JitContext::osrEntryPoint offset mismatch (expected 208)");
+              "JitContext::osrRecompiledFlagsPtr offset mismatch (expected 184)");
+static_assert(offsetof(JitContext, osrSavedBp) == 192, "JitContext::osrSavedBp offset mismatch (expected 192)");
+static_assert(offsetof(JitContext, osrSavedSp) == 200, "JitContext::osrSavedSp offset mismatch (expected 200)");
+static_assert(offsetof(JitContext, osrEntryPoint) == 208, "JitContext::osrEntryPoint offset mismatch (expected 208)");
 static_assert(offsetof(JitContext, deoptEntryPoint) == 216,
-    "JitContext::deoptEntryPoint offset mismatch (expected 216)");
-static_assert(offsetof(JitContext, deoptChunkIdx) == 224,
-    "JitContext::deoptChunkIdx offset mismatch (expected 224)");
-static_assert(offsetof(JitContext, memberGetICPtr) == 232,
-    "JitContext::memberGetICPtr offset mismatch (expected 232)");
-static_assert(offsetof(JitContext, globalsPtr) == 240,
-    "JitContext::globalsPtr offset mismatch (expected 240)");
+              "JitContext::deoptEntryPoint offset mismatch (expected 216)");
+static_assert(offsetof(JitContext, deoptChunkIdx) == 224, "JitContext::deoptChunkIdx offset mismatch (expected 224)");
+static_assert(offsetof(JitContext, memberGetICPtr) == 232, "JitContext::memberGetICPtr offset mismatch (expected 232)");
+static_assert(offsetof(JitContext, globalsPtr) == 240, "JitContext::globalsPtr offset mismatch (expected 240)");
 
 void verifyNanBoxConstants() {
     // 用 NaNBox 的 public 方法间接验证常量一致性

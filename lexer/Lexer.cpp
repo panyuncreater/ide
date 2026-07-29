@@ -6,8 +6,8 @@
 #include <cctype>
 #include <charconv>
 #include <cmath>
-#include <cstring>  // PERF: std::strcmp for keyword lookup
-#include <optional> // PERF: lookupKeywordFast return type
+#include <cstring>     // PERF: std::strcmp for keyword lookup
+#include <optional>    // PERF: lookupKeywordFast return type
 #include <string_view> // AUDIT-R4 BUG-07: 浮点上溢/下溢判定的尾数切片
 
 // ============================================================
@@ -97,46 +97,26 @@ struct KeywordEntry {
 };
 // 必须严格按字典序排列（std::lower_bound 前提）
 static constexpr KeywordEntry kSortedKeywords[] = {
-    {"and", TokenType::TK_AND},
-    {"array", TokenType::TK_ARRAY},
-    {"as", TokenType::TK_AS},
-    {"bool", TokenType::TK_BOOL},
-    {"break", TokenType::TK_BREAK},
-    {"case", TokenType::TK_CASE},
-    {"catch", TokenType::TK_CATCH},
-    {"class", TokenType::TK_CLASS},
-    {"const", TokenType::TK_CONST},
-    {"continue", TokenType::TK_CONTINUE},
-    {"default", TokenType::TK_DEFAULT},
-    {"dict", TokenType::TK_DICT},
-    {"else", TokenType::TK_ELSE},
-    {"enum", TokenType::TK_ENUM},
-    {"export", TokenType::TK_EXPORT},
-    {"extends", TokenType::TK_EXTENDS},
-    {"false", TokenType::TK_FALSE},
-    {"finally", TokenType::TK_FINALLY},
-    {"float", TokenType::TK_FLOAT},
-    {"for", TokenType::TK_FOR},
-    {"from", TokenType::TK_FROM},
-    {"fun", TokenType::TK_FUN},
-    {"func", TokenType::TK_FUN},
-    {"function", TokenType::TK_FUN},
-    {"if", TokenType::TK_IF},
-    {"import", TokenType::TK_IMPORT},
-    {"int", TokenType::TK_INT},
-    {"match", TokenType::TK_MATCH},
-    {"not", TokenType::TK_NOT},
-    {"null", TokenType::TK_NULL},
-    {"or", TokenType::TK_OR},
-    {"print", TokenType::TK_PRINT},
-    {"return", TokenType::TK_RETURN},
-    {"string", TokenType::TK_STRING_TYPE},
-    {"super", TokenType::TK_SUPER},
-    {"throw", TokenType::TK_THROW},
-    {"true", TokenType::TK_TRUE},
-    {"try", TokenType::TK_TRY},
-    {"var", TokenType::TK_VAR},
-    {"while", TokenType::TK_WHILE},
+    {"and", TokenType::TK_AND},         {"array", TokenType::TK_ARRAY},
+    {"as", TokenType::TK_AS},           {"bool", TokenType::TK_BOOL},
+    {"break", TokenType::TK_BREAK},     {"case", TokenType::TK_CASE},
+    {"catch", TokenType::TK_CATCH},     {"class", TokenType::TK_CLASS},
+    {"const", TokenType::TK_CONST},     {"continue", TokenType::TK_CONTINUE},
+    {"default", TokenType::TK_DEFAULT}, {"dict", TokenType::TK_DICT},
+    {"else", TokenType::TK_ELSE},       {"enum", TokenType::TK_ENUM},
+    {"export", TokenType::TK_EXPORT},   {"extends", TokenType::TK_EXTENDS},
+    {"false", TokenType::TK_FALSE},     {"finally", TokenType::TK_FINALLY},
+    {"float", TokenType::TK_FLOAT},     {"for", TokenType::TK_FOR},
+    {"from", TokenType::TK_FROM},       {"fun", TokenType::TK_FUN},
+    {"func", TokenType::TK_FUN},        {"function", TokenType::TK_FUN},
+    {"if", TokenType::TK_IF},           {"import", TokenType::TK_IMPORT},
+    {"int", TokenType::TK_INT},         {"match", TokenType::TK_MATCH},
+    {"not", TokenType::TK_NOT},         {"null", TokenType::TK_NULL},
+    {"or", TokenType::TK_OR},           {"print", TokenType::TK_PRINT},
+    {"return", TokenType::TK_RETURN},   {"string", TokenType::TK_STRING_TYPE},
+    {"super", TokenType::TK_SUPER},     {"throw", TokenType::TK_THROW},
+    {"true", TokenType::TK_TRUE},       {"try", TokenType::TK_TRY},
+    {"var", TokenType::TK_VAR},         {"while", TokenType::TK_WHILE},
     {"yield", TokenType::TK_YIELD},
 };
 static constexpr size_t kSortedKeywordsCount = sizeof(kSortedKeywords) / sizeof(kSortedKeywords[0]);
@@ -145,10 +125,9 @@ static constexpr size_t kSortedKeywordsCount = sizeof(kSortedKeywords) / sizeof(
 inline std::optional<TokenType> lookupKeywordFast(const std::string& text) {
     const auto* begin = kSortedKeywords;
     const auto* end = kSortedKeywords + kSortedKeywordsCount;
-    auto it = std::lower_bound(begin, end, text,
-        [](const KeywordEntry& entry, const std::string& key) {
-            return std::strcmp(entry.name, key.c_str()) < 0;
-        });
+    auto it = std::lower_bound(begin, end, text, [](const KeywordEntry& entry, const std::string& key) {
+        return std::strcmp(entry.name, key.c_str()) < 0;
+    });
     if (it != end && std::strcmp(it->name, text.c_str()) == 0) {
         return it->type;
     }

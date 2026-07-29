@@ -53,7 +53,8 @@ inline int64_t codepointCount(const std::string& s) {
 /// PERF: 带 ASCII 提示的重载。当调用方已通过 StringData::cachedIsAscii 确认为纯 ASCII 时，
 /// 直接返回字节长度（纯 ASCII 每字节 = 1 码位），从 O(n) 降为 O(1)。
 inline int64_t codepointCount(const std::string& s, bool knownAscii) {
-    if (knownAscii) return static_cast<int64_t>(s.size());
+    if (knownAscii)
+        return static_cast<int64_t>(s.size());
     return codepointCount(s);
 }
 

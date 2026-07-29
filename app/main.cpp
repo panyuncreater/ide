@@ -11,10 +11,10 @@
 
 #include "FluentGlobal.h"
 #include "Theme.h"
-#include "common/CrashHandler.h" // R128: 崩溃报告系统
+#include "common/CrashHandler.h"   // R128: 崩溃报告系统
 #include "gui/CrashReportDialog.h" // R128: 启动时检测上次崩溃
-#include "gui/GuiTextUtils.h" // R75: uiFont() 跨机器字体回退链
-#include "gui/I18n.h"         // D2: i18n 翻译辅助层
+#include "gui/GuiTextUtils.h"      // R75: uiFont() 跨机器字体回退链
+#include "gui/I18n.h"              // D2: i18n 翻译辅助层
 
 // ============================================================
 // MiniLang IDE 程序入口

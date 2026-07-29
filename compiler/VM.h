@@ -844,7 +844,7 @@ private:
     VMResult executeCall(size_t& ip, bool isExpr);
     /// L18 eng-tailcall: OP_TAIL_CALL 执行——目标可帧复用则 TCO（保留
     /// returnIp/basePointer 切换 chunk/ip），否则降级为 executeCall 普通调用
-    ///（字节布局同 OP_CALL，returnIp 指向后随 OP_RETURN，语义等价）。
+    /// （字节布局同 OP_CALL，returnIp 指向后随 OP_RETURN，语义等价）。
     VMResult executeTailCall(size_t& ip);
 
     // ---- R123 fix: executeCall 470 行二次拆分为 7 个 helper（原 470 行 → 每个方法 < 130 行）----

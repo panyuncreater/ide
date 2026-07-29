@@ -16,7 +16,7 @@
 
 #include "gui/AstBuilderToyPanel.h"
 #include "gui/I18n.h"
-#include "gui/LearnerProgress.h" // P0-2 fix (F7): 关卡完成状态持久化
+#include "gui/LearnerProgress.h"      // P0-2 fix (F7): 关卡完成状态持久化
 #include "gui/ProgressSaveFeedback.h" // P2-UX fix: save 失败 toast 通知
 // P1-3 fix (F14): 引入真实 Lexer + Parser 用于对照验证
 #include "ast/ASTNode.h"

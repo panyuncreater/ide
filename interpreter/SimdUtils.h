@@ -29,8 +29,8 @@
 
 #pragma once
 
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 
 // ============================================================
@@ -55,8 +55,8 @@
 #if MINILANG_HAS_AVX2
 #include <immintrin.h>
 #elif MINILANG_HAS_SSE42
-#include <nmmintrin.h>
 #include <emmintrin.h>
+#include <nmmintrin.h>
 #endif
 
 namespace minilang::simd {
@@ -106,13 +106,15 @@ inline int64_t simdSumInt64(const int64_t* data, size_t n) {
         int64_t result;
         _mm_storel_epi64(reinterpret_cast<__m128i*>(&result), final);
         // 尾部标量
-        for (; i < n; ++i) result += data[i];
+        for (; i < n; ++i)
+            result += data[i];
         return result;
     }
 #endif
     // 标量回退
     int64_t sum = 0;
-    for (size_t i = 0; i < n; ++i) sum += data[i];
+    for (size_t i = 0; i < n; ++i)
+        sum += data[i];
     return sum;
 }
 
@@ -144,12 +146,14 @@ inline double simdSumDouble(const double* data, size_t n) {
         __m128d final = _mm_add_pd(sum128, shuffle);
         double result;
         _mm_storel_pd(&result, final);
-        for (; i < n; ++i) result += data[i];
+        for (; i < n; ++i)
+            result += data[i];
         return result;
     }
 #endif
     double sum = 0.0;
-    for (size_t i = 0; i < n; ++i) sum += data[i];
+    for (size_t i = 0; i < n; ++i)
+        sum += data[i];
     return sum;
 }
 
@@ -164,7 +168,8 @@ inline double simdSumDouble(const double* data, size_t n) {
 // 变通：用比较 + blend 实现：min = (a < b) ? a : b
 // ============================================================
 inline int64_t simdMinInt64(const int64_t* data, size_t n) {
-    if (n == 0) return 0;
+    if (n == 0)
+        return 0;
 #if MINILANG_HAS_AVX2
     if (n >= SIMD_MIN_ELEMENTS) {
         __m256i acc = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(data));
@@ -190,17 +195,22 @@ inline int64_t simdMinInt64(const int64_t* data, size_t n) {
         _mm_storel_epi64(reinterpret_cast<__m128i*>(&hi64), high64);
         int64_t result = (lo64 < hi64) ? lo64 : hi64;
         // 尾部
-        for (; i < n; ++i) if (data[i] < result) result = data[i];
+        for (; i < n; ++i)
+            if (data[i] < result)
+                result = data[i];
         return result;
     }
 #endif
     int64_t m = data[0];
-    for (size_t i = 1; i < n; ++i) if (data[i] < m) m = data[i];
+    for (size_t i = 1; i < n; ++i)
+        if (data[i] < m)
+            m = data[i];
     return m;
 }
 
 inline int64_t simdMaxInt64(const int64_t* data, size_t n) {
-    if (n == 0) return 0;
+    if (n == 0)
+        return 0;
 #if MINILANG_HAS_AVX2
     if (n >= SIMD_MIN_ELEMENTS) {
         __m256i acc = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(data));
@@ -221,12 +231,16 @@ inline int64_t simdMaxInt64(const int64_t* data, size_t n) {
         int64_t hi64;
         _mm_storel_epi64(reinterpret_cast<__m128i*>(&hi64), high64);
         int64_t result = (lo64 > hi64) ? lo64 : hi64;
-        for (; i < n; ++i) if (data[i] > result) result = data[i];
+        for (; i < n; ++i)
+            if (data[i] > result)
+                result = data[i];
         return result;
     }
 #endif
     int64_t m = data[0];
-    for (size_t i = 1; i < n; ++i) if (data[i] > m) m = data[i];
+    for (size_t i = 1; i < n; ++i)
+        if (data[i] > m)
+            m = data[i];
     return m;
 }
 

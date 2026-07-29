@@ -16,7 +16,7 @@
 #include "gui/GuiTextUtils.h"
 #include "gui/I18n.h" // D2: i18n 翻译宏 mlTr
 #include "gui/PanelAnimator.h"
-#include "gui/ShareCodec.h" // 拓展二期·平台：代码片段分享链接编解码
+#include "gui/ShareCodec.h"    // 拓展二期·平台：代码片段分享链接编解码
 #include "gui/TeachingTheme.h" // P2 视觉一致性：info/success/warning/error/hint 语义色集中管理
 
 #include <QAbstractAnimation>

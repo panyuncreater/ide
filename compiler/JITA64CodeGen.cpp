@@ -18,8 +18,8 @@
 
 #ifdef MINILANG_USE_JIT_A64
 
-#include "compiler/JITInternal.h"
 #include "common/RuntimeLimits.h"
+#include "compiler/JITInternal.h"
 #include "interpreter/Value.h"
 #include <cstdint>
 #include <string>
@@ -145,8 +145,8 @@ JitA64EntryFn JITA64Backend::compileMainChunk(const CompileResult& result) {
         switch (op) {
         case OpCode::OP_INT: {
             // 从常量池加载整数，NaN-box 编码后 push
-            uint16_t constIdx = static_cast<uint16_t>(codeBytes[ip + 1]) |
-                                (static_cast<uint16_t>(codeBytes[ip + 2]) << 8);
+            uint16_t constIdx =
+                static_cast<uint16_t>(codeBytes[ip + 1]) | (static_cast<uint16_t>(codeBytes[ip + 2]) << 8);
             int64_t val = constants[constIdx].intVal();
             uint64_t encoded = 0;
             encodeNanBoxInt(val, encoded);
@@ -160,17 +160,17 @@ JitA64EntryFn JITA64Backend::compileMainChunk(const CompileResult& result) {
 
         case OpCode::OP_ADD: {
             // pop 两个值到 x0, x1（NaN-boxed INT 快速路径）
-            a.ldr(a64::regs::x1, a64::Mem(a64::regs::x21));           // rhs
+            a.ldr(a64::regs::x1, a64::Mem(a64::regs::x21)); // rhs
             a.add(a64::regs::x21, a64::regs::x21, 8);
-            a.ldr(a64::regs::x0, a64::Mem(a64::regs::x21));           // lhs
+            a.ldr(a64::regs::x0, a64::Mem(a64::regs::x21)); // lhs
             // 提取 int48 payload（低 48 位）并相加
-            a.and_(a64::regs::x2, a64::regs::x0, JIT_INT48_MASK);     // lhs payload
-            a.and_(a64::regs::x3, a64::regs::x1, JIT_INT48_MASK);     // rhs payload
-            a.add(a64::regs::x2, a64::regs::x2, a64::regs::x3);      // sum
+            a.and_(a64::regs::x2, a64::regs::x0, JIT_INT48_MASK); // lhs payload
+            a.and_(a64::regs::x3, a64::regs::x1, JIT_INT48_MASK); // rhs payload
+            a.add(a64::regs::x2, a64::regs::x2, a64::regs::x3);   // sum
             // 重新编码为 NaN-boxed INT
             a.mov(a64::regs::x3, JIT_INT_TAG_BASE);
-            a.and_(a64::regs::x2, a64::regs::x2, JIT_INT48_MASK);     // 截断到 48 位
-            a.orr(a64::regs::x0, a64::regs::x2, a64::regs::x3);      // tag | payload
+            a.and_(a64::regs::x2, a64::regs::x2, JIT_INT48_MASK); // 截断到 48 位
+            a.orr(a64::regs::x0, a64::regs::x2, a64::regs::x3);   // tag | payload
             // 写回栈顶
             a.str(a64::regs::x0, a64::Mem(a64::regs::x21));
             break;
@@ -215,9 +215,9 @@ JitA64EntryFn JITA64Backend::compileMainChunk(const CompileResult& result) {
 
         case OpCode::OP_PRINT: {
             // 调用 jitA64PrintValue(ctx, stack_top_value)
-            a.ldr(a64::regs::x1, a64::Mem(a64::regs::x21));  // arg2 = top value bits
-            a.add(a64::regs::x21, a64::regs::x21, 8);        // pop
-            a.mov(a64::regs::x0, a64::regs::x19);            // arg1 = ctx
+            a.ldr(a64::regs::x1, a64::Mem(a64::regs::x21)); // arg2 = top value bits
+            a.add(a64::regs::x21, a64::regs::x21, 8);       // pop
+            a.mov(a64::regs::x0, a64::regs::x19);           // arg1 = ctx
             a.mov(a64::regs::x2, reinterpret_cast<uint64_t>(&jitA64PrintValue));
             a.blr(a64::regs::x2);
             break;
@@ -229,8 +229,8 @@ JitA64EntryFn JITA64Backend::compileMainChunk(const CompileResult& result) {
         }
 
         case OpCode::OP_JUMP: {
-            uint16_t offset = static_cast<uint16_t>(codeBytes[ip + 1]) |
-                              (static_cast<uint16_t>(codeBytes[ip + 2]) << 8);
+            uint16_t offset =
+                static_cast<uint16_t>(codeBytes[ip + 1]) | (static_cast<uint16_t>(codeBytes[ip + 2]) << 8);
             if (labels.count(offset)) {
                 a.b(labels[offset]);
             }
@@ -238,8 +238,8 @@ JitA64EntryFn JITA64Backend::compileMainChunk(const CompileResult& result) {
         }
 
         case OpCode::OP_JUMP_IF_FALSE: {
-            uint16_t offset = static_cast<uint16_t>(codeBytes[ip + 1]) |
-                              (static_cast<uint16_t>(codeBytes[ip + 2]) << 8);
+            uint16_t offset =
+                static_cast<uint16_t>(codeBytes[ip + 1]) | (static_cast<uint16_t>(codeBytes[ip + 2]) << 8);
             // pop 栈顶值，检查 truthiness
             a.ldr(a64::regs::x0, a64::Mem(a64::regs::x21));
             a.add(a64::regs::x21, a64::regs::x21, 8);
@@ -265,8 +265,8 @@ JitA64EntryFn JITA64Backend::compileMainChunk(const CompileResult& result) {
         }
 
         case OpCode::OP_LOOP: {
-            uint16_t offset = static_cast<uint16_t>(codeBytes[ip + 1]) |
-                              (static_cast<uint16_t>(codeBytes[ip + 2]) << 8);
+            uint16_t offset =
+                static_cast<uint16_t>(codeBytes[ip + 1]) | (static_cast<uint16_t>(codeBytes[ip + 2]) << 8);
             if (labels.count(offset)) {
                 a.b(labels[offset]);
             }
@@ -274,8 +274,7 @@ JitA64EntryFn JITA64Backend::compileMainChunk(const CompileResult& result) {
         }
 
         case OpCode::OP_GET_LOCAL: {
-            uint16_t slot = static_cast<uint16_t>(codeBytes[ip + 1]) |
-                            (static_cast<uint16_t>(codeBytes[ip + 2]) << 8);
+            uint16_t slot = static_cast<uint16_t>(codeBytes[ip + 1]) | (static_cast<uint16_t>(codeBytes[ip + 2]) << 8);
             // ldr x0, [x20 - slot*8]
             a.ldr(a64::regs::x0, a64::Mem(a64::regs::x20, -static_cast<int32_t>(slot * 8)));
             // push
@@ -285,8 +284,7 @@ JitA64EntryFn JITA64Backend::compileMainChunk(const CompileResult& result) {
         }
 
         case OpCode::OP_SET_LOCAL: {
-            uint16_t slot = static_cast<uint16_t>(codeBytes[ip + 1]) |
-                            (static_cast<uint16_t>(codeBytes[ip + 2]) << 8);
+            uint16_t slot = static_cast<uint16_t>(codeBytes[ip + 1]) | (static_cast<uint16_t>(codeBytes[ip + 2]) << 8);
             // peek (不 pop)
             a.ldr(a64::regs::x0, a64::Mem(a64::regs::x21));
             // str x0, [x20 - slot*8]
@@ -295,8 +293,7 @@ JitA64EntryFn JITA64Backend::compileMainChunk(const CompileResult& result) {
         }
 
         case OpCode::OP_GET_GLOBAL: {
-            uint16_t slot = static_cast<uint16_t>(codeBytes[ip + 1]) |
-                            (static_cast<uint16_t>(codeBytes[ip + 2]) << 8);
+            uint16_t slot = static_cast<uint16_t>(codeBytes[ip + 1]) | (static_cast<uint16_t>(codeBytes[ip + 2]) << 8);
             // ldr x1, [x19 + offsetof(JitContext, globalSlots)]  // ctx->globalSlots
             a.ldr(a64::regs::x1, a64::Mem(a64::regs::x19, 24));
             // ldr x0, [x1 + slot*8]
@@ -308,8 +305,7 @@ JitA64EntryFn JITA64Backend::compileMainChunk(const CompileResult& result) {
         }
 
         case OpCode::OP_SET_GLOBAL: {
-            uint16_t slot = static_cast<uint16_t>(codeBytes[ip + 1]) |
-                            (static_cast<uint16_t>(codeBytes[ip + 2]) << 8);
+            uint16_t slot = static_cast<uint16_t>(codeBytes[ip + 1]) | (static_cast<uint16_t>(codeBytes[ip + 2]) << 8);
             // peek
             a.ldr(a64::regs::x0, a64::Mem(a64::regs::x21));
             // ctx->globalSlots
@@ -320,8 +316,7 @@ JitA64EntryFn JITA64Backend::compileMainChunk(const CompileResult& result) {
         }
 
         case OpCode::OP_DEFINE_GLOBAL: {
-            uint16_t slot = static_cast<uint16_t>(codeBytes[ip + 1]) |
-                            (static_cast<uint16_t>(codeBytes[ip + 2]) << 8);
+            uint16_t slot = static_cast<uint16_t>(codeBytes[ip + 1]) | (static_cast<uint16_t>(codeBytes[ip + 2]) << 8);
             // pop
             a.ldr(a64::regs::x0, a64::Mem(a64::regs::x21));
             a.add(a64::regs::x21, a64::regs::x21, 8);
@@ -393,8 +388,7 @@ JitA64Result JITA64Backend::execute(const CompileResult& result) {
     diagnostics_.clear();
 
     // 初始化全局变量 slot 存储
-    globalSlots_.assign(result.globalSlotCount > 0 ? result.globalSlotCount : 0,
-                        static_cast<int64_t>(JIT_NULL_BITS));
+    globalSlots_.assign(result.globalSlotCount > 0 ? result.globalSlotCount : 0, static_cast<int64_t>(JIT_NULL_BITS));
     jitContext_.globalSlots = globalSlots_.data();
     jitContext_.hasError = &hasError_;
     jitContext_.errorBuffer = &lastError_;

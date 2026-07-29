@@ -295,30 +295,30 @@ struct JitContext {
 // 任何 JitContext 字段重排都会立即在此捕获。
 // ============================================================
 namespace jit_offset {
-    constexpr int hasError = 8;
-    constexpr int globalSlots = 24;
-    constexpr int frames = 32;
-    constexpr int frameCount = 40;
-    constexpr int stackTop = 48;
-    constexpr int methodEntryPtr = 72;
-    constexpr int methodLocalCount = 80;
-    constexpr int callerBp = 96;
-    constexpr int chunkCallCounts = 104; // R150: per-chunk 调用计数数组指针
-    constexpr int hotThresholds = 112;   // R151: per-chunk 热点阈值数组指针
-    constexpr int recompiledFlags = 120; // R151: per-chunk 重编译标志数组指针
-    constexpr int typeFeedback = 128;
-    constexpr int lastMutatedReceiverPtr = 144;
-    constexpr int currentBp = 160;
-    constexpr int osrLoopCountsPtr = 168;      // R157: per-chunk 循环回边计数数组指针
-    constexpr int osrLoopThresholdsPtr = 176;  // R157: per-chunk OSR 阈值数组指针
-    constexpr int osrRecompiledFlagsPtr = 184; // R157: per-chunk OSR 已触发标志数组指针
-    constexpr int osrSavedBp = 192;
-    constexpr int osrSavedSp = 200;
-    constexpr int osrEntryPoint = 208;     // R158: OSR 入口点地址邮箱
-    constexpr int deoptEntryPoint = 216;   // R158: 反优化 Tier 1 入口点邮箱
-    constexpr int memberGetICPtr = 232;    // R160: inline cache 数组指针
-    constexpr int globalsPtr = 240;        // R162: 名称变量表指针
-    constexpr int gcNeededFlag = 248;      // Safepoint GC 请求标志指针
+constexpr int hasError = 8;
+constexpr int globalSlots = 24;
+constexpr int frames = 32;
+constexpr int frameCount = 40;
+constexpr int stackTop = 48;
+constexpr int methodEntryPtr = 72;
+constexpr int methodLocalCount = 80;
+constexpr int callerBp = 96;
+constexpr int chunkCallCounts = 104; // R150: per-chunk 调用计数数组指针
+constexpr int hotThresholds = 112;   // R151: per-chunk 热点阈值数组指针
+constexpr int recompiledFlags = 120; // R151: per-chunk 重编译标志数组指针
+constexpr int typeFeedback = 128;
+constexpr int lastMutatedReceiverPtr = 144;
+constexpr int currentBp = 160;
+constexpr int osrLoopCountsPtr = 168;      // R157: per-chunk 循环回边计数数组指针
+constexpr int osrLoopThresholdsPtr = 176;  // R157: per-chunk OSR 阈值数组指针
+constexpr int osrRecompiledFlagsPtr = 184; // R157: per-chunk OSR 已触发标志数组指针
+constexpr int osrSavedBp = 192;
+constexpr int osrSavedSp = 200;
+constexpr int osrEntryPoint = 208;   // R158: OSR 入口点地址邮箱
+constexpr int deoptEntryPoint = 216; // R158: 反优化 Tier 1 入口点邮箱
+constexpr int memberGetICPtr = 232;  // R160: inline cache 数组指针
+constexpr int globalsPtr = 240;      // R162: 名称变量表指针
+constexpr int gcNeededFlag = 248;    // Safepoint GC 请求标志指针
 } // namespace jit_offset
 static_assert(offsetof(JitContext, hasError) == jit_offset::hasError, "hasError offset");
 static_assert(offsetof(JitContext, globalSlots) == jit_offset::globalSlots, "globalSlots offset");
@@ -332,11 +332,14 @@ static_assert(offsetof(JitContext, chunkCallCounts) == jit_offset::chunkCallCoun
 static_assert(offsetof(JitContext, hotThresholds) == jit_offset::hotThresholds, "hotThresholds offset");
 static_assert(offsetof(JitContext, recompiledFlags) == jit_offset::recompiledFlags, "recompiledFlags offset");
 static_assert(offsetof(JitContext, typeFeedback) == jit_offset::typeFeedback, "typeFeedback offset");
-static_assert(offsetof(JitContext, lastMutatedReceiverPtr) == jit_offset::lastMutatedReceiverPtr, "lastMutatedReceiverPtr offset");
+static_assert(offsetof(JitContext, lastMutatedReceiverPtr) == jit_offset::lastMutatedReceiverPtr,
+              "lastMutatedReceiverPtr offset");
 static_assert(offsetof(JitContext, currentBp) == jit_offset::currentBp, "currentBp offset");
 static_assert(offsetof(JitContext, osrLoopCountsPtr) == jit_offset::osrLoopCountsPtr, "osrLoopCountsPtr offset");
-static_assert(offsetof(JitContext, osrLoopThresholdsPtr) == jit_offset::osrLoopThresholdsPtr, "osrLoopThresholdsPtr offset");
-static_assert(offsetof(JitContext, osrRecompiledFlagsPtr) == jit_offset::osrRecompiledFlagsPtr, "osrRecompiledFlagsPtr offset");
+static_assert(offsetof(JitContext, osrLoopThresholdsPtr) == jit_offset::osrLoopThresholdsPtr,
+              "osrLoopThresholdsPtr offset");
+static_assert(offsetof(JitContext, osrRecompiledFlagsPtr) == jit_offset::osrRecompiledFlagsPtr,
+              "osrRecompiledFlagsPtr offset");
 static_assert(offsetof(JitContext, osrSavedBp) == jit_offset::osrSavedBp, "osrSavedBp offset");
 static_assert(offsetof(JitContext, osrSavedSp) == jit_offset::osrSavedSp, "osrSavedSp offset");
 static_assert(offsetof(JitContext, osrEntryPoint) == jit_offset::osrEntryPoint, "osrEntryPoint offset");
@@ -376,9 +379,9 @@ struct MemberGetInlineCacheEntry {
         const Value* cachedFieldValuePtr = nullptr; ///< cache value: 字段 Value 指针（直接读取）
     };
 
-    Slot slots[kPICSlots];       ///< 4 路 PIC 槽位
-    uint8_t slotCount = 0;       ///< 已使用的槽位数（0~kPICSlots）
-    bool megamorphic = false;    ///< 超过 kPICSlots 种类型后置 true，永久走慢速路径
+    Slot slots[kPICSlots];    ///< 4 路 PIC 槽位
+    uint8_t slotCount = 0;    ///< 已使用的槽位数（0~kPICSlots）
+    bool megamorphic = false; ///< 超过 kPICSlots 种类型后置 true，永久走慢速路径
 
     /// 查找 instPtr 对应的缓存字段指针（命中返回 Value*，未命中返回 nullptr）
     const Value* lookup(const void* instPtr) const {
@@ -391,7 +394,8 @@ struct MemberGetInlineCacheEntry {
 
     /// 插入新条目。若已满则标记 megamorphic 并返回 false。
     bool insert(const void* instPtr, const Value* fieldPtr) {
-        if (megamorphic) return false;
+        if (megamorphic)
+            return false;
         // 检查是否已存在（避免重复插入）
         for (uint8_t i = 0; i < slotCount; ++i) {
             if (slots[i].cachedInstancePtr == instPtr) {
@@ -427,7 +431,7 @@ struct MethodCallICEntry {
     static constexpr int kSlots = 4;
 
     struct Slot {
-        const char* classNamePtr = nullptr;   ///< cache key: receiver.className() 的内部指针
+        const char* classNamePtr = nullptr;    ///< cache key: receiver.className() 的内部指针
         const JitMethodInfo* method = nullptr; ///< cache value: 解析到的方法信息
     };
 
@@ -444,7 +448,8 @@ struct MethodCallICEntry {
     }
 
     bool insert(const char* classNamePtr, const JitMethodInfo* method) {
-        if (megamorphic) return false;
+        if (megamorphic)
+            return false;
         for (uint8_t i = 0; i < slotCount; ++i) {
             if (slots[i].classNamePtr == classNamePtr) {
                 slots[i].method = method;
@@ -738,7 +743,7 @@ private:
     // 原 compileAllChunks 内嵌 25+ 个 lambda（~1100 行），新增 OpCode 支持需在
     // 3000+ 行函数中定位，维护性差。现提取为独立成员函数，实现移至 JITCodeGenHelpers.cpp。
     // 约定：所有 emit* 函数接收 asmjit::x86::Assembler& 和必要的 Label 参数
-    //（Label 是轻量 ID 包装，按值传递）。错误处理用的 epilogue 标签按值传递。
+    // （Label 是轻量 ID 包装，按值传递）。错误处理用的 epilogue 标签按值传递。
     // 依赖成员状态的函数（emitCheckInt 用 currentChunkIdx_、emitMemberGet 用 nextCallSiteId_）
     // 通过成员变量共享，无需额外参数。
     // ============================================================
@@ -791,8 +796,7 @@ private:
     /// @param funcIt funcTable 中命中的条目（调用前已验证非 end）
     /// @param argCount 实参个数
     /// @return true 走快速路径（ip += 4 由调用方处理），false 走 mailbox 路径
-    bool emitCallDispatch(asmjit::x86::Assembler& a, asmjit::Label epilogue, const JitFuncInfo& info,
-                          uint8_t argCount);
+    bool emitCallDispatch(asmjit::x86::Assembler& a, asmjit::Label epilogue, const JitFuncInfo& info, uint8_t argCount);
     /// OP_CALL mailbox 路径（lazy mode / 有默认参数 / 有 upvalues / 有内部闭包）
     void emitCallMailbox(asmjit::x86::Assembler& a, asmjit::Label epilogue, const char* funNamePtr, uint8_t argCount);
     /// OP_CALL_EXPR 代码生成（闭包值调用，邮箱模式）
@@ -812,8 +816,8 @@ private:
     /// @param chunkPtr BytecodeChunk 指针（注册到闭包值）
     /// @param upvalueCount upvalue 个数
     /// @param upvalueDescs upvalue 描述符指针（指向字节码 ip+4）
-    void emitClosure(asmjit::x86::Assembler& a, asmjit::Label epilogue, const char* funNamePtr,
-                     const void* chunkPtr, uint8_t upvalueCount, const uint8_t* upvalueDescs);
+    void emitClosure(asmjit::x86::Assembler& a, asmjit::Label epilogue, const char* funNamePtr, const void* chunkPtr,
+                     uint8_t upvalueCount, const uint8_t* upvalueDescs);
     ///@}
 
     /// codegen 共享状态（原 compileAllChunks 局部变量，提取为成员供 helper 函数访问）
@@ -1091,9 +1095,9 @@ public:
     /// @param fromAddr 帧基址 r13（高地址端），关闭当前帧所有 slot 的 upvalues（addr <= r13）
     void closeUpvaluesFrom(int64_t* fromAddr);
 
-    JitContext jitContext_; ///< 运行时上下文（传给 JIT 代码）
-    std::string lastError_; ///< 最后的错误消息
-    bool hasError_ = false; ///< 错误标志
+    JitContext jitContext_;            ///< 运行时上下文（传给 JIT 代码）
+    std::string lastError_;            ///< 最后的错误消息
+    bool hasError_ = false;            ///< 错误标志
     std::atomic<int> gcNeededFlag_{0}; ///< Safepoint GC 请求标志（OP_LOOP 回边轮询）
     // 拓展二期·教学：汇编文本捕获（setAsmCapture 启用，compileAllChunks 填充）
     bool asmCaptureEnabled_ = false; ///< 是否在 CodeHolder 上挂 StringLogger

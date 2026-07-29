@@ -113,9 +113,13 @@ COPY gui/ gui/
 COPY tests/ tests/
 
 # 配置并构建 IDE（关闭测试与 i18n 以加速）
+# 注：test_harness/ 和 cli/ 目录未 COPY 到 Docker 上下文（构建 IDE 镜像无需这些工具），
+# 必须显式关闭对应选项，否则 add_subdirectory 会因目录不存在而报 CMake Error。
 RUN cmake --preset linux-gcc-release \
     -DMINILANG_BUILD_TESTS=OFF \
-    -DMINILANG_ENABLE_I18N=OFF
+    -DMINILANG_ENABLE_I18N=OFF \
+    -DMINILANG_BUILD_TEST_HARNESS=OFF \
+    -DMINILANG_BUILD_CLI=OFF
 RUN cmake --build out/build/linux-release --parallel
 
 # ---- 开发/运行阶段 ----

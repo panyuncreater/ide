@@ -505,13 +505,15 @@ void Interpreter::setCurrentFilePath(const std::string& path) {
 }
 
 void Interpreter::setDebugger(std::shared_ptr<DebugController> dbg) {
-    // AUDIT-R4 BUG-15 fix: debugger_ 改为 std::atomic<std::shared_ptr<DebugController>>，
-    // 原子发布保证 worker 线程在 checkBreak()/visit* 中读取安全（memory_order_seq_cst
-    // 提供完整的 happens-before 关系）。原 callbackMutex_ 加锁方案仅保护写端，
-    // 读端（checkBreak 热路径）无锁——构成数据竞争 UB。atomic<shared_ptr> 彻底消除。
+    // AUDIT-R4 BUG-15 fix: debugger_ 改为 mutex 保护的 shared_ptr——setDebugger() 在主线程写入，
+    // checkBreak()/visit* 在 worker 线程读取，原普通 shared_ptr 构成数据竞争（UB）。
+    // 原方案用 std::atomic<std::shared_ptr>，但 macOS Clang libc++ 要求 T 满足
+    // is_trivially_copyable（shared_ptr 不满足），编译失败。改用 mutex 保护：
+    // debugMode_ atomic<bool> 作为热路径 fast-path 短路，仅调试模式启用时才进入加锁读。
     // 支持运行中动态附加/分离调试器（store nullptr 即分离，worker 下次 checkBreak
     // 读到 null 后跳过调试逻辑）。
-    debugger_.store(std::move(dbg), std::memory_order_seq_cst);
+    std::lock_guard<std::mutex> lock(debuggerMutex_);
+    debugger_ = std::move(dbg);
 }
 
 void Interpreter::setDebugMode(bool enabled) {
@@ -750,8 +752,8 @@ Value Interpreter::evaluateCondition(ASTNode* node) {
         std::unordered_map<std::string, int64_t> savedModuleMtimes;
         std::unordered_set<std::string> savedExportedNames;
         std::unordered_map<std::string, EnumInfo> savedEnumRegistry; // R99
-        int savedCoroutineTargetYieldId; // Bug #76
-        int savedYieldExecutionCount;    // Bug #76
+        int savedCoroutineTargetYieldId;                             // Bug #76
+        int savedYieldExecutionCount;                                // Bug #76
         // AUDIT-R6 B2 fix: 沙箱抑制的 output/input 回调（析构加锁恢复）
         std::shared_ptr<const std::function<void(const std::string&)>> savedOutputCb;
         std::function<std::string(const std::string&)> savedInputCb;
@@ -962,7 +964,7 @@ void Interpreter::checkBreak(ASTNode* node) {
     }
     if (debugMode_) {
         // AUDIT-R4 BUG-15 fix: atomic load 一次到局部变量，避免 TOCTOU + 减少原子操作
-        auto dbg = debugger_.load(std::memory_order_acquire);
+        auto dbg = debugger();
         if (dbg) {
             // BUG-DBG-1 fix: 更新调用栈顶帧行号为当前执行行号。
             // P-4 perf: 移入 debugMode_ 分支——非调试模式下 callStack_.line 无消费者，
@@ -1262,7 +1264,7 @@ Value Interpreter::numericBinaryOp(BinOpType opType, Value left, Value right, in
 void Interpreter::triggerIncrementalGc() {
     std::vector<const void*> gcRoots;
     // AUDIT-R3 P1-5 fix: 环境链全层遍历 helper——原实现仅收集各 env 本层变量
-    //（snapshotLocalVariables 不含子块环境），块作用域变量/模块加载期环境
+    // （snapshotLocalVariables 不含子块环境），块作用域变量/模块加载期环境
     // 中的活容器不在根集内，sweep 会静默清空其元素（数据损坏）。
     // 现沿 parent 链全层收集；重复根无害（mark 阶段 marked 集去重）。
     auto collectEnvChainRoots = [&gcRoots](const Environment* env) {
@@ -1822,7 +1824,7 @@ void Interpreter::visitVarDecl(VarDecl& node) {
     // L19 Watchpoint（pre-execution 语义，与 VM OP_DEFINE_VAR 对齐）：
     // 变量声明也视为写入，在求值初始化表达式之前检查。
     // AUDIT-R4 BUG-15 fix: atomic load 到局部变量
-    auto dbg = debugger_.load(std::memory_order_acquire);
+    auto dbg = debugger();
     if (dbg && dbg->hasWatchpoints()) {
         dbg->checkWatchpointHit(node.name, false, "", node.line);
     }
@@ -2011,7 +2013,7 @@ void Interpreter::visitAssignment(Assignment& node) {
     // L19 Watchpoint（pre-execution 语义，与 VM peekWriteTarget 对齐）：
     // 在 evaluate(node.value) 之前检查，用户看到的是写入前的旧值。
     // AUDIT-R4 BUG-15 fix: atomic load 到局部变量
-    auto dbg = debugger_.load(std::memory_order_acquire);
+    auto dbg = debugger();
     if (dbg && dbg->hasWatchpoints()) {
         dbg->checkWatchpointHit(node.name, false, "", node.line);
     }
@@ -2518,8 +2520,7 @@ void Interpreter::visitReturnStmt(ReturnStmt& node) {
             // 内建同名目标不抛信号，回退普通递归（VM 侧同样降级）。
             const Value* callee = currentEnv_->get(info.call->name);
             if (callee && callee->isClosure() && callee->closureBody() && callee->closureBody() != tcoDecl_ &&
-                !callee->closureBody()->isGenerator &&
-                classRegistry_.find(info.call->name) == classRegistry_.end()) {
+                !callee->closureBody()->isGenerator && classRegistry_.find(info.call->name) == classRegistry_.end()) {
                 FunDecl* targetDecl = callee->closureBody();
                 size_t argCount = info.call->arguments.size();
                 if (argCount >= static_cast<size_t>(targetDecl->requiredParamCount) &&
@@ -2570,7 +2571,7 @@ void Interpreter::visitThrowStmt(ThrowStmt& node) {
     checkBreak(&node);
     // R104 Exception Breakpoint：throw 前检查异常断点（对齐 GDB `catch throw`）
     // AUDIT-R4 BUG-15 fix: atomic load 到局部变量
-    if (auto dbg = debugger_.load(std::memory_order_acquire)) {
+    if (auto dbg = debugger()) {
         dbg->checkExceptionBreakpoint(node.line);
     }
     Value val = evaluate(node.expression.get());
@@ -2738,7 +2739,7 @@ void Interpreter::visitTryStmt(TryStmt& node) {
             // 三后端统一）。原实现无条件 rethrow 且 loopFlow_ 残留，外层 catch 块被
             // 截断（只执行第一条语句）后循环退出——既非异常优先也非控制流优先的
             // 损坏态。现在：loopFlow_ 被 finally 置位时吞掉异常，让 break/continue 生效
-            //（finally 内 return 经 ReturnException 从 runFinallyBlock 传播，天然覆盖原异常）。
+            // （finally 内 return 经 ReturnException 从 runFinallyBlock 传播，天然覆盖原异常）。
             if (loopFlow_ != LoopFlow::None) {
                 lastValue_ = Value::nullValue();
                 return;
@@ -3458,7 +3459,7 @@ void Interpreter::visitIndexAssign(IndexAssign& node) {
     // 索引写入视为修改变量本身（与 VmStepper::checkWatchpointHit 语义一致）。
     // 仅当 node.object 是简单 VarRef 时检查根变量名，复杂链式访问跳过（避免副作用）。
     // AUDIT-R4 BUG-15 fix: atomic load 到局部变量
-    auto dbg = debugger_.load(std::memory_order_acquire);
+    auto dbg = debugger();
     if (dbg && dbg->hasWatchpoints() && node.object->nodeType == NodeType::NODE_VAR_REF) {
         dbg->checkWatchpointHit(static_cast<VarRef*>(node.object.get())->name, false, "", node.line);
     }
@@ -3836,9 +3837,9 @@ Value Interpreter::invokeMethod(MethodCall& node, Value& obj, const ClassInfo* s
                 // 帧复用：取回本轮更新后的 this（与真实递归中内层读取最新 this
                 // 的语义一致），清理本轮 env 与栈条目后用新实参重建。
                 if (++tcoIterations > RuntimeLimits::MAX_LOOP_ITERATIONS) {
-                    runtimeError(ErrorFormat::formatStd("尾调用迭代次数超过限制 ({})",
-                                                        RuntimeLimits::MAX_LOOP_ITERATIONS),
-                                 node.line, node.column);
+                    runtimeError(
+                        ErrorFormat::formatStd("尾调用迭代次数超过限制 ({})", RuntimeLimits::MAX_LOOP_ITERATIONS),
+                        node.line, node.column);
                 }
                 auto* thisNow = methodEnv->get("this");
                 Value updatedNow = thisNow ? *thisNow : Value::nullValue();

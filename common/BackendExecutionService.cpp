@@ -14,13 +14,13 @@
 #include "common/BackendExecutionService.h"
 
 #include "common/Diagnostic.h"
-#include "common/IBackend.h"          // IVmBackend 完整定义（createBackend 返回类型）
-#include "compiler/Bytecode.h"        // BytecodeChunk::isGenerator/yieldCount/kDynamicYieldCount
+#include "common/IBackend.h"   // IVmBackend 完整定义（createBackend 返回类型）
+#include "compiler/Bytecode.h" // BytecodeChunk::isGenerator/yieldCount/kDynamicYieldCount
 #include "compiler/Compiler.h"
 #include "compiler/RegisterBytecode.h" // RegBytecodeChunk::isGenerator/yieldCount
 #include "compiler/RegisterVM.h"
 #include "compiler/VM.h"
-#include "interpreter/GcManager.h"   // GcManager::instance().trackedCount()（executeWithDetail 用）
+#include "interpreter/GcManager.h" // GcManager::instance().trackedCount()（executeWithDetail 用）
 #include "interpreter/Interpreter.h"
 #include "interpreter/RuntimeExceptions.h"
 #include "lexer/Lexer.h"
@@ -421,7 +421,7 @@ BackendExecDetail BackendExecutionService::executeWithDetail(const std::string& 
 
     // 重新执行一次以收集详细数据（generator chunks + opcode counts）
     // 注：重新执行开销与 execute() 相同，但仅在用户主动请求详细分析时触发
-    //（ProfileDashboardPanel/CoroutineVisualizerPanel），频率可接受。
+    // （ProfileDashboardPanel/CoroutineVisualizerPanel），频率可接受。
     // AUDIT-R2 P1-5 fix: 不再调用 GcManager::instance().reset()——reset 会清空
     // 全局单例的 tracked_/aliveSet_，若此时 worker 线程正在执行用户程序，其容器
     // 节点会从跟踪结构中消失，后续 collectCycle 的存活判定被破坏，违反头文件

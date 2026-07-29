@@ -138,8 +138,8 @@ std::unique_ptr<Block> Parser::parse(const std::vector<Token>& tokens) {
         // 不会回退到顶层 parse()。
         if (check(TokenType::TK_RBRACE)) {
             const Token& rbrace = peek();
-            diagnostics_.addError("多余的 '}' 在顶层（无匹配的 '{'）", rbrace.line, rbrace.column,
-                                  DiagSource::Parser, DiagCodes::kStrayBrace);
+            diagnostics_.addError("多余的 '}' 在顶层（无匹配的 '{'）", rbrace.line, rbrace.column, DiagSource::Parser,
+                                  DiagCodes::kStrayBrace);
             advance(); // 消耗 stray '}'，避免 declaration() → primary() 不识别 → 死循环
             continue;
         }
@@ -321,7 +321,8 @@ bool Parser::isFunTypeDeclStart() const {
 std::string Parser::parseTypeAnnotation() {
     // Bug #10 fix: 递归深度保护（dict[K:V] / fun(params):ret 递归调用自身）
     if (parseDepth_ >= MAX_PARSE_DEPTH) {
-        throw ParseError("类型注解嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）", peek().line, peek().column);
+        throw ParseError("类型注解嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）", peek().line,
+                         peek().column);
     }
     DepthGuard guard{parseDepth_};
 
@@ -533,8 +534,8 @@ std::unique_ptr<ASTNode> Parser::varDecl() {
                 // L20: 跳过可选 ": <TypeTokens>"
                 if ((*tokens_)[scanPos].type == TokenType::TK_COLON) {
                     ++scanPos; // 消耗 ':'
-                    // 跳过类型 token 序列：标识符/类型关键字/enum/'['/']'/'?'/','/'('/')'/'{'/'}'（dict[K:V], fun():ret）
-                    // 简化：跳过到下一个 ',' 或 ')'，不严格解析类型语法（实际解析在 parseTypeAnnotation）
+                    // 跳过类型 token 序列：标识符/类型关键字/enum/'['/']'/'?'/','/'('/')'/'{'/'}'（dict[K:V],
+                    // fun():ret） 简化：跳过到下一个 ',' 或 ')'，不严格解析类型语法（实际解析在 parseTypeAnnotation）
                     while (scanPos < static_cast<int>(tokens_->size())) {
                         TokenType tt = (*tokens_)[scanPos].type;
                         if (tt == TokenType::TK_COMMA || tt == TokenType::TK_RPAREN)
@@ -594,8 +595,8 @@ std::unique_ptr<ASTNode> Parser::varDecl() {
             consume(TokenType::TK_SEMICOLON, "期望 ';' 结束解构绑定");
             // L20: 若任一位置带类型注解，则 nameTypeAnnotations 全量保留（空串表示该位置无注解）；
             //      若全部无注解，保留空 vector 以维持向后兼容（hasNameTypeAnnotations() == false）
-            auto node = std::make_unique<DestructureBinding>(std::move(names), std::move(init), varTok.line,
-                                                              varTok.column);
+            auto node =
+                std::make_unique<DestructureBinding>(std::move(names), std::move(init), varTok.line, varTok.column);
             if (anyNameTypeAnn) {
                 node->nameTypeAnnotations = std::move(nameTypeAnns);
             }
@@ -625,7 +626,8 @@ std::unique_ptr<ASTNode> Parser::varDecl() {
     }
     consume(TokenType::TK_SEMICOLON, "期望 ';' 结束变量声明");
 
-    return std::make_unique<VarDecl>(StringIntern::intern(name.lexeme), typeAnn, std::move(init), varTok.line, varTok.column);
+    return std::make_unique<VarDecl>(StringIntern::intern(name.lexeme), typeAnn, std::move(init), varTok.line,
+                                     varTok.column);
 }
 
 std::unique_ptr<VarDecl> Parser::typedVarDecl(const std::string& typeAnn) {
@@ -637,7 +639,8 @@ std::unique_ptr<VarDecl> Parser::typedVarDecl(const std::string& typeAnn) {
     }
     consume(TokenType::TK_SEMICOLON, "期望 ';' 结束变量声明");
 
-    return std::make_unique<VarDecl>(StringIntern::intern(name.lexeme), typeAnn, std::move(init), name.line, name.column);
+    return std::make_unique<VarDecl>(StringIntern::intern(name.lexeme), typeAnn, std::move(init), name.line,
+                                     name.column);
 }
 
 std::unique_ptr<FunDecl> Parser::funDecl() {
@@ -714,8 +717,8 @@ std::unique_ptr<FunDecl> Parser::funDecl() {
     consume(TokenType::TK_LBRACE, "期望 '{'");
     auto body = block();
 
-    auto decl = std::make_unique<FunDecl>(StringIntern::intern(name.lexeme), std::move(params), std::move(paramTypes), returnType,
-                                          std::move(body), funTok.line, funTok.column);
+    auto decl = std::make_unique<FunDecl>(StringIntern::intern(name.lexeme), std::move(params), std::move(paramTypes),
+                                          returnType, std::move(body), funTok.line, funTok.column);
     decl->typeParams = std::move(typeParams);
     // R164 协程/生成器：标记生成器函数（fun*），供 Interpreter/VM 在调用时
     // 返回 Coroutine 值而非直接执行函数体。
@@ -761,8 +764,8 @@ std::unique_ptr<FunDecl> Parser::typedFunDecl(const std::string& returnType) {
     consume(TokenType::TK_LBRACE, "期望 '{'");
     auto body = block();
 
-    auto decl = std::make_unique<FunDecl>(StringIntern::intern(name.lexeme), std::move(params), std::move(paramTypes), returnType,
-                                          std::move(body), name.line, name.column);
+    auto decl = std::make_unique<FunDecl>(StringIntern::intern(name.lexeme), std::move(params), std::move(paramTypes),
+                                          returnType, std::move(body), name.line, name.column);
     // F10: 计算必需参数个数
     int reqCount = 0;
     for (size_t i = 0; i < defaultValues.size(); ++i) {
@@ -1007,8 +1010,8 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
 
     // AUDIT-P2.8 fix: 记录闭合 '}' 所在行号，供 Formatter 注入类体末尾注释。
     int closingBraceLine = previous().line;
-    auto decl =
-        std::make_unique<ClassDecl>(StringIntern::intern(name.lexeme), superClassName, std::move(members), classTok.line, classTok.column);
+    auto decl = std::make_unique<ClassDecl>(StringIntern::intern(name.lexeme), superClassName, std::move(members),
+                                            classTok.line, classTok.column);
     decl->closingBraceLine = closingBraceLine;
     decl->typeParams = std::move(typeParams);
     return decl;
@@ -1103,8 +1106,9 @@ void Parser::parseClassMembers(std::vector<std::shared_ptr<ASTNode>>& members) {
                     consume(TokenType::TK_LBRACE, "期望 '{'");
                     auto body = block();
 
-                    auto decl = std::make_unique<FunDecl>(StringIntern::intern(firstTok.lexeme), std::move(params), std::move(paramTypes),
-                                                          returnType, std::move(body), firstTok.line, firstTok.column);
+                    auto decl = std::make_unique<FunDecl>(StringIntern::intern(firstTok.lexeme), std::move(params),
+                                                          std::move(paramTypes), returnType, std::move(body),
+                                                          firstTok.line, firstTok.column);
                     // F10: 计算必需参数个数
                     int reqCount = 0;
                     for (size_t i = 0; i < defaultValues.size(); ++i) {
@@ -1769,8 +1773,7 @@ std::unique_ptr<ImportStmt> Parser::importStmt() {
 
     // P2-11: namespace 模式用专用构造函数
     if (!namespaceAlias.empty()) {
-        return std::make_unique<ImportStmt>(pathTok.literalString(), namespaceAlias, importTok.line,
-                                            importTok.column);
+        return std::make_unique<ImportStmt>(pathTok.literalString(), namespaceAlias, importTok.line, importTok.column);
     }
     return std::make_unique<ImportStmt>(pathTok.literalString(), std::move(names), importAll, importTok.line,
                                         importTok.column);
@@ -1894,8 +1897,7 @@ std::unique_ptr<Block> Parser::block() {
         // 结构性块边界或 EOF：不消耗，让调用方处理 catch/finally/else
     } else {
         // 其他情况（如错误上限 break 后 peek 非 '}'）：记录诊断但不抛错
-        diagnostics_.addError("期望 '}'", peek().line, peek().column, DiagSource::Parser,
-                              DiagCodes::kUnbalancedBrace);
+        diagnostics_.addError("期望 '}'", peek().line, peek().column, DiagSource::Parser, DiagCodes::kUnbalancedBrace);
     }
 
     auto blk = std::make_unique<Block>(std::move(stmts), lbrace.line, lbrace.column);
@@ -2199,11 +2201,12 @@ std::unique_ptr<ASTNode> Parser::call() {
                 }
                 consume(TokenType::TK_RPAREN, "期望 ')' 结束方法参数列表");
 
-                expr = std::make_unique<MethodCall>(std::move(expr), StringIntern::intern(fieldName.lexeme), std::move(args), dot.line,
-                                                    dot.column);
+                expr = std::make_unique<MethodCall>(std::move(expr), StringIntern::intern(fieldName.lexeme),
+                                                    std::move(args), dot.line, dot.column);
             } else {
                 // 普通成员访问: obj.field
-                expr = std::make_unique<MemberAccess>(std::move(expr), StringIntern::intern(fieldName.lexeme), dot.line, dot.column);
+                expr = std::make_unique<MemberAccess>(std::move(expr), StringIntern::intern(fieldName.lexeme), dot.line,
+                                                      dot.column);
             }
             continue;
         }
@@ -2508,9 +2511,9 @@ void Parser::synchronize() {
     case TokenType::TK_STRING_TYPE:
     case TokenType::TK_DICT:
     case TokenType::TK_ARRAY:
-    case TokenType::TK_ENUM:   // Bug #39 fix: enum 作为同步点
-    case TokenType::TK_MATCH:  // Bug #39 fix: match 作为同步点
-    case TokenType::TK_FROM: // AUDIT-P1-CORRECT fix: from 作为同步点，避免 import 错误恢复时吞掉 from
+    case TokenType::TK_ENUM:  // Bug #39 fix: enum 作为同步点
+    case TokenType::TK_MATCH: // Bug #39 fix: match 作为同步点
+    case TokenType::TK_FROM:  // AUDIT-P1-CORRECT fix: from 作为同步点，避免 import 错误恢复时吞掉 from
         return;
     default:
         break;
@@ -2562,9 +2565,9 @@ void Parser::synchronize() {
         case TokenType::TK_STRING_TYPE:
         case TokenType::TK_DICT:
         case TokenType::TK_ARRAY:
-        case TokenType::TK_ENUM:   // Bug #39 fix: enum 作为同步点
-        case TokenType::TK_MATCH:  // Bug #39 fix: match 作为同步点
-        case TokenType::TK_FROM: // AUDIT-P1-CORRECT fix: from 作为同步点
+        case TokenType::TK_ENUM:  // Bug #39 fix: enum 作为同步点
+        case TokenType::TK_MATCH: // Bug #39 fix: match 作为同步点
+        case TokenType::TK_FROM:  // AUDIT-P1-CORRECT fix: from 作为同步点
             return;
         default:
             break;

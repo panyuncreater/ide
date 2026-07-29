@@ -765,7 +765,8 @@ void CourseSystemPanel::onImportFromFile() {
     Course course;
     QString errMsg;
     if (!CourseSystemLibrary::loadCourseFromFile(path, course, errMsg)) {
-        previewBrowser_->setHtml(QStringLiteral("<p style='color:red;'><b>导入失败：</b>%1</p>").arg(errMsg.toHtmlEscaped()));
+        previewBrowser_->setHtml(
+            QStringLiteral("<p style='color:red;'><b>导入失败：</b>%1</p>").arg(errMsg.toHtmlEscaped()));
         loadToLibraryBtn_->setEnabled(false);
         hasLastParsed_ = false;
         return;
@@ -791,14 +792,15 @@ void CourseSystemPanel::onExportCourse() {
 
     // 默认文件名：课程标题.json
     QString defaultName = QString::fromUtf8(c.title.c_str()) + QStringLiteral(".json");
-    QString path = QFileDialog::getSaveFileName(this, tr("导出课程"), defaultName,
-                                                tr("课程 JSON 文件 (*.json);;所有文件 (*)"));
+    QString path =
+        QFileDialog::getSaveFileName(this, tr("导出课程"), defaultName, tr("课程 JSON 文件 (*.json);;所有文件 (*)"));
     if (path.isEmpty())
         return;
 
     QString errMsg;
     if (!CourseSystemLibrary::saveCourseToFile(path, c, errMsg)) {
-        courseDetail_->append(QStringLiteral("<p style='color:red;'><b>导出失败：</b>%1</p>").arg(errMsg.toHtmlEscaped()));
+        courseDetail_->append(
+            QStringLiteral("<p style='color:red;'><b>导出失败：</b>%1</p>").arg(errMsg.toHtmlEscaped()));
         return;
     }
     courseDetail_->append(QStringLiteral("<p style='color:#2E7D32;'>已导出课程到：%1</p>").arg(path.toHtmlEscaped()));

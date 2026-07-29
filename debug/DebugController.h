@@ -1,8 +1,8 @@
 #pragma once
 
 #include "common/IDebugController.h" // P1-4: 调试控制器统一接口
-#include "debug/DebugEvaluator.h"   // A5 fix: 抽取条件断点求值器
-#include "debug/DebugTypes.h"       // ARCH-16 fix: 共享调试公共类型
+#include "debug/DebugEvaluator.h"    // A5 fix: 抽取条件断点求值器
+#include "debug/DebugTypes.h"        // ARCH-16 fix: 共享调试公共类型
 #include "interpreter/Value.h"
 #include <QMap>
 #include <QObject>
@@ -243,7 +243,7 @@ private:
     // A5 fix: 抽取到独立 DebugEvaluator 类，DebugController 仅持有指针
     std::unique_ptr<DebugEvaluator> evaluator_{std::make_unique<DebugEvaluator>()};
     // P0-9 fix: 跨线程读写的标量字段改为 atomic，避免数据竞争
-    std::atomic<int> currentDepth_{0};        // 当前调用深度（worker 写，UI 读）
+    std::atomic<int> currentDepth_{0}; // 当前调用深度（worker 写，UI 读）
     // AUDIT-R4 BUG-16 fix: stepOverDepth_/stepOutDepth_/tempBreakpointLine_ 改为
     // atomic<int>——reset() 在 terminate 防御路径用 try_lock，获锁失败时原实现
     // 跳过这些非原子字段的重置，残留旧值使下次调试会话首次单步行为异常。

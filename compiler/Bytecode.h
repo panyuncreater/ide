@@ -160,15 +160,15 @@ enum class OpCode : uint8_t {
 
     // PERF: 类型特化算术操作码（跳过运行时类型检查）
     // 编译器在静态确定两个操作数均为 int 时生成，消除热循环中的分支预测开销。
-    OP_ADD_INT_SPEC,  // int + int → int（无类型检查）
-    OP_SUB_INT_SPEC,  // int - int → int（无类型检查）
-    OP_MUL_INT_SPEC,  // int * int → int（无类型检查）
-    OP_LT_INT_SPEC,   // int < int → bool（无类型检查，最常见的循环比较）
+    OP_ADD_INT_SPEC, // int + int → int（无类型检查）
+    OP_SUB_INT_SPEC, // int - int → int（无类型检查）
+    OP_MUL_INT_SPEC, // int * int → int（无类型检查）
+    OP_LT_INT_SPEC,  // int < int → bool（无类型检查，最常见的循环比较）
 
     // L18 eng-tailcall: 互递归尾调用 return g(args)。字节布局与 OP_CALL 完全
     // 相同（nameIdx 2B + argCount 1B，共 4 字节），编译器在其后紧跟 OP_RETURN。
     // 运行时：目标命中 functionChunks_ 普通函数且当前帧可复用 → 帧复用 TCO
-    //（跳过后随 OP_RETURN）；否则降级为 OP_CALL 语义（返回后执行 OP_RETURN）。
+    // （跳过后随 OP_RETURN）；否则降级为 OP_CALL 语义（返回后执行 OP_RETURN）。
     OP_TAIL_CALL, // nameIdx(2B) + argCount(1B)
 };
 
@@ -262,7 +262,7 @@ struct BytecodeChunk {
     // 将每次 OP_GET_VAR/OP_SET_VAR 的哈希查找降为 O(1) 数组下标访问。
     // mutable：执行期在 const chunk 上下文中惰性填充（同 fieldIndexCache_ 模式）。
     struct VarCacheEntry {
-        int resolvedSlot = -2;  // >=0: globalSlots_ 下标; -1: 非 slot 变量; -2: 未解析
+        int resolvedSlot = -2;     // >=0: globalSlots_ 下标; -1: 非 slot 变量; -2: 未解析
         Value* valuePtr = nullptr; // globals_ 中的值指针（slot==-1 时有效）
         uint32_t version = 0;      // 缓存写入时的 globalsVersion 快照
     };

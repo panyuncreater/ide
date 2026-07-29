@@ -24,8 +24,7 @@
 //   2. erase 为换尾删除（O(1) 不保序）：遍历中删除会漏访/重访元素，
 //      不要在迭代中 erase。
 
-template <typename K, typename V, size_t N = 8>
-class SmallMap {
+template <typename K, typename V, size_t N = 8> class SmallMap {
 public:
     using value_type = std::pair<K, V>;
     using size_type = size_t;
@@ -53,11 +52,13 @@ public:
             // A fully conforming fix would require changing value_type to
             // std::pair<const K,V> (breaking the inline array API) or adding a
             // projection layer; the cost/benefit does not justify that change here.
-            if (heapMode_) return reinterpret_cast<value_type&>(*mapIt_);
+            if (heapMode_)
+                return reinterpret_cast<value_type&>(*mapIt_);
             return *ptr_;
         }
         value_type* operator->() const {
-            if (heapMode_) return reinterpret_cast<value_type*>(&(*mapIt_));
+            if (heapMode_)
+                return reinterpret_cast<value_type*>(&(*mapIt_));
             return ptr_;
         }
 
@@ -75,7 +76,8 @@ public:
         }
 
         bool operator==(const iterator& o) const {
-            if (heapMode_ != o.heapMode_) return false;
+            if (heapMode_ != o.heapMode_)
+                return false;
             return heapMode_ ? (mapIt_ == o.mapIt_) : (ptr_ == o.ptr_);
         }
         bool operator!=(const iterator& o) const { return !(*this == o); }
@@ -94,11 +96,13 @@ public:
         const_iterator() = default;
 
         const value_type& operator*() const {
-            if (heapMode_) return reinterpret_cast<const value_type&>(*mapIt_);
+            if (heapMode_)
+                return reinterpret_cast<const value_type&>(*mapIt_);
             return *ptr_;
         }
         const value_type* operator->() const {
-            if (heapMode_) return reinterpret_cast<const value_type*>(&(*mapIt_));
+            if (heapMode_)
+                return reinterpret_cast<const value_type*>(&(*mapIt_));
             return ptr_;
         }
 
@@ -116,7 +120,8 @@ public:
         }
 
         bool operator==(const const_iterator& o) const {
-            if (heapMode_ != o.heapMode_) return false;
+            if (heapMode_ != o.heapMode_)
+                return false;
             return heapMode_ ? (mapIt_ == o.mapIt_) : (ptr_ == o.ptr_);
         }
         bool operator!=(const const_iterator& o) const { return !(*this == o); }
@@ -127,8 +132,7 @@ public:
 
     ~SmallMap() = default; // inline_[] and heap_ have proper destructors
 
-    SmallMap(const SmallMap& other)
-        : inlineSize_(other.inlineSize_), useHeap_(other.useHeap_) {
+    SmallMap(const SmallMap& other) : inlineSize_(other.inlineSize_), useHeap_(other.useHeap_) {
         if (useHeap_) {
             heap_ = std::make_unique<MapType>(*other.heap_);
         } else {
@@ -138,8 +142,7 @@ public:
         }
     }
 
-    SmallMap(SmallMap&& other) noexcept
-        : inlineSize_(other.inlineSize_), useHeap_(other.useHeap_) {
+    SmallMap(SmallMap&& other) noexcept : inlineSize_(other.inlineSize_), useHeap_(other.useHeap_) {
         if (useHeap_) {
             heap_ = std::move(other.heap_);
         } else {
@@ -152,7 +155,8 @@ public:
     }
 
     SmallMap& operator=(const SmallMap& other) {
-        if (this == &other) return *this;
+        if (this == &other)
+            return *this;
         clear();
         useHeap_ = other.useHeap_;
         inlineSize_ = other.inlineSize_;
@@ -167,7 +171,8 @@ public:
     }
 
     SmallMap& operator=(SmallMap&& other) noexcept {
-        if (this == &other) return *this;
+        if (this == &other)
+            return *this;
         clear();
         useHeap_ = other.useHeap_;
         inlineSize_ = other.inlineSize_;
@@ -229,8 +234,7 @@ public:
         return end();
     }
 
-    template <typename... Args>
-    std::pair<iterator, bool> try_emplace(const K& key, Args&&... args) {
+    template <typename... Args> std::pair<iterator, bool> try_emplace(const K& key, Args&&... args) {
         if (useHeap_) {
             auto [it, inserted] = heap_->try_emplace(key, std::forward<Args>(args)...);
             return {iterator(it), inserted};
@@ -280,11 +284,13 @@ public:
     // ===== Iterators =====
 
     iterator begin() {
-        if (useHeap_) return iterator(heap_->begin());
+        if (useHeap_)
+            return iterator(heap_->begin());
         return iterator(&inline_[0]);
     }
     iterator end() {
-        if (useHeap_) return iterator(heap_->end());
+        if (useHeap_)
+            return iterator(heap_->end());
         return iterator(&inline_[inlineSize_]);
     }
     const_iterator begin() const {
@@ -358,7 +364,8 @@ public:
             return m.count(key);
         }
         for (uint8_t i = 0; i < inlineSize_; ++i) {
-            if (inline_[i].first == key) return 1;
+            if (inline_[i].first == key)
+                return 1;
         }
         return 0;
     }

@@ -22,11 +22,11 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPushButton>
-#include <QToolTip> // 拓展二期：hover 求值提示
 #include <QScrollBar>
 #include <QStringListModel>
 #include <QTextBlock>
 #include <QTextCharFormat>
+#include <QToolTip> // 拓展二期：hover 求值提示
 #include <QVBoxLayout>
 
 // ============================================================
@@ -289,9 +289,8 @@ void LineNumberArea::contextMenuEvent(QContextMenuEvent* event) {
     // R104: 新增"编辑断点属性"综合对话框入口（含类型选择+日志消息+条件）
     QAction* editPropsAction = menu.addAction(mlTr("编辑断点属性... (行 %1)").arg(lineNumber));
 
-    QAction* setCondAction =
-        menu.addAction(currentCond.isEmpty() ? mlTr("设置条件... (行 %1)").arg(lineNumber)
-                                             : mlTr("修改条件: \"%1\"").arg(currentCond));
+    QAction* setCondAction = menu.addAction(currentCond.isEmpty() ? mlTr("设置条件... (行 %1)").arg(lineNumber)
+                                                                  : mlTr("修改条件: \"%1\"").arg(currentCond));
 
     // R104: 快速切换 Logpoint / 普通断点
     QAction* toggleKindAction = nullptr;
@@ -396,8 +395,7 @@ void LineNumberArea::contextMenuEvent(QContextMenuEvent* event) {
         edit->setPlaceholderText(mlTr("例如 i == 5 或 x > 10"));
         layout->addWidget(edit);
 
-        auto* warnLabel =
-            new QLabel(mlTr("提示：Logpoint 命中不暂停仅输出日志；条件为假时不输出/不暂停。"), &dlg);
+        auto* warnLabel = new QLabel(mlTr("提示：Logpoint 命中不暂停仅输出日志；条件为假时不输出/不暂停。"), &dlg);
         warnLabel->setObjectName("condWarn");
         warnLabel->setWordWrap(true);
         layout->addWidget(warnLabel);
@@ -2339,7 +2337,10 @@ bool CodeEditor::isInsideStringOrComment(int pos) const {
         }
         if (inString) {
             // Bug #74 fix: 处理转义字符，\" 不应结束字符串
-            if (c == '\\') { ++i; continue; }
+            if (c == '\\') {
+                ++i;
+                continue;
+            }
             if (c == '"')
                 inString = false;
             continue;
@@ -2441,37 +2442,54 @@ void CodeEditor::highlightBracketMatch() {
             QChar c = document()->characterAt(i);
             QChar next = (i + 1 < charCount) ? document()->characterAt(i + 1) : QChar();
             if (mInLine) {
-                if (c == '\n') mInLine = false;
-                if (i >= maskStart) inStrOrComment[i - maskStart] = true;
+                if (c == '\n')
+                    mInLine = false;
+                if (i >= maskStart)
+                    inStrOrComment[i - maskStart] = true;
                 continue;
             }
             if (mInBlock) {
-                if (i >= maskStart) inStrOrComment[i - maskStart] = true;
+                if (i >= maskStart)
+                    inStrOrComment[i - maskStart] = true;
                 if (c == '*' && next == '/') {
-                    mInBlock = false; ++i;
-                    if (i >= maskStart && i <= maskEnd) inStrOrComment[i - maskStart] = true;
+                    mInBlock = false;
+                    ++i;
+                    if (i >= maskStart && i <= maskEnd)
+                        inStrOrComment[i - maskStart] = true;
                 }
                 continue;
             }
             if (mInStr) {
-                if (i >= maskStart) inStrOrComment[i - maskStart] = true;
-                if (c == '\\') { ++i; if (i >= maskStart && i <= maskEnd) inStrOrComment[i - maskStart] = true; continue; }
-                if (c == '"') mInStr = false;
+                if (i >= maskStart)
+                    inStrOrComment[i - maskStart] = true;
+                if (c == '\\') {
+                    ++i;
+                    if (i >= maskStart && i <= maskEnd)
+                        inStrOrComment[i - maskStart] = true;
+                    continue;
+                }
+                if (c == '"')
+                    mInStr = false;
                 continue;
             }
             if (c == '/' && next == '/') {
                 mInLine = true;
-                if (i >= maskStart) inStrOrComment[i - maskStart] = true;
+                if (i >= maskStart)
+                    inStrOrComment[i - maskStart] = true;
                 ++i;
-                if (i >= maskStart && i <= maskEnd) inStrOrComment[i - maskStart] = true;
+                if (i >= maskStart && i <= maskEnd)
+                    inStrOrComment[i - maskStart] = true;
             } else if (c == '/' && next == '*') {
                 mInBlock = true;
-                if (i >= maskStart) inStrOrComment[i - maskStart] = true;
+                if (i >= maskStart)
+                    inStrOrComment[i - maskStart] = true;
                 ++i;
-                if (i >= maskStart && i <= maskEnd) inStrOrComment[i - maskStart] = true;
+                if (i >= maskStart && i <= maskEnd)
+                    inStrOrComment[i - maskStart] = true;
             } else if (c == '"') {
                 mInStr = true;
-                if (i >= maskStart) inStrOrComment[i - maskStart] = true;
+                if (i >= maskStart)
+                    inStrOrComment[i - maskStart] = true;
             }
         }
     }

@@ -1,11 +1,11 @@
-﻿#include "compiler/IR.h"
-#include "ast/ASTNode.h"
+﻿#include "ast/ASTNode.h"
 #include "ast/ModuleIsolation.h" // BUG-AUDIT-MOD-2: IR 模块隔离（非导出顶层名前缀化）
 #include "common/Logger.h"
-#include "common/RuntimeLimits.h"     // BUG-AUDIT-MOD-3: MAX_RECURSION_DEPTH
-#include "common/TCO.h"               // R109 TCO: isTailRecursiveReturn（与 Compiler.cpp 共享识别逻辑）
-#include "common/TypeChecker.h"       // R163 泛型扩展: isTypeParameter（emitTypeCheckIR 擦除）
-#include "compiler/BytecodeCache.h"   // L11: 预编译模块 .minic 加载
+#include "common/RuntimeLimits.h"   // BUG-AUDIT-MOD-3: MAX_RECURSION_DEPTH
+#include "common/TCO.h"             // R109 TCO: isTailRecursiveReturn（与 Compiler.cpp 共享识别逻辑）
+#include "common/TypeChecker.h"     // R163 泛型扩展: isTypeParameter（emitTypeCheckIR 擦除）
+#include "compiler/BytecodeCache.h" // L11: 预编译模块 .minic 加载
+#include "compiler/IR.h"
 #include "interpreter/NumericUtils.h" // #14: OverflowCheck
 #include "interpreter/Value.h"
 #include "lexer/Lexer.h"   // VM-IMPORT: 模块源码词法分析

@@ -49,17 +49,17 @@ private slots:
 private:
     void buildUi(const CrashReport& report);
 
-    CrashReport    report_;
-    QLabel*        titleLabel_      = nullptr;
-    QLabel*        infoLabel_       = nullptr;
-    QPlainTextEdit* traceView_      = nullptr;
-    QPushButton*   openDirButton_   = nullptr;
-    QPushButton*   copyButton_      = nullptr;
-    QPushButton*   deleteButton_    = nullptr;
-    QPushButton*   ignoreButton_    = nullptr;
-    QCheckBox*     dontShowAgain_   = nullptr;
+    CrashReport report_;
+    QLabel* titleLabel_ = nullptr;
+    QLabel* infoLabel_ = nullptr;
+    QPlainTextEdit* traceView_ = nullptr;
+    QPushButton* openDirButton_ = nullptr;
+    QPushButton* copyButton_ = nullptr;
+    QPushButton* deleteButton_ = nullptr;
+    QPushButton* ignoreButton_ = nullptr;
+    QCheckBox* dontShowAgain_ = nullptr;
 
-    bool reportDeleted_   = false;
+    bool reportDeleted_ = false;
     bool ignoreRequested_ = false;
 
     QString formatReportForClipboard() const;

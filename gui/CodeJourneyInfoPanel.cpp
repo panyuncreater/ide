@@ -8,7 +8,7 @@
 #include "gui/CodeJourneyInfoPanel.h"
 #include "Theme.h" // QFluentKit（onThemeModeChanged 信号）
 #include "gui/I18n.h"
-#include "gui/LearnerProgress.h" // AUDIT-P1 fix: markCompleted 直接持久化
+#include "gui/LearnerProgress.h"      // AUDIT-P1 fix: markCompleted 直接持久化
 #include "gui/ProgressSaveFeedback.h" // P2-UX fix: save 失败 toast 通知
 #include "gui/TeachingTheme.h"
 

@@ -541,11 +541,8 @@ export fun bpow(base, exp) {
 /// 内建模块注册表：路径→源码
 const std::unordered_map<std::string, std::string>& moduleRegistry() {
     static const std::unordered_map<std::string, std::string> registry = {
-        {"std/math", kStdMath},
-        {"std/string", kStdString},
-        {"std/list", kStdList},
-        {"std/result", kStdResult},
-        {"std/bigint", kStdBigint},
+        {"std/math", kStdMath},     {"std/string", kStdString}, {"std/list", kStdList},
+        {"std/result", kStdResult}, {"std/bigint", kStdBigint},
     };
     return registry;
 }

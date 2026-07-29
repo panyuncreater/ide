@@ -13,13 +13,13 @@
 
 #include "common/BackendExecutionService.h" // ARCH-10: 后端执行服务中间层
 
+#include <QApplication>
+#include <QEventLoop>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QSplitter>
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
-#include <QApplication>
-#include <QEventLoop>
 
 #include <algorithm>
 #include <sstream>

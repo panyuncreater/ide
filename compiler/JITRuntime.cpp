@@ -10,12 +10,12 @@
 
 #ifdef MINILANG_USE_JIT
 
-#include "compiler/JITInternal.h"
 #include "common/Diagnostic.h"
 #include "common/ErrorFormat.h"
 #include "common/ErrorMessages.h"
 #include "common/RuntimeLimits.h"
 #include "common/Utf8Utils.h"
+#include "compiler/JITInternal.h"
 #include "interpreter/Value.h"
 #include <algorithm>
 #include <array>
@@ -846,7 +846,7 @@ extern "C" void jitCallExpr(JitContext* ctx, uint8_t argCount) {
         if (ctx->hasError && ctx->errorBuffer) {
             *ctx->hasError = true;
             *ctx->errorBuffer = ErrorFormat::formatStd(ErrorMessages::kRecursionDepthExceededFmtStd,
-                                                    static_cast<int>(RuntimeLimits::MAX_FRAMES));
+                                                       static_cast<int>(RuntimeLimits::MAX_FRAMES));
         }
         ctx->stackTop = sp;
         return;
@@ -1162,7 +1162,7 @@ extern "C" void jitClassNew(JitContext* ctx, const char* className, uint8_t argC
         if (ctx->hasError && ctx->errorBuffer) {
             *ctx->hasError = true;
             *ctx->errorBuffer = ErrorFormat::formatStd(ErrorMessages::kRecursionDepthExceededFmtStd,
-                                                    static_cast<int>(RuntimeLimits::MAX_FRAMES));
+                                                       static_cast<int>(RuntimeLimits::MAX_FRAMES));
         }
         ctx->stackTop = sp;
         return;
@@ -1837,7 +1837,7 @@ method_found:
         if (ctx->hasError && ctx->errorBuffer) {
             *ctx->hasError = true;
             *ctx->errorBuffer = ErrorFormat::formatStd(ErrorMessages::kRecursionDepthExceededFmtStd,
-                                                    static_cast<int>(RuntimeLimits::MAX_FRAMES));
+                                                       static_cast<int>(RuntimeLimits::MAX_FRAMES));
         }
         ctx->stackTop = sp;
         return;
@@ -2035,7 +2035,7 @@ extern "C" void jitCallByName(JitContext* ctx, const char* funName, uint8_t argC
         if (ctx->hasError && ctx->errorBuffer) {
             *ctx->hasError = true;
             *ctx->errorBuffer = ErrorFormat::formatStd(ErrorMessages::kRecursionDepthExceededFmtStd,
-                                                    static_cast<int>(RuntimeLimits::MAX_FRAMES));
+                                                       static_cast<int>(RuntimeLimits::MAX_FRAMES));
         }
         ctx->stackTop = sp;
         return;
@@ -2405,7 +2405,6 @@ extern "C" void jitDeleteVar(JitContext* ctx, const char* name) {
         backend->globals_.erase(name);
     }
 }
-
 
 } // extern "C"
 

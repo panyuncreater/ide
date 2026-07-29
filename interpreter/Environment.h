@@ -420,7 +420,7 @@ private:
     // 只要不触发 promoteToHeap 就稳定（方法环境变量数通常 ≤8）。
     SmallMap<std::string, Value, 8> variables;
     SmallMap<std::string, std::string, 4> typeAnnotations_; // B2: 作用域感知类型注解
-    Value* boundInstance_ = nullptr; // P5: 绑定的 this 实例（非拥有指针，方法调用期间有效）
+    Value* boundInstance_ = nullptr;                        // P5: 绑定的 this 实例（非拥有指针，方法调用期间有效）
 
     // B1 fix: 闭包捕获追踪。记录哪些闭包捕获了本 env 中的变量。
     // 作用域退出时 closeCapturedVariables() 将最终值写回闭包 capturedVars。

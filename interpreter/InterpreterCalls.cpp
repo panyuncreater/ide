@@ -155,7 +155,7 @@ Value Interpreter::callClosureValue(FunCall& node) {
 
     // R104 Function Breakpoint：函数调用入口检查（闭包调用路径）
     // AUDIT-R4 BUG-15 fix: atomic load 到局部变量
-    if (auto dbg = debugger_.load(std::memory_order_acquire)) {
+    if (auto dbg = debugger()) {
         dbg->checkFunctionBreakpoint(effectiveName, node.line);
     }
 
@@ -166,17 +166,17 @@ Value Interpreter::callClosureValue(FunCall& node) {
     // 此处给出明确的运行时错误而非崩溃。
     if (!funDecl) {
         runtimeError(ErrorFormat::formatStd("无法在条件断点沙箱中调用 VM 闭包 {}（缺少 AST body，仅 VM 后端可调用）",
-                                         
-                                         effectiveName),
+
+                                            effectiveName),
                      node.line, node.column);
     }
 
     // F10: 支持默认参数
     size_t argCount = node.arguments.size();
     if (argCount < static_cast<size_t>(funDecl->requiredParamCount) || argCount > funDecl->params.size()) {
-        runtimeError(ErrorFormat::formatStd("函数 {} 期望 {}-{} 个参数，但传入了 {} 个",  effectiveName,
-                                         
-                                         funDecl->requiredParamCount,  funDecl->params.size(),  argCount),
+        runtimeError(ErrorFormat::formatStd("函数 {} 期望 {}-{} 个参数，但传入了 {} 个", effectiveName,
+
+                                            funDecl->requiredParamCount, funDecl->params.size(), argCount),
                      node.line, node.column, DiagCodes::kArityMismatch);
     }
 
@@ -247,8 +247,8 @@ Value Interpreter::callClosureValue(FunCall& node) {
 
     // S2 fix: 统一使用 RecursionGuard RAII 管理递归深度
     if (recursionDepth_ + 1 >= MAX_RECURSION_DEPTH) {
-        runtimeError(ErrorFormat::formatStd(ErrorMessages::kRecursionDepthExceededFmtStd,  MAX_RECURSION_DEPTH), node.line,
-                     node.column);
+        runtimeError(ErrorFormat::formatStd(ErrorMessages::kRecursionDepthExceededFmtStd, MAX_RECURSION_DEPTH),
+                     node.line, node.column);
     }
     RecursionGuard recursionGuard{recursionDepth_};
 
@@ -417,10 +417,10 @@ Result<Value> Interpreter::invokeClosureSync(const Value& closure, const Value* 
     // 参数数量检查
     if (argCount < static_cast<size_t>(funDecl->requiredParamCount) || argCount > funDecl->params.size()) {
         return Result<Value>::err(ErrorFormat::formatStd("函数 {} 期望 {}-{} 个参数，但传入了 {} 个",
-                                                      
-                                                      effectiveName,  funDecl->requiredParamCount,
-                                                      
-                                                      funDecl->params.size(),  argCount),
+
+                                                         effectiveName, funDecl->requiredParamCount,
+
+                                                         funDecl->params.size(), argCount),
                                   line, column);
     }
 
@@ -451,8 +451,8 @@ Result<Value> Interpreter::invokeClosureSync(const Value& closure, const Value* 
 
     // 递归深度检查
     if (recursionDepth_ + 1 >= MAX_RECURSION_DEPTH) {
-        return Result<Value>::err(ErrorFormat::formatStd(ErrorMessages::kRecursionDepthExceededFmtStd,  MAX_RECURSION_DEPTH),
-                                  line, column);
+        return Result<Value>::err(
+            ErrorFormat::formatStd(ErrorMessages::kRecursionDepthExceededFmtStd, MAX_RECURSION_DEPTH), line, column);
     }
 
     // R163 泛型扩展：传入 funDecl->typeParams，使函数体内的类型参数注解跳过类型校验
@@ -555,31 +555,31 @@ Value Interpreter::callHigherOrderBuiltin(FunCall& node) {
     Result<Value> r = Result<Value>::ok(Value::nullValue());
     if (node.name == "map") {
         if (argValues.size() != 2) {
-            runtimeError(ErrorFormat::formatStd("map 期望 2 个参数，但传入了 {} 个",  argValues.size()), node.line,
+            runtimeError(ErrorFormat::formatStd("map 期望 2 个参数，但传入了 {} 个", argValues.size()), node.line,
                          node.column);
         }
         r = executeSharedMap(argValues[0], argValues[1], invoke, node.line, node.column);
     } else if (node.name == "filter") {
         if (argValues.size() != 2) {
-            runtimeError(ErrorFormat::formatStd("filter 期望 2 个参数，但传入了 {} 个",  argValues.size()), node.line,
+            runtimeError(ErrorFormat::formatStd("filter 期望 2 个参数，但传入了 {} 个", argValues.size()), node.line,
                          node.column);
         }
         r = executeSharedFilter(argValues[0], argValues[1], invoke, node.line, node.column);
     } else if (node.name == "reduce") {
         if (argValues.size() != 3) {
-            runtimeError(ErrorFormat::formatStd("reduce 期望 3 个参数，但传入了 {} 个",  argValues.size()), node.line,
+            runtimeError(ErrorFormat::formatStd("reduce 期望 3 个参数，但传入了 {} 个", argValues.size()), node.line,
                          node.column);
         }
         r = executeSharedReduce(argValues[0], argValues[1], argValues[2], invoke, node.line, node.column);
     } else if (node.name == "forEach") {
         if (argValues.size() != 2) {
-            runtimeError(ErrorFormat::formatStd("forEach 期望 2 个参数，但传入了 {} 个",  argValues.size()), node.line,
+            runtimeError(ErrorFormat::formatStd("forEach 期望 2 个参数，但传入了 {} 个", argValues.size()), node.line,
                          node.column);
         }
         r = executeSharedForEach(argValues[0], argValues[1], invoke, node.line, node.column);
     } else if (node.name == "find") {
         if (argValues.size() != 2) {
-            runtimeError(ErrorFormat::formatStd("find 期望 2 个参数，但传入了 {} 个",  argValues.size()), node.line,
+            runtimeError(ErrorFormat::formatStd("find 期望 2 个参数，但传入了 {} 个", argValues.size()), node.line,
                          node.column);
         }
         r = executeSharedFind(argValues[0], argValues[1], invoke, node.line, node.column);
@@ -649,15 +649,15 @@ Value Interpreter::constructClassInstance(FunCall& node) {
     if (initMethod &&
         (node.arguments.size() < initMethod->requiredParamCount || node.arguments.size() > initMethod->params.size())) {
         runtimeError(ErrorFormat::formatStd("构造函数 init 期望 {}-{} 个参数，但传入了 {} 个",
-                                         
-                                         initMethod->requiredParamCount,  initMethod->params.size(),
-                                         
-                                         node.arguments.size()),
+
+                                            initMethod->requiredParamCount, initMethod->params.size(),
+
+                                            node.arguments.size()),
                      node.line, node.column);
     }
     if (!initMethod && !node.arguments.empty()) {
         runtimeError(
-            ErrorFormat::formatStd("类 {} 没有 init 方法，但传入了 {} 个参数",  cls->name,  node.arguments.size()),
+            ErrorFormat::formatStd("类 {} 没有 init 方法，但传入了 {} 个参数", cls->name, node.arguments.size()),
             node.line, node.column);
     }
 
@@ -686,17 +686,17 @@ Value Interpreter::constructClassInstance(FunCall& node) {
                        argValues.size() > initMethod->params.size())) {
         runtimeError(
             ErrorFormat::formatStd("类 {} 在构造期间被重定义，参数数量不匹配（init 期望 {}-{} 个，但传入了 {} 个）",
-                                
-                                cls->name,  initMethod->requiredParamCount,  initMethod->params.size(),
-                                
-                                argValues.size()),
+
+                                   cls->name, initMethod->requiredParamCount, initMethod->params.size(),
+
+                                   argValues.size()),
             node.line, node.column);
     }
 
     // S2 fix: 统一使用 RecursionGuard RAII 管理递归深度
     if (recursionDepth_ + 1 >= MAX_RECURSION_DEPTH) {
-        runtimeError(ErrorFormat::formatStd(ErrorMessages::kRecursionDepthExceededFmtStd,  MAX_RECURSION_DEPTH), node.line,
-                     node.column);
+        runtimeError(ErrorFormat::formatStd(ErrorMessages::kRecursionDepthExceededFmtStd, MAX_RECURSION_DEPTH),
+                     node.line, node.column);
     }
     RecursionGuard recursionGuard{recursionDepth_};
 
@@ -891,7 +891,7 @@ Value Interpreter::callNamedFunction(FunCall& node) {
     // 使用 node.name 对齐 StackVM/RegisterVM 的 peekCalledFunctionName（OP_CALL/REG_CALL
     // 取常量池函数名，闭包路径另由 callClosureValue 检查 effectiveName）。
     // AUDIT-R4 BUG-15 fix: atomic load 到局部变量
-    if (auto dbg = debugger_.load(std::memory_order_acquire)) {
+    if (auto dbg = debugger()) {
         dbg->checkFunctionBreakpoint(node.name, node.line);
     }
 
@@ -954,13 +954,13 @@ Value Interpreter::callNamedFunction(FunCall& node) {
             if (!calleePtr || !calleePtr->isClosure()) {
                 // R164 fix: 三后端消息统一（fuzz mutate 发现的分歧）
                 // 原报 "X 不是函数，无法调用"，StackVM/RegisterVM 报 "未定义的函数: X"
-                runtimeError(ErrorFormat::formatStd(ErrorMessages::kUndefinedFunctionFmtStd,  node.name), node.line,
+                runtimeError(ErrorFormat::formatStd(ErrorMessages::kUndefinedFunctionFmtStd, node.name), node.line,
                              node.column, "undefined-function");
             }
             // 仅在 calleePtr 是闭包但 body 缺失时回退到 funRegistry_
             auto it = funRegistry_.find(effectiveName);
             if (it == funRegistry_.end()) {
-                runtimeError(ErrorFormat::formatStd(ErrorMessages::kUndefinedFunctionFmtStd,  node.name), node.line,
+                runtimeError(ErrorFormat::formatStd(ErrorMessages::kUndefinedFunctionFmtStd, node.name), node.line,
                              node.column, "undefined-function");
             }
             funDecl = it->second;
@@ -975,9 +975,9 @@ Value Interpreter::callNamedFunction(FunCall& node) {
     // 检查参数数量（参数已在函数查找之前求值，R164 fix 求值顺序对齐）
     // F10: 支持默认参数，参数数量可在 [requiredParamCount, params.size()] 范围内
     if (argCount < static_cast<size_t>(funDecl->requiredParamCount) || argCount > funDecl->params.size()) {
-        runtimeError(ErrorFormat::formatStd("函数 {} 期望 {}-{} 个参数，但传入了 {} 个",  node.name,
-                                         
-                                         funDecl->requiredParamCount,  funDecl->params.size(),  argCount),
+        runtimeError(ErrorFormat::formatStd("函数 {} 期望 {}-{} 个参数，但传入了 {} 个", node.name,
+
+                                            funDecl->requiredParamCount, funDecl->params.size(), argCount),
                      node.line, node.column, DiagCodes::kArityMismatch);
     }
 
@@ -1037,8 +1037,8 @@ Value Interpreter::callNamedFunction(FunCall& node) {
 
     // S2 fix: 统一使用 RecursionGuard RAII 管理递归深度
     if (recursionDepth_ + 1 >= MAX_RECURSION_DEPTH) {
-        runtimeError(ErrorFormat::formatStd(ErrorMessages::kRecursionDepthExceededFmtStd,  MAX_RECURSION_DEPTH), node.line,
-                     node.column);
+        runtimeError(ErrorFormat::formatStd(ErrorMessages::kRecursionDepthExceededFmtStd, MAX_RECURSION_DEPTH),
+                     node.line, node.column);
     }
     RecursionGuard recursionGuard{recursionDepth_};
 
@@ -1129,9 +1129,9 @@ Value Interpreter::callNamedFunction(FunCall& node) {
                 // 使本轮内定义的闭包捕获语义与非 TCO 递归完全一致），
                 // 弹出本轮调用栈条目，下一轮重新压入。
                 if (++tcoIterations > RuntimeLimits::MAX_LOOP_ITERATIONS) {
-                    runtimeError(ErrorFormat::formatStd("尾调用迭代次数超过限制 ({})",
-                                                        RuntimeLimits::MAX_LOOP_ITERATIONS),
-                                 node.line, node.column);
+                    runtimeError(
+                        ErrorFormat::formatStd("尾调用迭代次数超过限制 ({})", RuntimeLimits::MAX_LOOP_ITERATIONS),
+                        node.line, node.column);
                 }
                 if (!closureEnv && envFromSnapshot && closureValPtr && funEnv)
                     writeBackCapturedVars(*closureValPtr, funEnv);

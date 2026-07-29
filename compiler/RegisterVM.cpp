@@ -471,7 +471,7 @@ VMResult RegisterVM::throwException(Value thrownValue) {
                 return runtimeError("throwException: catchIp 相对当前 chunk 越界");
             }
             // AUDIT-R5 R1 fix: 同帧 catch 命中时仅关闭 try 开始后开启的 upvalue
-            //（序号 >= handler.upvalueSeqFloor）。原 Bug #47 方案用帧基址 0 全量关闭，
+            // （序号 >= handler.upvalueSeqFloor）。原 Bug #47 方案用帧基址 0 全量关闭，
             // 会把 try 之前创建、catch 后仍存活的闭包 upvalue 误关为快照，
             // 导致 catch 后闭包与变量不再共享（与 Interpreter/StackVM 不一致）。
             // try 期间开启的 upvalue（含嵌套作用域复用低槽位的情形）仍全部关闭，

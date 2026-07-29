@@ -164,7 +164,8 @@ public:
         size_t operator()(int64_t v) const { return kIntTag ^ std::hash<int64_t>{}(v); }
         size_t operator()(bool v) const { return kBoolTag ^ std::hash<bool>{}(v); }
         size_t operator()(double v) const {
-            if (v == 0.0) v = 0.0; // P0 fix: 规范化 -0.0 → +0.0，保证 hash 不变量
+            if (v == 0.0)
+                v = 0.0; // P0 fix: 规范化 -0.0 → +0.0，保证 hash 不变量
             uint64_t bits;
             std::memcpy(&bits, &v, sizeof(double));
             return kDoubleTag ^ std::hash<uint64_t>{}(bits);
@@ -182,7 +183,8 @@ public:
                         return kBoolTag ^ std::hash<bool>{}(v);
                     else {
                         double dv = v;
-                        if (dv == 0.0) dv = 0.0; // P0 fix: 规范化 -0.0 → +0.0
+                        if (dv == 0.0)
+                            dv = 0.0; // P0 fix: 规范化 -0.0 → +0.0
                         uint64_t bits;
                         std::memcpy(&bits, &dv, sizeof(double));
                         return kDoubleTag ^ std::hash<uint64_t>{}(bits);
@@ -418,10 +420,10 @@ private:
         bool done = false;                       // 是否已耗尽
         std::vector<Value> currentValueBox;      // 最近一次 yield 的值（单元素容器）
         // R164 D.5: VM 路径字段（非拥有，functionChunks_ 拥有 BytecodeChunk 生命周期）
-        const BytecodeChunk* vmChunk = nullptr;  // 生成器字节码块指针
+        const BytecodeChunk* vmChunk = nullptr; // 生成器字节码块指针
         // R164 fixup: vmClosure 改为单元素容器绕开 C2079（CoroutineData 嵌套在 Value 类内部时
         // Value 尚未定义完成，直接声明 Value vmClosure; 触发 C2079，与 currentValueBox 同模式）
-        std::vector<Value> vmClosureBox;           // 闭包值（含 upvalue 绑定，单元素容器）
+        std::vector<Value> vmClosureBox; // 闭包值（含 upvalue 绑定，单元素容器）
         // R164 D.6: RegisterVM 路径字段（非拥有，functionChunks_ 拥有 RegBytecodeChunk 生命周期）
         // 与 vmChunk 互斥使用：vmChunk 用于 StackVM/StackVM-IR 路径，regChunk 用于 RegisterVM 路径。
         const RegBytecodeChunk* regChunk = nullptr;

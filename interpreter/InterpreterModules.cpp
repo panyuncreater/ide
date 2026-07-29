@@ -17,7 +17,7 @@ void Interpreter::visitImportStmt(ImportStmt& node) {
     // R132-C fix: 拆为 3 个子任务 helper（路径解析/加载+缓存/名称导入），
     // 原函数 208 行 → thin orchestrator ~35 行 + 3 helper。
     // BUG-M4 fix: loaderPath 保留大小写（供 loader 请求），cacheKey 在 Windows 上小写折叠
-    //（供所有缓存/去重 map 键），使同一文件的不同大小写拼写去重为同一模块。
+    // （供所有缓存/去重 map 键），使同一文件的不同大小写拼写去重为同一模块。
     std::string loaderPath = resolveModulePath(node);
     std::string cacheKey = moduleCacheKey(loaderPath);
 
@@ -132,7 +132,7 @@ Interpreter::loadModuleOrGetCached(const std::string& loaderPath, const std::str
     // 加载模块源码（A6 fix: 使用已拷贝的 loader，避免跨线程数据竞争）
     std::string source = loader(loaderPath);
     // 空源码视为加载失败（模块不存在或 0 字节文件）。production loader
-    //（IdeController/WorkerManager）在文件不存在/无法打开时均返回 ""，
+    // （IdeController/WorkerManager）在文件不存在/无法打开时均返回 ""，
     // 无法与真正的 0 字节文件区分；对空模块报错可捕获 import 笔误，
     // 与 Compiler/IR 路径行为一致（三后端统一）。
     if (source.empty()) {
@@ -236,9 +236,9 @@ Interpreter::loadModuleOrGetCached(const std::string& loaderPath, const std::str
                 exportsCache.erase(cacheKey);
             }
         }
-    } envGuard{*this,          moduleEnv,           savedEnv,          exportedNames_,
-               savedExported,  moduleLoadingStack_, moduleLoadingSet_, moduleCache_,
-               moduleExports_, cacheKey};
+    } envGuard{
+        *this,        moduleEnv,      savedEnv, exportedNames_, savedExported, moduleLoadingStack_, moduleLoadingSet_,
+        moduleCache_, moduleExports_, cacheKey};
 
     for (auto& stmt : ast->statements) {
         evaluate(stmt.get());

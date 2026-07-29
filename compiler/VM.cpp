@@ -1194,9 +1194,9 @@ VMResult VM::dispatchArrayBuiltin(const Value& obj, BuiltinMethod method, const 
         // AUDIT-R5 BUG-07 fix: 补齐“有效范围”后缀，对齐 Interpreter（BuiltinMethods.cpp）
         // 与索引访问路径的统一格式，三后端错误文本一致。
         if (ri < 0 || static_cast<size_t>(ri) >= arr.size())
-            return runtimeError(ErrorFormat::formatStd("数组索引越界: {}, 有效范围 [0, {})",
-                                                       static_cast<long long>(ri), arr.size()),
-                                DiagCodes::kIndexOutOfBounds);
+            return runtimeError(
+                ErrorFormat::formatStd("数组索引越界: {}, 有效范围 [0, {})", static_cast<long long>(ri), arr.size()),
+                DiagCodes::kIndexOutOfBounds);
         arr.erase(arr.begin() + static_cast<size_t>(ri));
     } else {
         return runtimeError("数组没有方法 " + methodName, "undefined-function");

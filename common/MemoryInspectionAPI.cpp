@@ -38,8 +38,7 @@ std::string bitsToBinary(uint64_t bits) {
 
 std::string ptrToHex(const void* p) {
     std::ostringstream os;
-    os << "0x" << std::hex << std::setfill('0') << std::setw(16)
-       << reinterpret_cast<uintptr_t>(p);
+    os << "0x" << std::hex << std::setfill('0') << std::setw(16) << reinterpret_cast<uintptr_t>(p);
     return os.str();
 }
 

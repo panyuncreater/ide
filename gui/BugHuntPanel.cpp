@@ -267,7 +267,7 @@ BugHuntPanel::BugHuntPanel(QWidget* parent) : QWidget(parent) {
             }
             if (totalInDiff > 0 && solvedInDiff == totalInDiff) {
                 // AUDIT-R2 P1-2 fix: 构造函数内直接 emit 时外部 connect 尚未建立
-                //（ide.cpp 在 new BugHuntPanel 返回后才 connect），信号会被直接丢弃，
+                // （ide.cpp 在 new BugHuntPanel 返回后才 connect），信号会被直接丢弃，
                 // "跨会话补发"从未生效。延迟到事件循环首轮再发射，确保信号到达学习路径。
                 QTimer::singleShot(0, this, [this, diffInt]() { emit challengeSolved(diffInt); });
             }

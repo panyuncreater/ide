@@ -282,7 +282,7 @@ enum class IROp : uint8_t {
     // operands: [dest_vreg, name_idx(GLOBAL_NAME), arg_count(IMM), arg1_vreg, ...]
     // 与 CALL 同布局；后端 lowering 为 OP_TAIL_CALL / REG_TAIL_CALL，紧跟 RETURN dest。
     // 运行时若目标可帧复用则 TCO（跳过后随 RETURN），否则降级为普通调用
-    //（返回后执行后随 RETURN，语义与 CALL+RETURN 完全等价）。
+    // （返回后执行后随 RETURN，语义与 CALL+RETURN 完全等价）。
     TAIL_CALL,
 };
 
@@ -697,7 +697,7 @@ private:
     /// 成功时 outPath 填入规范化路径，返回 kContinue / kAlreadyLoaded / kCircularLoading；
     /// 失败时设置 hasError_/errorMessage_/errorLine_ 并返回 kError。
     /// BUG-M4 fix: outLoaderPath 保留大小写（供 loader/预编译解析器），outCacheKey 为去重键
-    //（Windows 小写折叠），供所有去重/隔离用途。
+    // （Windows 小写折叠），供所有去重/隔离用途。
     ImportPathStatus resolveImportPath(ImportStmt& node, std::string& outLoaderPath, std::string& outCacheKey);
     /// VM-IMPORT: 加载模块源码 + 解析为 AST + 模块隔离重命名
     /// BUG-M4 fix: loaderPath 供 moduleLoader_（保留大小写），cacheKey 供 rename 隔离前缀。

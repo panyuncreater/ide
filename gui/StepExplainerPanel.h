@@ -18,8 +18,8 @@
 
 #include "compiler/Bytecode.h"
 
-#include <QListWidget>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QPushButton>
 #include <QStackedWidget>
 #include <QTableWidget>
@@ -96,10 +96,10 @@ private:
 
     // 编译产物（用于选中行时生成详细讲解）
     struct StepInfo {
-        int step = 0;     // 指令序号（从 0 起）
-        size_t ip = 0;    // 字节偏移
-        OpCode op;        // 操作码
-        QString summary;  // 讲解摘要（操作数简述）
+        int step = 0;    // 指令序号（从 0 起）
+        size_t ip = 0;   // 字节偏移
+        OpCode op;       // 操作码
+        QString summary; // 讲解摘要（操作数简述）
     };
     std::vector<StepInfo> steps_;
     BytecodeChunk lastChunk_;

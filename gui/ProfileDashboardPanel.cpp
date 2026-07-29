@@ -475,8 +475,8 @@ void ProfileDashboardPanel::runProfile(int scenarioIndex) {
     // 多次测量三后端
     std::vector<BackendTiming> results;
     results.push_back(measureBackend(
-        "Interpreter", [this](const std::string& s) { return measureInterpreterOnce(s); },
-        scenario.sourceCode, scenario.iterations));
+        "Interpreter", [this](const std::string& s) { return measureInterpreterOnce(s); }, scenario.sourceCode,
+        scenario.iterations));
 
     // 问题 7: 在后端之间处理事件，避免长时间阻塞 UI
     statusRunningBase_ = QString::fromUtf8("运行中 [2/3] StackVM");

@@ -202,12 +202,9 @@ void BackendParallelPanel::onRunAllBackends() {
     }
 
     // ARCH-10: 通过服务中间层触发三后端执行（主线程串行，避免引擎层非线程安全问题）
-    BackendExecResult interp = convertServiceResult(
-        BackendExecutionService::execute(src, BackendType::Interpreter));
-    BackendExecResult stackvm = convertServiceResult(
-        BackendExecutionService::execute(src, BackendType::StackVM_IR));
-    BackendExecResult regvm = convertServiceResult(
-        BackendExecutionService::execute(src, BackendType::RegisterVM_IR));
+    BackendExecResult interp = convertServiceResult(BackendExecutionService::execute(src, BackendType::Interpreter));
+    BackendExecResult stackvm = convertServiceResult(BackendExecutionService::execute(src, BackendType::StackVM_IR));
+    BackendExecResult regvm = convertServiceResult(BackendExecutionService::execute(src, BackendType::RegisterVM_IR));
 
     // 渲染表格行
     renderResult(0, QString::fromUtf8("Interpreter"), interp);

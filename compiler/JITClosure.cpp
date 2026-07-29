@@ -30,7 +30,7 @@ extern "C" {
 /// R156: OP_CLOSURE — 创建闭包值
 /// 与 StackVM executeClosure（VM.cpp:1035-1088）对齐
 int64_t jitCreateClosure(JitContext* ctx, const char* funName, const void* chunkPtr, uint8_t upvalueCount,
-                                    const uint8_t* upvalueDescs) {
+                         const uint8_t* upvalueDescs) {
     if (!ctx || !funName) {
         return static_cast<int64_t>(JIT_NULL_BITS);
     }

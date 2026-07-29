@@ -242,7 +242,10 @@ IRCFG::IRCFG(const IRFunction& ir) {
                     // 避免重复边
                     bool alreadyExists = false;
                     for (uint32_t s : node.succs) {
-                        if (s == cit->second) { alreadyExists = true; break; }
+                        if (s == cit->second) {
+                            alreadyExists = true;
+                            break;
+                        }
                     }
                     if (!alreadyExists) {
                         node.succs.push_back(cit->second);
@@ -621,14 +624,13 @@ bool ssaConstructPass(IRFunction& ir) {
     // 降序插入：高位置先插入不影响低位置的 startInstr，确保每个 PHI 都插入到
     // 正确的块首（LABEL 之后）。同块内多个 PHI 仍按 slot 升序 + offset 递增插入。
     std::vector<std::pair<uint32_t, std::set<uint32_t>>> sortedPhiPlacement(phiPlacement.begin(), phiPlacement.end());
-    std::sort(sortedPhiPlacement.begin(), sortedPhiPlacement.end(),
-              [&](const auto& a, const auto& b) {
-                  const auto& nodeA = cfg.node(a.first);
-                  const auto& nodeB = cfg.node(b.first);
-                  if (nodeA.sourceBlockIdx != nodeB.sourceBlockIdx)
-                      return nodeA.sourceBlockIdx > nodeB.sourceBlockIdx; // 降序
-                  return nodeA.startInstr > nodeB.startInstr;             // 降序
-              });
+    std::sort(sortedPhiPlacement.begin(), sortedPhiPlacement.end(), [&](const auto& a, const auto& b) {
+        const auto& nodeA = cfg.node(a.first);
+        const auto& nodeB = cfg.node(b.first);
+        if (nodeA.sourceBlockIdx != nodeB.sourceBlockIdx)
+            return nodeA.sourceBlockIdx > nodeB.sourceBlockIdx; // 降序
+        return nodeA.startInstr > nodeB.startInstr;             // 降序
+    });
 
     for (auto& [blockId, slots] : sortedPhiPlacement) {
         const auto& node = cfg.node(blockId);
@@ -757,7 +759,7 @@ bool ssaConstructPass(IRFunction& ir) {
                 // 找到 succId 块中此 slot 的 PHI 指令
                 uint32_t phiDest = phiDestMap[{succId, slot}];
                 // L17 fix: 栈空时跳过——该前驱路径上 slot 的当前值仍在帧槽中
-                //（参数初值由调用协议写入，或更早的 STORE_LOCAL 已写入），
+                // （参数初值由调用协议写入，或更早的 STORE_LOCAL 已写入），
                 // ssaDestruct 无需在该前驱插入 STORE_LOCAL 写回。原实现栈空时
                 // 填 vreg=0，会把无关的 v0 写入参数槽位，破坏参数值。
                 auto& stack = slotStacks[slot];
@@ -1033,8 +1035,7 @@ bool licmPass(IRFunction& ir) {
 
     while (true) {
         if (++iterations > kMaxIterations) {
-            LOG_DEBUG("licmPass: 达到迭代上限 " + std::to_string(kMaxIterations) + "，强制收敛（函数 " +
-                          ir.name + "）",
+            LOG_DEBUG("licmPass: 达到迭代上限 " + std::to_string(kMaxIterations) + "，强制收敛（函数 " + ir.name + "）",
                       "IR-SSA");
             break;
         }
@@ -1223,8 +1224,8 @@ bool inlinePass(IRModule& module) {
             // 列表（isLocal+slot）与 LOAD/STORE/CLOSE_UPVALUE 的 uv 索引均指向
             // callee 自己的帧/捕获表，内联到 caller 后捕获错误变量（复现：
             // 内联 outerFn 后闭包误捕 caller 槽位，返回闭包对象而非调用结果）。
-            if (instr.op == IROp::MAKE_CLOSURE || instr.op == IROp::LOAD_UPVALUE ||
-                instr.op == IROp::STORE_UPVALUE || instr.op == IROp::CLOSE_UPVALUE)
+            if (instr.op == IROp::MAKE_CLOSURE || instr.op == IROp::LOAD_UPVALUE || instr.op == IROp::STORE_UPVALUE ||
+                instr.op == IROp::CLOSE_UPVALUE)
                 return false;
             ++count;
         }
@@ -1279,7 +1280,7 @@ bool inlinePass(IRModule& module) {
                     // 防递归内联
                     // L17 fix3: 实参数量必须等于 callee arity——否则运行时应报
                     // "参数数量不匹配"错误，内联会吞掉该错误破坏三后端一致性
-                    //（复现：foo(a,b) 调用 foo(1,2,3) 内联后静默成功）。
+                    // （复现：foo(a,b) 调用 foo(1,2,3) 内联后静默成功）。
                     uint32_t callArgCount = instr.operands[2].index;
                     if (callee && callee != caller && callArgCount == static_cast<uint32_t>(callee->arity) &&
                         isInlineable(*callee) && totalInlinedOps < kMaxTotalInlineOps) {
@@ -1349,7 +1350,7 @@ bool inlinePass(IRModule& module) {
                             if (cInstr.op == IROp::RETURN_NULL) {
                                 // L17 fix: 隐式/显式 `return;` → CALL 的 dest 必须收到 null。
                                 // 原实现直接跳过，dest vreg 无定义，lowering 后读脏寄存器
-                                //（复现：`fun foo(){return;} var x=foo();` 内联后 x 为闭包脏值）。
+                                // （复现：`fun foo(){return;} var x=foo();` 内联后 x 为闭包脏值）。
                                 uint32_t destVReg = instr.operands[0].index;
                                 newInstrs.emplace_back(IROp::LOAD_NULL,
                                                        std::vector<IROperand>{IROperand::vreg(destVReg)}, cInstr.line);

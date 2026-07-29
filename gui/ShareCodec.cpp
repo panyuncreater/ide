@@ -57,8 +57,8 @@ bool decode(const QString& url, QString& codeOut, QString& errorOut) {
     }
 
     // AbortOnBase64DecodingErrors：负载被截断/篡改时立即失败而非静默产出垃圾
-    auto decoded = QByteArray::fromBase64Encoding(
-        payloadStr.toLatin1(), QByteArray::Base64UrlEncoding | QByteArray::AbortOnBase64DecodingErrors);
+    auto decoded = QByteArray::fromBase64Encoding(payloadStr.toLatin1(), QByteArray::Base64UrlEncoding |
+                                                                             QByteArray::AbortOnBase64DecodingErrors);
     if (!decoded) {
         errorOut = QStringLiteral("base64 解码失败：链接可能被截断或损坏");
         return false;
@@ -73,8 +73,8 @@ bool decode(const QString& url, QString& codeOut, QString& errorOut) {
 
     // CRC-16 完整性校验——必须先于 qUncompress（截断流会使其挂死，见文件头）
     const auto n = blob.size();
-    quint16 storedCrc = static_cast<quint16>((static_cast<quint8>(blob[n - 2]) << 8) |
-                                             static_cast<quint8>(blob[n - 1]));
+    quint16 storedCrc =
+        static_cast<quint16>((static_cast<quint8>(blob[n - 2]) << 8) | static_cast<quint8>(blob[n - 1]));
     QByteArray compressed = blob.left(n - 2);
     if (qChecksum(QByteArrayView(compressed)) != storedCrc) {
         errorOut = QStringLiteral("校验和不匹配：链接被截断或篡改");

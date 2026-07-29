@@ -15,8 +15,8 @@
 // 前向声明（避免循环依赖）
 class Environment;
 class FunDecl;
-struct BytecodeChunk;        // M3 fix: 闭包值持有函数 chunk 指针（D-1: 与 Bytecode.h 定义一致）
-struct RegBytecodeChunk;     // R164 D.6: 协程值持有 RegisterVM chunk 指针（与 RegisterBytecode.h 一致）
+struct BytecodeChunk;    // M3 fix: 闭包值持有函数 chunk 指针（D-1: 与 Bytecode.h 定义一致）
+struct RegBytecodeChunk; // R164 D.6: 协程值持有 RegisterVM chunk 指针（与 RegisterBytecode.h 一致）
 
 // ============================================================
 // Value 运行时值类型 — NaN-boxing + 侵入式引用计数（PERF-12）
@@ -29,22 +29,22 @@ struct RegBytecodeChunk;     // R164 D.6: 协程值持有 RegisterVM chunk 指�
 
 /// 值类型枚举（PERF-12: 不再依赖 variant 索引，由 NaNBox::tag() + RefCounted::type 分发）
 enum class ValueType {
-    VAL_NULL,     // NaNBox NULL_BITS
-    VAL_INT,      // NaNBox int48 内联 或 BoxedIntData* 装箱
-    VAL_FLOAT,    // NaNBox double 原始位
-    VAL_BOOL,     // NaNBox bool
-    VAL_STRING,   // StringData* (RefCounted)
-    VAL_ARRAY,    // ArrayData* (RefCounted)
-    VAL_DICT,     // DictData* (RefCounted)
-    VAL_INSTANCE, // InstanceData* (RefCounted)
-    VAL_CLOSURE,  // ClosureData* (RefCounted)
-    VAL_TUPLE,    // R98 元组与解构：TupleData* (RefCounted, immutable)
+    VAL_NULL,         // NaNBox NULL_BITS
+    VAL_INT,          // NaNBox int48 内联 或 BoxedIntData* 装箱
+    VAL_FLOAT,        // NaNBox double 原始位
+    VAL_BOOL,         // NaNBox bool
+    VAL_STRING,       // StringData* (RefCounted)
+    VAL_ARRAY,        // ArrayData* (RefCounted)
+    VAL_DICT,         // DictData* (RefCounted)
+    VAL_INSTANCE,     // InstanceData* (RefCounted)
+    VAL_CLOSURE,      // ClosureData* (RefCounted)
+    VAL_TUPLE,        // R98 元组与解构：TupleData* (RefCounted, immutable)
     VAL_ENUM_VARIANT, // R99 枚举与 ADT：EnumVariantData* (RefCounted, immutable)
     // R136 线程与并发原语：四种同步对象（均使用 shared_ptr<Inner> 共享底层资源）
-    VAL_CHANNEL,  // ChannelData* (RefCounted) — 阻塞式消息通道（mutex+cv+queue）
-    VAL_MUTEX,    // MutexData* (RefCounted) — 互斥锁（shared_ptr<std::mutex>）
-    VAL_RWLOCK,   // RwLockData* (RefCounted) — 读写锁（shared_ptr<std::shared_mutex>）
-    VAL_THREAD,   // ThreadData* (RefCounted) — 线程句柄（shared_ptr<std::thread>）
+    VAL_CHANNEL, // ChannelData* (RefCounted) — 阻塞式消息通道（mutex+cv+queue）
+    VAL_MUTEX,   // MutexData* (RefCounted) — 互斥锁（shared_ptr<std::mutex>）
+    VAL_RWLOCK,  // RwLockData* (RefCounted) — 读写锁（shared_ptr<std::shared_mutex>）
+    VAL_THREAD,  // ThreadData* (RefCounted) — 线程句柄（shared_ptr<std::thread>）
     // R164 协程/生成器：CoroutineData* (RefCounted)
     // 生成器函数调用返回的协程值，通过 .next() 恢复执行、.done() 判断是否耗尽。
     // Interpreter 使用重放模式（每次 .next() 从头执行，用 yieldId 跳过已返回的 yield）。
@@ -66,7 +66,7 @@ constexpr const char* DICT = "dict";
 constexpr const char* INSTANCE = "instance";
 constexpr const char* CLOSURE = "closure";
 constexpr const char* TUPLE = "tuple"; // R98 元组与解构
-constexpr const char* ENUM = "enum";  // R99 枚举与 ADT（泛型注解，匹配任意 enum variant）
+constexpr const char* ENUM = "enum";   // R99 枚举与 ADT（泛型注解，匹配任意 enum variant）
 // R136 线程与并发原语
 constexpr const char* CHANNEL = "channel";
 constexpr const char* MUTEX = "mutex";

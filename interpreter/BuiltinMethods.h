@@ -294,7 +294,7 @@ bool isConcurrencyBuiltin(const std::string& name);
 /// @return        方法结果 + 是否修改了对象（用于 writeBack，目前始终 false——
 ///                同步对象内部状态通过 shared_ptr<Inner> 共享，无需 writeBack）
 BuiltinMethodResult handleSyncObjectMethod(const std::string& method, Value& obj, const std::vector<Value>& args,
-                                            int line, int col);
+                                           int line, int col);
 
 /// spawn(fn, args...) 共享层入口（类似 input()，由调用方注入闭包调用器）
 /// @param closure    闭包值（用户传入的函数）
@@ -308,7 +308,7 @@ BuiltinMethodResult handleSyncObjectMethod(const std::string& method, Value& obj
 /// 注：invoker 必须线程安全或通过外部 mutex 序列化。当前实现 Interpreter
 /// 在 callSpawnBuiltin 内通过 spawnMutex_ 序列化所有 spawn 出的闭包调用。
 Result<Value> executeSharedSpawn(const Value& closure, const Value* args, size_t argCount,
-                                  const ClosureInvoker& invoker, int line = 0, int column = 0);
+                                 const ClosureInvoker& invoker, int line = 0, int column = 0);
 
 /// 内置方法辅助类（全静态方法，无状态）
 class BuiltinMethods {

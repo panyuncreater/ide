@@ -1,10 +1,10 @@
-#include "compiler/Compiler.h"
 #include "ast/ModuleIsolation.h" // BUG-AUDIT-MOD-2: VM 模块隔离（非导出顶层名前缀化）
 #include "common/ConstFunEval.h" // L18 lang-constfun: 编译期沙箱求值
 #include "common/Logger.h"
-#include "common/RuntimeLimits.h"             // BUG-AUDIT-MOD-3: MAX_RECURSION_DEPTH
-#include "common/TCO.h"                       // R109 TCO: 尾递归自调用识别
-#include "compiler/BytecodeCache.h"           // P2-11: .minic 文件加载
+#include "common/RuntimeLimits.h"   // BUG-AUDIT-MOD-3: MAX_RECURSION_DEPTH
+#include "common/TCO.h"             // R109 TCO: 尾递归自调用识别
+#include "compiler/BytecodeCache.h" // P2-11: .minic 文件加载
+#include "compiler/Compiler.h"
 #include "compiler/IRSSA.h"                   // P2-10: gvnPass/licmPass/inlinePass
 #include "compiler/RegisterBytecodeBackend.h" // PERF-14: 寄存器式后端
 #include "interpreter/NumericUtils.h"         // 共享溢出检查（B6 fix）
@@ -394,18 +394,18 @@ void Compiler::visitFunDecl(FunDecl& node) {
     {
         CompileContextGuard guard(*this);
         // AUDIT-R7 F5 fix: 嵌套函数不是类方法——清除 compilingMethodBody_ 标志
-        //（guard 不管理，手动恢复）。原 visitReturnStmt 用 currentClassName_ 非空
+        // （guard 不管理，手动恢复）。原 visitReturnStmt 用 currentClassName_ 非空
         // 判断 isMethod，类方法内嵌套命名函数编译时类名残留 → identifyTailCall
         // 拒绝 SelfFunction 尾调用 → 直接路径无 TCO 而 IR 路径有（实证：方法内
         // 嵌套函数深尾递归 StackVM 报深度超限而 StackVM-IR/RegisterVM 正常）。
         // 注：不清 currentClassName_——它还承担嵌套函数内 super 调用的类上下文
-        //（visitSuperExpr L613 明确依赖其不被清除）。
+        // （visitSuperExpr L613 明确依赖其不被清除）。
         bool savedCompilingMethodF5 = compilingMethodBody_;
         compilingMethodBody_ = false;
 
         if (!declareFunction(node, guard.saved, effectiveName)) {
             compilingMethodBody_ = savedCompilingMethodF5; // AUDIT-R7 F5: 提前返回也恢复
-            return; // guard 自动恢复上下文（参数超限）
+            return;                                        // guard 自动恢复上下文（参数超限）
         }
         compileFunctionBody(node);
         emitDefaultValues(node);
@@ -695,8 +695,7 @@ void Compiler::visitFunCall(FunCall& node) {
     // L18 lang-constfun: const fun 调用且实参全字面量 → 编译期沙箱求值，
     // 直接 emit 常量（求值失败/不纯/非原始类型结果 → 回退普通调用）。
     // 局部名遮蔽防护：当前作用域存在同名局部/upvalue 时不折叠。
-    if (!constFunDecls_.empty() && node.callee == nullptr &&
-        currentLocals_.find(node.name) == currentLocals_.end()) {
+    if (!constFunDecls_.empty() && node.callee == nullptr && currentLocals_.find(node.name) == currentLocals_.end()) {
         if (auto folded = ConstFunEval::tryEvaluate(constFunDecls_, node)) {
             emitConstant(*folded, node.line);
             return;
@@ -884,8 +883,7 @@ void Compiler::visitReturnStmt(ReturnStmt& node) {
     //   - 非生成器体（协程帧快照不可复用，运行时另有兑底）
     //   - 不在 try 块内（handler 清理语义）
     if (tco.kind == TCO::TailCallInfo::Kind::GeneralCall && tryDepth_ == 0 && inFunction_ && !compilingMethodBody_ &&
-        currentFunctionReturnType_.empty() &&
-        (currentFunctionDecl_ == nullptr || !currentFunctionDecl_->isGenerator)) {
+        currentFunctionReturnType_.empty() && (currentFunctionDecl_ == nullptr || !currentFunctionDecl_->isGenerator)) {
         compileNode(node.value.get());
         // 仅当尾部恰为 4 字节 OP_CALL 时 patch（CALL_EXPR 等路径保持普通调用）。
         // 三重校验防误判操作数字节：opcode 字节 + 常量池名称回查 + argCount 匹配。
@@ -1079,7 +1077,7 @@ void Compiler::visitImportStmt(ImportStmt& node) {
 
     // 1. 路径规范化与安全校验（SEC-1: 路径遍历防护）
     // BUG-M4 fix: loaderPath 保留大小写（供 moduleLoader_/预编译加载）；modulePath 为去重键
-    //（Windows 小写折叠），供 linkedModuleSet_/moduleLoadingSet_/moduleExports_/rename 等所有
+    // （Windows 小写折叠），供 linkedModuleSet_/moduleLoadingSet_/moduleExports_/rename 等所有
     // 去重与隔离用途，使同一文件的不同大小写拼写去重为同一模块（对齐 Interpreter）。
     std::string loaderPath = normalizeModulePath(node.modulePath);
     if (loaderPath.empty()) {
@@ -2603,7 +2601,7 @@ void Compiler::emitFinallyBlock(TryStmt& node, size_t outerTryBeginIp, size_t fi
     // AUDIT-R6 B1 fix(B): 异常值先从栈上暂存到唯一临时全局（OP_DEFINE_VAR pop），
     // finally 体在干净栈上执行；正常走完后重新压回并 rethrow。若 finally 体内
     // break/continue/return 跳出，则 reload+rethrow 被跳过——待处理异常被丢弃
-    //（Java 式语义，与 Interpreter/IR 路径统一）且无栈残留（原实现异常值留在
+    // （Java 式语义，与 Interpreter/IR 路径统一）且无栈残留（原实现异常值留在
     // 栈上，循环内每轮泄漏一个）。临时全局按 try 站点命名（非每次迭代增长），
     // break 跳出时残留一个值可接受（下次经过覆盖，正常路径 DELETE 清理）。
     std::string finallyExcName = "__finally_exc_" + std::to_string(blockSaveCounter_++);
@@ -2773,4 +2771,3 @@ void Compiler::visitBlock(Block& node) {
 }
 
 // ---- 新增节点编译 ----
-

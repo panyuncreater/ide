@@ -1,13 +1,13 @@
-﻿#include "compiler/IR.h"
-#include "ast/ASTNode.h"
+﻿#include "ast/ASTNode.h"
 #include "ast/ModuleIsolation.h" // BUG-AUDIT-MOD-2: IR 模块隔离（非导出顶层名前缀化）
 #include "common/Logger.h"
-#include "common/ModulePath.h"        // AUDIT-R5 R6 fix: 模块路径缓存键规范化单一事实源
-#include "common/RuntimeLimits.h"     // BUG-AUDIT-MOD-3: MAX_RECURSION_DEPTH
-#include "common/TCO.h"               // R109 TCO: isTailRecursiveReturn（与 Compiler.cpp 共享识别逻辑）
-#include "common/TypeChecker.h"       // R163 泛型扩展: isTypeParameter（emitTypeCheckIR 擦除）
-#include "compiler/BytecodeCache.h"   // L11: 预编译模块 .minic 加载
-#include "compiler/ExprStmtPop.h"     // AUDIT-R4 BUG-04: 表达式语句 POP 共享谓词
+#include "common/ModulePath.h"      // AUDIT-R5 R6 fix: 模块路径缓存键规范化单一事实源
+#include "common/RuntimeLimits.h"   // BUG-AUDIT-MOD-3: MAX_RECURSION_DEPTH
+#include "common/TCO.h"             // R109 TCO: isTailRecursiveReturn（与 Compiler.cpp 共享识别逻辑）
+#include "common/TypeChecker.h"     // R163 泛型扩展: isTypeParameter（emitTypeCheckIR 擦除）
+#include "compiler/BytecodeCache.h" // L11: 预编译模块 .minic 加载
+#include "compiler/ExprStmtPop.h"   // AUDIT-R4 BUG-04: 表达式语句 POP 共享谓词
+#include "compiler/IR.h"
 #include "interpreter/NumericUtils.h" // #14: OverflowCheck
 #include "interpreter/Value.h"
 #include "lexer/Lexer.h"   // VM-IMPORT: 模块源码词法分析
@@ -220,7 +220,7 @@ void AstIRBuilder::preScanTopLevelDecls(Block& program, bool /*isMainModule*/) {
 /// 成功时 outPath 填入规范化路径，返回 kContinue / kAlreadyLoaded；
 /// 失败时设置 hasError_/errorMessage_/errorLine_ 并返回 kError。
 AstIRBuilder::ImportPathStatus AstIRBuilder::resolveImportPath(ImportStmt& node, std::string& outLoaderPath,
-                                                              std::string& outCacheKey) {
+                                                               std::string& outCacheKey) {
     // BUG-AUDIT-MOD-2 fix: 模块隔离（AST 重写 + 作用域分析）
     // -----------------------------------------------------------
     // VM/IR 编译期模块内联——加载模块源码、解析 AST、IR lowering 模块语句。
@@ -306,7 +306,7 @@ AstIRBuilder::ImportPathStatus AstIRBuilder::resolveImportPath(ImportStmt& node,
 /// 2. 加载模块源码 + 解析为 AST + 模块隔离重命名。
 /// 成功时 outAst 持有重命名后的模块 AST；失败时设置 hasError_ 并返回 false。
 bool AstIRBuilder::loadImportedModule(ImportStmt& node, const std::string& loaderPath, const std::string& cacheKey,
-                                     std::unique_ptr<Block>& outAst) {
+                                      std::unique_ptr<Block>& outAst) {
     // 检查模块加载器
     if (!moduleLoader_) {
         irDiagnostics_.addErrorFatal("VM 编译需要模块加载器（moduleLoader 未设置）", node.line, 0,
@@ -2286,7 +2286,7 @@ void AstIRBuilder::visitReturnStmt(ReturnStmt* node) {
     // 两后端语义等价：参数槽被覆盖，栈深度恢复（StackVM）或无栈概念（RegisterVM）。
     TCO::TailCallInfo tco = TCO::identifyTailCall(node, currentFunctionName_, currentFunctionIsMethod_);
     // B1-Shadow fix（与直接路径对齐）：SelfFunction 名称被本函数局部变量/参数遮蔽
-    //（var f = other; return f(x);）时不做 TCO——varMap_ 中 Kind::LOCAL 即被遮蔽；
+    // （var f = other; return f(x);）时不做 TCO——varMap_ 中 Kind::LOCAL 即被遮蔽；
     // UPVALUE 是嵌套函数自引用（合法 TCO），GLOBAL_* 是未遮蔽的全局自递归。
     if (tco.kind == TCO::TailCallInfo::Kind::SelfFunction) {
         auto shadowIt = varMap_.find(tco.call->name);
@@ -2955,7 +2955,8 @@ IROperand AstIRBuilder::visitMatchExpr(MatchExpr* node) {
                         coveredVariants.insert(pat.variantName);
                 } else if (pat.kind == MatchPatternKind::OR) {
                     for (const auto& sub : pat.subPatterns)
-                        if (sub) collectVariants(*sub);
+                        if (sub)
+                            collectVariants(*sub);
                 }
             };
             collectVariants(*mc.pattern);
@@ -2973,11 +2974,12 @@ IROperand AstIRBuilder::visitMatchExpr(MatchExpr* node) {
                     if (!missing.empty()) {
                         std::string msg = "match 未覆盖 enum " + matchedEnumName + " 的全部变体，缺少: ";
                         for (size_t i = 0; i < missing.size(); ++i) {
-                            if (i > 0) msg += ", ";
+                            if (i > 0)
+                                msg += ", ";
                             msg += missing[i];
                         }
-                        irDiagnostics_.addWarning(msg, node->line, node->column,
-                                                  DiagSource::Compiler, "non-exhaustive-match");
+                        irDiagnostics_.addWarning(msg, node->line, node->column, DiagSource::Compiler,
+                                                  "non-exhaustive-match");
                     }
                     break;
                 }
@@ -2992,8 +2994,8 @@ IROperand AstIRBuilder::visitMatchExpr(MatchExpr* node) {
     // 用 tempSlot + LOAD_LOCAL 模式让每个 case 独立加载 scrut（参考 BIN_AND tempSlot 模式）。
     uint32_t scrutSlot = nextLocalSlot_++;
     emitIR(IROp::STORE_LOCAL, {IROperand::local(scrutSlot), scrutVReg}, node->line);
-    emitIR(IROp::POP, {scrutVReg}, node->line);    // STORE_LOCAL peek，补 POP 消费栈顶 scrut
-    uint32_t tempSlot = nextLocalSlot_++; // 汇合所有 case 结果的临时槽位
+    emitIR(IROp::POP, {scrutVReg}, node->line); // STORE_LOCAL peek，补 POP 消费栈顶 scrut
+    uint32_t tempSlot = nextLocalSlot_++;       // 汇合所有 case 结果的临时槽位
     uint32_t endLabel = ir_->allocLabel();
     bool hasDefault = false;
 
@@ -3982,7 +3984,7 @@ void AstIRBuilder::emitFinallyBlock(TryStmt& node, TryEmitCtx& ctx) {
     // AUDIT-R6 B1 fix(A): 发射 finally 体（两个副本）期间暂时弹出自身条目。
     // 原实现中 finally 体内的 break/continue/return 经 emitFinallyJumpIR 把自身当作
     // enclosing finally，发射 JUMP 回自身 finallyEntryLabel → 运行时 finally 无限重执行
-    //（实证：死循环被指令数上限拦截）。弹出后 finally 体内的 break 正确链到更外层
+    // （实证：死循环被指令数上限拦截）。弹出后 finally 体内的 break 正确链到更外层
     // finally 或直走常规跳转；结束后压回，保持调用方统一 pop 语义。
     TryFinallyContext selfFinallyCtx = std::move(tryFinallyStack_.back());
     tryFinallyStack_.pop_back();
@@ -4017,4 +4019,3 @@ void AstIRBuilder::visitThrowStmt(ThrowStmt* node) {
     IROperand val = node->expression ? visitNode(node->expression.get()) : IROperand::vreg(0);
     emitIR(IROp::THROW, {val}, node->line);
 }
-

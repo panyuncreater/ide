@@ -27,8 +27,8 @@ namespace minilang {
 class LiteralTypeWalker : public DefaultVisitor {
 public:
     DiagnosticBag diagnostics;
-    std::unordered_map<std::string, std::string> varTypes; // 变量名→类型注解
-    std::unordered_map<std::string, TypeInfo> varTypeInfos; // 变量名→推断类型
+    std::unordered_map<std::string, std::string> varTypes;        // 变量名→类型注解
+    std::unordered_map<std::string, TypeInfo> varTypeInfos;       // 变量名→推断类型
     std::unordered_map<std::string, std::string> funcReturnTypes; // 函数名→返回类型注解
 
     /// 从表达式 AST 节点推断类型
@@ -252,8 +252,8 @@ public:
             TypeInfo actualReturn = inferExprType(node.value.get());
             if (actualReturn.kind != TypeKind::UNKNOWN && actualReturn.kind != TypeKind::NULL_T) {
                 if (!declaredReturn.isCompatible(actualReturn)) {
-                    diagnostics.addWarning("函数返回类型注解为 " + currentCheckingReturnType_ +
-                                               "，但返回值为 " + actualReturn.toString(),
+                    diagnostics.addWarning("函数返回类型注解为 " + currentCheckingReturnType_ + "，但返回值为 " +
+                                               actualReturn.toString(),
                                            node.line, node.column, DiagSource::TypeChecker);
                 }
             }

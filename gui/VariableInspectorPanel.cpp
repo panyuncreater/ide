@@ -273,10 +273,9 @@ void VariableInspectorPanel::onVariableDoubleClicked(QTreeWidgetItem* item, int 
     }
     const QString name = item->text(0);
     bool ok = false;
-    const QString text =
-        QInputDialog::getText(this, tr("修改变量"),
-                              tr("变量 %1 的新值（int / float / true / false / null / \"字符串\"）：").arg(name),
-                              QLineEdit::Normal, item->text(2), &ok);
+    const QString text = QInputDialog::getText(
+        this, tr("修改变量"), tr("变量 %1 的新值（int / float / true / false / null / \"字符串\"）：").arg(name),
+        QLineEdit::Normal, item->text(2), &ok);
     if (!ok || text.isEmpty())
         return;
     Value newVal;

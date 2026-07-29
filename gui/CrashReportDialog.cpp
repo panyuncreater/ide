@@ -5,8 +5,8 @@
 #include "gui/CrashReportDialog.h"
 
 #include <QApplication>
-#include <QClipboard>
 #include <QCheckBox>
+#include <QClipboard>
 #include <QDesktopServices>
 #include <QFileInfo>
 #include <QHBoxLayout>
@@ -21,8 +21,7 @@
 
 namespace minilang::gui {
 
-CrashReportDialog::CrashReportDialog(const CrashReport& report, QWidget* parent)
-    : QDialog(parent), report_(report) {
+CrashReportDialog::CrashReportDialog(const CrashReport& report, QWidget* parent) : QDialog(parent), report_(report) {
     setWindowTitle(mlTr("MiniLang IDE - 上次会话崩溃"));
     setMinimumSize(560, 420);
     buildUi(report);
@@ -42,9 +41,9 @@ void CrashReportDialog::buildUi(const CrashReport& report) {
     // 信息标签
     QString infoText;
     if (report.valid) {
-        infoText = mlTr("信号/异常：") + QString::fromStdString(report.signalName) + "\n"
-                 + mlTr("时间：") + QString::fromStdString(report.timestamp) + "\n"
-                 + mlTr("崩溃文件：") + QString::fromStdString(report.dumpFilePath);
+        infoText = mlTr("信号/异常：") + QString::fromStdString(report.signalName) + "\n" + mlTr("时间：") +
+                   QString::fromStdString(report.timestamp) + "\n" + mlTr("崩溃文件：") +
+                   QString::fromStdString(report.dumpFilePath);
     } else {
         infoText = mlTr("（无有效崩溃报告）");
     }
@@ -61,8 +60,8 @@ void CrashReportDialog::buildUi(const CrashReport& report) {
         traceView_->setPlainText(QString::fromStdString(report.stackTrace));
     } else {
 #ifdef _WIN32
-        traceView_->setPlainText(mlTr(
-            "（Windows minidump 为二进制格式，请用 Visual Studio 或 WinDbg 打开 .dmp 文件查看调用栈）"));
+        traceView_->setPlainText(
+            mlTr("（Windows minidump 为二进制格式，请用 Visual Studio 或 WinDbg 打开 .dmp 文件查看调用栈）"));
 #else
         traceView_->setPlainText(mlTr("（无文本栈回溯）"));
 #endif
@@ -76,9 +75,9 @@ void CrashReportDialog::buildUi(const CrashReport& report) {
     // 按钮行
     auto* btnLayout = new QHBoxLayout();
     openDirButton_ = new QPushButton(mlTr("打开所在目录"), this);
-    copyButton_    = new QPushButton(mlTr("复制信息"), this);
-    deleteButton_  = new QPushButton(mlTr("删除报告"), this);
-    ignoreButton_  = new QPushButton(mlTr("关闭"), this);
+    copyButton_ = new QPushButton(mlTr("复制信息"), this);
+    deleteButton_ = new QPushButton(mlTr("删除报告"), this);
+    ignoreButton_ = new QPushButton(mlTr("关闭"), this);
     ignoreButton_->setDefault(true);
 
     btnLayout->addWidget(openDirButton_);
@@ -89,13 +88,14 @@ void CrashReportDialog::buildUi(const CrashReport& report) {
     layout->addLayout(btnLayout);
 
     connect(openDirButton_, &QPushButton::clicked, this, &CrashReportDialog::onOpenDirectory);
-    connect(copyButton_,    &QPushButton::clicked, this, &CrashReportDialog::onCopyInfo);
-    connect(deleteButton_,  &QPushButton::clicked, this, &CrashReportDialog::onDeleteReport);
-    connect(ignoreButton_,  &QPushButton::clicked, this, &CrashReportDialog::onIgnore);
+    connect(copyButton_, &QPushButton::clicked, this, &CrashReportDialog::onCopyInfo);
+    connect(deleteButton_, &QPushButton::clicked, this, &CrashReportDialog::onDeleteReport);
+    connect(ignoreButton_, &QPushButton::clicked, this, &CrashReportDialog::onIgnore);
 }
 
 void CrashReportDialog::onOpenDirectory() {
-    if (report_.dumpFilePath.empty()) return;
+    if (report_.dumpFilePath.empty())
+        return;
     QFileInfo fi(QString::fromStdString(report_.dumpFilePath));
     QString dir = fi.absolutePath();
     QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
@@ -115,15 +115,14 @@ QString CrashReportDialog::formatReportForClipboard() const {
 
 void CrashReportDialog::onCopyInfo() {
     QGuiApplication::clipboard()->setText(formatReportForClipboard());
-    QMessageBox::information(this, mlTr("已复制"),
-                             mlTr("崩溃信息已复制到剪贴板，可粘贴到 Issue 报告中。"));
+    QMessageBox::information(this, mlTr("已复制"), mlTr("崩溃信息已复制到剪贴板，可粘贴到 Issue 报告中。"));
 }
 
 void CrashReportDialog::onDeleteReport() {
-    auto ret = QMessageBox::question(this, mlTr("确认删除"),
-                                     mlTr("确定要删除此崩溃报告吗？此操作不可撤销。"),
+    auto ret = QMessageBox::question(this, mlTr("确认删除"), mlTr("确定要删除此崩溃报告吗？此操作不可撤销。"),
                                      QMessageBox::Yes | QMessageBox::No);
-    if (ret != QMessageBox::Yes) return;
+    if (ret != QMessageBox::Yes)
+        return;
 
     // 删除磁盘上的报告文件
     if (!report_.dumpFilePath.empty()) {

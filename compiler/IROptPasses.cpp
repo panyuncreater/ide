@@ -1,11 +1,11 @@
-﻿#include "compiler/IR.h"
-#include "ast/ASTNode.h"
+﻿#include "ast/ASTNode.h"
 #include "ast/ModuleIsolation.h" // BUG-AUDIT-MOD-2: IR 模块隔离（非导出顶层名前缀化）
 #include "common/Logger.h"
-#include "common/RuntimeLimits.h"     // BUG-AUDIT-MOD-3: MAX_RECURSION_DEPTH
-#include "common/TCO.h"               // R109 TCO: isTailRecursiveReturn（与 Compiler.cpp 共享识别逻辑）
-#include "common/TypeChecker.h"       // R163 泛型扩展: isTypeParameter（emitTypeCheckIR 擦除）
-#include "compiler/BytecodeCache.h"   // L11: 预编译模块 .minic 加载
+#include "common/RuntimeLimits.h"   // BUG-AUDIT-MOD-3: MAX_RECURSION_DEPTH
+#include "common/TCO.h"             // R109 TCO: isTailRecursiveReturn（与 Compiler.cpp 共享识别逻辑）
+#include "common/TypeChecker.h"     // R163 泛型扩展: isTypeParameter（emitTypeCheckIR 擦除）
+#include "compiler/BytecodeCache.h" // L11: 预编译模块 .minic 加载
+#include "compiler/IR.h"
 #include "interpreter/NumericUtils.h" // #14: OverflowCheck
 #include "interpreter/Value.h"
 #include "lexer/Lexer.h"   // VM-IMPORT: 模块源码词法分析
@@ -94,8 +94,8 @@ bool isPureCompute(IROp op) {
     case IROp::LTE:
     case IROp::GTE:
         // AUDIT-R6 F2 fix: DUP 从纯计算列表移除——栈式后端的 DUP 是位置性压栈指令
-        //（lowering 仅 emit OP_DUP 复制栈顶，不读 src vreg），DCE 删除后消费者
-        //（INDEX_GET 等）会弹走原始值导致栈下溢。实证：irOptimize + 两元素解构
+        // （lowering 仅 emit OP_DUP 复制栈顶，不读 src vreg），DCE 删除后消费者
+        // （INDEX_GET 等）会弹走原始值导致栈下溢。实证：irOptimize + 两元素解构
         // 即触发“栈下溢”（CSE 将同源 DUP 重定向后 DCE 删除第二条 DUP）。
         return true;
     default:

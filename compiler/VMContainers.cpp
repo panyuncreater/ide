@@ -66,7 +66,7 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
     case OpCode::OP_ENUM_VARIANT_FIELD:
         return executeEnumOps(op, ip);
     default:
-        return runtimeError(ErrorFormat::formatStd("未知操作码: {}",  static_cast<int>(op)));
+        return runtimeError(ErrorFormat::formatStd("未知操作码: {}", static_cast<int>(op)));
     }
 }
 
@@ -100,7 +100,9 @@ VMResult VM::executeContainerBuildOps(OpCode op, size_t& ip) {
             return runtimeError("栈下溢: OP_BUILD_DICT");
         // BUG-017 fix (2026-07-18): 记录入口栈深度，循环结束后断言
         // 栈净变化 = -2*pairCount + 1（弹出全部键值对，压入一个 dict）。
-        const size_t stackDepthBefore = stack_.size();
+        // [[maybe_unused]]：Release（NDEBUG）下 assert 展开为 ((void)0)，
+        // stackDepthBefore 不再被引用，触发 MSVC C4189（/WX 视为错误）。
+        [[maybe_unused]] const size_t stackDepthBefore = stack_.size();
         // L4 fix: 字典键支持 string/int/bool/float，使用 DictKey map
         // R97 #2 fix: 改用 Value::DictMap（含 DictKeyEqual 透明比较器）
         Value::DictMap dict;
@@ -162,7 +164,7 @@ VMResult VM::executeContainerBuildOps(OpCode op, size_t& ip) {
         // 对齐 Interpreter::visitEnumVariantExpr 的校验逻辑，保证三后端一致。
         auto enumIt = enumRegistry_.find(enumName);
         if (enumIt == enumRegistry_.end()) {
-            return runtimeError(ErrorFormat::formatStd("未定义的 enum: {}",  enumName), "undefined-function");
+            return runtimeError(ErrorFormat::formatStd("未定义的 enum: {}", enumName), "undefined-function");
         }
         const VMEnumInfo& info = enumIt->second;
         const VMEnumVariantInfo* varInfo = nullptr;
@@ -173,14 +175,13 @@ VMResult VM::executeContainerBuildOps(OpCode op, size_t& ip) {
             }
         }
         if (varInfo == nullptr) {
-            return runtimeError(
-                ErrorFormat::formatStd("enum '{}' 没有 variant '{}'",  enumName,  variantName),
-                "undefined-function");
+            return runtimeError(ErrorFormat::formatStd("enum '{}' 没有 variant '{}'", enumName, variantName),
+                                "undefined-function");
         }
         if (static_cast<int>(argCount) != varInfo->arity) {
-            return runtimeError(ErrorFormat::formatStd("enum variant '{}.{}' 期望 {} 个参数，得到 {} 个",  enumName,
-                                                    
-                                                    variantName,  varInfo->arity,  static_cast<int>(argCount)),
+            return runtimeError(ErrorFormat::formatStd("enum variant '{}.{}' 期望 {} 个参数，得到 {} 个", enumName,
+
+                                                       variantName, varInfo->arity, static_cast<int>(argCount)),
                                 DiagCodes::kArityMismatch);
         }
 
@@ -227,7 +228,7 @@ VMResult VM::executeContainerBuildOps(OpCode op, size_t& ip) {
     }
 
     default:
-        return runtimeError(ErrorFormat::formatStd("未知操作码: {}",  static_cast<int>(op)));
+        return runtimeError(ErrorFormat::formatStd("未知操作码: {}", static_cast<int>(op)));
     }
 
     return VMResult::VM_OK;
@@ -254,7 +255,7 @@ VMResult VM::executeIndexOps(OpCode op, size_t& ip) {
     case OpCode::OP_INDEX_SET_LOCAL:
         return executeIndexSetLocal(ip);
     default:
-        return runtimeError(ErrorFormat::formatStd("未知操作码: {}",  static_cast<int>(op)));
+        return runtimeError(ErrorFormat::formatStd("未知操作码: {}", static_cast<int>(op)));
     }
 }
 
@@ -273,9 +274,9 @@ VMResult VM::executeIndexGet(size_t& ip) {
         if (BoundsCheck::inBounds(i, obj.arrayVal().size())) {
             push(obj.arrayVal()[static_cast<size_t>(i)]);
         } else {
-            return runtimeError(ErrorFormat::formatStd("数组索引越界: {}, 有效范围 [0, {})",  static_cast<long long>(i),
-                                                    
-                                                    obj.arrayVal().size()),
+            return runtimeError(ErrorFormat::formatStd("数组索引越界: {}, 有效范围 [0, {})", static_cast<long long>(i),
+
+                                                       obj.arrayVal().size()),
                                 DiagCodes::kIndexOutOfBounds);
         }
     } else if (obj.isDict()) {
@@ -323,8 +324,8 @@ VMResult VM::executeIndexGet(size_t& ip) {
         }
         if (i < 0 || !found) {
             return runtimeError(ErrorFormat::formatStd("字符串索引越界: {}, 有效范围 [0, {})",
-                                                    
-                                                    static_cast<long long>(i),  static_cast<long long>(charCount)),
+
+                                                       static_cast<long long>(i), static_cast<long long>(charCount)),
                                 DiagCodes::kIndexOutOfBounds);
         }
         push(Value(s.substr(targetBytePos, targetByteLen)));
@@ -341,9 +342,9 @@ VMResult VM::executeIndexGet(size_t& ip) {
         if (BoundsCheck::inBounds(i, obj.tupleVal().size())) {
             push(obj.tupleVal()[static_cast<size_t>(i)]);
         } else {
-            return runtimeError(ErrorFormat::formatStd("元组索引越界: {}, 有效范围 [0, {})",  static_cast<long long>(i),
-                                                    
-                                                    obj.tupleVal().size()),
+            return runtimeError(ErrorFormat::formatStd("元组索引越界: {}, 有效范围 [0, {})", static_cast<long long>(i),
+
+                                                       obj.tupleVal().size()),
                                 DiagCodes::kIndexOutOfBounds);
         }
     } else if (obj.isTuple()) {
@@ -375,9 +376,9 @@ VMResult VM::executeIndexSet(size_t& ip) {
         if (BoundsCheck::inBounds(i, std::as_const(obj).arrayVal().size())) {
             obj.arrayVal()[static_cast<size_t>(i)] = val;
         } else {
-            return runtimeError(ErrorFormat::formatStd("数组索引越界: {}, 有效范围 [0, {})",  static_cast<long long>(i),
-                                                    
-                                                    std::as_const(obj).arrayVal().size()),
+            return runtimeError(ErrorFormat::formatStd("数组索引越界: {}, 有效范围 [0, {})", static_cast<long long>(i),
+
+                                                       std::as_const(obj).arrayVal().size()),
                                 DiagCodes::kIndexOutOfBounds);
         }
     } else if (obj.isDict()) {
@@ -423,9 +424,9 @@ VMResult VM::executeIndexSetVar(size_t& ip) {
         if (BoundsCheck::inBounds(i, std::as_const(obj).arrayVal().size())) {
             obj.arrayVal()[static_cast<size_t>(i)] = val;
         } else {
-            return runtimeError(ErrorFormat::formatStd("数组索引越界: {}, 有效范围 [0, {})",  static_cast<long long>(i),
-                                                    
-                                                    std::as_const(obj).arrayVal().size()),
+            return runtimeError(ErrorFormat::formatStd("数组索引越界: {}, 有效范围 [0, {})", static_cast<long long>(i),
+
+                                                       std::as_const(obj).arrayVal().size()),
                                 DiagCodes::kIndexOutOfBounds);
         }
     } else if (obj.isDict()) {
@@ -474,9 +475,9 @@ VMResult VM::executeIndexSetLocal(size_t& ip) {
             if (isFieldSlot)
                 currentFrame().fieldsModified = true;
         } else {
-            return runtimeError(ErrorFormat::formatStd("数组索引越界: {}, 有效范围 [0, {})",  static_cast<long long>(i),
-                                                    
-                                                    std::as_const(obj).arrayVal().size()),
+            return runtimeError(ErrorFormat::formatStd("数组索引越界: {}, 有效范围 [0, {})", static_cast<long long>(i),
+
+                                                       std::as_const(obj).arrayVal().size()),
                                 DiagCodes::kIndexOutOfBounds);
         }
     } else if (obj.isDict()) {
@@ -647,7 +648,7 @@ VMResult VM::executeMemberOps(OpCode op, size_t& ip) {
     }
 
     default:
-        return runtimeError(ErrorFormat::formatStd("未知操作码: {}",  static_cast<int>(op)));
+        return runtimeError(ErrorFormat::formatStd("未知操作码: {}", static_cast<int>(op)));
     }
 
     return VMResult::VM_OK;
@@ -705,8 +706,8 @@ VMResult VM::executeEnumOps(OpCode op, size_t& ip) {
         const auto& fields = scrut.enumVariantFields();
         if (i < 0 || static_cast<size_t>(i) >= fields.size()) {
             return runtimeError(ErrorFormat::formatStd("OP_ENUM_VARIANT_FIELD: 索引越界 {}, 有效范围 [0, {})",
-                                                    
-                                                    static_cast<long long>(i),  fields.size()),
+
+                                                       static_cast<long long>(i), fields.size()),
                                 DiagCodes::kIndexOutOfBounds);
         }
         push(fields[static_cast<size_t>(i)]);
@@ -716,7 +717,7 @@ VMResult VM::executeEnumOps(OpCode op, size_t& ip) {
     }
 
     default:
-        return runtimeError(ErrorFormat::formatStd("未知操作码: {}",  static_cast<int>(op)));
+        return runtimeError(ErrorFormat::formatStd("未知操作码: {}", static_cast<int>(op)));
     }
 
     return VMResult::VM_OK;
@@ -742,7 +743,7 @@ VMResult VM::executeWritebackOps(OpCode op, size_t& ip) {
     case OpCode::OP_WRITEBACK_INDEX_UPVALUE:
         return writebackToUpvalue(op, ip);
     default:
-        return runtimeError(ErrorFormat::formatStd("未知操作码: {}",  static_cast<int>(op)));
+        return runtimeError(ErrorFormat::formatStd("未知操作码: {}", static_cast<int>(op)));
     }
 }
 
@@ -950,7 +951,7 @@ VMResult VM::executeMiscOps(OpCode op, size_t& ip) {
     case OpCode::OP_FINALLY_END:
         return executeMiscExceptionOps(op, ip);
     default:
-        return runtimeError(ErrorFormat::formatStd("未知操作码: {}",  static_cast<int>(op)));
+        return runtimeError(ErrorFormat::formatStd("未知操作码: {}", static_cast<int>(op)));
     }
 }
 
@@ -1063,7 +1064,7 @@ VMResult VM::executeMiscStackOps(OpCode op, size_t& ip) {
     }
 
     default:
-        return runtimeError(ErrorFormat::formatStd("executeMiscStackOps 未知操作码: {}",  static_cast<int>(op)));
+        return runtimeError(ErrorFormat::formatStd("executeMiscStackOps 未知操作码: {}", static_cast<int>(op)));
     }
 
     return VMResult::VM_OK;
@@ -1106,7 +1107,7 @@ VMResult VM::executeMiscTypeCheck(OpCode op, size_t& ip) {
             } // 匹配，通过
         }
         return runtimeError(
-            ErrorFormat::formatStd(ErrorMessages::kTypeAnnotationViolationFmtStd,  annotation,  val.typeName()),
+            ErrorFormat::formatStd(ErrorMessages::kTypeAnnotationViolationFmtStd, annotation, val.typeName()),
             DiagCodes::kTypeMismatch);
     }
     notifyStep(ip, op);
@@ -1197,7 +1198,7 @@ VMResult VM::executeMiscJumpOps(OpCode op, size_t& ip) {
     }
 
     default:
-        return runtimeError(ErrorFormat::formatStd("executeMiscJumpOps 未知操作码: {}",  static_cast<int>(op)));
+        return runtimeError(ErrorFormat::formatStd("executeMiscJumpOps 未知操作码: {}", static_cast<int>(op)));
     }
 
     return VMResult::VM_OK;
@@ -1282,7 +1283,7 @@ VMResult VM::executeMiscExceptionOps(OpCode op, size_t& ip) {
     }
 
     default:
-        return runtimeError(ErrorFormat::formatStd("executeMiscExceptionOps 未知操作码: {}",  static_cast<int>(op)));
+        return runtimeError(ErrorFormat::formatStd("executeMiscExceptionOps 未知操作码: {}", static_cast<int>(op)));
     }
 
     return VMResult::VM_OK;

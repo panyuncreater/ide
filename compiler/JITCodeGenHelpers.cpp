@@ -466,8 +466,7 @@ void JITBackend::emitInitField(x86::Assembler& a, Label epilogue, const char* fi
 
 // OP_DEFINE_CLASS: void jitDefineClass(JitContext* ctx, const char* className, const char* superClassName)
 // 栈布局：[templateInstance]（pop 消费）
-void JITBackend::emitDefineClass(x86::Assembler& a, Label epilogue, const char* className,
-                                  const char* superClassName) {
+void JITBackend::emitDefineClass(x86::Assembler& a, Label epilogue, const char* className, const char* superClassName) {
     a.mov(x86::qword_ptr(x86::r12, jit_offset::stackTop), x86::r15);
     a.movabs(x86::r10, reinterpret_cast<uint64_t>(className));      // r10 = className
     a.movabs(x86::r11, reinterpret_cast<uint64_t>(superClassName)); // r11 = superClassName
@@ -613,8 +612,8 @@ void JITBackend::emitMemberSetLocal(x86::Assembler& a, Label epilogue, uint8_t s
 // 栈布局（调用前，向低地址增长）：[argN-1]...[arg0][receiver] ← r15 指向 argN-1
 // 栈布局（调用后）：[extraSlots...][defaults...][args...][fields...][this] ← r15 指向最后一个 extraSlot
 void JITBackend::emitMethodCall(x86::Assembler& a, Label epilogue, const char* methodName, uint8_t argCount,
-                                 uint8_t receiverLocalSlotByte, int receiverGlobalSlot, bool isSuperCall,
-                                 const char* superClassName) {
+                                uint8_t receiverLocalSlotByte, int receiverGlobalSlot, bool isSuperCall,
+                                const char* superClassName) {
     Label returnLabel = a.new_label();
 
     // 方法调用 IC：分配 callSiteId 并确保 methodCallIC_ 容量
@@ -667,7 +666,7 @@ void JITBackend::emitMethodCall(x86::Assembler& a, Label epilogue, const char* m
     a.movabs(x86::rax, reinterpret_cast<uint64_t>(this));
     a.mov(x86::qword_ptr(x86::rsp, 48), x86::rax); // arg7 = backendPtr
 #else
-    a.sub(x86::rsp, 16);        // 16-byte alignment + arg7 slot
+    a.sub(x86::rsp, 16);       // 16-byte alignment + arg7 slot
     a.mov(x86::rdi, x86::r12); // arg1 = ctx
     a.mov(x86::rsi, x86::rax); // arg2 = methodName
     a.mov(x86::rdx, x86::r11); // arg3 = packedArgs
@@ -770,7 +769,7 @@ void JITBackend::emitCheckInt(x86::Assembler& a, x86::Gp val, Label failLabel) {
         // Bug #19 fix: jitDeoptimize 调用破坏了 rax（用于 movabs+call），而 failLabel 处的
         // emitRecordTypeFeedback 读取 rax 作为操作数类型反馈。必须从栈重新加载原始值。
         a.mov(x86::rax, x86::qword_ptr(x86::r15)); // 恢复 rax = 栈顶操作数（right）
-        a.jmp(failLabel); // 当前操作走 generic 路径正确处理
+        a.jmp(failLabel);                          // 当前操作走 generic 路径正确处理
         a.bind(intPath);
         return;
     }
@@ -804,7 +803,7 @@ void JITBackend::emitCheckInt(x86::Assembler& a, x86::Gp val, Label failLabel) {
 #endif
         // Bug #19 fix: jitDeoptimize 调用破坏了 rax，从栈重新加载操作数供类型反馈使用
         a.mov(x86::rax, x86::qword_ptr(x86::r15)); // 恢复 rax = 栈顶操作数（right）
-        a.jmp(failLabel); // 反优化后走 generic 路径正确处理
+        a.jmp(failLabel);                          // 反优化后走 generic 路径正确处理
         return;
     }
     a.mov(x86::rdx, val);
@@ -854,7 +853,7 @@ void JITBackend::emitRecordTypeFeedback(x86::Assembler& a, x86::Gp val, size_t c
 // @param chunkIdx 当前 chunk 索引（类型反馈收集用）
 // @param divByZeroLabel 除零错误标签（仅 op=3 使用）
 void JITBackend::emitFloatBinaryArith(x86::Assembler& a, int op, Label failLabel, Label endLabel, size_t chunkIdx,
-                                       Label divByZeroLabel) {
+                                      Label divByZeroLabel) {
     // Bug #53 fix: 除法路径必须提供有效的 divByZeroLabel。默认构造的 Label
     // 无效（isValid()==false），若调用方遗漏传入，op==3 分支的 a.jz(divByZeroLabel)
     // 会生成无效跳转目标。此处断言在编译期捕获调用错误。

@@ -336,8 +336,8 @@ VMResult VM::executeTailCall(size_t& ip) {
     // 栈收缩到 bp+argCount，再补目标函数的额外局部槽
     int extraSlots = target.localCount - argCount;
     if (extraSlots < 0) {
-        return runtimeError(ErrorFormat::formatStd("函数调用帧布局损坏: localCount={} < argCount={}",
-                                                   target.localCount, static_cast<int>(argCount)));
+        return runtimeError(ErrorFormat::formatStd("函数调用帧布局损坏: localCount={} < argCount={}", target.localCount,
+                                                   static_cast<int>(argCount)));
     }
     stack_.resize(frame.basePointer + argCount);
     for (int i = 0; i < extraSlots; ++i) {
@@ -1825,7 +1825,7 @@ VMResult VM::dispatchCoroutineBuiltin(Value& obj, const std::string& methodName,
         }
         // AUDIT-R7 F2 fix: 快照 tryStack_ 检测生成器体内未捕获 throw 的穿透（仿
         // dispatchSyncObjectBuiltin 的 P3-A1）。穿透时 throwException 已截断栈
-        //（receiver 已被清除）并 push 异常值 + 设 catchIp，不可 pop/push/推进 ip。
+        // （receiver 已被清除）并 push 异常值 + 设 catchIp，不可 pop/push/推进 ip。
         size_t savedTryStackSize = tryStack_.size();
         Value result = callCoroutineNext(obj);
         if (hasError_) {
@@ -1997,7 +1997,7 @@ Value VM::callCoroutineNext(Value& coroVal) {
             // Interpreter/RegisterVM 对齐：两者错误路径均保持 done=false）。
         } else if (tryStack_.size() < savedTryStackSize) {
             // AUDIT-R7 F2 fix: 异常穿透到调用方 catch——不置 done、不动结果、不清理
-            //（throwException 已就位 catch 状态：栈顶是异常值、调用方 ip=catchIp）。
+            // （throwException 已就位 catch 状态：栈顶是异常值、调用方 ip=catchIp）。
             // 由 dispatchCoroutineBuiltin 同样检测并返回 VM_EXCEPTION_THROW。
             currentCoroutineTargetYieldId_ = savedTargetYieldId;
             currentYieldExecutionCount_ = savedYieldExecCount;

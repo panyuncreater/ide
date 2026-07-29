@@ -31,7 +31,7 @@
 #include <vector>
 
 // 前向声明 IBackend，避免在此公共头文件中 #include "common/IBackend.h"
-//（后者会传递引入 interpreter/Value.h 等重依赖）。调用方持有 createBackend
+// （后者会传递引入 interpreter/Value.h 等重依赖）。调用方持有 createBackend
 // 返回的 unique_ptr<IVmBackend> 时必然已 include IBackend.h。
 class IVmBackend;
 
@@ -59,18 +59,18 @@ const char* backendTypeToShortName(BackendType type);
 /// 单次后端执行的完整结果（只读快照）。
 /// 所有字段为值类型或 std::string，调用方无需依赖任何编译器/VM 内部类型。
 struct BackendExecResult {
-    bool success = false;                // 是否成功（无词法/语法/编译/运行时错误）
+    bool success = false;                           // 是否成功（无词法/语法/编译/运行时错误）
     BackendType backend = BackendType::Interpreter; // 实际使用的后端
-    std::string output;                  // 标准输出（print 累积）
-    std::string errorMsg;                // 错误信息（success=false 时有效，含错误前缀）
-    std::string errorPrefix;             // 错误前缀（"词法错误" / "语法错误" / "编译错误" / "运行时错误"）
-    int64_t elapsedMs = 0;               // 执行耗时（毫秒，= elapsedUs/1000，保留兼容旧调用方）
+    std::string output;                             // 标准输出（print 累积）
+    std::string errorMsg;                           // 错误信息（success=false 时有效，含错误前缀）
+    std::string errorPrefix;                        // 错误前缀（"词法错误" / "语法错误" / "编译错误" / "运行时错误"）
+    int64_t elapsedMs = 0;                          // 执行耗时（毫秒，= elapsedUs/1000，保留兼容旧调用方）
     // AUDIT-R2 P2-2 fix: 新增微秒精度耗时——教学题库代码多在 1ms 内完成，
     // 毫秒粒度下三后端耗时恒显 0，面板对比失去意义。
     // 注：VM/RegisterVM 路径的耗时仅覆盖执行阶段（不含编译），与 Interpreter
     // 路径口径一致（AUDIT-R2 P2-3 fix，此前 VM 路径含编译时间，对比不对称）。
-    int64_t elapsedUs = 0;               // 执行耗时（微秒）
-    int64_t instrCount = -1;             // 指令数（字节码字节数；-1 表示 N/A，如 Interpreter 无字节码）
+    int64_t elapsedUs = 0;                // 执行耗时（微秒）
+    int64_t instrCount = -1;              // 指令数（字节码字节数；-1 表示 N/A，如 Interpreter 无字节码）
     std::vector<std::string> diagnostics; // 编译诊断信息（warning/error 文本列表）
 
     /// 便捷访问：指令数显示文本（"N/A" 或数字字符串）

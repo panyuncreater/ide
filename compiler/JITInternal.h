@@ -152,7 +152,7 @@ void jitMemberSetVar(JitContext* ctx, int64_t* slotPtr, const char* fieldName);
 void jitMemberSetLocal(JitContext* ctx, uint8_t slot, int64_t* frameBase, const char* fieldName);
 int64_t jitMethodReturn(JitContext* ctx, JitFrame* framePtr, int64_t retvalBits);
 void jitMethodCall(JitContext* ctx, const char* methodName, int64_t packedArgs, int64_t* receiverSlotPtr,
-                  const char* superClassName, uint64_t callSiteId, void* backendPtr);
+                   const char* superClassName, uint64_t callSiteId, void* backendPtr);
 
 // --- Function calls (JITRuntime.cpp) ---
 void jitCallExpr(JitContext* ctx, uint8_t argCount);

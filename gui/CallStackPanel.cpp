@@ -318,9 +318,7 @@ void CallStackPanel::refreshLive() {
     int selFrame = controller_->getSelectedFrame();
     QString selHint;
     if (selFrame >= 0 && selFrame < static_cast<int>(entries.size())) {
-        selHint = tr(" | 已选帧: %1 (%2)")
-                      .arg(selFrame)
-                      .arg(QString::fromUtf8(entries[selFrame].functionName.c_str()));
+        selHint = tr(" | 已选帧: %1 (%2)").arg(selFrame).arg(QString::fromUtf8(entries[selFrame].functionName.c_str()));
     }
     liveStatusLabel_->setText(tr("状态：%1 | 帧数：%2%3").arg(modeLabel).arg(entries.size()).arg(selHint));
 

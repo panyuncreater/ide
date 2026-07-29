@@ -202,8 +202,8 @@ std::string ErrorHintEngine::enrichErrorMessage(const std::string& msg, const st
     }
 
     // N3 fix: 参数个数不匹配
-    if (msg.find("Expected") != std::string::npos && msg.find("argument") != std::string::npos ||
-        msg.find("参数") != std::string::npos && msg.find("个") != std::string::npos ||
+    if ((msg.find("Expected") != std::string::npos && msg.find("argument") != std::string::npos) ||
+        (msg.find("参数") != std::string::npos && msg.find("个") != std::string::npos) ||
         msg.find("arity") != std::string::npos) {
         return msg + " 提示：函数调用时参数个数必须与声明一致。"
                      "检查 fun 声明的参数列表和调用时传入的参数数量。";

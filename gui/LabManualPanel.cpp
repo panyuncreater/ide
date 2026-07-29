@@ -11,16 +11,16 @@
 #include <QUrl>
 #include <QVBoxLayout>
 
-#include "Label.h"                 // QFluentKit（CaptionLabel）
-#include "PushButton.h"            // QFluentKit（PrimaryPushButton）
-#include "gui/ErrorHintEngine.h"   // P1-F12 fix: buggy:tag 链接查表
-#include "gui/GuiTextUtils.h"      // monospaceFont()
-#include "gui/I18n.h"              // mlTr()
-#include "gui/LearnerProgress.h"   // P2-3 fix (F9): 学情画像持久化
-#include "gui/MarkdownRenderer.h"  // 统一 Markdown 渲染
-#include "gui/SyntaxHighlighter.h" // MiniLang 语法高亮器
-#include "QFluent/InfoBar.h"       // P2-UX fix: 进度保存失败 toast 通知
+#include "Label.h"                    // QFluentKit（CaptionLabel）
+#include "PushButton.h"               // QFluentKit（PrimaryPushButton）
+#include "QFluent/InfoBar.h"          // P2-UX fix: 进度保存失败 toast 通知
+#include "gui/ErrorHintEngine.h"      // P1-F12 fix: buggy:tag 链接查表
+#include "gui/GuiTextUtils.h"         // monospaceFont()
+#include "gui/I18n.h"                 // mlTr()
+#include "gui/LearnerProgress.h"      // P2-3 fix (F9): 学情画像持久化
+#include "gui/MarkdownRenderer.h"     // 统一 Markdown 渲染
 #include "gui/ProgressSaveFeedback.h" // P2-UX fix: 共享 save 失败反馈 helper
+#include "gui/SyntaxHighlighter.h"    // MiniLang 语法高亮器
 
 LabManualPanel::LabManualPanel(QWidget* parent) : QWidget(parent) {
     auto* mainLayout = new QVBoxLayout(this);

@@ -9,8 +9,8 @@
 #include "gui/JitVisualizerPanel.h"
 
 #include "gui/GuiTextUtils.h" // 拓展二期：monospaceFont（字节码/汇编等宽字体）
-#include "gui/I18n.h"      // mlTr
-#include "gui/JitRunner.h" // Qt↔asmjit 隔离层（不直接包含 JIT.h 以避免宏冲突）
+#include "gui/I18n.h"         // mlTr
+#include "gui/JitRunner.h"    // Qt↔asmjit 隔离层（不直接包含 JIT.h 以避免宏冲突）
 
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -813,8 +813,9 @@ void JitVisualizerPanel::buildAsmComparePage(QWidget* host) {
     layout->setSpacing(4);
 
     layout->addWidget(new QLabel(mlTr("<b>字节码↔汇编对照</b>：编辑源码后点击「编译并对照」，"
-                                     "左栏展示栈式字节码反汇编，右栏展示 JIT 真实发射的 x86-64 汇编"
-                                     "（含机器码字节，asmjit StringLogger 捕获）。"), host));
+                                      "左栏展示栈式字节码反汇编，右栏展示 JIT 真实发射的 x86-64 汇编"
+                                      "（含机器码字节，asmjit StringLogger 捕获）。"),
+                                 host));
 
     asmSrcEdit_ = new QPlainTextEdit(host);
     asmSrcEdit_->setFont(GuiTextUtils::monospaceFont());

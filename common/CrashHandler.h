@@ -35,12 +35,12 @@ namespace minilang {
 
 /// 崩溃报告元信息（由 lastCrashReport() 返回）
 struct CrashReport {
-    bool        valid = false;          ///< 是否存在有效崩溃报告
-    std::string timestamp;              ///< 崩溃时间（YYYY-MM-DD HH:MM:SS）
-    std::string signalName;             ///< 信号/异常名（SIGSEGV / EXCEPTION_ACCESS_VIOLATION 等）
-    std::string dumpFilePath;           ///< minidump 或 backtrace 文件路径
-    std::string logFilePath;            ///< 崩溃时的应用日志路径（如有）
-    std::string stackTrace;             ///< 文本栈回溯（仅 POSIX；Windows 留空，需工具解析 .dmp）
+    bool valid = false;       ///< 是否存在有效崩溃报告
+    std::string timestamp;    ///< 崩溃时间（YYYY-MM-DD HH:MM:SS）
+    std::string signalName;   ///< 信号/异常名（SIGSEGV / EXCEPTION_ACCESS_VIOLATION 等）
+    std::string dumpFilePath; ///< minidump 或 backtrace 文件路径
+    std::string logFilePath;  ///< 崩溃时的应用日志路径（如有）
+    std::string stackTrace;   ///< 文本栈回溯（仅 POSIX；Windows 留空，需工具解析 .dmp）
 };
 
 /// 跨平台崩溃处理器
@@ -73,9 +73,7 @@ public:
     /// 写入崩溃元信息文件（.crashmeta）— handler 内部调用
     /// @note Windows handler 可使用 std::ofstream；POSIX 由下次启动构造
     /// @note public 以便匿名命名空间中的 handler 函数访问
-    static void writeCrashMeta(const std::string& dumpDir,
-                                const std::string& dumpFile,
-                                const std::string& signalName);
+    static void writeCrashMeta(const std::string& dumpDir, const std::string& dumpFile, const std::string& signalName);
 
     /// 设置崩溃回调（用于测试注入；handler 中调用，必须异步信号安全）
     /// @note 实际产品中不应使用，仅单元测试用
@@ -91,8 +89,8 @@ private:
     CrashHandler& operator=(const CrashHandler&) = delete;
 
     std::string dumpDir_;
-    bool        installed_ = false;
-    void        (*crashCallback_)() = nullptr;
+    bool installed_ = false;
+    void (*crashCallback_)() = nullptr;
 
     // 平台特定实现（在 .cpp 中按平台 #ifdef 分发）
     bool installPlatform(const std::string& dumpDir);

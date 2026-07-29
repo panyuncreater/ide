@@ -395,10 +395,10 @@ public:
 ///   - 与 tupleTypeAnnotation 互斥：per-name 注解优先，tupleTypeAnnotation 保留作整体注解（向后兼容）
 class DestructureBinding : public ASTNode {
 public:
-    std::vector<std::string> names;       // 被绑定的变量名列表（按元组位置对应）
-    std::string tupleTypeAnnotation;      // 可选：元组类型注解 "(T1,T2,...)"
+    std::vector<std::string> names;               // 被绑定的变量名列表（按元组位置对应）
+    std::string tupleTypeAnnotation;              // 可选：元组类型注解 "(T1,T2,...)"
     std::vector<std::string> nameTypeAnnotations; // L20: per-name 类型注解，与 names 平行
-    std::shared_ptr<ASTNode> initializer; // 右侧表达式（求值结果必须为 tuple）
+    std::shared_ptr<ASTNode> initializer;         // 右侧表达式（求值结果必须为 tuple）
 
     DestructureBinding(std::vector<std::string> ns, std::shared_ptr<ASTNode> init, int ln = 0, int col = 0,
                        std::string typeAnn = "")

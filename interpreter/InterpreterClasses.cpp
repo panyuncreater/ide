@@ -150,7 +150,7 @@ void Interpreter::visitMemberAssign(MemberAssign& node) {
     // 字段写入检查。仅当 node.object 是简单 VarRef 时附带接收者变量名，
     // 复杂链式访问（如 obj.a.b = 1）仅按 fieldName 匹配（varName 空通配）。
     // AUDIT-R4 BUG-15 fix: atomic load 到局部变量
-    auto dbg = debugger_.load(std::memory_order_acquire);
+    auto dbg = debugger();
     if (dbg && dbg->hasWatchpoints()) {
         std::string rootVarName;
         if (node.object->nodeType == NodeType::NODE_VAR_REF) {

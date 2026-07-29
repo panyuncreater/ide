@@ -280,9 +280,8 @@ void IRTransformPanel::onPredictSubmit() {
     if (guess == e.instrAfter) {
         predictResultLabel_->setText(tr("✅ 预测正确！优化后确为 %1 条指令").arg(e.instrAfter));
     } else {
-        predictResultLabel_->setText(tr("❌ 预测 %1 条，实际 %2 条——对照右侧揭示的优化后 IR 看看哪些指令被消除了")
-                                         .arg(guess)
-                                         .arg(e.instrAfter));
+        predictResultLabel_->setText(
+            tr("❌ 预测 %1 条，实际 %2 条——对照右侧揭示的优化后 IR 看看哪些指令被消除了").arg(guess).arg(e.instrAfter));
     }
 }
 
@@ -440,9 +439,8 @@ void IRTransformPanel::populateCurrentIR() {
         for (const auto& blk : mod->mainFunction->blocks) {
             instrCount += (int)blk.instructions.size();
         }
-        currentStatusLabel_->setText(tr("已生成 IR：%1 基本块 / %2 条指令")
-                                         .arg(mod->mainFunction->blocks.size())
-                                         .arg(instrCount));
+        currentStatusLabel_->setText(
+            tr("已生成 IR：%1 基本块 / %2 条指令").arg(mod->mainFunction->blocks.size()).arg(instrCount));
     } catch (const std::exception& e) {
         currentStatusLabel_->setText(tr("IR 生成异常"));
         currentIrBrowser_->setPlainText(QString::fromUtf8(e.what()));
@@ -540,9 +538,8 @@ void IRTransformPanel::buildReplayPage(QWidget* host) {
         if (!steps.empty()) {
             replayStepsList_->setCurrentRow(0);
         }
-        replayStatusLabel_->setText(tr("场景：%1 — %2 个步骤")
-                                        .arg(QString::fromUtf8(scenarios[row].first.c_str()))
-                                        .arg(steps.size()));
+        replayStatusLabel_->setText(
+            tr("场景：%1 — %2 个步骤").arg(QString::fromUtf8(scenarios[row].first.c_str())).arg(steps.size()));
         // 注：移除 fadeInWidget —— QListWidget 刷新无需动画，
         // QGraphicsOpacityEffect 会导致连续切换时 opacity 卡 0 内容空白。
     });

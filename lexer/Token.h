@@ -51,12 +51,12 @@ enum class TokenType {
     TK_ARRAY,    // array 关键字
     TK_NULL,     // null 关键字
     // R99 枚举与 ADT + match：新增关键字
-    TK_ENUM,     // enum 关键字
-    TK_MATCH,    // match 关键字
-    TK_CASE,     // case 关键字
-    TK_DEFAULT,  // default 关键字
+    TK_ENUM,    // enum 关键字
+    TK_MATCH,   // match 关键字
+    TK_CASE,    // case 关键字
+    TK_DEFAULT, // default 关键字
     // R164 协程/生成器：新增关键字
-    TK_YIELD,    // yield 关键字（生成器挂起）
+    TK_YIELD, // yield 关键字（生成器挂起）
     // L18 lang-constfun：const fun 编译期求值
     TK_CONST, // const 关键字（修饰 fun 声明）
     // 字面量

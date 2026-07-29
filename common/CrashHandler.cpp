@@ -29,20 +29,20 @@
 // 的 TokenType / Token::type 字段（C3646 未知重写说明符）。
 // 此三宏是 Windows SDK 官方推荐的最小化包含方式，不影响 dbghelp.h 的 MiniDumpWriteDump。
 #ifdef _WIN32
-#  define WIN32_LEAN_AND_MEAN
-#  define NOMINMAX
-#  define NOGDI
-#  include <windows.h>
-#  include <dbghelp.h>
-#  pragma comment(lib, "dbghelp.lib")
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#define NOGDI
+#include <windows.h>
+#include <dbghelp.h>
+#pragma comment(lib, "dbghelp.lib")
 #else
-#  include <cerrno>
-#  include <csignal>
-#  include <execinfo.h>
-#  include <fcntl.h>
-#  include <unistd.h>
-#  include <sys/stat.h>
-#  include <sys/types.h>
+#include <cerrno>
+#include <csignal>
+#include <execinfo.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 #endif
 
 namespace minilang {
@@ -54,7 +54,7 @@ namespace minilang {
 // 暴露。CrashHandler::setCrashCallback 写入此原子。
 // ============================================================
 namespace {
-std::atomic<void(*)()> g_crashCallback{nullptr};
+std::atomic<void (*)()> g_crashCallback{nullptr};
 
 // 跨平台 localtime 包装：
 //   - Windows(MSVC) 用 localtime_s（安全 CRT），签名 errno_t localtime_s(tm*, const time_t*)
@@ -90,7 +90,8 @@ void CrashHandler::setCrashCallback(void (*cb)()) {
 // 公共接口：install / uninstall
 // ============================================================
 bool CrashHandler::install(const std::string& dumpDir) {
-    if (installed_) return true;
+    if (installed_)
+        return true;
 
     // 默认 dump 目录：<temp>/minilang-crashdumps/
     if (dumpDir.empty()) {
@@ -127,7 +128,8 @@ bool CrashHandler::install(const std::string& dumpDir) {
 }
 
 void CrashHandler::uninstall() {
-    if (!installed_) return;
+    if (!installed_)
+        return;
     uninstallPlatform();
     installed_ = false;
 }
@@ -165,12 +167,11 @@ void CrashHandler::uninstallPlatform() {
 // Windows handler 中调用（非严格 async-signal-safe）。
 // POSIX handler 不调用此函数，由下次启动时构造。
 // ============================================================
-void CrashHandler::writeCrashMeta(const std::string& dumpDir,
-                                   const std::string& dumpFile,
-                                   const std::string& signalName) {
+void CrashHandler::writeCrashMeta(const std::string& dumpDir, const std::string& dumpFile,
+                                  const std::string& signalName) {
     std::ostringstream oss;
     auto now = std::chrono::system_clock::now();
-    auto t   = std::chrono::system_clock::to_time_t(now);
+    auto t = std::chrono::system_clock::to_time_t(now);
     oss << "{\n";
     std::tm tmBuf{}; // 零初始化：localtime 转换失败时降级为 1900-01-01 00:00:00
     safeLocaltime(t, &tmBuf);
@@ -210,7 +211,8 @@ CrashReport CrashHandler::lastCrashReport() {
 #endif
     }
 
-    if (!fs::exists(dumpDir)) return report;
+    if (!fs::exists(dumpDir))
+        return report;
 
     // 查找最新的 .dmp / .txt 文件
     fs::path latestDump;
@@ -219,12 +221,16 @@ CrashReport CrashHandler::lastCrashReport() {
 
     std::error_code ec;
     for (const auto& entry : fs::directory_iterator(dumpDir, ec)) {
-        if (ec) break;
-        if (!entry.is_regular_file()) continue;
+        if (ec)
+            break;
+        if (!entry.is_regular_file())
+            continue;
         auto ext = entry.path().extension().string();
-        if (ext != ".dmp" && ext != ".txt") continue;
+        if (ext != ".dmp" && ext != ".txt")
+            continue;
         auto ftime = entry.last_write_time(ec);
-        if (ec) continue;
+        if (ec)
+            continue;
         if (!found || ftime > latestTime) {
             latestTime = ftime;
             latestDump = entry.path();
@@ -232,7 +238,8 @@ CrashReport CrashHandler::lastCrashReport() {
         }
     }
 
-    if (!found) return report;
+    if (!found)
+        return report;
 
     report.valid = true;
     report.dumpFilePath = latestDump.string();
@@ -285,18 +292,23 @@ CrashReport CrashHandler::consumeLastCrashReport() {
 int CrashHandler::cleanupOldReports(int maxAgeDays) {
     namespace fs = std::filesystem;
     fs::path dumpDir(CrashHandler::instance().dumpDirectory());
-    if (dumpDir.empty() || !fs::exists(dumpDir)) return 0;
+    if (dumpDir.empty() || !fs::exists(dumpDir))
+        return 0;
 
     int removed = 0;
     auto now = fs::file_time_type::clock::now();
     std::error_code ec;
     for (const auto& entry : fs::directory_iterator(dumpDir, ec)) {
-        if (ec) break;
-        if (!entry.is_regular_file()) continue;
+        if (ec)
+            break;
+        if (!entry.is_regular_file())
+            continue;
         auto ext = entry.path().extension().string();
-        if (ext != ".dmp" && ext != ".txt") continue;
+        if (ext != ".dmp" && ext != ".txt")
+            continue;
         auto ftime = entry.last_write_time(ec);
-        if (ec) continue;
+        if (ec)
+            continue;
         auto age = std::chrono::duration_cast<std::chrono::hours>(now - ftime);
         if (age.count() > maxAgeDays * 24) {
             if (fs::remove(entry.path(), ec)) {
@@ -323,27 +335,48 @@ LPTOP_LEVEL_EXCEPTION_FILTER g_prevFilter = nullptr;
 // 异常码 → 可读名称
 const char* exceptionName(DWORD code) {
     switch (code) {
-    case EXCEPTION_ACCESS_VIOLATION:         return "EXCEPTION_ACCESS_VIOLATION";
-    case EXCEPTION_ARRAY_BOUNDS_EXCEEDED:    return "EXCEPTION_ARRAY_BOUNDS_EXCEEDED";
-    case EXCEPTION_BREAKPOINT:               return "EXCEPTION_BREAKPOINT";
-    case EXCEPTION_DATATYPE_MISALIGNMENT:    return "EXCEPTION_DATATYPE_MISALIGNMENT";
-    case EXCEPTION_FLT_DENORMAL_OPERAND:     return "EXCEPTION_FLT_DENORMAL_OPERAND";
-    case EXCEPTION_FLT_DIVIDE_BY_ZERO:       return "EXCEPTION_FLT_DIVIDE_BY_ZERO";
-    case EXCEPTION_FLT_INEXACT_RESULT:       return "EXCEPTION_FLT_INEXACT_RESULT";
-    case EXCEPTION_FLT_INVALID_OPERATION:    return "EXCEPTION_FLT_INVALID_OPERATION";
-    case EXCEPTION_FLT_OVERFLOW:             return "EXCEPTION_FLT_OVERFLOW";
-    case EXCEPTION_FLT_STACK_CHECK:          return "EXCEPTION_FLT_STACK_CHECK";
-    case EXCEPTION_FLT_UNDERFLOW:            return "EXCEPTION_FLT_UNDERFLOW";
-    case EXCEPTION_ILLEGAL_INSTRUCTION:      return "EXCEPTION_ILLEGAL_INSTRUCTION";
-    case EXCEPTION_IN_PAGE_ERROR:            return "EXCEPTION_IN_PAGE_ERROR";
-    case EXCEPTION_INT_DIVIDE_BY_ZERO:       return "EXCEPTION_INT_DIVIDE_BY_ZERO";
-    case EXCEPTION_INT_OVERFLOW:             return "EXCEPTION_INT_OVERFLOW";
-    case EXCEPTION_INVALID_DISPOSITION:      return "EXCEPTION_INVALID_DISPOSITION";
-    case EXCEPTION_NONCONTINUABLE_EXCEPTION: return "EXCEPTION_NONCONTINUABLE_EXCEPTION";
-    case EXCEPTION_PRIV_INSTRUCTION:         return "EXCEPTION_PRIV_INSTRUCTION";
-    case EXCEPTION_SINGLE_STEP:              return "EXCEPTION_SINGLE_STEP";
-    case EXCEPTION_STACK_OVERFLOW:           return "EXCEPTION_STACK_OVERFLOW";
-    default:                                 return "UNKNOWN_EXCEPTION";
+    case EXCEPTION_ACCESS_VIOLATION:
+        return "EXCEPTION_ACCESS_VIOLATION";
+    case EXCEPTION_ARRAY_BOUNDS_EXCEEDED:
+        return "EXCEPTION_ARRAY_BOUNDS_EXCEEDED";
+    case EXCEPTION_BREAKPOINT:
+        return "EXCEPTION_BREAKPOINT";
+    case EXCEPTION_DATATYPE_MISALIGNMENT:
+        return "EXCEPTION_DATATYPE_MISALIGNMENT";
+    case EXCEPTION_FLT_DENORMAL_OPERAND:
+        return "EXCEPTION_FLT_DENORMAL_OPERAND";
+    case EXCEPTION_FLT_DIVIDE_BY_ZERO:
+        return "EXCEPTION_FLT_DIVIDE_BY_ZERO";
+    case EXCEPTION_FLT_INEXACT_RESULT:
+        return "EXCEPTION_FLT_INEXACT_RESULT";
+    case EXCEPTION_FLT_INVALID_OPERATION:
+        return "EXCEPTION_FLT_INVALID_OPERATION";
+    case EXCEPTION_FLT_OVERFLOW:
+        return "EXCEPTION_FLT_OVERFLOW";
+    case EXCEPTION_FLT_STACK_CHECK:
+        return "EXCEPTION_FLT_STACK_CHECK";
+    case EXCEPTION_FLT_UNDERFLOW:
+        return "EXCEPTION_FLT_UNDERFLOW";
+    case EXCEPTION_ILLEGAL_INSTRUCTION:
+        return "EXCEPTION_ILLEGAL_INSTRUCTION";
+    case EXCEPTION_IN_PAGE_ERROR:
+        return "EXCEPTION_IN_PAGE_ERROR";
+    case EXCEPTION_INT_DIVIDE_BY_ZERO:
+        return "EXCEPTION_INT_DIVIDE_BY_ZERO";
+    case EXCEPTION_INT_OVERFLOW:
+        return "EXCEPTION_INT_OVERFLOW";
+    case EXCEPTION_INVALID_DISPOSITION:
+        return "EXCEPTION_INVALID_DISPOSITION";
+    case EXCEPTION_NONCONTINUABLE_EXCEPTION:
+        return "EXCEPTION_NONCONTINUABLE_EXCEPTION";
+    case EXCEPTION_PRIV_INSTRUCTION:
+        return "EXCEPTION_PRIV_INSTRUCTION";
+    case EXCEPTION_SINGLE_STEP:
+        return "EXCEPTION_SINGLE_STEP";
+    case EXCEPTION_STACK_OVERFLOW:
+        return "EXCEPTION_STACK_OVERFLOW";
+    default:
+        return "UNKNOWN_EXCEPTION";
     }
 }
 
@@ -359,9 +392,8 @@ LONG WINAPI minilangExceptionFilter(EXCEPTION_POINTERS* ep) {
     SYSTEMTIME st;
     GetLocalTime(&st);
     char fname[256];
-    snprintf(fname, sizeof(fname), "crash-%s-%04d%02d%02d-%02d%02d%02d.dmp",
-             excName,
-             st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+    snprintf(fname, sizeof(fname), "crash-%s-%04d%02d%02d-%02d%02d%02d.dmp", excName, st.wYear, st.wMonth, st.wDay,
+             st.wHour, st.wMinute, st.wSecond);
 
     // P2 #59 fix: 避免在 SEH 过滤器中使用堆分配（std::string 拼接），
     // 因为崩溃可能由堆损坏引起，此时堆分配会导致二次崩溃。
@@ -370,15 +402,13 @@ LONG WINAPI minilangExceptionFilter(EXCEPTION_POINTERS* ep) {
     snprintf(dumpPath, sizeof(dumpPath), "%s\\%s", g_winDumpDir.c_str(), fname);
 
     // 写 minidump
-    HANDLE hFile = CreateFileA(dumpPath, GENERIC_WRITE, 0, nullptr,
-                                CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE hFile = CreateFileA(dumpPath, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (hFile != INVALID_HANDLE_VALUE) {
         MINIDUMP_EXCEPTION_INFORMATION mei;
         mei.ThreadId = GetCurrentThreadId();
         mei.ExceptionPointers = ep;
         mei.ClientPointers = FALSE;
-        MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), hFile,
-                          MiniDumpNormal, &mei, nullptr, nullptr);
+        MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), hFile, MiniDumpNormal, &mei, nullptr, nullptr);
         CloseHandle(hFile);
     }
 
@@ -391,13 +421,11 @@ LONG WINAPI minilangExceptionFilter(EXCEPTION_POINTERS* ep) {
         SYSTEMTIME st2;
         GetLocalTime(&st2);
         int metaLen = snprintf(metaBuf, sizeof(metaBuf),
-            "{\n  \"timestamp\": \"%04d-%02d-%02d %02d:%02d:%02d\",\n"
-            "  \"signal\": \"%s\",\n"
-            "  \"dumpFile\": \"%s\"\n}\n",
-            st2.wYear, st2.wMonth, st2.wDay, st2.wHour, st2.wMinute, st2.wSecond,
-            excName, dumpPath);
-        HANDLE hMeta = CreateFileA(metaPath, GENERIC_WRITE, 0, nullptr,
-                                    CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+                               "{\n  \"timestamp\": \"%04d-%02d-%02d %02d:%02d:%02d\",\n"
+                               "  \"signal\": \"%s\",\n"
+                               "  \"dumpFile\": \"%s\"\n}\n",
+                               st2.wYear, st2.wMonth, st2.wDay, st2.wHour, st2.wMinute, st2.wSecond, excName, dumpPath);
+        HANDLE hMeta = CreateFileA(metaPath, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (hMeta != INVALID_HANDLE_VALUE) {
             DWORD written = 0;
             WriteFile(hMeta, metaBuf, (DWORD)metaLen, &written, nullptr);
@@ -419,9 +447,7 @@ bool CrashHandler::installWindows(const std::string& dumpDir) {
     g_prevFilter = SetUnhandledExceptionFilter(minilangExceptionFilter);
     // 同时注册 pure virtual call handler 与 invalid parameter handler
     // 这些是 CRT 级别的扩展，覆盖更多崩溃路径
-    _set_purecall_handler([]() {
-        RaiseException(EXCEPTION_ACCESS_VIOLATION, EXCEPTION_NONCONTINUABLE, 0, nullptr);
-    });
+    _set_purecall_handler([]() { RaiseException(EXCEPTION_ACCESS_VIOLATION, EXCEPTION_NONCONTINUABLE, 0, nullptr); });
     _set_invalid_parameter_handler([](const wchar_t*, const wchar_t*, const wchar_t*, unsigned int, uintptr_t) {
         RaiseException(EXCEPTION_ACCESS_VIOLATION, EXCEPTION_NONCONTINUABLE, 0, nullptr);
     });
@@ -453,19 +479,26 @@ struct sigaction g_oldBus;
 // 信号 → 可读名称
 const char* signalName(int sig) {
     switch (sig) {
-    case SIGSEGV: return "SIGSEGV";
-    case SIGABRT: return "SIGABRT";
-    case SIGFPE:  return "SIGFPE";
-    case SIGILL:  return "SIGILL";
-    case SIGBUS:  return "SIGBUS";
-    default:      return "UNKNOWN_SIGNAL";
+    case SIGSEGV:
+        return "SIGSEGV";
+    case SIGABRT:
+        return "SIGABRT";
+    case SIGFPE:
+        return "SIGFPE";
+    case SIGILL:
+        return "SIGILL";
+    case SIGBUS:
+        return "SIGBUS";
+    default:
+        return "UNKNOWN_SIGNAL";
     }
 }
 
 // 异步信号安全的字符串长度
 size_t safeStrlen(const char* s) {
     size_t n = 0;
-    while (s[n]) ++n;
+    while (s[n])
+        ++n;
     return n;
 }
 
@@ -474,7 +507,8 @@ void safeWrite(int fd, const char* buf, size_t len) {
     while (len > 0) {
         ssize_t n = write(fd, buf, len);
         if (n <= 0) {
-            if (n < 0 && errno == EINTR) continue;
+            if (n < 0 && errno == EINTR)
+                continue;
             break;
         }
         buf += n;
@@ -502,15 +536,12 @@ void crashHandler(int sig, siginfo_t* info, void* ucontext) {
     struct tm tmBuf;
     localtime_r(&now, &tmBuf);
     char fname[256];
-    snprintf(fname, sizeof(fname), "crash-%s-%04d%02d%02d-%02d%02d%02d.txt",
-             signalName(sig),
-             tmBuf.tm_year + 1900, tmBuf.tm_mon + 1, tmBuf.tm_mday,
-             tmBuf.tm_hour, tmBuf.tm_min, tmBuf.tm_sec);
+    snprintf(fname, sizeof(fname), "crash-%s-%04d%02d%02d-%02d%02d%02d.txt", signalName(sig), tmBuf.tm_year + 1900,
+             tmBuf.tm_mon + 1, tmBuf.tm_mday, tmBuf.tm_hour, tmBuf.tm_min, tmBuf.tm_sec);
 
     // 拼接完整路径（不调用 malloc，使用栈缓冲）
     char fullPath[1024];
-    snprintf(fullPath, sizeof(fullPath), "%s/%s",
-             g_posixDumpDir, fname);
+    snprintf(fullPath, sizeof(fullPath), "%s/%s", g_posixDumpDir, fname);
 
     // 打开文件（O_CREAT | O_WRONLY | O_TRUNC）
     int fd = open(fullPath, O_CREAT | O_WRONLY | O_TRUNC, 0644);
@@ -526,10 +557,8 @@ void crashHandler(int sig, siginfo_t* info, void* ucontext) {
     safeWriteStr(fd, "\n");
 
     char timeBuf[64];
-    snprintf(timeBuf, sizeof(timeBuf),
-             "Timestamp: %04d-%02d-%02d %02d:%02d:%02d\n",
-             tmBuf.tm_year + 1900, tmBuf.tm_mon + 1, tmBuf.tm_mday,
-             tmBuf.tm_hour, tmBuf.tm_min, tmBuf.tm_sec);
+    snprintf(timeBuf, sizeof(timeBuf), "Timestamp: %04d-%02d-%02d %02d:%02d:%02d\n", tmBuf.tm_year + 1900,
+             tmBuf.tm_mon + 1, tmBuf.tm_mday, tmBuf.tm_hour, tmBuf.tm_min, tmBuf.tm_sec);
     safeWriteStr(fd, timeBuf);
 
     safeWriteStr(fd, "PID: ");
@@ -580,9 +609,9 @@ bool CrashHandler::installPosix(const std::string& dumpDir) {
     bool ok = true;
     ok &= registerHandler(SIGSEGV, &g_oldSegv);
     ok &= registerHandler(SIGABRT, &g_oldAbort);
-    ok &= registerHandler(SIGFPE,  &g_oldFpe);
-    ok &= registerHandler(SIGILL,  &g_oldIll);
-    ok &= registerHandler(SIGBUS,  &g_oldBus);
+    ok &= registerHandler(SIGFPE, &g_oldFpe);
+    ok &= registerHandler(SIGILL, &g_oldIll);
+    ok &= registerHandler(SIGBUS, &g_oldBus);
     return ok;
 }
 

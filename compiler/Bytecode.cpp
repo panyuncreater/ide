@@ -111,13 +111,13 @@ constexpr OpCodeInfo kOpCodeInfo[] = {
     /* 78 OP_ENUM_VARIANT_FIELD       */ {"OP_ENUM_VARIANT_FIELD", 1, false}, // R99: opcode(1B)
     /* 79 OP_SWAP                     */ {"OP_SWAP", 1, false},               // R99: opcode(1B) 交换栈顶两个值
     /* 80 OP_LEN                      */ {"OP_LEN", 1, false},                // R134: opcode(1B) 容器长度
-    /* 81 OP_TYPE_TEST                */ {"OP_TYPE_TEST", 3, false}, // R134: opcode(1B) + typeIdx(2B) 软类型测试
-    /* 82 OP_YIELD                    */ {"OP_YIELD", 1, false}, // R164: opcode(1B) yield 表达式（重放模式）
-    /* 83 OP_ADD_INT_SPEC              */ {"OP_ADD_INT_SPEC", 1, false},  // PERF: int+int 特化
-    /* 84 OP_SUB_INT_SPEC              */ {"OP_SUB_INT_SPEC", 1, false},  // PERF: int-int 特化
-    /* 85 OP_MUL_INT_SPEC              */ {"OP_MUL_INT_SPEC", 1, false},  // PERF: int*int 特化
-    /* 86 OP_LT_INT_SPEC               */ {"OP_LT_INT_SPEC", 1, false},   // PERF: int<int 特化
-    /* 87 OP_TAIL_CALL                 */ {"OP_TAIL_CALL", 4, false},      // L18: nameIdx(2B)+argCount(1B)
+    /* 81 OP_TYPE_TEST                */ {"OP_TYPE_TEST", 3, false},     // R134: opcode(1B) + typeIdx(2B) 软类型测试
+    /* 82 OP_YIELD                    */ {"OP_YIELD", 1, false},         // R164: opcode(1B) yield 表达式（重放模式）
+    /* 83 OP_ADD_INT_SPEC              */ {"OP_ADD_INT_SPEC", 1, false}, // PERF: int+int 特化
+    /* 84 OP_SUB_INT_SPEC              */ {"OP_SUB_INT_SPEC", 1, false}, // PERF: int-int 特化
+    /* 85 OP_MUL_INT_SPEC              */ {"OP_MUL_INT_SPEC", 1, false}, // PERF: int*int 特化
+    /* 86 OP_LT_INT_SPEC               */ {"OP_LT_INT_SPEC", 1, false},  // PERF: int<int 特化
+    /* 87 OP_TAIL_CALL                 */ {"OP_TAIL_CALL", 4, false},    // L18: nameIdx(2B)+argCount(1B)
 };
 } // anonymous namespace
 
@@ -320,8 +320,8 @@ std::string BytecodeChunk::disassembleInstruction(size_t& offset) const {
         // L18 eng-tailcall: 字节布局与 OP_CALL 相同
         uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
         uint8_t argCount = code[offset + 3];
-        str += "OP_TAIL_CALL " + std::to_string(idx) + " (" + constants[idx].stringVal() + ") " +
-               std::to_string(argCount);
+        str +=
+            "OP_TAIL_CALL " + std::to_string(idx) + " (" + constants[idx].stringVal() + ") " + std::to_string(argCount);
         offset += 4;
         break;
     }
@@ -697,11 +697,11 @@ void BytecodeChunk::relocateGlobalSlots(const std::vector<int>& relocationMap) {
             break;
         OpCode op = static_cast<OpCode>(code[offset]);
         // 仅全局槽位指令需要重定位（OP_GET_GLOBAL/OP_SET_GLOBAL/OP_DEFINE_GLOBAL/OP_DELETE_GLOBAL）
-        if (op == OpCode::OP_GET_GLOBAL || op == OpCode::OP_SET_GLOBAL ||
-            op == OpCode::OP_DEFINE_GLOBAL || op == OpCode::OP_DELETE_GLOBAL) {
+        if (op == OpCode::OP_GET_GLOBAL || op == OpCode::OP_SET_GLOBAL || op == OpCode::OP_DEFINE_GLOBAL ||
+            op == OpCode::OP_DELETE_GLOBAL) {
             if (offset + 2 < code.size()) {
-                uint16_t slot = static_cast<uint16_t>(code[offset + 1]) |
-                                (static_cast<uint16_t>(code[offset + 2]) << 8);
+                uint16_t slot =
+                    static_cast<uint16_t>(code[offset + 1]) | (static_cast<uint16_t>(code[offset + 2]) << 8);
                 if (slot < relocationMap.size() && relocationMap[slot] >= 0) {
                     int newSlot = relocationMap[slot];
                     code[offset + 1] = static_cast<uint8_t>(newSlot & 0xFF);

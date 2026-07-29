@@ -1,9 +1,9 @@
-#include "compiler/Compiler.h"
 #include "ast/ModuleIsolation.h" // BUG-AUDIT-MOD-2: VM 模块隔离（非导出顶层名前缀化）
 #include "common/Logger.h"
-#include "common/RuntimeLimits.h"             // BUG-AUDIT-MOD-3: MAX_RECURSION_DEPTH
-#include "common/TCO.h"                       // R109 TCO: 尾递归自调用识别
-#include "compiler/BytecodeCache.h"           // P2-11: .minic 文件加载
+#include "common/RuntimeLimits.h"   // BUG-AUDIT-MOD-3: MAX_RECURSION_DEPTH
+#include "common/TCO.h"             // R109 TCO: 尾递归自调用识别
+#include "compiler/BytecodeCache.h" // P2-11: .minic 文件加载
+#include "compiler/Compiler.h"
 #include "compiler/ExprStmtPop.h"             // AUDIT-R4 BUG-04: 表达式语句 POP 共享谓词
 #include "compiler/IRSSA.h"                   // P2-10: gvnPass/licmPass/inlinePass
 #include "compiler/RegisterBytecodeBackend.h" // PERF-14: 寄存器式后端
@@ -1322,4 +1322,3 @@ void Compiler::visitIndexAssign(IndexAssign& node) {
     chunk_.writeOp(OpCode::OP_INDEX_SET, node.line);
     return;
 }
-

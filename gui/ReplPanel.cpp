@@ -18,7 +18,7 @@
 #include <QKeyEvent>
 #include <QRegularExpression> // 拓展二期：Tab 补全历史词提取
 #include <QSet>               // 拓展二期：补全候选去重
-#include <QSettings> // 拓展二期：REPL 历史持久化
+#include <QSettings>          // 拓展二期：REPL 历史持久化
 #include <QTextCharFormat>
 #include <QTextCursor>
 #include <cstdlib> // IDE-CLOSE-01 fix: std::_Exit 强制进程退出
@@ -877,11 +877,10 @@ bool ReplPanel::tryTabComplete() {
 
     // 候选集：MiniLang 关键字/内建 + 历史输入中的标识符词
     static const QStringList kKeywords = {
-        "var",    "fun",      "if",     "else",   "while", "for",    "return", "break", "continue", "print",
-        "true",   "false",    "null",   "and",    "or",    "not",    "class",  "extends", "super",   "import",
-        "from",   "export",   "try",    "catch",  "finally", "throw", "enum",   "match",  "case",    "default",
-        "yield",  "len",      "type",   "str",    "int",   "abs",    "min",    "max",    "range",   "sum",
-        "channel", "mutex",   "rwlock", "spawn"};
+        "var",   "fun",   "if",      "else",  "while", "for",   "return",  "break",   "continue", "print",  "true",
+        "false", "null",  "and",     "or",    "not",   "class", "extends", "super",   "import",   "from",   "export",
+        "try",   "catch", "finally", "throw", "enum",  "match", "case",    "default", "yield",    "len",    "type",
+        "str",   "int",   "abs",     "min",   "max",   "range", "sum",     "channel", "mutex",    "rwlock", "spawn"};
     QSet<QString> candidateSet;
     for (const QString& kw : kKeywords) {
         if (kw.startsWith(prefix) && kw != prefix)

@@ -1,8 +1,8 @@
-#include "interpreter/Interpreter.h"
 #include "common/ErrorFormat.h"
 #include "common/ErrorMessages.h"
 #include "common/RuntimeLimits.h"
 #include "interpreter/BuiltinMethods.h"
+#include "interpreter/Interpreter.h"
 
 // ============================================================
 // InterpreterCoroutine.cpp — 协程/生成器（重放模式）实现

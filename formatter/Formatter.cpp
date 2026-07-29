@@ -238,7 +238,7 @@ static bool isSelfTerminating(ASTNode* node) {
     case NodeType::NODE_BLOCK:
     case NodeType::NODE_DESTRUCTURE_BINDING: // P1 #26 fix: 解构绑定自带 ';'，自终止，避免 formatBlock 双重分号
     case NodeType::NODE_ENUM_DECL:           // P1 #29 fix: enum 以 '}' 结尾，自终止
-    case NodeType::NODE_TRY_STMT: // P0 fix: try/catch 以 } 结尾，自终止
+    case NodeType::NODE_TRY_STMT:            // P0 fix: try/catch 以 } 结尾，自终止
         return true;
     case NodeType::NODE_IMPORT_STMT: // P0 fix: visitImportStmt 已自行添加 ;
         return true;
@@ -838,7 +838,8 @@ std::string Formatter::formatIfStmt(IfStmt& node) {
 
 /// 格式化 while 语句：与 if 一致的单语句体/复合体策略，保持 AST 往返等价。
 std::string Formatter::formatWhileStmt(WhileStmt& node) {
-    if (!node.body) return "/* empty */"; // P1 #28 fix: 空指针保护
+    if (!node.body)
+        return "/* empty */"; // P1 #28 fix: 空指针保护
     // P1-D fix: 保留单语句体原貌（无花括号），避免往返后 AST 结构改变
     if (node.body->nodeType != NodeType::NODE_BLOCK) {
         std::string result = "while (" + formatNode(node.condition.get()) + ") ";
@@ -867,7 +868,8 @@ std::string Formatter::formatWhileStmt(WhileStmt& node) {
 /// 格式化 for 语句：输出 "for (init; cond; update) body"，空 update/cond 时省略空格，
 /// 单语句体与原貌一致、复合体包裹花括号。
 std::string Formatter::formatForStmt(ForStmt& node) {
-    if (!node.body) return "/* empty */"; // P1 #28 fix: 空指针保护
+    if (!node.body)
+        return "/* empty */"; // P1 #28 fix: 空指针保护
     // P1-D fix: 保留单语句体原貌（无花括号），避免往返后 AST 结构改变
     if (node.body->nodeType != NodeType::NODE_BLOCK) {
         std::string result = "for (";
@@ -915,7 +917,8 @@ std::string Formatter::formatForStmt(ForStmt& node) {
 /// 格式化函数声明：输出 "fun name(params): retType { body }"，参数支持类型标注与默认值，
 /// 函数体以 } 自终止，外部由 formatBlock 决定是否补前导空行。
 std::string Formatter::formatFunDecl(FunDecl& node) {
-    if (!node.body) return "/* empty */"; // P1 #28 fix: 空指针保护
+    if (!node.body)
+        return "/* empty */"; // P1 #28 fix: 空指针保护
     // PERF-27 fix: 预估输出大小（fun + name + params + body），避免反复 realloc
     std::string result;
     result.reserve(32 + node.params.size() * 16 + node.name.size());
