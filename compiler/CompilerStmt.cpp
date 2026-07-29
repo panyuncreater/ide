@@ -1,5 +1,6 @@
 #include "compiler/Compiler.h"
 #include "ast/ModuleIsolation.h" // BUG-AUDIT-MOD-2: VM 模块隔离（非导出顶层名前缀化）
+#include "common/ConstFunEval.h" // L18 lang-constfun: 编译期沙箱求值
 #include "common/Logger.h"
 #include "common/RuntimeLimits.h"             // BUG-AUDIT-MOD-3: MAX_RECURSION_DEPTH
 #include "common/TCO.h"                       // R109 TCO: 尾递归自调用识别
@@ -370,6 +371,12 @@ void Compiler::visitFunDecl(FunDecl& node) {
     // H5 fix: 记录是否为内嵌函数（在函数体内定义的函数）
     bool isInner = inFunction_;
 
+    // L18 lang-constfun: 顶层 const fun 注册到折叠表（后续 visitFunCall
+    // 对实参全字面量的调用编译期沙箱求值）。仅顶层（非嵌套）声明参与。
+    if (node.isConstFun && !isInner && !node.name.empty()) {
+        constFunDecls_[node.name] = &node;
+    }
+
     // R98 W3: 匿名 lambda（node.name 为空）使用合成名 `$lambda_N` 作为内部 key。
     // 合成名用于：functionChunks_ 存储、identifierIndex 常量池、innerFunctionSlots_ 注册。
     // 合成名不暴露给用户——错误消息中显示 `<lambda>`，不参与 OP_CALL 按名查找。
@@ -685,6 +692,16 @@ void Compiler::emitDefaultValues(FunDecl& node) {
 }
 
 void Compiler::visitFunCall(FunCall& node) {
+    // L18 lang-constfun: const fun 调用且实参全字面量 → 编译期沙箱求值，
+    // 直接 emit 常量（求值失败/不纯/非原始类型结果 → 回退普通调用）。
+    // 局部名遮蔽防护：当前作用域存在同名局部/upvalue 时不折叠。
+    if (!constFunDecls_.empty() && node.callee == nullptr &&
+        currentLocals_.find(node.name) == currentLocals_.end()) {
+        if (auto folded = ConstFunEval::tryEvaluate(constFunDecls_, node)) {
+            emitConstant(*folded, node.line);
+            return;
+        }
+    }
     // 链式调用 / 表达式调用: callee(args)
     if (node.callee) {
         // C-P1-1 fix: 参数数量检查移到编译参数之前，避免截断后栈损坏
@@ -856,6 +873,36 @@ void Compiler::visitReturnStmt(ReturnStmt& node) {
     if (tco.kind == TCO::TailCallInfo::Kind::SelfFunction &&
         currentLocals_.find(tco.call->name) != currentLocals_.end()) {
         tco.kind = TCO::TailCallInfo::Kind::None;
+    }
+    // L18 eng-tailcall: 互递归/一般尾调用 return g(args)。编译策略：先正常编译
+    // 调用表达式（自动继承 visitFunCall 的遮蔽/upvalue/全局槽分流），若尾部
+    // 恰为 OP_CALL（纯命名调用路径）则原地 patch 为 OP_TAIL_CALL，再补 OP_RETURN。
+    // 运行时帧复用或降级为普通调用（语义与 CALL+RETURN 完全等价）。
+    // 限制条件：
+    //   - 非方法体（方法帧的 this/字段槽与 writeBack 语义不兼容帧复用）
+    //   - 无返回类型注解（TCO 路径跳过 OP_TYPE_CHECK，目标函数类型未知）
+    //   - 非生成器体（协程帧快照不可复用，运行时另有兑底）
+    //   - 不在 try 块内（handler 清理语义）
+    if (tco.kind == TCO::TailCallInfo::Kind::GeneralCall && tryDepth_ == 0 && inFunction_ && !compilingMethodBody_ &&
+        currentFunctionReturnType_.empty() &&
+        (currentFunctionDecl_ == nullptr || !currentFunctionDecl_->isGenerator)) {
+        compileNode(node.value.get());
+        // 仅当尾部恰为 4 字节 OP_CALL 时 patch（CALL_EXPR 等路径保持普通调用）。
+        // 三重校验防误判操作数字节：opcode 字节 + 常量池名称回查 + argCount 匹配。
+        if (chunk_.code.size() >= 4 && chunk_.code[chunk_.code.size() - 4] == static_cast<uint8_t>(OpCode::OP_CALL)) {
+            size_t callPos = chunk_.code.size() - 4;
+            uint16_t nIdx = static_cast<uint16_t>(chunk_.code[callPos + 1] | (chunk_.code[callPos + 2] << 8));
+            uint8_t ac = chunk_.code[callPos + 3];
+            if (nIdx < chunk_.constants.size() && chunk_.constants[nIdx].isString() &&
+                chunk_.constants[nIdx].stringVal() == tco.call->name && ac == tco.call->arguments.size()) {
+                chunk_.code[callPos] = static_cast<uint8_t>(OpCode::OP_TAIL_CALL);
+            }
+        }
+        chunk_.writeOp(OpCode::OP_RETURN, node.line);
+        return;
+    }
+    if (tco.kind == TCO::TailCallInfo::Kind::GeneralCall) {
+        tco.kind = TCO::TailCallInfo::Kind::None; // 条件不满足：回退普通 return 路径
     }
     if (tco.kind != TCO::TailCallInfo::Kind::None && tryDepth_ == 0 && currentFunctionDecl_ != nullptr) {
         const size_t paramCount = currentFunctionDecl_->params.size();
@@ -1818,7 +1865,9 @@ void Compiler::renameClosureRefs(BytecodeChunk& chunk, const std::string& prefix
         if (offset >= chunk.code.size())
             break;
         OpCode op = static_cast<OpCode>(chunk.code[offset]);
-        if (op == OpCode::OP_CLOSURE || op == OpCode::OP_CALL) {
+        // L18 eng-tailcall: OP_TAIL_CALL 布局同 OP_CALL（nameIdx 在 offset+1..+2），
+        // 同样需要模块隔离重命名，否则尾调用按原名命中主程序同名函数。
+        if (op == OpCode::OP_CLOSURE || op == OpCode::OP_CALL || op == OpCode::OP_TAIL_CALL) {
             if (offset + 2 < chunk.code.size()) {
                 uint16_t nameIdx = static_cast<uint16_t>(chunk.code[offset + 1]) |
                                    (static_cast<uint16_t>(chunk.code[offset + 2]) << 8);
@@ -1852,7 +1901,9 @@ void Compiler::renameRegClosureRefs(RegBytecodeChunk& chunk, const std::string& 
     size_t offset = 0;
     while (offset < chunk.code.size()) {
         RegOp op = static_cast<RegOp>(chunk.code[offset]);
-        if (op == RegOp::REG_CALL || op == RegOp::REG_MAKE_CLOSURE) {
+        // L18 eng-tailcall: REG_TAIL_CALL 布局同 REG_CALL（nameIdx 在 offset+2..+3），
+        // 同样需要模块隔离重命名。
+        if (op == RegOp::REG_CALL || op == RegOp::REG_MAKE_CLOSURE || op == RegOp::REG_TAIL_CALL) {
             // nameIdx 在 offset+2..offset+3（2B LE）
             if (offset + 3 < chunk.code.size()) {
                 uint16_t nameIdx = static_cast<uint16_t>(chunk.code[offset + 2]) |

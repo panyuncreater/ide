@@ -80,6 +80,8 @@ const std::unordered_map<std::string, TokenType>& Lexer::keywords() {
         m["default"] = TokenType::TK_DEFAULT;
         // R164 协程/生成器：新增关键字
         m["yield"] = TokenType::TK_YIELD;
+        // L18 lang-constfun
+        m["const"] = TokenType::TK_CONST;
         return m;
     }();
     return kw;
@@ -103,6 +105,7 @@ static constexpr KeywordEntry kSortedKeywords[] = {
     {"case", TokenType::TK_CASE},
     {"catch", TokenType::TK_CATCH},
     {"class", TokenType::TK_CLASS},
+    {"const", TokenType::TK_CONST},
     {"continue", TokenType::TK_CONTINUE},
     {"default", TokenType::TK_DEFAULT},
     {"dict", TokenType::TK_DICT},
@@ -565,9 +568,23 @@ void Lexer::identifier() {
     std::string text(source_, start_, current_ - start_);
 
     // #10 fix: 保留 __ 前缀给编译器内部使用（__blk_save_*, __wb_idx_*）
+    // 拓展二期·语言（运算符重载）：dunder 方法名白名单——__add/__sub/__mul/
+    // __div/__mod 允许用户在类中定义，供 instance 算术运算分派调用。
+    // 白名单与编译器内部名（__blk_save_*/__wb_idx_*/__mod_*/__qmark_unwrap）
+    // 无交集，保留前缀的防冲突目的不受影响。
     if (text.size() >= 2 && text[0] == '_' && text[1] == '_') {
-        errorToken("标识符 '" + text + "' 使用了保留前缀 '__'（编译器内部使用）");
-        return;
+        static const char* kDunderWhitelist[] = {"__add", "__sub", "__mul", "__div", "__mod"};
+        bool whitelisted = false;
+        for (const char* w : kDunderWhitelist) {
+            if (text == w) {
+                whitelisted = true;
+                break;
+            }
+        }
+        if (!whitelisted) {
+            errorToken("标识符 '" + text + "' 使用了保留前缀 '__'（编译器内部使用）");
+            return;
+        }
     }
 
     // 查关键字表（PERF: 使用二分查找替代 hash map）

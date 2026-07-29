@@ -462,6 +462,14 @@ private:
                              const SmallArgs<uint8_t>& argRegs, size_t returnOffset,
                              const Value* closureValue = nullptr, bool isMethodCall = false);
 
+    /// 拓展二期·语言（运算符重载）：instance 算术 dunder 分派。
+    /// reg(s1) 为 instance 且类（含继承链）定义了对应 dunder 方法时，
+    /// 经 executeCallImpl 注入方法帧（this=reg(s1)，参数=reg(s2)，
+    /// returnReg=dst，returnOffset=4 即 REG_ADD 系列指令长）。
+    /// @return true 表示已分派（outResult 有效）；false 未分派（回退报错）。
+    /// 限制（三后端一致）：接收者不写回（receiverReg 保持 -1）；不支持 super。
+    bool tryOperatorOverload(size_t& ip, RegOp op, uint8_t dst, uint8_t s1, uint8_t s2, VMResult& outResult);
+
     /// executeCallImpl 子阶段：函数名在 functionChunks_ 未命中时，
     /// 依次尝试 input/higher-order(spawn,map,filter,...)/isBuiltinFunction/classInfo_ 构造调用，
     /// 全部未命中则返回"未定义的函数"错误。始终返回 VM_OK 或 VM_RUNTIME_ERROR。

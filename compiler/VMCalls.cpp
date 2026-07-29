@@ -49,6 +49,8 @@ VMResult VM::executeCallOps(OpCode op, size_t& ip) {
         return executeCall(ip, false);
     case OpCode::OP_CALL_EXPR:
         return executeCall(ip, true);
+    case OpCode::OP_TAIL_CALL:
+        return executeTailCall(ip); // L18 eng-tailcall
     case OpCode::OP_SUPER_CALL:
     case OpCode::OP_METHOD_CALL:
         return executeMethodCall(ip, op);
@@ -264,6 +266,96 @@ VMResult VM::executeCall(size_t& ip, bool isExpr) {
         return executeCallByName(ip, op);
     }
     return executeCallExprValue(ip, op);
+}
+
+// ============================================================
+// L18 eng-tailcall: executeTailCall — OP_TAIL_CALL 执行
+// 字节布局与 OP_CALL 相同（nameIdx 2B + argCount 1B），后随 OP_RETURN。
+// TCO 可行条件（全部满足才帧复用）：
+//   1. 目标命中 functionChunks_ 且非生成器（executeCallByName 中 functionChunks_
+//      优先级最高，命中即与普通调用目标一致）
+//   2. 当前帧非方法帧（this/字段槽写回语义不兼容）、非生成器帧（协程快照）
+//   3. argCount 在 [requiredArity, arity] 范围内（越界时降级，由普通路径报错）
+// 否则降级：直接转 executeCall(ip,false)——OP_TAIL_CALL 字节布局与 OP_CALL 相同，
+// returnIp=ip+4 恰指向后随 OP_RETURN，语义与 CALL+RETURN 完全等价。
+// 帧复用步骤：关闭当前帧 open upvalues → 填充默认参数 → 实参搬到 bp →
+// 栈收缩+补局部槽 → 换 chunk/ip/upvalues（保留 returnIp/basePointer）。
+// ============================================================
+VMResult VM::executeTailCall(size_t& ip) {
+    VMCallFrame& frame = currentFrame();
+    const BytecodeChunk& chunk = *frame.chunk;
+    uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+    uint8_t argCount = chunk.code[ip + 3];
+    if (idx >= chunk.constants.size())
+        return runtimeError("常量池索引越界");
+    const std::string& funName = chunk.constants[idx].stringVal();
+
+    auto it = functionChunks_.find(funName);
+    bool canReuse = it != functionChunks_.end() && !it->second.isGenerator && !frame.isMethodCall &&
+                    !frame.isInitCall && !chunk.isGenerator;
+    if (canReuse) {
+        const BytecodeChunk& target = it->second;
+        if (argCount < static_cast<uint8_t>(target.requiredArity) || argCount > static_cast<uint8_t>(target.arity)) {
+            canReuse = false; // arity 越界：降级由普通路径报一致错误
+        }
+    }
+    if (!canReuse) {
+        // 降级：OP_TAIL_CALL 字节布局与 OP_CALL 相同，returnIp=ip+4 指向后随 OP_RETURN
+        return executeCall(ip, false);
+    }
+    const BytecodeChunk& target = it->second;
+
+    // 默认参数填充（与 setupFunctionCallFrame 同逻辑：补推常量到栈顶）
+    if (argCount < static_cast<uint8_t>(target.arity)) {
+        int missingCount = target.arity - argCount;
+        int defaultStartIdx = static_cast<int>(target.defaultConstIndices.size()) - missingCount;
+        if (defaultStartIdx < 0 ||
+            static_cast<size_t>(defaultStartIdx + missingCount) > target.defaultConstIndices.size()) {
+            return executeCall(ip, false); // 异常形态降级，普通路径报错
+        }
+        for (int i = defaultStartIdx; i < defaultStartIdx + missingCount; ++i) {
+            uint16_t constIdx = target.defaultConstIndices[i];
+            if (constIdx == RuntimeLimits::NO_INDEX || constIdx >= target.constants.size()) {
+                popN(static_cast<size_t>(i - defaultStartIdx));
+                return executeCall(ip, false); // 非字面量默认值：降级
+            }
+            push(target.constants[constIdx]);
+        }
+        argCount = static_cast<uint8_t>(target.arity);
+    }
+
+    // 帧复用：先关闭指向当前帧栈槽的 open upvalues（闭包快照当轮值）
+    if (closeUpvaluesFrom(frame.basePointer) != VMResult::VM_OK)
+        return VMResult::VM_RUNTIME_ERROR;
+
+    // 实参搬运：栈顶 argCount 个 → basePointer 起始槽位
+    size_t argStart = stack_.size() - argCount;
+    for (uint8_t i = 0; i < argCount; ++i) {
+        stack_[frame.basePointer + i] = std::move(stack_[argStart + i]);
+    }
+    // 栈收缩到 bp+argCount，再补目标函数的额外局部槽
+    int extraSlots = target.localCount - argCount;
+    if (extraSlots < 0) {
+        return runtimeError(ErrorFormat::formatStd("函数调用帧布局损坏: localCount={} < argCount={}",
+                                                   target.localCount, static_cast<int>(argCount)));
+    }
+    stack_.resize(frame.basePointer + argCount);
+    for (int i = 0; i < extraSlots; ++i) {
+        push(Value::nullValue());
+    }
+
+    // 切换帧目标（保留 returnIp/basePointer：调用者信息不变）
+    size_t savedIp = ip;
+    frame.chunk = &target;
+    frame.ip = 0;
+    frame.functionName = funName;
+    frame.upvalues.clear();
+    auto closureIt = functionClosures_.find(funName);
+    if (closureIt != functionClosures_.end() && closureIt->second.vmClosure()) {
+        frame.upvalues = closureIt->second.vmClosure()->upvalues;
+    }
+    notifyStep(savedIp, OpCode::OP_TAIL_CALL);
+    return VMResult::VM_OK;
 }
 
 // ============================================================

@@ -1301,6 +1301,9 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
             // ---- R141: 函数调用指令（OP_CALL，4B: op + nameIdx(2B) + argCount(1B)） ----
             // StackVM 语义：参数已按序 push（arg0 在底，argN-1 在顶），按名查找 functionChunks_
             // JIT 实现：保存调用者帧 → 预分配 extraSlots → 设置 r13 → jmp 函数 Label
+            // L18 eng-tailcall: OP_TAIL_CALL 字节布局与 OP_CALL 完全相同且后随 OP_RETURN，
+            // JIT 自管理帧栈无需帧复用，按普通调用处理即语义等价（call 后 RETURN）。
+            case OpCode::OP_TAIL_CALL:
             case OpCode::OP_CALL: {
                 if (ip + 3 >= bytecodes.size()) {
                     compileError("OP_CALL 操作数越界");

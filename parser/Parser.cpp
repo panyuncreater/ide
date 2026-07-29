@@ -421,6 +421,21 @@ std::unique_ptr<ASTNode> Parser::declaration() {
     if (check(TokenType::TK_FUN) && !checkNext(TokenType::TK_LPAREN))
         return funDecl();
 
+    // L18 lang-constfun: const fun name(...) —— 编译期求值函数声明。
+    // const 仅允许修饰具名 fun 声明（非 lambda/非其它语句）。
+    if (check(TokenType::TK_CONST)) {
+        const Token& constTok = peek();
+        advance(); // 消耗 const
+        if (check(TokenType::TK_FUN) && !checkNext(TokenType::TK_LPAREN)) {
+            auto decl = funDecl();
+            if (decl && decl->nodeType == NodeType::NODE_FUN_DECL) {
+                static_cast<FunDecl*>(decl.get())->isConstFun = true;
+            }
+            return decl;
+        }
+        throw ParseError("const 仅可修饰具名函数声明（const fun name(...)）", constTok.line, constTok.column);
+    }
+
     // class 声明
     if (check(TokenType::TK_CLASS))
         return classDecl();
@@ -2190,6 +2205,21 @@ std::unique_ptr<ASTNode> Parser::call() {
                 // 普通成员访问: obj.field
                 expr = std::make_unique<MemberAccess>(std::move(expr), StringIntern::intern(fieldName.lexeme), dot.line, dot.column);
             }
+            continue;
+        }
+
+        // 拓展二期·语言：? 传播运算符 expr? —— 脱糖为共享内建
+        // __qmark_unwrap(expr)（BuiltinMethods.cpp builtinFunctionRegistry，
+        // 三后端自动一致）。Lexer 将 '?' 映射到死槽位 TK_FUNC；表达式上下文
+        // 无三元运算符，与 parseTypeAnnotation 的类型上下文消费互不冲突。
+        // 语义：Ok(v)/Some(v) → v；Err(e)/None → 运行时错误（可被 try/catch
+        // 捕获，异常式传播；Rust 返回式传播需语句级支持，MiniLang 无语句
+        // 表达式，选择与 try/catch 体系自洽的抛出语义）。配套 std/result。
+        if (match(TokenType::TK_FUNC)) {
+            const Token& q = previous();
+            std::vector<std::shared_ptr<ASTNode>> qargs;
+            qargs.push_back(std::shared_ptr<ASTNode>(std::move(expr)));
+            expr = std::make_unique<FunCall>("__qmark_unwrap", std::move(qargs), q.line, q.column);
             continue;
         }
 

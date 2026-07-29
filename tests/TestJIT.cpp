@@ -5299,9 +5299,9 @@ TEST(TestJIT, R160InlineCacheStatsHitMiss) {
 
     // IC 统计：10 次 OP_MEMBER_GET p.x
     // 首次 miss（cache 空）→ 填充；后续 9 次 hit（相同 receiver p）
-    auto [hits, misses] = jit.getInlineCacheStats();
-    EXPECT_EQ(misses, 1u) << "首次访问应 miss 并填充 cache，实际 miss: " << misses;
-    EXPECT_EQ(hits, 9u) << "后续 9 次访问应命中 cache，实际 hit: " << hits;
+    auto stats = jit.getInlineCacheStats();
+    EXPECT_EQ(stats.miss, 1u) << "首次访问应 miss 并填充 cache，实际 miss: " << stats.miss;
+    EXPECT_EQ(stats.hit, 9u) << "后续 9 次访问应命中 cache，实际 hit: " << stats.hit;
 }
 
 // R160: inline cache 多态场景（不同 receiver 导致 cache 抖动）
@@ -5333,14 +5333,14 @@ TEST(TestJIT, R160InlineCachePolymorphicDegradation) {
     ASSERT_EQ(result, JitResult::OK);
     EXPECT_EQ(out, "12");
 
-    // 单态 IC 在多态场景下每次都 miss（p1→p2→p1→p2...）
-    // p1.x 和 p2.x 是不同 callSite（不同 OP_MEMBER_GET），各自 cache 独立
+    // PIC 升级后：p1.x 和 p2.x 是不同 callSite（不同 OP_MEMBER_GET），各自 PIC 独立
     // p1.x callSite: 首次 miss → 填充 p1 → 后续 3 次 hit（p1 不变）
     // p2.x callSite: 首次 miss → 填充 p2 → 后续 3 次 hit（p2 不变）
-    // 总 miss=2, hit=6
-    auto [hits, misses] = jit.getInlineCacheStats();
-    EXPECT_EQ(misses, 2u) << "两个 callSite 各首次 miss，实际 miss: " << misses;
-    EXPECT_EQ(hits, 6u) << "两个 callSite 各后续 3 次 hit，实际 hit: " << hits;
+    // 总 miss=2, hit=6（PIC 4 路足以容纳 2 种类型，无退化）
+    auto stats = jit.getInlineCacheStats();
+    EXPECT_EQ(stats.miss, 2u) << "两个 callSite 各首次 miss，实际 miss: " << stats.miss;
+    EXPECT_EQ(stats.hit, 6u) << "两个 callSite 各后续 3 次 hit，实际 hit: " << stats.hit;
+    EXPECT_EQ(stats.megamorphic, 0u) << "2 种类型不应触发 megamorphic";
 }
 
 // ============================================================

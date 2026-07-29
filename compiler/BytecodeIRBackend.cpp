@@ -274,6 +274,7 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
     // ---- 调用 + 闭包 ----
     case IROp::CALL:
     case IROp::CALL_EXPR:
+    case IROp::TAIL_CALL: // L18 eng-tailcall
     case IROp::RETURN:
     case IROp::RETURN_NULL:
     case IROp::MAKE_CLOSURE:
@@ -670,6 +671,24 @@ bool BytecodeIRBackend::lowerCallOp(const IRInstruction& instr, const IRFunction
         }
         vregStackDepth_[instr.operands[0].index] = static_cast<uint32_t>(chunk_->code.size());
         chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_CALL_EXPR));
+        chunk_->code.push_back(static_cast<uint8_t>(instr.operands[2].index & 0xFF)); // argCount
+        break;
+    }
+    case IROp::TAIL_CALL: {
+        // L18 eng-tailcall: 布局同 CALL，lower 为 OP_TAIL_CALL（后随的 IROp::RETURN
+        // 由 AstIRBuilder 保证紧跟，lower 为 OP_RETURN 供降级路径使用）。
+        if (instr.operands.size() < 3)
+            return false;
+        if (instr.operands[2].index > 255) {
+            Logger::Error("BytecodeIRBackend: TAIL_CALL argCount 超出 255 上限 (" +
+                              std::to_string(instr.operands[2].index) + ")",
+                          "IR");
+            return false;
+        }
+        uint16_t nameConstIdx = addStringConstant(globalNameOf(ir, instr.operands[1].index), ir);
+        vregStackDepth_[instr.operands[0].index] = static_cast<uint32_t>(chunk_->code.size());
+        chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_TAIL_CALL));
+        emitUint16(chunk_->code, nameConstIdx);
         chunk_->code.push_back(static_cast<uint8_t>(instr.operands[2].index & 0xFF)); // argCount
         break;
     }

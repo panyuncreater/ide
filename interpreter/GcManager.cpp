@@ -7,10 +7,38 @@
 #include "interpreter/RefCounted.h"
 #include "interpreter/Value.h"
 
+#include <atomic>
+
+// SHUTDOWN-UAF fix: 进程退出阶段的静态析构顺序保护。
+// GcManager 是 Meyer's Singleton（函数局部 static），其析构发生在 main() 返回后的
+// 静态析构阶段。然而 thread_local Value（如 VM.cpp 的 nullSentinel、Value.h 的
+// tlsCloned）以及文件作用域 static 容器可能在 GcManager 之后析构，触发
+// ~RefCounted() → GcManager::instance().onDestroyed(this)——此时单例已销毁，
+// 访问其 mutex_/aliveSet_ 成员导致"读取访问权限冲突"（this 为已释放地址）。
+//
+// 修复：用 trivially-destructible 的 atomic<bool> 标记单例存活状态。
+// std::atomic<bool> 无用户定义析构，不参与静态析构排序，进程退出时其存储
+// 始终有效（与 int 全局变量相同语义）。
+static std::atomic<bool> g_gcManagerAlive{false};
+
+// SHUTDOWN-UAF fix: 构造时标记存活，析构时清除。
+// 析构器在 main() 返回后的静态析构阶段执行（Meyer's Singleton 语义），
+// 清除标志后，后续 RefCounted 析构将跳过 onDestroyed 调用。
+GcManager::GcManager() {
+    g_gcManagerAlive.store(true, std::memory_order_release);
+}
+
+GcManager::~GcManager() {
+    g_gcManagerAlive.store(false, std::memory_order_release);
+}
+
 // Bug2 fix: RefCounted 析构函数定义在此处（GcManager 完整定义可见）
 // 仅当 gcTracked_ 为 true 时通知 GcManager，非跟踪对象零开销。
 RefCounted::~RefCounted() {
-    if (gcTracked_) {
+    // SHUTDOWN-UAF fix: 进程退出时 GcManager 单例可能已析构。
+    // 此时 aliveSet_/tracked_ 随进程消亡，无需（也不能）安全移除。
+    // 检查 g_gcManagerAlive 避免对已销毁单例的 UAF 访问。
+    if (gcTracked_ && g_gcManagerAlive.load(std::memory_order_acquire)) {
         GcManager::instance().onDestroyed(this);
     }
 }

@@ -617,6 +617,12 @@ void JITBackend::emitMethodCall(x86::Assembler& a, Label epilogue, const char* m
                                  const char* superClassName) {
     Label returnLabel = a.new_label();
 
+    // 方法调用 IC：分配 callSiteId 并确保 methodCallIC_ 容量
+    uint64_t methodCallSiteId = nextMethodCallSiteId_++;
+    if (methodCallSiteId >= methodCallIC_.size()) {
+        methodCallIC_.resize(methodCallSiteId + 1);
+    }
+
     // 1. 计算 receiverSlotPtr → r10
     if (receiverLocalSlotByte != RuntimeLimits::NO_SLOT) {
         // 接收者是当前帧的局部变量：r10 = r13 - receiverLocalSlotByte * 8
@@ -641,17 +647,12 @@ void JITBackend::emitMethodCall(x86::Assembler& a, Label epilogue, const char* m
     // 4. 同步栈顶到 ctx->stackTop (offset 48)
     a.mov(x86::qword_ptr(x86::r12, jit_offset::stackTop), x86::r15);
 
-    // 5. 调用 jitMethodCall(ctx, methodName, packedArgs, receiverSlotPtr, superClassName)
-    //    Win32 ABI: rcx, rdx, r8, r9, [rsp+32] (5th arg on stack)
-    //    SysV ABI:  rdi, rsi, rdx, rcx, r8
-    //    R149 fix: Windows x64 ABI 要求第 5 参数在 sub rsp 之后的 [rsp+32] 位置，
-    //    原代码顺序"先写 [rsp+32] 再 sub rsp"导致 callee 读到 sub 前的位置
-    //    （即 [rsp+72]），是栈上残留垃圾数据（恰好是 JIT 机器码字节），
-    //    superClassName 读到 "UH\x89\xE5..." 报"类 X 没有父类"错误。
-    //    修复：先 sub rsp 调整栈帧，再写第 5 参数。
+    // 5. 调用 jitMethodCall(ctx, methodName, packedArgs, receiverSlotPtr, superClassName, callSiteId, backendPtr)
+    //    Win32 ABI: rcx, rdx, r8, r9, [rsp+32], [rsp+40], [rsp+48]
+    //    SysV ABI:  rdi, rsi, rdx, rcx, r8, r9, [rsp]
     a.movabs(x86::rax, reinterpret_cast<uint64_t>(methodName));
 #ifdef _WIN32
-    a.sub(x86::rsp, 48);       // shadow space (32) + arg5 slot (8) + 8B 对齐填充
+    a.sub(x86::rsp, 64);       // shadow space (32) + arg5/6/7 slots (24) + 8B 对齐填充
     a.mov(x86::rcx, x86::r12); // arg1 = ctx
     a.mov(x86::rdx, x86::rax); // arg2 = methodName
     a.mov(x86::r8, x86::r11);  // arg3 = packedArgs
@@ -662,8 +663,11 @@ void JITBackend::emitMethodCall(x86::Assembler& a, Label epilogue, const char* m
     } else {
         a.mov(x86::qword_ptr(x86::rsp, 32), 0);
     }
+    a.mov(x86::qword_ptr(x86::rsp, 40), methodCallSiteId); // arg6 = callSiteId
+    a.movabs(x86::rax, reinterpret_cast<uint64_t>(this));
+    a.mov(x86::qword_ptr(x86::rsp, 48), x86::rax); // arg7 = backendPtr
 #else
-    a.sub(x86::rsp, 16);        // 16-byte alignment
+    a.sub(x86::rsp, 16);        // 16-byte alignment + arg7 slot
     a.mov(x86::rdi, x86::r12); // arg1 = ctx
     a.mov(x86::rsi, x86::rax); // arg2 = methodName
     a.mov(x86::rdx, x86::r11); // arg3 = packedArgs
@@ -674,11 +678,14 @@ void JITBackend::emitMethodCall(x86::Assembler& a, Label epilogue, const char* m
     } else {
         a.xor_(x86::r8, x86::r8);
     }
+    a.mov(x86::r9, methodCallSiteId); // arg6 = callSiteId
+    a.movabs(x86::rax, reinterpret_cast<uint64_t>(this));
+    a.mov(x86::qword_ptr(x86::rsp, 0), x86::rax); // arg7 = backendPtr (stack)
 #endif
     a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitMethodCall));
     a.call(x86::rax);
 #ifdef _WIN32
-    a.add(x86::rsp, 48);
+    a.add(x86::rsp, 64);
 #else
     a.add(x86::rsp, 16);
 #endif

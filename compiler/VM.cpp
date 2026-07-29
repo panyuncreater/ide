@@ -829,6 +829,108 @@ const BytecodeChunk* VM::findMethodChunk(const std::string& className, const std
 // 数值运算类型枚举（避免字符串比较）
 enum { OP_ADD_INT = 0, OP_SUB_INT, OP_MUL_INT, OP_DIV_INT, OP_MOD_INT };
 
+// ============================================================
+// 拓展二期·语言：运算符重载（instance 算术 dunder 分派）
+// ------------------------------------------------------------
+// 栈布局 [left,right] 恰好就是方法调用的 [receiver,arg]，按
+// executeInstanceMethodCall 的帧协议注入新帧（returnIp=ip+1，
+// OP_ADD 系列为单字节指令），方法 OP_RETURN 时结果自然压栈——
+// 与“弹二压一”算术语义吹合。receiver 写回禁用（receiverVarName 空，
+// receiverLocalSlot=-1）：运算符方法内 this 字段变异不写回接收者，
+// 与 Interpreter 的左值拷贝语义一致。
+// ============================================================
+bool VM::tryOperatorOverload(size_t& ip, OpCode op, VMResult& outResult) {
+    if (stack_.size() < 2) {
+        return false; // 栈下溢由 numericOp 统一报错
+    }
+    const Value& left = stack_[stack_.size() - 2];
+    if (!left.isInstance()) {
+        return false;
+    }
+    const char* dunderName = nullptr;
+    switch (op) {
+    case OpCode::OP_ADD:
+        dunderName = "__add";
+        break;
+    case OpCode::OP_SUBTRACT:
+        dunderName = "__sub";
+        break;
+    case OpCode::OP_MULTIPLY:
+        dunderName = "__mul";
+        break;
+    case OpCode::OP_DIVIDE:
+        dunderName = "__div";
+        break;
+    case OpCode::OP_MODULO:
+        dunderName = "__mod";
+        break;
+    default:
+        return false;
+    }
+    const BytecodeChunk* targetChunkPtr = findMethodChunk(left.className(), dunderName);
+    if (targetChunkPtr == nullptr) {
+        return false; // 无 dunder 方法 → 回退到“算术运算需要数值类型”报错
+    }
+    const BytecodeChunk& targetChunk = *targetChunkPtr;
+
+    // 与 Interpreter 一致：运算符方法必须恰好 1 个参数
+    if (targetChunk.requiredArity != 1 || targetChunk.arity != 1) {
+        outResult = runtimeError(std::string("运算符方法 ") + dunderName + " 必须恰好接受 1 个参数");
+        return true;
+    }
+    if (frames_.size() >= MAX_FRAMES) {
+        outResult = runtimeError(
+            ErrorFormat::formatStd(ErrorMessages::kRecursionDepthExceededFmtStd, static_cast<int>(MAX_FRAMES)),
+            DiagCodes::kRecursionDepth);
+        return true;
+    }
+
+    // 栈重排：[left,right] → [this(=left), 字段..., arg(=right)] + 局部变量槽
+    Value right = pop();
+    Value objCopy = pop();
+    push(objCopy); // this
+    int fieldCount = 0;
+    if (!targetChunk.fieldOrder.empty()) {
+        for (const auto& fieldName : targetChunk.fieldOrder) {
+            auto fieldIt = objCopy.fields().find(fieldName);
+            push(fieldIt != objCopy.fields().end() ? fieldIt->second : Value::nullValue());
+        }
+        fieldCount = static_cast<int>(targetChunk.fieldOrder.size());
+    }
+    push(std::move(right)); // 唯一参数
+
+    int preAllocated = 1 + fieldCount + 1; // this + 字段 + 1 参数
+    int extraSlots = targetChunk.localCount - preAllocated;
+    if (extraSlots < 0) {
+        popN(static_cast<size_t>(preAllocated));
+        outResult = runtimeError(ErrorFormat::formatStd("方法 {} 帧布局损坏: localCount={} < preAllocated={}",
+                                                        dunderName, targetChunk.localCount, preAllocated));
+        return true;
+    }
+    for (int i = 0; i < extraSlots; ++i) {
+        push(Value::nullValue());
+    }
+
+    VMCallFrame newFrame;
+    newFrame.chunk = targetChunkPtr;
+    newFrame.returnIp = ip + 1; // OP_ADD 系列均为单字节指令
+    newFrame.basePointer = stack_.size() - targetChunk.localCount;
+    newFrame.functionName = targetChunk.name;
+    newFrame.ip = 0;
+    newFrame.isMethodCall = true;
+    newFrame.isInitCall = false;
+    newFrame.receiverLocalSlot = -1; // 接收者不写回（见函数头注释）
+    auto upvIt = methodUpvalues_.find(targetChunk.name);
+    if (upvIt != methodUpvalues_.end() && upvIt->second) {
+        newFrame.upvalues = upvIt->second->upvalues;
+    }
+    size_t savedIp = ip;
+    frames_.push_back(std::move(newFrame));
+    notifyStep(savedIp, op);
+    outResult = VMResult::VM_OK;
+    return true;
+}
+
 VMResult VM::numericOp(int opType) {
     // 使用 peek 访问栈顶避免深拷贝，然后调整栈指针
     if (stack_.size() < 2)
@@ -1757,6 +1859,7 @@ VMResult VM::executeOneInstruction() {
     // 调用相关类
     case OpCode::OP_CALL:
     case OpCode::OP_CALL_EXPR:
+    case OpCode::OP_TAIL_CALL: // L18 eng-tailcall
     case OpCode::OP_CLOSURE:
     case OpCode::OP_RETURN:
     case OpCode::OP_SUPER_CALL:
@@ -1898,6 +2001,10 @@ VMResult VM::executeArithOps(OpCode op, size_t& ip) {
 
     switch (op) {
     case OpCode::OP_ADD: {
+        // 拓展二期：instance dunder 分派（__add），未分派回退 numericOp
+        VMResult ovr;
+        if (tryOperatorOverload(ip, op, ovr))
+            return ovr;
         VMResult r = numericOp(OP_ADD_INT);
         if (r != VMResult::VM_OK)
             return r;
@@ -1907,6 +2014,9 @@ VMResult VM::executeArithOps(OpCode op, size_t& ip) {
     }
 
     case OpCode::OP_SUBTRACT: {
+        VMResult ovr;
+        if (tryOperatorOverload(ip, op, ovr))
+            return ovr;
         VMResult r = numericOp(OP_SUB_INT);
         if (r != VMResult::VM_OK)
             return r;
@@ -1916,6 +2026,9 @@ VMResult VM::executeArithOps(OpCode op, size_t& ip) {
     }
 
     case OpCode::OP_MULTIPLY: {
+        VMResult ovr;
+        if (tryOperatorOverload(ip, op, ovr))
+            return ovr;
         VMResult r = numericOp(OP_MUL_INT);
         if (r != VMResult::VM_OK)
             return r;
@@ -1925,6 +2038,9 @@ VMResult VM::executeArithOps(OpCode op, size_t& ip) {
     }
 
     case OpCode::OP_DIVIDE: {
+        VMResult ovr;
+        if (tryOperatorOverload(ip, op, ovr))
+            return ovr;
         VMResult r = numericOp(OP_DIV_INT);
         if (r != VMResult::VM_OK)
             return r;
@@ -1934,6 +2050,9 @@ VMResult VM::executeArithOps(OpCode op, size_t& ip) {
     }
 
     case OpCode::OP_MODULO: {
+        VMResult ovr;
+        if (tryOperatorOverload(ip, op, ovr))
+            return ovr;
         VMResult r = numericOp(OP_MOD_INT);
         if (r != VMResult::VM_OK)
             return r;

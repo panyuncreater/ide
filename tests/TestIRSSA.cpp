@@ -1017,3 +1017,112 @@ TEST(IRSSADebugOutput, DomTreeToStringProducesOutput) {
     EXPECT_NE(str.find("DominatorTree"), std::string::npos);
     EXPECT_NE(str.find("idom"), std::string::npos);
 }
+
+// ============================================================
+// 拓展二期·引擎（eng-gvnlicm）：Ackermann 挂死回归锁
+// ------------------------------------------------------------
+// 2026-07-28 发现：irOptimize 默认开启时 PerfBenchmark.Ackermann_RegisterVM
+// 挂死（>300s）。复现条件：setIROptimize(true)+setIRSSAOptimize(true)+
+// RegisterVM 跑深互递归 ackermann。本测试以小参数 ack(2,3)=9 作为
+// 回归锁：修复前挂死/错结果即红（ctest 超时兼做守卫）。
+// ============================================================
+
+namespace {
+const char* kAckermannSrc = "fun ack(m, n) {\n"
+                            "    if (m == 0) { return n + 1; }\n"
+                            "    if (n == 0) { return ack(m - 1, 1); }\n"
+                            "    return ack(m - 1, ack(m, n - 1));\n"
+                            "}\n"
+                            "print(ack(2, 3));\n";
+} // namespace
+
+TEST(IROptRegression, AckermannWithFullOptimizePipeline) {
+    // 完整优化管线（inline+折叠+DCE+SSA/GVN/LICM）：ack(2,3)=9
+    EXPECT_EQ(runViaRegisterVM(kAckermannSrc, /*ssaOptimize=*/true), "9");
+}
+
+TEST(IROptRegression, AckermannWithBasicOptimizeOnly) {
+    // 仅基础 pass（折叠+DCE，无 SSA/inline）：定位挂死层级的对照组
+    EXPECT_EQ(runViaRegisterVM(kAckermannSrc, /*ssaOptimize=*/false), "9");
+}
+
+TEST(IROptRegression, AckermannCompileOnlyBasicOptimize) {
+    // 只编译不执行：区分编译期挂死 vs 优化后运行期死循环
+    Lexer lexer;
+    auto tokens = lexer.scan(kAckermannSrc);
+    Parser parser;
+    auto ast = parser.parse(tokens);
+    ASSERT_TRUE(ast);
+    Compiler compiler;
+    compiler.setUseRegisterVM(true);
+    compiler.setIROptimize(true);
+    RegisterCompileResult result = compiler.compileViaRegisterIR(*ast);
+    EXPECT_FALSE(result.mainChunk.code.empty());
+}
+
+TEST(IROptRegression, AckermannNoOptimizeControl) {
+    // 无优化对照组：irOptimize=false 路径应正常输出 9
+    Lexer lexer;
+    auto tokens = lexer.scan(kAckermannSrc);
+    Parser parser;
+    auto ast = parser.parse(tokens);
+    ASSERT_TRUE(ast);
+    Compiler compiler;
+    compiler.setUseRegisterVM(true);
+    compiler.setIROptimize(false);
+    RegisterCompileResult result = compiler.compileViaRegisterIR(*ast);
+    RegisterVM vm;
+    std::string captured;
+    vm.setOutputCallback([&](const std::string& s) { captured += s; });
+    vm.execute(result);
+    ASSERT_FALSE(vm.hasError()) << vm.getLastError();
+    EXPECT_EQ(captured, "9");
+}
+
+// L17 回归锁：SSA 重命名不得为函数参数分配无定义的假 vreg——
+// 原实现为 slot 0..arity-1 凭空分配初始 vreg，参数的 LOAD_LOCAL 被替换为
+// 未定义 vreg，lowering 后读未初始化寄存器（任意带 while(i<n) 的函数即踩）。
+TEST(IROptRegression, SsaParamSlotSimpleWhile) {
+    const char* src = "fun f(n) { var i = 0; while (i < n) { i = i + 1; } return i; }\nprint(f(3));\n";
+    EXPECT_EQ(runViaRegisterVM(src, /*ssaOptimize=*/true), "3");
+}
+
+TEST(IROptRegression, SsaParamSlotTwoWhiles) {
+    // 两个连续循环 + 参数参与两个循环条件：f(3) → i=3, r=3+4=7
+    const char* src = "fun f(n) { var i = 0; while (i < n) { i = i + 1; } var j = i; var r = 0; while (j < n + 2) { r "
+                      "= r + j; j = j + 1; } return r; }\nprint(f(3));\n";
+    EXPECT_EQ(runViaRegisterVM(src, /*ssaOptimize=*/true), "7");
+}
+
+TEST(IROptRegression, SsaRoundTripWhileShortCircuit) {
+    // L17 回归锁：SSA 构造+析构往返必须语义等价——短路条件 while 循环
+    //（复现自 BuiltinModulesBigint.* 在 irOptimize 默认启用后的回归）。
+    const char* src = "fun bstrip(s) {\n"
+                      "    var i = 0;\n"
+                      "    while (i < len(s) - 1 and s[i] == \"0\") {\n"
+                      "        i = i + 1;\n"
+                      "    }\n"
+                      "    var r = \"\";\n"
+                      "    var j = i;\n"
+                      "    while (j < len(s)) {\n"
+                      "        r = r + s[j];\n"
+                      "        j = j + 1;\n"
+                      "    }\n"
+                      "    return r;\n"
+                      "}\n"
+                      "print(bstrip(\"0042\"));\n";
+    EXPECT_EQ(runViaRegisterVM(src, /*ssaOptimize=*/true), "42");
+}
+
+TEST(IROptRegression, InlinePassSkipsClosureFactory) {
+    // L17 回归锁：含 MAKE_CLOSURE/自有局部变量的单块函数不可内联——
+    // 内联后闭包捕获列表指向 caller 槽位，误返回闭包对象而非调用结果
+    //（复现自 TryCatchClosureGaps.CatchBlockReferencesOuterVar）。
+    const char* src = "fun outerFn() {\n"
+                      "  var captured = 99;\n"
+                      "  var inner = fun() { return captured; };\n"
+                      "  return inner();\n"
+                      "}\n"
+                      "print(outerFn());\n";
+    EXPECT_EQ(runViaRegisterVM(src, /*ssaOptimize=*/true), "99");
+}

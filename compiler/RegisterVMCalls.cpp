@@ -94,6 +94,80 @@ VMResult RegisterVM::executeCallOps(RegOp op, size_t& ip) {
         ip = newIp;
         break;
     }
+    case RegOp::REG_TAIL_CALL: {
+        // L18 eng-tailcall: 互递归尾调用。布局同 REG_CALL（dst+nameIdx 2B+argCount+args），
+        // 后随 REG_RETURN dst。目标可帧复用则 TCO，否则降级为普通 executeCallImpl
+        //（结果写 dst，返回后执行后随 REG_RETURN，语义与 CALL+RETURN 完全等价）。
+        uint8_t dst = chunk.code[ip + 1];
+        uint16_t nameIdx = chunk.code[ip + 2] | (chunk.code[ip + 3] << 8);
+        uint8_t argCount = chunk.code[ip + 4];
+        if (nameIdx >= chunk.constants.size() || !chunk.constants[nameIdx].isString()) {
+            return runtimeError("函数名索引无效");
+        }
+        const std::string& funName = chunk.constants[nameIdx].stringVal();
+        SmallArgs<uint8_t> argRegs;
+        for (uint8_t i = 0; i < argCount; ++i) {
+            argRegs.push_back(chunk.code[ip + 5 + i]);
+        }
+
+        RegCallFrame& fr = frames_.back();
+        auto itf = functionChunks_.find(funName);
+        bool canReuse = itf != functionChunks_.end() && !itf->second.isGenerator && !fr.isMethodCall &&
+                        !fr.chunk->isGenerator;
+        if (canReuse) {
+            const RegBytecodeChunk& target = itf->second;
+            if (argCount < target.requiredArity || argCount > target.arity) {
+                canReuse = false; // arity 越界：降级由普通路径报一致错误
+            }
+        }
+        if (!canReuse) {
+            size_t newIp = ip;
+            VMResult r = executeCallImpl(newIp, funName, argCount, dst, argRegs, 5u + argCount);
+            if (r != VMResult::VM_OK)
+                return r;
+            ip = newIp;
+            break;
+        }
+        const RegBytecodeChunk& target = itf->second;
+
+        // 实参先读出（argRegs 指向当前帧寄存器，覆写前取值）
+        SmallArgs<Value> argVals;
+        for (uint8_t i = 0; i < argCount; ++i) {
+            argVals.push_back(reg(argRegs[i]));
+        }
+        // 默认参数填充（与 executeCallImpl 同逻辑）
+        uint8_t adjustedArgCount = argCount;
+        std::vector<Value> defaults;
+        if (argCount < target.arity) {
+            if (!fillDefaultArgs(target, adjustedArgCount, funName, defaults)) {
+                return runtimeError(formatParamError(false, funName, argCount, target), DiagCodes::kArityMismatch);
+            }
+        }
+        // 关闭指向当前帧寄存器的 open upvalues（全局槽编码 frameIdx*32+slot）
+        if (closeUpvaluesFrom((frames_.size() - 1) * RegCallFrame::MAX_REGISTERS) != VMResult::VM_OK)
+            return VMResult::VM_RUNTIME_ERROR;
+
+        // 帧复用：保留 returnIp/returnReg（调用者信息），切换 chunk/ip/寄存器窗口
+        fr.chunk = &target;
+        fr.ip = 0;
+        fr.registerCount = static_cast<uint8_t>(
+            target.registerCount <= RegCallFrame::MAX_REGISTERS ? target.registerCount : RegCallFrame::MAX_REGISTERS);
+        for (uint8_t i = 0; i < fr.registerCount; ++i) {
+            fr.registers[i] = Value::nullValue(); // 清旧帧残值（与新帧零初始化对齐）
+        }
+        for (uint8_t i = 0; i < argCount && i < fr.registerCount; ++i) {
+            fr.registers[i] = std::move(argVals[i]);
+        }
+        for (uint8_t i = argCount; i < adjustedArgCount; ++i) {
+            if (i < fr.registerCount && static_cast<size_t>(i - argCount) < defaults.size()) {
+                fr.registers[i] = defaults[i - argCount];
+            }
+        }
+        fr.upvalues.clear();
+        populateCallFrameUpvalues(fr, nullptr, funName, false);
+        notifyStep(ip, op);
+        break;
+    }
     default:
         return runtimeError("executeCallOps: 未知操作码");
     }
@@ -320,6 +394,7 @@ VMResult RegisterVM::executeCalls(RegOp op, size_t& ip) {
     }
     case RegOp::REG_CALL:
     case RegOp::REG_CALL_EXPR:
+    case RegOp::REG_TAIL_CALL: // L18 eng-tailcall
     case RegOp::REG_MAKE_CLOSURE:
         // 普通函数调用 / 闭包值调用 / 闭包构造
         return executeCallOps(op, ip);

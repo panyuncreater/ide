@@ -717,6 +717,10 @@ std::vector<QJsonObject> LspRequestHandler::handleMessage(const QJsonObject& mes
             result = handleSignatureHelp(params); // LSP 二期
         } else if (method == "textDocument/semanticTokens/full") {
             result = handleSemanticTokens(params); // LSP 二期
+        } else if (method == "textDocument/codeAction") {
+            result = handleCodeAction(params); // LSP 二期
+        } else if (method == "textDocument/inlayHint") {
+            result = handleInlayHint(params); // LSP 二期
         } else {
             // 未知方法：返回错误响应
             QJsonObject errorResponse;
@@ -796,6 +800,14 @@ QJsonValue LspRequestHandler::handleInitialize(const QJsonObject& /*params*/) {
     semanticTokensProvider["legend"] = legend;
     semanticTokensProvider["full"] = true;
     capabilities["semanticTokensProvider"] = semanticTokensProvider;
+
+    // LSP 二期：codeAction / inlayHint
+    QJsonObject codeActionProvider;
+    QJsonArray codeActionKinds;
+    codeActionKinds.append("quickfix");
+    codeActionProvider["codeActionKinds"] = codeActionKinds;
+    capabilities["codeActionProvider"] = codeActionProvider;
+    capabilities["inlayHintProvider"] = true;
 
     result["capabilities"] = capabilities;
 
@@ -1404,6 +1416,136 @@ std::string versionString() {
 
 std::string serverName() {
     return "minilang-lsp";
+}
+
+// ============================================================
+// LSP 二期：codeAction — 联动 lint 自动修复
+// ============================================================
+
+QJsonValue LspRequestHandler::handleCodeAction(const QJsonObject& params) {
+    // params: { textDocument: {uri}, range: {...}, context: { diagnostics: [...] } }
+    QJsonArray result;
+
+    auto textDoc = params["textDocument"].toObject();
+    std::string uri = textDoc["uri"].toString().toStdString();
+    auto context = params["context"].toObject();
+    auto diagnostics = context["diagnostics"].toArray();
+
+    for (const auto& diagVal : diagnostics) {
+        auto diag = diagVal.toObject();
+        QString source = diag["source"].toString();
+        QString message = diag["message"].toString();
+        auto range = diag["range"].toObject();
+
+        // 仅为 lint 来源的诊断提供 quickfix
+        if (source != "minilang-lint" && source != "lint")
+            continue;
+
+        QJsonObject action;
+        action["title"] = QString("修复: %1").arg(message.left(60));
+        action["kind"] = "quickfix";
+
+        // 关联诊断
+        QJsonArray relatedDiags;
+        relatedDiags.append(diag);
+        action["diagnostics"] = relatedDiags;
+
+        // 提供命令式修复（客户端执行 minilang-lint --fix）
+        QJsonObject command;
+        command["title"] = "应用 lint --fix";
+        command["command"] = "minilang.lint.fix";
+        QJsonArray args;
+        args.append(QString::fromStdString(uri));
+        command["arguments"] = args;
+        action["command"] = command;
+
+        result.append(action);
+    }
+
+    // 若无 lint 诊断但有错误，提供"格式化文档"通用 action
+    if (result.isEmpty()) {
+        auto* doc = docManager_.get(uri);
+        if (doc && !doc->source.empty()) {
+            QJsonObject action;
+            action["title"] = "格式化文档";
+            action["kind"] = "quickfix";
+            QJsonObject command;
+            command["title"] = "格式化";
+            command["command"] = "minilang.format.document";
+            QJsonArray args;
+            args.append(QString::fromStdString(uri));
+            command["arguments"] = args;
+            action["command"] = command;
+            result.append(action);
+        }
+    }
+
+    return result;
+}
+
+// ============================================================
+// LSP 二期：inlayHint — 显示推断类型
+// ============================================================
+
+QJsonValue LspRequestHandler::handleInlayHint(const QJsonObject& params) {
+    QJsonArray result;
+
+    auto textDoc = params["textDocument"].toObject();
+    std::string uri = textDoc["uri"].toString().toStdString();
+
+    auto* doc = docManager_.get(uri);
+    if (!doc || !doc->ast || doc->hasParseErrors)
+        return result;
+
+    // 遍历文档符号，为无显式类型注解的变量声明显示推断类型
+    for (const auto& sym : doc->symbols) {
+        // 仅处理变量声明
+        if (sym.kind != LspSymbolKind::Variable)
+            continue;
+
+        // 跳过已有类型注解的（detail 中含 ":" 但无 "=" 的）
+        if (sym.detail.find(": ") != std::string::npos &&
+            sym.detail.find("= ") == std::string::npos) {
+            continue;
+        }
+
+        // 推断类型：从 detail 中提取初始化表达式
+        std::string inferredType;
+        auto assignPos = sym.detail.find("= ");
+        if (assignPos != std::string::npos) {
+            std::string initExpr = sym.detail.substr(assignPos + 2);
+            if (!initExpr.empty()) {
+                char first = initExpr[0];
+                if (first == '"' || first == '\'') inferredType = "str";
+                else if (first == '[') inferredType = "array";
+                else if (first == '{') inferredType = "dict";
+                else if (initExpr == "true" || initExpr == "false") inferredType = "bool";
+                else if (initExpr == "null") inferredType = "null";
+                else if (std::isdigit(static_cast<unsigned char>(first)) || first == '-') {
+                    if (initExpr.find('.') != std::string::npos) inferredType = "float";
+                    else inferredType = "int";
+                }
+            }
+        }
+
+        if (inferredType.empty())
+            continue;
+
+        // 构建 InlayHint：位置在变量名末尾
+        QJsonObject hint;
+        QJsonObject position;
+        position["line"] = sym.selectionRange.start.line;
+        position["character"] = sym.selectionRange.end.character;
+        hint["position"] = position;
+        hint["label"] = QString::fromStdString(": " + inferredType);
+        hint["kind"] = 1; // Type hint
+        hint["paddingLeft"] = false;
+        hint["paddingRight"] = true;
+
+        result.append(hint);
+    }
+
+    return result;
 }
 
 // ============================================================

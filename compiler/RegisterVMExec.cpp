@@ -133,6 +133,17 @@ VMResult RegisterVM::executeArith(RegOp op, size_t& ip) {
         }
 
         if (!a.isNumber() || !b.isNumber()) {
+            // 拓展二期·语言（运算符重载）：报错前先尝试 instance dunder 分派——
+            // reg(s1) 为类实例且定义了 __add 等方法时注入方法帧（与
+            // Interpreter/StackVM 的同名分派点保持三后端一致）。
+            // 已分派时直接 return（新帧已 push，不推进旧帧 ip，不走 arithDone
+            // 的 notifyStep——分派内部已按方法调用模式 notifyStep）。
+            {
+                VMResult ovr;
+                if (tryOperatorOverload(ip, op, dst, s1, s2, ovr)) {
+                    return ovr;
+                }
+            }
             return runtimeError("算术运算需要数值类型", DiagCodes::kTypeMismatch);
         }
 
@@ -224,6 +235,109 @@ VMResult RegisterVM::executeArith(RegOp op, size_t& ip) {
 arithDone:
     notifyStep(ip, op);
     return VMResult::VM_OK;
+}
+
+// ============================================================
+// 拓展二期·语言：运算符重载（instance 算术 dunder 分派）
+// ------------------------------------------------------------
+// 方法查找仿 executeMethodCallImpl 的继承链循环（含 methodCache），
+// 命中后直接复用 executeCallImpl 注入方法帧：fullArgRegs=[s1,s2]
+//（this=左操作数寄存器，arg=右操作数寄存器），returnReg=dst，
+// returnOffset=4（REG_ADD 系列固定 4 字节）。方法 REG_RETURN 时
+// 结果自动写入调用者帧的 reg(dst)。
+// ============================================================
+bool RegisterVM::tryOperatorOverload(size_t& ip, RegOp op, uint8_t dst, uint8_t s1, uint8_t s2, VMResult& outResult) {
+    const Value& left = reg(s1);
+    if (!left.isInstance()) {
+        return false;
+    }
+    const char* dunderName = nullptr;
+    switch (op) {
+    case RegOp::REG_ADD:
+        dunderName = "__add";
+        break;
+    case RegOp::REG_SUB:
+        dunderName = "__sub";
+        break;
+    case RegOp::REG_MUL:
+        dunderName = "__mul";
+        break;
+    case RegOp::REG_DIV:
+        dunderName = "__div";
+        break;
+    case RegOp::REG_MOD:
+        dunderName = "__mod";
+        break;
+    default:
+        return false;
+    }
+
+    // 沿继承链查找 dunder 方法（仿 executeMethodCallImpl，含 methodCache）
+    const std::string& className = left.className();
+    auto classInfoIt = classInfo_.find(className);
+    std::string foundFunName;
+    bool methodFound = false;
+    if (classInfoIt != classInfo_.end()) {
+        auto cacheIt = classInfoIt->second.methodCache.find(dunderName);
+        if (cacheIt != classInfoIt->second.methodCache.end()) {
+            if (cacheIt->second.empty()) {
+                return false; // 缓存命中“无此方法” → 回退报错
+            }
+            foundFunName = cacheIt->second;
+            methodFound = true;
+        }
+    }
+    if (!methodFound) {
+        std::string searchClass = className;
+        for (int guard = 0; guard < 64 && !searchClass.empty(); ++guard) {
+            auto classIt = classInfo_.find(searchClass);
+            if (classIt == classInfo_.end())
+                break;
+            auto methodIt = classIt->second.methods.find(dunderName);
+            if (methodIt != classIt->second.methods.end()) {
+                foundFunName = methodIt->second;
+                methodFound = true;
+                break;
+            }
+            searchClass = classIt->second.parent;
+        }
+        if (classInfoIt != classInfo_.end()) {
+            classInfoIt->second.methodCache[dunderName] = methodFound ? foundFunName : std::string{};
+        }
+        if (!methodFound) {
+            return false; // 无 dunder 方法 → 回退到“算术运算需要数值类型”报错
+        }
+    }
+
+    // 与 Interpreter/StackVM 一致：运算符方法必须恰好 1 个参数
+    //（RegisterVM 方法 chunk 的 arity 含 this，故要求 arity==2）
+    auto chunkIt = functionChunks_.find(foundFunName);
+    if (chunkIt != functionChunks_.end() &&
+        (chunkIt->second.arity != 2 || chunkIt->second.requiredArity != 2)) {
+        outResult = runtimeError(std::string("运算符方法 ") + dunderName + " 必须恰好接受 1 个参数");
+        return true;
+    }
+
+    // 经 executeCallImpl 注入方法帧：[s1,s2] = [this,arg]，returnOffset=4
+    SmallArgs<uint8_t> fullArgRegs;
+    fullArgRegs.push_back(s1);
+    fullArgRegs.push_back(s2);
+    size_t newIp = ip;
+    VMResult cr = executeCallImpl(newIp, foundFunName, 2, dst, fullArgRegs, 4u, nullptr, true);
+    if (cr != VMResult::VM_OK) {
+        outResult = cr;
+        return true;
+    }
+    if (!frames_.empty()) {
+        frames_.back().isMethodCall = true;
+        frames_.back().isInitCall = false;
+        // receiverReg 保持 -1：运算符方法内 this 字段变异不写回接收者
+        //（与 Interpreter 左值拷贝/StackVM receiverLocalSlot=-1 语义一致）
+    }
+    ip = newIp;
+    notifyStep(ip, op);
+    outResult = VMResult::VM_OK;
+    return true;
 }
 
 // ============================================================

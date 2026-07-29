@@ -579,6 +579,7 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
     // ---- 调用 ----
     case IROp::CALL:
     case IROp::CALL_EXPR:
+    case IROp::TAIL_CALL: // L18 eng-tailcall
     case IROp::METHOD_CALL:
     case IROp::SUPER_CALL:
         return lowerCallOps(instr, ir);
@@ -1153,6 +1154,31 @@ bool RegisterBytecodeBackend::lowerCallOps(const IRInstruction& instr, const IRF
         // AUDIT-BUG-C1 fix: argCount 是数量操作数（合法 0-255），不是寄存器号。
         // 原用 writeReg（含 assert(reg < 32)），argCount >= 32 时 Debug 构建崩溃。
         // 改用 writeByte（无 assert），与 MAKE_CLOSURE:504 一致。
+        chunk_->writeByte(argCount, line);
+        for (uint8_t i = 0; i < argCount; ++i) {
+            if (3 + i >= instr.operands.size())
+                return false;
+            uint8_t argReg = vregToReg(instr.operands[3 + i].index);
+            chunk_->writeReg(argReg, line);
+        }
+        break;
+    }
+    case IROp::TAIL_CALL: {
+        // L18 eng-tailcall: 布局同 CALL，lower 为 REG_TAIL_CALL（后随 IROp::RETURN
+        // lower 为 REG_RETURN dst，供降级路径使用）。
+        if (instr.operands.size() < 3)
+            return false;
+        uint8_t dst = vregToReg(instr.operands[0].index);
+        uint16_t nameIdx = addStringConstant(globalName(ir, instr.operands[1].index), ir);
+        if (instr.operands[2].index > 255) {
+            Logger::Error("RegisterBytecodeBackend: TAIL_CALL 参数数量超过 255 上限", "RegIR");
+            hasError_ = true;
+            return false;
+        }
+        uint8_t argCount = static_cast<uint8_t>(instr.operands[2].index & 0xFF);
+        chunk_->writeOp(RegOp::REG_TAIL_CALL, line);
+        chunk_->writeReg(dst, line);
+        chunk_->writeShort(nameIdx, line);
         chunk_->writeByte(argCount, line);
         for (uint8_t i = 0; i < argCount; ++i) {
             if (3 + i >= instr.operands.size())

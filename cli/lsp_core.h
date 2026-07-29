@@ -347,6 +347,8 @@ private:
     QJsonValue handleRename(const QJsonObject& params);
     QJsonValue handleSignatureHelp(const QJsonObject& params);
     QJsonValue handleSemanticTokens(const QJsonObject& params);
+    QJsonValue handleCodeAction(const QJsonObject& params);   // LSP 二期：codeAction
+    QJsonValue handleInlayHint(const QJsonObject& params);    // LSP 二期：inlayHint
 
     // 通知处理（无 id，可能返回需要发送的通知）
     std::vector<QJsonObject> handleInitialized();

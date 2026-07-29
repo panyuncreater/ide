@@ -1106,16 +1106,17 @@ TEST(ConsistencyDiff, G7_DeepRecursionHitsLimit) {
     EXPECT_EQ(errMsg(rs), errMsg(rr));
 }
 
-// G8: 互递归触发 MAX_FRAMES (256)
-// 不变量:even(1000) 和 odd(1000) 互递归超过 256 帧上限,三后端都应报错。
-TEST(ConsistencyDiff, G8_MutualRecursionHitsFrameLimit) {
+// G8: 互递归深度 1000（L18 eng-tailcall 后语义变更）
+// 不变量:互递归尾调用现由 OP_TAIL_CALL/REG_TAIL_CALL/蹦床帧复用，
+// 深度 1000 > MAX_FRAMES (256) 不再报错，三后端一致正常完成。
+TEST(ConsistencyDiff, G8_MutualRecursionTailCallNoFrameLimit) {
     std::string src = "func even(n) { if (n == 0) { return 1; } return odd(n - 1); }\n"
                       "func odd(n) { if (n == 0) { return 0; } return even(n - 1); }\n"
-                      "even(1000);\n";
+                      "print(even(1000));\n";
     auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
-    EXPECT_TRUE(isRuntimeError(ri));
-    EXPECT_TRUE(isRuntimeError(rs));
-    EXPECT_TRUE(isRuntimeError(rr));
+    EXPECT_EQ(ri, "1");
+    EXPECT_EQ(rs, "1");
+    EXPECT_EQ(rr, "1");
 }
 
 // G9: if 块内声明闭包

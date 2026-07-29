@@ -153,6 +153,12 @@ enum class RegOp : uint8_t {
     // 与 REG_TYPE_CHECK 区别：不抛错，写 bool 到 dst。
     // 用于 TUPLE pattern 类型检查（不匹配时 fall through 而非抛错）。
     REG_TYPE_TEST,
+
+    // L18 eng-tailcall: 互递归尾调用 return g(args)。布局与 REG_CALL 相同
+    //（dst 1B + nameIdx 2B + argCount 1B + argRegs），lowering 在其后紧跟
+    // REG_RETURN dst。运行时目标可帧复用则 TCO（跳过后随 REG_RETURN），
+    // 否则降级为 REG_CALL 语义（结果写 dst，返回后执行 REG_RETURN）。
+    REG_TAIL_CALL, // dst(1B), nameIdx(2B), argCount(1B), arg1, ...
 };
 
 // ============================================================

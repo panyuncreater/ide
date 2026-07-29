@@ -277,6 +277,13 @@ enum class IROp : uint8_t {
     //     永远不会看到 PHI 指令（ssaDestructPass 已消除）。
     //   - 若 lowering 意外遇到 PHI，视为编译器内部错误（assert + 返回失败）。
     PHI,
+
+    // L18 eng-tailcall: 互递归尾调用 return g(args)（g != 当前函数）。
+    // operands: [dest_vreg, name_idx(GLOBAL_NAME), arg_count(IMM), arg1_vreg, ...]
+    // 与 CALL 同布局；后端 lowering 为 OP_TAIL_CALL / REG_TAIL_CALL，紧跟 RETURN dest。
+    // 运行时若目标可帧复用则 TCO（跳过后随 RETURN），否则降级为普通调用
+    //（返回后执行后随 RETURN，语义与 CALL+RETURN 完全等价）。
+    TAIL_CALL,
 };
 
 /// IR 指令

@@ -381,6 +381,7 @@ VMResult RegisterVM::executeOneInstruction() {
     // 调用
     case RegOp::REG_CALL:
     case RegOp::REG_CALL_EXPR:
+    case RegOp::REG_TAIL_CALL: // L18 eng-tailcall
     case RegOp::REG_RETURN:
     case RegOp::REG_RETURN_NULL:
     case RegOp::REG_MAKE_CLOSURE:

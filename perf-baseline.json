@@ -9,40 +9,189 @@
     "closure": 1.5
   },
   "description": "MiniLang CI 性能基线。version 3: 新增 per-category 差异化容忍度 + JIT 后端基准 + IR 优化对比基准。",
-  "note": "elapsed_ms=null 表示基线尚未建立，check 模式将跳过判定。category_tolerance 覆盖全局 tolerance，未列出的 category 使用全局值。",
+  "note": "elapsed_ms 由本地 Debug 构建初始化（2026-07-29）。CI 首次通过后请用 linux-release 数据执行 python scripts/perf_baseline.py update 刷新为精确基线。category_tolerance 覆盖全局 tolerance，未列出的 category 使用全局值。",
   "benchmarks": [
-    {"backend": "Interpreter", "benchmark": "fibonacci",       "category": "recursion", "elapsed_ms": null, "output": "46368"},
-    {"backend": "StackVM",     "benchmark": "fibonacci",       "category": "recursion", "elapsed_ms": null, "output": "46368"},
-    {"backend": "RegisterVM",  "benchmark": "fibonacci",       "category": "recursion", "elapsed_ms": null, "output": "46368"},
-    {"backend": "JIT",         "benchmark": "fibonacci",       "category": "recursion", "elapsed_ms": null, "output": "46368"},
-
-    {"backend": "Interpreter", "benchmark": "large_loop",      "category": "compute",   "elapsed_ms": null, "output": "4999950000"},
-    {"backend": "StackVM",     "benchmark": "large_loop",      "category": "compute",   "elapsed_ms": null, "output": "4999950000"},
-    {"backend": "RegisterVM",  "benchmark": "large_loop",      "category": "compute",   "elapsed_ms": null, "output": "4999950000"},
-    {"backend": "JIT",         "benchmark": "large_loop",      "category": "compute",   "elapsed_ms": null, "output": "4999950000"},
-
-    {"backend": "Interpreter", "benchmark": "string_concat",   "category": "memory",    "elapsed_ms": null, "output": "5000"},
-    {"backend": "StackVM",     "benchmark": "string_concat",   "category": "memory",    "elapsed_ms": null, "output": "5000"},
-    {"backend": "RegisterVM",  "benchmark": "string_concat",   "category": "memory",    "elapsed_ms": null, "output": "5000"},
-
-    {"backend": "Interpreter", "benchmark": "tak",             "category": "recursion", "elapsed_ms": null, "output": "12"},
-    {"backend": "StackVM",     "benchmark": "tak",             "category": "recursion", "elapsed_ms": null, "output": "12"},
-    {"backend": "RegisterVM",  "benchmark": "tak",             "category": "recursion", "elapsed_ms": null, "output": "12"},
-
-    {"backend": "Interpreter", "benchmark": "ackermann",       "category": "recursion", "elapsed_ms": null, "output": "13"},
-    {"backend": "StackVM",     "benchmark": "ackermann",       "category": "recursion", "elapsed_ms": null, "output": "13"},
-    {"backend": "RegisterVM",  "benchmark": "ackermann",       "category": "recursion", "elapsed_ms": null, "output": "13"},
-
-    {"backend": "Interpreter", "benchmark": "bubble_sort",     "category": "container", "elapsed_ms": null, "output": "0"},
-    {"backend": "StackVM",     "benchmark": "bubble_sort",     "category": "container", "elapsed_ms": null, "output": "0"},
-    {"backend": "RegisterVM",  "benchmark": "bubble_sort",     "category": "container", "elapsed_ms": null, "output": "0"},
-
-    {"backend": "Interpreter", "benchmark": "closure_counter", "category": "closure",   "elapsed_ms": null, "output": "50005000"},
-    {"backend": "StackVM",     "benchmark": "closure_counter", "category": "closure",   "elapsed_ms": null, "output": "50005000"},
-    {"backend": "RegisterVM",  "benchmark": "closure_counter", "category": "closure",   "elapsed_ms": null, "output": "50005000"},
-    {"backend": "JIT",         "benchmark": "closure_counter", "category": "closure",   "elapsed_ms": null, "output": "50005000"},
-
-    {"backend": "RegisterVM",  "benchmark": "fibonacci_ir_opt",   "category": "recursion", "elapsed_ms": null, "output": "46368"},
-    {"backend": "RegisterVM",  "benchmark": "fibonacci_ir_noopt", "category": "recursion", "elapsed_ms": null, "output": "46368"}
+    {
+      "backend": "Interpreter",
+      "benchmark": "fibonacci",
+      "category": "recursion",
+      "elapsed_ms": 3741.42,
+      "output": "46368"
+    },
+    {
+      "backend": "StackVM",
+      "benchmark": "fibonacci",
+      "category": "recursion",
+      "elapsed_ms": 820.031,
+      "output": "46368"
+    },
+    {
+      "backend": "RegisterVM",
+      "benchmark": "fibonacci",
+      "category": "recursion",
+      "elapsed_ms": 871.312,
+      "output": "46368"
+    },
+    {
+      "backend": "JIT",
+      "benchmark": "fibonacci",
+      "category": "recursion",
+      "elapsed_ms": 35.272,
+      "output": "46368"
+    },
+    {
+      "backend": "Interpreter",
+      "benchmark": "large_loop",
+      "category": "compute",
+      "elapsed_ms": 529.952,
+      "output": "4999950000"
+    },
+    {
+      "backend": "StackVM",
+      "benchmark": "large_loop",
+      "category": "compute",
+      "elapsed_ms": 307.798,
+      "output": "4999950000"
+    },
+    {
+      "backend": "RegisterVM",
+      "benchmark": "large_loop",
+      "category": "compute",
+      "elapsed_ms": 180.455,
+      "output": "4999950000"
+    },
+    {
+      "backend": "JIT",
+      "benchmark": "large_loop",
+      "category": "compute",
+      "elapsed_ms": 7.853,
+      "output": "4999950000"
+    },
+    {
+      "backend": "Interpreter",
+      "benchmark": "string_concat",
+      "category": "memory",
+      "elapsed_ms": 43.783,
+      "output": "5000"
+    },
+    {
+      "backend": "StackVM",
+      "benchmark": "string_concat",
+      "category": "memory",
+      "elapsed_ms": 22.17,
+      "output": "5000"
+    },
+    {
+      "backend": "RegisterVM",
+      "benchmark": "string_concat",
+      "category": "memory",
+      "elapsed_ms": 17.699,
+      "output": "5000"
+    },
+    {
+      "backend": "Interpreter",
+      "benchmark": "tak",
+      "category": "recursion",
+      "elapsed_ms": 1502.76,
+      "output": "12"
+    },
+    {
+      "backend": "StackVM",
+      "benchmark": "tak",
+      "category": "recursion",
+      "elapsed_ms": 300.943,
+      "output": "12"
+    },
+    {
+      "backend": "RegisterVM",
+      "benchmark": "tak",
+      "category": "recursion",
+      "elapsed_ms": 299.789,
+      "output": "12"
+    },
+    {
+      "backend": "Interpreter",
+      "benchmark": "ackermann",
+      "category": "recursion",
+      "elapsed_ms": 4.882,
+      "output": "13"
+    },
+    {
+      "backend": "StackVM",
+      "benchmark": "ackermann",
+      "category": "recursion",
+      "elapsed_ms": 0.927,
+      "output": "13"
+    },
+    {
+      "backend": "RegisterVM",
+      "benchmark": "ackermann",
+      "category": "recursion",
+      "elapsed_ms": 0.781,
+      "output": "13"
+    },
+    {
+      "backend": "Interpreter",
+      "benchmark": "bubble_sort",
+      "category": "container",
+      "elapsed_ms": 24.918,
+      "output": "0"
+    },
+    {
+      "backend": "StackVM",
+      "benchmark": "bubble_sort",
+      "category": "container",
+      "elapsed_ms": 9.388,
+      "output": "0"
+    },
+    {
+      "backend": "RegisterVM",
+      "benchmark": "bubble_sort",
+      "category": "container",
+      "elapsed_ms": 0.067,
+      "output": "0"
+    },
+    {
+      "backend": "Interpreter",
+      "benchmark": "closure_counter",
+      "category": "closure",
+      "elapsed_ms": 311.778,
+      "output": "50005000"
+    },
+    {
+      "backend": "StackVM",
+      "benchmark": "closure_counter",
+      "category": "closure",
+      "elapsed_ms": 102.595,
+      "output": "50005000"
+    },
+    {
+      "backend": "RegisterVM",
+      "benchmark": "closure_counter",
+      "category": "closure",
+      "elapsed_ms": 77.832,
+      "output": "50005000"
+    },
+    {
+      "backend": "JIT",
+      "benchmark": "closure_counter",
+      "category": "closure",
+      "elapsed_ms": 112.423,
+      "output": "50005000"
+    },
+    {
+      "backend": "RegisterVM",
+      "benchmark": "fibonacci_ir_opt",
+      "category": "recursion",
+      "elapsed_ms": null,
+      "output": "46368"
+    },
+    {
+      "backend": "RegisterVM",
+      "benchmark": "fibonacci_ir_noopt",
+      "category": "recursion",
+      "elapsed_ms": null,
+      "output": "46368"
+    }
   ]
 }

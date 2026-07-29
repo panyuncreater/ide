@@ -842,6 +842,10 @@ private:
     /// OP_CALL / OP_CALL_EXPR 执行：函数调用（thin dispatcher，按 isExpr 分发到 executeCallByName /
     /// executeCallExprValue）
     VMResult executeCall(size_t& ip, bool isExpr);
+    /// L18 eng-tailcall: OP_TAIL_CALL 执行——目标可帧复用则 TCO（保留
+    /// returnIp/basePointer 切换 chunk/ip），否则降级为 executeCall 普通调用
+    ///（字节布局同 OP_CALL，returnIp 指向后随 OP_RETURN，语义等价）。
+    VMResult executeTailCall(size_t& ip);
 
     // ---- R123 fix: executeCall 470 行二次拆分为 7 个 helper（原 470 行 → 每个方法 < 130 行）----
     /// OP_CALL 路径分发器：按函数名查找缓存/classInfo_/input/higher-order/builtin/functionChunks_，
@@ -904,6 +908,16 @@ private:
     /// @return VM_OK 成功 / VM_RUNTIME_ERROR 失败（hasError_ 已设置）
     VMResult invokeClosureSync(const Value& closure, const Value* args, size_t argCount, int line, int column,
                                Value& result);
+
+    /// 拓展二期·语言（运算符重载）：instance 算术 dunder 分派。
+    /// 栈布局 [left,right] 且 left 为 instance 时，若类（含继承链）定义了
+    /// 对应 dunder 方法（__add 等）则按方法调用协议注入新帧（this=left，
+    /// 参数=right，returnIp=ip+1），方法 return 时结果自然回到操作数栈——
+    /// 与 OP_ADD“弹二压一”语义天然吹合。
+    /// @return true 表示已分派（outResult 为 VM_OK 或错误）；false 表示
+    ///         未分派（非 instance 或无 dunder 方法），调用方回退 numericOp。
+    /// 限制（三后端一致）：方法内 this 字段变异不写回接收者；不支持 super。
+    bool tryOperatorOverload(size_t& ip, OpCode op, VMResult& outResult);
 
     /// 执行单条指令的内部实现（供 execute() 和 stepOnce() 共用）
     /// P-2 perf: __forceinline 提示 MSVC 尝试内联到 execute() 主循环，

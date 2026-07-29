@@ -1049,6 +1049,111 @@ template <typename Cmp> Value Interpreter::compareNumericOrString(BinaryOp& node
     return Value(r.value);
 }
 
+// ============================================================
+// 拓展二期·语言：运算符重载（instance 算术 dunder 分派）
+// ------------------------------------------------------------
+// 仿 invokeClosureSync 的简化执行模式：方法有类定义时的 closureEnv，
+// 无快照重建问题。this 绑定后 bindInstance 使裸字段名可解析。
+// 限制（与 VM/RegisterVM 一致）：不支持方法内 super 调用（不压
+// classContextStack_）；方法必须恰好 1 个参数。
+// ============================================================
+bool Interpreter::tryOperatorOverload(BinOpType opType, Value& left, Value& right, int line, int col, Value& out) {
+    if (!left.isInstance()) {
+        return false;
+    }
+    const char* dunderName = nullptr;
+    switch (opType) {
+    case BinOpType::BIN_ADD:
+        dunderName = "__add";
+        break;
+    case BinOpType::BIN_SUB:
+        dunderName = "__sub";
+        break;
+    case BinOpType::BIN_MUL:
+        dunderName = "__mul";
+        break;
+    case BinOpType::BIN_DIV:
+        dunderName = "__div";
+        break;
+    case BinOpType::BIN_MOD:
+        dunderName = "__mod";
+        break;
+    default:
+        return false;
+    }
+    auto clsIt = classRegistry_.find(left.className());
+    if (clsIt == classRegistry_.end()) {
+        return false;
+    }
+    FunDecl* method = findMethod(clsIt->second, dunderName);
+    if (!method) {
+        return false;
+    }
+    if (method->params.size() != 1) {
+        runtimeError(std::string("运算符方法 ") + dunderName + " 必须恰好接受 1 个参数", line, col);
+    }
+
+    if (recursionDepth_ + 1 >= MAX_RECURSION_DEPTH) {
+        runtimeError(ErrorFormat::formatStd(ErrorMessages::kRecursionDepthExceededFmtStd, MAX_RECURSION_DEPTH), line,
+                     col, DiagCodes::kRecursionDepth);
+    }
+    RecursionGuard recursionGuard{recursionDepth_};
+    // 合并类泛型参数（与 invokeMethod 一致），方法体内 T 注解跳过校验
+    std::vector<std::string> mergedTypeParams = clsIt->second.typeParams;
+    for (const auto& tp : method->typeParams) {
+        mergedTypeParams.push_back(tp);
+    }
+    CallFrameGuard frameGuard{*this, method->returnType, /*manageCtx=*/false, mergedTypeParams};
+
+    auto prevEnv = currentEnv_;
+    auto parentEnv = clsIt->second.closureEnv ? clsIt->second.closureEnv : currentEnv_;
+    auto methodEnv = std::make_shared<Environment>(parentEnv);
+
+    struct OpEnvGuard {
+        Interpreter& interp;
+        std::shared_ptr<Environment>& env;
+        std::shared_ptr<Environment>& prev;
+        bool popCallStack = false;
+        ~OpEnvGuard() {
+            if (popCallStack && !interp.callStack_.empty())
+                interp.callStack_.pop_back();
+            if (env)
+                env->closeCapturedVariables();
+            interp.currentEnv_ = prev;
+        }
+    } envGuard{*this, methodEnv, prevEnv};
+
+    methodEnv->define("this", left);
+    // 参数类型注解校验（与 invokeMethod 绑定循环一致）
+    if (!method->paramTypes.empty() && !method->paramTypes[0].empty()) {
+        checkType(
+            right, method->paramTypes[0],
+            [&] { return std::string("方法 ") + dunderName + " 的参数 " + method->params[0]; }, line, col);
+    }
+    methodEnv->define(method->params[0], right);
+    // H-新2 fix 同模式：bindInstance 必须在全部 define 之后（避免 rehash 悬空）
+    Value* thisInEnv = const_cast<Value*>(methodEnv->get("this"));
+    if (thisInEnv) {
+        methodEnv->bindInstance(thisInEnv);
+    }
+
+    callStack_.emplace_back(left.className() + "." + dunderName, methodEnv, line, recursionDepth_);
+    envGuard.popCallStack = true;
+    currentEnv_ = methodEnv;
+
+    // 非蹦床上下文：运算符方法内 return this.__add(...) 不做 TCO
+    TcoScopeGuard tcoGuard{*this, nullptr, std::string(), /*isMethod=*/false, /*enabled=*/false};
+    try {
+        executeFunctionBody(static_cast<Block&>(*method->body));
+        out = std::move(lastValue_);
+    } catch (ReturnException& e) {
+        // 方法体 return 抵达此处（executeFunctionBody 不捕获 ReturnException，
+        // 与 invokeClosureSync 的 catch 模式一致）
+        out = std::move(e.returnValue);
+    }
+    return true;
+}
+
 Value Interpreter::numericBinaryOp(BinOpType opType, Value left, Value right, int line, int col) {
     // 字符串拼接（仅加法）
     if (opType == BinOpType::BIN_ADD) {
@@ -1078,7 +1183,14 @@ Value Interpreter::numericBinaryOp(BinOpType opType, Value left, Value right, in
     }
 
     // 非数值类型检查（字符串拼接已在上面处理）
+    // 拓展二期·语言（运算符重载）：报错前先尝试 instance dunder 分派——
+    // 左操作数为类实例且定义了 __add 等方法时调用之（与 VM/RegisterVM
+    // 的同名分派点保持三后端一致）。
     if (!left.isNumber() || !right.isNumber()) {
+        Value overloadResult;
+        if (tryOperatorOverload(opType, left, right, line, col, overloadResult)) {
+            return overloadResult;
+        }
         runtimeError("算术运算需要数值类型", line, col);
     }
 
@@ -2395,6 +2507,29 @@ void Interpreter::visitReturnStmt(ReturnStmt& node) {
                             args.push_back(evaluate(a.get()));
                         throw TailCallSignal(std::move(args));
                     }
+                }
+            }
+        } else if (info.kind == TCO::TailCallInfo::Kind::GeneralCall && !tcoIsMethod_ &&
+                   currentFunctionReturnType_.empty()) {
+            // L18 eng-tailcall: 互递归/一般尾调用 return g(args)。目标为普通
+            // 函数闭包（非生成器/非类构造）时帧复用：蹦床循环切换目标 decl，
+            // 信号携带目标闭包值供蹦床重建环境（closureEnv/capturedVars）。
+            // 条件与 VM 路径对齐：非方法体/无返回类型注解；生成器/类构造/
+            // 内建同名目标不抛信号，回退普通递归（VM 侧同样降级）。
+            const Value* callee = currentEnv_->get(info.call->name);
+            if (callee && callee->isClosure() && callee->closureBody() && callee->closureBody() != tcoDecl_ &&
+                !callee->closureBody()->isGenerator &&
+                classRegistry_.find(info.call->name) == classRegistry_.end()) {
+                FunDecl* targetDecl = callee->closureBody();
+                size_t argCount = info.call->arguments.size();
+                if (argCount >= static_cast<size_t>(targetDecl->requiredParamCount) &&
+                    argCount <= targetDecl->params.size()) {
+                    std::vector<Value> args;
+                    args.reserve(argCount);
+                    for (auto& a : info.call->arguments)
+                        args.push_back(evaluate(a.get()));
+                    throw TailCallSignal(std::move(args), callee->closureBodyShared(),
+                                         const_cast<const Value&>(*callee).closureName(), *callee);
                 }
             }
         }

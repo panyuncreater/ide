@@ -402,11 +402,17 @@ TEST(AstIRBuilderFunction, NestedFunCallEmitsMultipleCalls) {
     ASSERT_NE(quad, nullptr);
     auto ops = flattenOps(*quad);
     size_t callCount = 0;
+    size_t tailCallCount = 0;
     for (auto op : ops) {
         if (op == IROp::CALL)
             ++callCount;
+        if (op == IROp::TAIL_CALL)
+            ++tailCallCount;
     }
-    EXPECT_EQ(callCount, 2u);
+    // L18 eng-tailcall: return double(double(x)) 的外层调用是尾调用，
+    // 现在 emit 为 TAIL_CALL（内层仍为 CALL），共 2 个调用指令。
+    EXPECT_EQ(callCount, 1u);
+    EXPECT_EQ(tailCallCount, 1u);
 }
 
 // ============================================================

@@ -16,6 +16,7 @@
 #include <cassert>
 #include <cmath>
 #include <filesystem> // L11: 源码路径推导
+#include <functional> // 穷尽性检查: std::function 递归 lambda
 #include <sstream>
 #include <unordered_set>
 
@@ -2293,6 +2294,32 @@ void AstIRBuilder::visitReturnStmt(ReturnStmt* node) {
             tco.kind = TCO::TailCallInfo::Kind::None;
         }
     }
+    // L18 eng-tailcall: 互递归/一般尾调用 return g(args)（与直接路径对齐）。
+    // 策略：正常 visitNode 编译调用（继承遮蔽/upvalue/全局分流），若当前块
+    // 尾部恰为同名 CALL 则原地改写为 TAIL_CALL（operands 布局相同），再 emit
+    // RETURN dest。后端 lowering 为 OP_TAIL_CALL/REG_TAIL_CALL，运行时帧复用或降级。
+    // 限制条件与直接路径一致：非方法体/无返回类型注解/非生成器/不在 try 内。
+    if (tco.kind == TCO::TailCallInfo::Kind::GeneralCall && tryDepth_ == 0 && inFunction_ &&
+        !currentFunctionIsMethod_ && currentFunctionReturnType_.empty() &&
+        (currentFunctionDecl_ == nullptr || !currentFunctionDecl_->isGenerator)) {
+        IROperand val = visitNode(node->value.get());
+        auto& instrs = currentBlock_->instructions;
+        if (!instrs.empty()) {
+            IRInstruction& last = instrs.back();
+            if (last.op == IROp::CALL && last.operands.size() >= 3 &&
+                last.operands[1].index < ir_->globalNames.size() &&
+                ir_->globalNames[last.operands[1].index] == tco.call->name &&
+                last.operands[2].index == tco.call->arguments.size() && !last.operands.empty() &&
+                last.operands[0].kind == IROperandKind::VIRTUAL && last.operands[0].index == val.index) {
+                last.op = IROp::TAIL_CALL;
+            }
+        }
+        emitIR(IROp::RETURN, {val}, node->line);
+        return;
+    }
+    if (tco.kind == TCO::TailCallInfo::Kind::GeneralCall) {
+        tco.kind = TCO::TailCallInfo::Kind::None; // 条件不满足：回退普通 return 路径
+    }
     if (tco.kind != TCO::TailCallInfo::Kind::None && tryDepth_ == 0 && currentFunctionDecl_ != nullptr) {
         const size_t paramCount = currentFunctionDecl_->params.size();
         // IR 路径方法帧布局：slot 0 = this，slot 1.. = params（字段不占 slot）
@@ -2904,6 +2931,60 @@ IROperand AstIRBuilder::emitMatchCaseBody(ASTNode* body, int nodeLine) {
 }
 
 IROperand AstIRBuilder::visitMatchExpr(MatchExpr* node) {
+    // ---- 穷尽性检查（编译期）----
+    // 扫描所有 case 的 VARIANT pattern，确定匹配的 enum 名称，
+    // 然后检查是否覆盖了所有 variant（或含 wildcard/default）。
+    {
+        std::string matchedEnumName;
+        std::unordered_set<std::string> coveredVariants;
+        bool hasWildcardOrDefault = false;
+
+        for (const auto& mc : node->cases) {
+            if (mc.isDefault || !mc.pattern) {
+                hasWildcardOrDefault = true;
+                continue;
+            }
+            // 递归收集 VARIANT pattern 覆盖的 variant 名
+            std::function<void(const MatchPattern&)> collectVariants = [&](const MatchPattern& pat) {
+                if (pat.kind == MatchPatternKind::WILDCARD || pat.kind == MatchPatternKind::VARIABLE) {
+                    hasWildcardOrDefault = true;
+                } else if (pat.kind == MatchPatternKind::VARIANT) {
+                    if (matchedEnumName.empty() && !pat.enumName.empty())
+                        matchedEnumName = pat.enumName;
+                    if (pat.enumName == matchedEnumName)
+                        coveredVariants.insert(pat.variantName);
+                } else if (pat.kind == MatchPatternKind::OR) {
+                    for (const auto& sub : pat.subPatterns)
+                        if (sub) collectVariants(*sub);
+                }
+            };
+            collectVariants(*mc.pattern);
+        }
+
+        // 仅当匹配的是已知 enum 且无 wildcard/default 时检查穷尽性
+        if (!matchedEnumName.empty() && !hasWildcardOrDefault) {
+            for (const auto& info : enumInfos_) {
+                if (info.name == matchedEnumName) {
+                    std::vector<std::string> missing;
+                    for (const auto& v : info.variants) {
+                        if (coveredVariants.find(v.name) == coveredVariants.end())
+                            missing.push_back(v.name);
+                    }
+                    if (!missing.empty()) {
+                        std::string msg = "match 未覆盖 enum " + matchedEnumName + " 的全部变体，缺少: ";
+                        for (size_t i = 0; i < missing.size(); ++i) {
+                            if (i > 0) msg += ", ";
+                            msg += missing[i];
+                        }
+                        irDiagnostics_.addWarning(msg, node->line, node->column,
+                                                  DiagSource::Compiler, "non-exhaustive-match");
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
     IROperand scrutVReg = visitNode(node->scrutinee.get());
     // R99 L1 fix: 将 scrut 存入临时 slot，每个 case 通过 LOAD_LOCAL 重新加载。
     // 原实现直接引用 scrutVReg，但 IR→StackVM lowering 假设 vreg 已在栈上。

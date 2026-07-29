@@ -616,6 +616,13 @@ private:
     // 函数内可检测独占所有权（tryGetMutableString）做原地 append。
     Value numericBinaryOp(BinOpType opType, Value left, Value right, int line, int col);
 
+    /// 拓展二期·语言（运算符重载）：instance 算术分派 __add/__sub/__mul/__div/__mod。
+    /// 左操作数为 instance 且类（含继承链）定义了对应 dunder 方法时调用
+    /// obj.__op(right) 并将返回值写入 out，返回 true；未定义返回 false
+    ///（调用方回退到原“算术运算需要数值类型”报错）。
+    /// 限制（MVP，三后端一致）：方法内不支持 super 调用；方法必须恰好 1 参。
+    bool tryOperatorOverload(BinOpType opType, Value& left, Value& right, int line, int col, Value& out);
+
     /// P1-2 fix: 比较运算（LT/GT/LTE/GTE）共用模板，消除 4 处重复样板
     template <typename Cmp> Value compareNumericOrString(BinaryOp& node, Cmp cmp);
 

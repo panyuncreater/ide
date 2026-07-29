@@ -1377,18 +1377,25 @@ extern "C" void jitMemberGetWithIC(JitContext* ctx, const char* fieldName, uint6
         auto* backend = static_cast<JITBackend*>(backendPtr);
         if (callSiteId < backend->memberGetIC_.size()) {
             auto& entry = backend->memberGetIC_[callSiteId];
-            if (entry.cachedInstancePtr == instPtr && entry.cachedFieldValuePtr != nullptr) {
-                // cache 命中：直接从字段指针读取，跳过 map lookup
-                Value result = *entry.cachedFieldValuePtr; // 拷贝（addRef）
-                sp += 1;                                   // pop obj
-                sp -= 1;                                   // push result
-                *sp = valueToBits(result);
-                ctx->stackTop = sp;
-                backend->icHitCount_++;
-                return;
+
+            // PIC 查找：megamorphic 直接走慢速路径
+            if (!entry.megamorphic) {
+                const Value* cached = entry.lookup(instPtr);
+                if (cached != nullptr) {
+                    // PIC 命中：直接从字段指针读取，跳过 map lookup
+                    Value result = *cached; // 拷贝（addRef）
+                    sp += 1;                // pop obj
+                    sp -= 1;                // push result
+                    *sp = valueToBits(result);
+                    ctx->stackTop = sp;
+                    backend->icHitCount_++;
+                    return;
+                }
+            } else {
+                backend->icMegamorphicCount_++;
             }
         }
-        // cache 未命中：走慢速路径并更新 cache
+        // PIC 未命中（或 megamorphic）：走慢速路径并尝试更新 PIC
         backend->icMissCount_++;
         // 关键：使用 std::as_const(obj).fields() 调用 const 重载，避免 ensureUnique COW
         const auto& fields = std::as_const(obj).fields();
@@ -1399,13 +1406,11 @@ extern "C" void jitMemberGetWithIC(JitContext* ctx, const char* fieldName, uint6
             sp -= 1;                   // push result
             *sp = valueToBits(result);
             ctx->stackTop = sp;
-            // 更新 cache：记录 (Instance 地址, 字段 Value 指针)
+            // 更新 PIC：插入 (Instance 地址, 字段 Value 指针)
             // 安全性：InstanceData 由全局变量/局部变量持有，不会被释放；
             // unordered_map node 在 erase 前地址稳定；MiniLang 字段不被 erase。
             if (callSiteId < backend->memberGetIC_.size()) {
-                auto& entry = backend->memberGetIC_[callSiteId];
-                entry.cachedInstancePtr = instPtr;
-                entry.cachedFieldValuePtr = &(it->second);
+                backend->memberGetIC_[callSiteId].insert(instPtr, &(it->second));
             }
             return;
         }
@@ -1607,7 +1612,7 @@ extern "C" int64_t jitMethodReturn(JitContext* ctx, JitFrame* framePtr, int64_t 
 /// @param receiverSlotPtr 接收者 slot 指针（null=无 writeBack，如临时表达式）
 /// @param superClassName 父类名（仅 isSuperCall=1 时有效，null=非 super 调用）
 extern "C" void jitMethodCall(JitContext* ctx, const char* methodName, int64_t packedArgs, int64_t* receiverSlotPtr,
-                              const char* superClassName) {
+                              const char* superClassName, uint64_t callSiteId, void* backendPtr) {
     if (!ctx || !ctx->stackTop || !methodName) {
         return;
     }
@@ -1642,63 +1647,85 @@ extern "C" void jitMethodCall(JitContext* ctx, const char* methodName, int64_t p
         return;
     }
 
-    // 3. 沿继承链查找方法
-    //    super 调用：从父类开始查找
-    //    普通调用：从实例类开始查找
-    std::string searchClassName;
-    if (isSuperCall && superClassName) {
-        // super 调用：通过编译时编码的父类名查找
-        std::string superName(superClassName);
-        auto clsIt = ctx->classInfoPtr->find(superName);
-        if (clsIt == ctx->classInfoPtr->end() || clsIt->second.superClassName.empty()) {
+    // 3. 方法调用 IC：缓存 (className) → JitMethodInfo* 避免继承链遍历
+    //    仅对非 super 调用启用（super 调用需从父类开始查找，语义不同）
+    auto* backend = backendPtr ? static_cast<JITBackend*>(backendPtr) : nullptr;
+    const JitMethodInfo* foundMethod = nullptr;
+
+    if (!isSuperCall && backend && callSiteId < backend->methodCallIC_.size()) {
+        auto& icEntry = backend->methodCallIC_[callSiteId];
+        const char* classPtr = receiver.className().c_str();
+        if (!icEntry.megamorphic) {
+            foundMethod = icEntry.lookup(classPtr);
+            if (foundMethod) {
+                backend->methodIcHitCount_++;
+                // IC 命中：跳过继承链查找，直接进入参数校验
+                goto method_found;
+            }
+        }
+        backend->methodIcMissCount_++;
+    }
+
+    // 4. 慢速路径：沿继承链查找方法
+    {
+        std::string searchClassName;
+        if (isSuperCall && superClassName) {
+            std::string superName(superClassName);
+            auto clsIt = ctx->classInfoPtr->find(superName);
+            if (clsIt == ctx->classInfoPtr->end() || clsIt->second.superClassName.empty()) {
+                if (ctx->hasError && ctx->errorBuffer) {
+                    *ctx->hasError = true;
+                    *ctx->errorBuffer = "类 " + superName + " 没有父类，不能使用 super";
+                }
+                ctx->stackTop = callerSpAfterPop;
+                return;
+            }
+            searchClassName = clsIt->second.superClassName;
+        } else {
+            searchClassName = receiver.className();
+        }
+
+        for (int guard = 0; guard < 64 && !searchClassName.empty(); ++guard) {
+            std::string key = searchClassName + "." + methodName;
+            auto it = ctx->methodEntriesPtr->find(key);
+            if (it != ctx->methodEntriesPtr->end()) {
+                foundMethod = &it->second;
+                break;
+            }
+            auto clsIt = ctx->classInfoPtr->find(searchClassName);
+            if (clsIt == ctx->classInfoPtr->end())
+                break;
+            searchClassName = clsIt->second.superClassName;
+        }
+
+        if (!foundMethod) {
             if (ctx->hasError && ctx->errorBuffer) {
                 *ctx->hasError = true;
-                *ctx->errorBuffer = "类 " + superName + " 没有父类，不能使用 super";
+                *ctx->errorBuffer = "类 " + receiver.className() + " 没有方法 " + std::string(methodName);
             }
             ctx->stackTop = callerSpAfterPop;
             return;
         }
-        searchClassName = clsIt->second.superClassName;
-    } else {
-        searchClassName = receiver.className();
+
+        // 更新方法调用 IC（仅非 super 调用）
+        if (!isSuperCall && backend && callSiteId < backend->methodCallIC_.size()) {
+            backend->methodCallIC_[callSiteId].insert(receiver.className().c_str(), foundMethod);
+        }
     }
 
-    const JitMethodInfo* foundMethod = nullptr;
-    for (int guard = 0; guard < 64 && !searchClassName.empty(); ++guard) {
-        std::string key = searchClassName + "." + methodName;
-        auto it = ctx->methodEntriesPtr->find(key);
-        if (it != ctx->methodEntriesPtr->end()) {
-            foundMethod = &it->second;
-            break;
-        }
-        // 查找父类
-        auto clsIt = ctx->classInfoPtr->find(searchClassName);
-        if (clsIt == ctx->classInfoPtr->end())
-            break;
-        searchClassName = clsIt->second.superClassName;
-    }
-
-    if (!foundMethod) {
-        if (ctx->hasError && ctx->errorBuffer) {
-            *ctx->hasError = true;
-            *ctx->errorBuffer = "类 " + receiver.className() + " 没有方法 " + std::string(methodName);
-        }
-        ctx->stackTop = callerSpAfterPop;
-        return;
-    }
+method_found:
 
     // R157: lazy compilation — entryPtr 为 null 时触发按需编译
     // lazyMode_ 下 compileAllChunks 将方法 chunk 的 entryPtr 置空，
     // 首次方法调用时通过 backendPtr 回调 triggerLazyCompile 编译该 chunk。
     if (foundMethod->entryPtr == nullptr) {
-        auto* backend = static_cast<JITBackend*>(ctx->backendPtr);
         if (backend) {
             // 用完整 key（"Class.method"）触发 lazy compilation
-            std::string fullKey = searchClassName + "." + methodName;
+            std::string fullKey = receiver.className() + "." + methodName;
             JitEntryFn lazyEntry = backend->triggerLazyCompile(fullKey);
             if (lazyEntry) {
                 // 编译成功，重新查找（entryPtr 已更新）
-                std::string rekey = searchClassName + "." + methodName;
+                std::string rekey = receiver.className() + "." + methodName;
                 auto reIt = ctx->methodEntriesPtr->find(rekey);
                 if (reIt != ctx->methodEntriesPtr->end()) {
                     foundMethod = &reIt->second;
@@ -1832,7 +1859,6 @@ extern "C" void jitMethodCall(JitContext* ctx, const char* methodName, int64_t p
 
     // R156: 推入空 upvalues（方法调用不携带闭包 upvalues，但需保持 frameUpvaluesStack_ 对齐）
     {
-        auto* backend = static_cast<JITBackend*>(ctx->backendPtr);
         if (backend) {
             if (backend->frameUpvaluesStack_.size() <= idx) {
                 backend->frameUpvaluesStack_.resize(idx + 1);

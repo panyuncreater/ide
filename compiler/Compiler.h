@@ -144,12 +144,15 @@ public:
 private:
     // ARCH-06: IR 中间层状态
     bool useIR_ = false;                 // 是否启用 IR 路径（实验性，默认关闭）
-    bool irOptimize_ = false;            // 是否启用 IR 优化 pass（方向二）。
-                                         // 拓展二期审计（2026-07-28）：尝试默认开启时发现
-                                         // PerfBenchmark.Ackermann_RegisterVM 挂死（>300s）——
-                                         // 深度互递归下 inlinePass/SSA 优化链存在真实缺陷，
-                                         // 默认开启前需先修复该问题（复现：setIROptimize(true)+
-                                         // setUseRegisterVM(true) 跑 ackermann(2,3)）。维持默认关。
+    bool irOptimize_ = true;             // 是否启用 IR 优化 pass（方向二）。
+                                         // L17: 默认启用（eng-gvnlicm）。此前默认关的根因是
+                                         // PerfBenchmark.Ackermann_RegisterVM 挂死——licmPass 对
+                                         // 尾递归→循环转换产生的 header=entry 多循环缺少 preheader
+                                         // 支配性校验，候选指令在回边源块间乒乓迁移不收敛。
+                                         // 已修复（IRSSA.cpp licmPass：dominates(preheader,header)
+                                         // 前提校验 + 不动点燃料上限），回归锁：IROptRegression.*。
+                                         // 注意：仅当 useIR_ / useRegisterVM_ 启用时生效，
+                                         // 默认 compile() 直接路径不受影响。
     bool irSSAOptimize_ = true;          // L16: SSA 高级优化默认启用（GVN/LICM/内联，仅寄存器式后端）。
                                          //   仅当 irOptimize_=true 时生效。
                                          //   验证机制：ssaConstructPass 返回 false（无 LOCAL 变量需 PHI）时
@@ -446,6 +449,9 @@ private:
     // 编译时用 `$lambda_N` 作为 functionChunks_/identifierIndex 的内部 key
     // （$ 不在标识符首字符集中，合成名不会与用户变量名冲突）
     int lambdaCounter_ = 0;
+    // L18 lang-constfun: 顶层 const fun 注册表（name → 非拥有 FunDecl 指针，
+    // AST 编译期间存活）。visitFunCall 据此对实参全字面量调用编译期折叠。
+    std::unordered_map<std::string, FunDecl*> constFunDecls_;
 
     // A2/B4: 全局变量整数槽位管理（委托给 GlobalSlotAllocator）
     GlobalSlotAllocator globalSlotAllocator_;

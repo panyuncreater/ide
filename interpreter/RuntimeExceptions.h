@@ -95,8 +95,18 @@ public:
 class TailCallSignal : public std::runtime_error {
 public:
     std::vector<Value> args;
+    // L18 eng-tailcall: 互递归目标。非空时蹦床循环切换到目标 FunDecl；
+    // targetClosure 携带目标闭包值（浅拷贝共享 ClosureData），蹦床用其
+    // closureEnv/capturedVars 重建目标环境（复用现有 rebuild 机制）。
+    // 空 = 自递归（原语义不变）。
+    std::shared_ptr<FunDecl> target;
+    std::string targetName;
+    Value targetClosure;
 
     explicit TailCallSignal(std::vector<Value> a) : std::runtime_error("tailcall"), args(std::move(a)) {}
+    TailCallSignal(std::vector<Value> a, std::shared_ptr<FunDecl> t, std::string tn, Value tc)
+        : std::runtime_error("tailcall"), args(std::move(a)), target(std::move(t)), targetName(std::move(tn)),
+          targetClosure(std::move(tc)) {}
 };
 
 /// 调试终止异常（用户点击停止按钮时抛出）

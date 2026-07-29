@@ -538,3 +538,274 @@ TEST(NamespaceImport, ThreeBackendConsistency_MultipleNamespaces) {
     EXPECT_EQ(runRegVM_IRWithBuiltinModules(src), expected);
     EXPECT_EQ(runInterpreterWithBuiltinModules(src), expected);
 }
+
+// ============================================================
+// 拓展二期·语言：std/result — Result/Option 错误处理模块
+// ============================================================
+
+TEST(BuiltinModulesResult, RegistryContainsStdResult) {
+    EXPECT_TRUE(BuiltinModuleRegistry::isBuiltinModule("std/result"));
+    EXPECT_FALSE(BuiltinModuleRegistry::getSource("std/result").empty());
+}
+
+TEST(BuiltinModulesResult, OkErrConstructAndQuery_AllBackends) {
+    std::string src = "import { Ok, Err, is_ok, is_err } from \"std/result\";"
+                      "var a = Ok(42);"
+                      "var b = Err(\"boom\");"
+                      "print(is_ok(a));"
+                      "print(is_err(a));"
+                      "print(is_ok(b));"
+                      "print(is_err(b));";
+    std::string expected = "truefalsefalsetrue";
+    EXPECT_EQ(runWithBuiltinModules(src), expected);
+    EXPECT_EQ(runStackVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runRegVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runInterpreterWithBuiltinModules(src), expected);
+}
+
+TEST(BuiltinModulesResult, UnwrapAndUnwrapOr_AllBackends) {
+    std::string src = "import { Ok, Err, unwrap, unwrap_or, unwrap_err } from \"std/result\";"
+                      "print(unwrap(Ok(7)));"
+                      "print(unwrap_or(Err(\"e\"), -1));"
+                      "print(unwrap_or(Ok(3), -1));"
+                      "print(unwrap_err(Err(\"bad\")));";
+    std::string expected = "7-13bad";
+    EXPECT_EQ(runWithBuiltinModules(src), expected);
+    EXPECT_EQ(runStackVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runRegVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runInterpreterWithBuiltinModules(src), expected);
+}
+
+TEST(BuiltinModulesResult, UnwrapErrThrowsCatchable_AllBackends) {
+    // unwrap(Err) 抛出 → try/catch 捕获（传播语义的运行时基础）
+    std::string src = "import { Err, unwrap } from \"std/result\";"
+                      "try {"
+                      "    unwrap(Err(\"oops\"));"
+                      "    print(\"unreached\");"
+                      "} catch (e) {"
+                      "    print(\"caught\");"
+                      "}";
+    std::string expected = "caught";
+    EXPECT_EQ(runWithBuiltinModules(src), expected);
+    EXPECT_EQ(runStackVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runRegVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runInterpreterWithBuiltinModules(src), expected);
+}
+
+TEST(BuiltinModulesResult, MapOkHigherOrder_AllBackends) {
+    // map_ok 高阶组合子：Ok 变换，Err 短路传递
+    std::string src = "import { Ok, Err, map_ok, unwrap, is_err } from \"std/result\";"
+                      "fun double(x) { return x * 2; }"
+                      "print(unwrap(map_ok(Ok(21), double)));"
+                      "print(is_err(map_ok(Err(\"e\"), double)));";
+    std::string expected = "42true";
+    EXPECT_EQ(runWithBuiltinModules(src), expected);
+    EXPECT_EQ(runStackVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runRegVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runInterpreterWithBuiltinModules(src), expected);
+}
+
+TEST(BuiltinModulesResult, OptionSomeNone_AllBackends) {
+    std::string src = "import { Some, None, is_some, is_none, option_or } from \"std/result\";"
+                      "var s = Some(5);"
+                      "var n = None();"
+                      "print(is_some(s));"
+                      "print(is_none(n));"
+                      "print(option_or(s, 0));"
+                      "print(option_or(n, 0));";
+    std::string expected = "truetrue50";
+    EXPECT_EQ(runWithBuiltinModules(src), expected);
+    EXPECT_EQ(runStackVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runRegVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runInterpreterWithBuiltinModules(src), expected);
+}
+
+TEST(BuiltinModulesResult, ErrorPropagationPattern_AllBackends) {
+    // 完整传播模式演示：逐层 is_err 检查后提前返回 Err（? 运算符的手写等价形式）
+    std::string src = "import { Ok, Err, is_err, unwrap } from \"std/result\";"
+                      "fun safe_div(a, b) {"
+                      "    if (b == 0) { return Err(\"div by zero\"); }"
+                      "    return Ok(a / b);"
+                      "}"
+                      "fun compute(x) {"
+                      "    var r1 = safe_div(100, x);"
+                      "    if (is_err(r1)) { return r1; }"
+                      "    var r2 = safe_div(unwrap(r1), 2);"
+                      "    if (is_err(r2)) { return r2; }"
+                      "    return Ok(unwrap(r2) + 1);"
+                      "}"
+                      "print(unwrap(compute(5)));"
+                      "print(is_err(compute(0)));";
+    // 100/5=20, 20/2=10, 10+1=11
+    std::string expected = "11true";
+    EXPECT_EQ(runWithBuiltinModules(src), expected);
+    EXPECT_EQ(runStackVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runRegVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runInterpreterWithBuiltinModules(src), expected);
+}
+
+// ============================================================
+// 拓展二期·语言：? 传播运算符（expr? → __qmark_unwrap 脱糖）
+// ============================================================
+
+TEST(QmarkOperator, UnwrapsOkAndSome_AllBackends) {
+    std::string src = "import { Ok, Some } from \"std/result\";"
+                      "print(Ok(7)?);"
+                      "print(Some(5)?);";
+    std::string expected = "75";
+    EXPECT_EQ(runWithBuiltinModules(src), expected);
+    EXPECT_EQ(runStackVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runRegVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runInterpreterWithBuiltinModules(src), expected);
+}
+
+TEST(QmarkOperator, PropagatesErrCatchable_AllBackends) {
+    // Err? 抛出 → try/catch 捕获（异常式传播）
+    std::string src = "import { Err } from \"std/result\";"
+                      "try {"
+                      "    var x = Err(\"boom\")?;"
+                      "    print(\"unreached\");"
+                      "} catch (e) {"
+                      "    print(\"caught\");"
+                      "}";
+    std::string expected = "caught";
+    EXPECT_EQ(runWithBuiltinModules(src), expected);
+    EXPECT_EQ(runStackVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runRegVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runInterpreterWithBuiltinModules(src), expected);
+}
+
+TEST(QmarkOperator, PropagatesNoneCatchable_AllBackends) {
+    std::string src = "import { None } from \"std/result\";"
+                      "try {"
+                      "    var x = None()?;"
+                      "    print(\"unreached\");"
+                      "} catch (e) {"
+                      "    print(\"caught-none\");"
+                      "}";
+    std::string expected = "caught-none";
+    EXPECT_EQ(runWithBuiltinModules(src), expected);
+    EXPECT_EQ(runStackVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runRegVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runInterpreterWithBuiltinModules(src), expected);
+}
+
+TEST(QmarkOperator, ChainsWithCombinators_AllBackends) {
+    // ? 作为后缀与高阶组合子链式搭配
+    std::string src = "import { Ok, map_ok } from \"std/result\";"
+                      "fun double(x) { return x * 2; }"
+                      "print(map_ok(Ok(21), double)?);";
+    std::string expected = "42";
+    EXPECT_EQ(runWithBuiltinModules(src), expected);
+    EXPECT_EQ(runStackVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runRegVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runInterpreterWithBuiltinModules(src), expected);
+}
+
+TEST(QmarkOperator, RejectsNonResultValue_AllBackends) {
+    // 非 Result/Option 值使用 ? → 运行时错误（可捕获）
+    std::string src = "try {"
+                      "    var x = 42?;"
+                      "    print(\"unreached\");"
+                      "} catch (e) {"
+                      "    print(\"type-err\");"
+                      "}";
+    std::string expected = "type-err";
+    EXPECT_EQ(runWithBuiltinModules(src), expected);
+    EXPECT_EQ(runStackVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runRegVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runInterpreterWithBuiltinModules(src), expected);
+}
+
+TEST(QmarkOperator, PropagationChainRewrite_AllBackends) {
+    // 用 ? 改写 ErrorPropagationPattern：传播链由外层 try/catch 收口
+    std::string src = "import { Ok, Err } from \"std/result\";"
+                      "fun safe_div(a, b) {"
+                      "    if (b == 0) { return Err(\"div by zero\"); }"
+                      "    return Ok(a / b);"
+                      "}"
+                      "fun compute(x) {"
+                      "    var v1 = safe_div(100, x)?;"
+                      "    var v2 = safe_div(v1, 2)?;"
+                      "    return v2 + 1;"
+                      "}"
+                      "print(compute(5));"
+                      "try { print(compute(0)); } catch (e) { print(\"propagated\"); }";
+    std::string expected = "11propagated";
+    EXPECT_EQ(runWithBuiltinModules(src), expected);
+    EXPECT_EQ(runStackVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runRegVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runInterpreterWithBuiltinModules(src), expected);
+}
+
+// ============================================================
+// 拓展二期·语言：std/bigint — 字符串十进制大数（int 溢出提升演示）
+// ============================================================
+
+TEST(BuiltinModulesBigint, RegistryContainsStdBigint) {
+    EXPECT_TRUE(BuiltinModuleRegistry::isBuiltinModule("std/bigint"));
+    EXPECT_FALSE(BuiltinModuleRegistry::getSource("std/bigint").empty());
+}
+
+TEST(BuiltinModulesBigint, AddWithCarry_AllBackends) {
+    std::string src = "import { badd } from \"std/bigint\";"
+                      "print(badd(\"999\", \"1\"));"
+                      "print(badd(\"12345\", \"67890\"));";
+    std::string expected = "100080235"; // 1000 拼 80235
+    EXPECT_EQ(runWithBuiltinModules(src), expected);
+    EXPECT_EQ(runStackVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runRegVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runInterpreterWithBuiltinModules(src), expected);
+}
+
+TEST(BuiltinModulesBigint, MultiplyStripsLeadingZeros_AllBackends) {
+    std::string src = "import { bmul } from \"std/bigint\";"
+                      "print(bmul(\"123\", \"456\"));"
+                      "print(bmul(\"0\", \"999\"));";
+    std::string expected = "560880"; // 56088 拼 0
+    EXPECT_EQ(runWithBuiltinModules(src), expected);
+    EXPECT_EQ(runStackVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runRegVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runInterpreterWithBuiltinModules(src), expected);
+}
+
+TEST(BuiltinModulesBigint, CompareOrdering_AllBackends) {
+    std::string src = "import { bcmp } from \"std/bigint\";"
+                      "print(bcmp(\"100\", \"99\"));"
+                      "print(bcmp(\"5\", \"5\"));"
+                      "print(bcmp(\"7\", \"42\"));";
+    std::string expected = "10-1";
+    EXPECT_EQ(runWithBuiltinModules(src), expected);
+    EXPECT_EQ(runStackVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runRegVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runInterpreterWithBuiltinModules(src), expected);
+}
+
+TEST(BuiltinModulesBigint, PowExceedsInt48Range_AllBackends) {
+    // 2^64 = 18446744073709551616 远超 int48（原生 int 溢出），
+    // BigInt 提升后字符串精确表示——本项目的核心演示点。
+    std::string src = "import { bpow } from \"std/bigint\";"
+                      "print(bpow(\"2\", 64));";
+    std::string expected = "18446744073709551616";
+    EXPECT_EQ(runWithBuiltinModules(src), expected);
+    EXPECT_EQ(runStackVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runRegVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runInterpreterWithBuiltinModules(src), expected);
+}
+
+TEST(BuiltinModulesBigint, Factorial25_AllBackends) {
+    // 25! = 15511210043330985984000000 远超 int48，验证大数乘法链式正确性
+    std::string src = "import { bmul, bfrom } from \"std/bigint\";"
+                      "var acc = \"1\";"
+                      "var i = 1;"
+                      "while (i <= 25) {"
+                      "    acc = bmul(acc, bfrom(i));"
+                      "    i = i + 1;"
+                      "}"
+                      "print(acc);";
+    std::string expected = "15511210043330985984000000";
+    EXPECT_EQ(runWithBuiltinModules(src), expected);
+    EXPECT_EQ(runStackVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runRegVM_IRWithBuiltinModules(src), expected);
+    EXPECT_EQ(runInterpreterWithBuiltinModules(src), expected);
+}

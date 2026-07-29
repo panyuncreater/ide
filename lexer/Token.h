@@ -57,6 +57,8 @@ enum class TokenType {
     TK_DEFAULT,  // default 关键字
     // R164 协程/生成器：新增关键字
     TK_YIELD,    // yield 关键字（生成器挂起）
+    // L18 lang-constfun：const fun 编译期求值
+    TK_CONST, // const 关键字（修饰 fun 声明）
     // 字面量
     TK_IDENTIFIER,
     TK_INT_LIT,
@@ -214,6 +216,8 @@ struct Token {
             return "DEFAULT";
         case TokenType::TK_YIELD:
             return "YIELD";
+        case TokenType::TK_CONST:
+            return "CONST";
         case TokenType::TK_IDENTIFIER:
             return "IDENTIFIER";
         case TokenType::TK_INT_LIT:

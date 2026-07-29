@@ -341,12 +341,211 @@ export fun flatten(arr) {
 }
 )";
 
+/// std/result — Result/Option 错误处理模块（拓展二期·语言）
+/// 用 dict 封装 tag+负载（避开 enum 不支持自引用/泛型参数的限制），
+/// 提供 Ok/Err/Some/None 构造子 + is_ok/is_err/unwrap/unwrap_or/map 组合子。
+/// 纯 MiniLang 实现，三后端零侵入（同 std/math|string|list）。
+/// ? 传播：由 Parser 将 expr? 脱糖为 match（后续 lang-result 二阶段）；
+/// 本模块先提供运行时基础设施，手动 is_err+unwrap 即可实现传播语义。
+const std::string kStdResult = R"(
+// std/result — Result/Option 错误处理模块
+// P拓展二期: 内建标准库，纯 MiniLang 实现（用 dict 封装 tag）
+
+// ---- Result: Ok(value) / Err(error) ----
+export fun Ok(value) {
+    return {"tag": "ok", "value": value};
+}
+
+export fun Err(error) {
+    return {"tag": "err", "error": error};
+}
+
+export fun is_ok(r) {
+    return r["tag"] == "ok";
+}
+
+export fun is_err(r) {
+    return r["tag"] == "err";
+}
+
+// unwrap: Ok 返回值；Err 抛出（由调用方 try/catch 捕获）
+export fun unwrap(r) {
+    if (r["tag"] == "ok") {
+        return r["value"];
+    }
+    throw "called unwrap on Err: " + str(r["error"]);
+}
+
+// unwrap_or: Ok 返回值；Err 返回默认值（不抛出）
+export fun unwrap_or(r, fallback) {
+    if (r["tag"] == "ok") {
+        return r["value"];
+    }
+    return fallback;
+}
+
+// unwrap_err: Err 返回错误；Ok 抛出
+export fun unwrap_err(r) {
+    if (r["tag"] == "err") {
+        return r["error"];
+    }
+    throw "called unwrap_err on Ok";
+}
+
+// map: Ok(v) -> Ok(fn(v))；Err 原样传递
+export fun map_ok(r, fn) {
+    if (r["tag"] == "ok") {
+        return {"tag": "ok", "value": fn(r["value"])};
+    }
+    return r;
+}
+
+// ---- Option: Some(value) / None() ----
+export fun Some(value) {
+    return {"tag": "some", "value": value};
+}
+
+export fun None() {
+    return {"tag": "none"};
+}
+
+export fun is_some(o) {
+    return o["tag"] == "some";
+}
+
+export fun is_none(o) {
+    return o["tag"] == "none";
+}
+
+// option 取值：Some 返回值；None 返回默认值
+export fun option_or(o, fallback) {
+    if (o["tag"] == "some") {
+        return o["value"];
+    }
+    return fallback;
+}
+)";
+
+/// std/bigint — 字符串十进制大数模块（拓展二期·语言：int 溢出 BigInt 提升演示）
+/// MiniLang int 为 NaN-boxed 48 位（算术溢出报错，如 sum 的 addOverflow）。
+/// 本模块演示“溢出后提升到任意精度”的另一条路：非负十进制字符串大数
+/// 加法/乘法/比较，纯 MiniLang 实现，三后端零侵入。教学定位：
+/// 真正的 Value 层 BigInt 提升需改 NaN-boxing 内存模型（后续工作）。
+const std::string kStdBigint = R"(
+// std/bigint — 字符串十进制大数模块（非负整数）
+// 拓展二期: int 溢出 BigInt 提升演示，纯 MiniLang 实现
+
+// 去除前导零（保留至少一位）
+export fun bstrip(s) {
+    var i = 0;
+    while (i < len(s) - 1 and s[i] == "0") {
+        i = i + 1;
+    }
+    var r = "";
+    var j = i;
+    while (j < len(s)) {
+        r = r + s[j];
+        j = j + 1;
+    }
+    return r;
+}
+
+// int → 大数字符串
+export fun bfrom(n) {
+    return str(n);
+}
+
+// 大数加法：逐位加 + 进位（经典笔算法）
+export fun badd(a, b) {
+    var i = len(a) - 1;
+    var j = len(b) - 1;
+    var carry = 0;
+    var result = "";
+    while (i >= 0 or j >= 0 or carry > 0) {
+        var da = 0;
+        if (i >= 0) {
+            da = int(a[i]);
+        }
+        var db = 0;
+        if (j >= 0) {
+            db = int(b[j]);
+        }
+        var s = da + db + carry;
+        carry = s / 10;
+        result = str(s % 10) + result;
+        i = i - 1;
+        j = j - 1;
+    }
+    return bstrip(result);
+}
+
+// 大数乘法：逐位分解 + 重复加法（O(n*m*9)，教学演示优先可读性）
+export fun bmul(a, b) {
+    var result = "0";
+    var shift = "";
+    var j = len(b) - 1;
+    while (j >= 0) {
+        var db = int(b[j]);
+        var partial = "0";
+        var k = 0;
+        while (k < db) {
+            partial = badd(partial, a);
+            k = k + 1;
+        }
+        if (partial != "0") {
+            result = badd(result, partial + shift);
+        }
+        shift = shift + "0";
+        j = j - 1;
+    }
+    return bstrip(result);
+}
+
+// 大数比较：a<b 返回 -1，a==b 返回 0，a>b 返回 1
+export fun bcmp(a, b) {
+    var sa = bstrip(a);
+    var sb = bstrip(b);
+    if (len(sa) < len(sb)) {
+        return -1;
+    }
+    if (len(sa) > len(sb)) {
+        return 1;
+    }
+    var i = 0;
+    while (i < len(sa)) {
+        var da = int(sa[i]);
+        var db = int(sb[i]);
+        if (da < db) {
+            return -1;
+        }
+        if (da > db) {
+            return 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// 大数幂：base^exp（exp 为普通 int）——溢出演示的典型入口（2^100 等）
+export fun bpow(base, exp) {
+    var result = "1";
+    var k = 0;
+    while (k < exp) {
+        result = bmul(result, base);
+        k = k + 1;
+    }
+    return result;
+}
+)";
+
 /// 内建模块注册表：路径→源码
 const std::unordered_map<std::string, std::string>& moduleRegistry() {
     static const std::unordered_map<std::string, std::string> registry = {
         {"std/math", kStdMath},
         {"std/string", kStdString},
         {"std/list", kStdList},
+        {"std/result", kStdResult},
+        {"std/bigint", kStdBigint},
     };
     return registry;
 }

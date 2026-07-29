@@ -150,8 +150,10 @@ public:
     };
 
 private:
-    GcManager() = default;
-    ~GcManager() = default;
+    // SHUTDOWN-UAF fix: 构造/析构定义为 user-provided（在 GcManager.cpp），
+    // 用于设置/清除 g_gcManagerAlive 标志，保护进程退出阶段的 RefCounted 析构。
+    GcManager();
+    ~GcManager();
     GcManager(const GcManager&) = delete;
     GcManager& operator=(const GcManager&) = delete;
 

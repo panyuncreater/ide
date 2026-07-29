@@ -44,6 +44,9 @@ struct TailCallInfo {
         None,         ///< 非尾调用或不支持的形式
         SelfFunction, ///< return f(args) 自递归函数调用（f == 当前函数名）
         SelfMethod,   ///< return this.method(args) 类方法自调用（method == 当前方法名）
+        GeneralCall,  ///< L18: return g(args) 互递归/一般尾调用（g != 当前函数名，
+                      ///<      直接名称调用）。需 VM 层 OP_TAIL_CALL/REG_TAIL_CALL
+                      ///<      帧复用；调用方需额外检查遮蔽/返回类型注解/非方法体。
     };
 
     Kind kind = Kind::None;
@@ -74,13 +77,21 @@ inline TailCallInfo identifyTailCall(ReturnStmt* node, const std::string& curren
     }
 
     // SelfFunction: return f(args) — 直接名称调用且名称匹配当前函数
-    if (node->value->nodeType == NodeType::NODE_FUN_CALL && !isMethod) {
+    // L18 GeneralCall: return g(args) — 直接名称调用但名称不匹配（互递归/一般尾调用）
+    if (node->value->nodeType == NodeType::NODE_FUN_CALL) {
         auto* call = static_cast<FunCall*>(node->value.get());
         // 仅支持直接名称调用：f(args)，不支持链式 expr(args)
-        if (call->callee == nullptr && call->name == currentFuncName) {
-            info.kind = TailCallInfo::Kind::SelfFunction;
-            info.call = call;
-            return info;
+        if (call->callee == nullptr) {
+            if (call->name == currentFuncName && !isMethod) {
+                info.kind = TailCallInfo::Kind::SelfFunction;
+                info.call = call;
+                return info;
+            }
+            if (call->name != currentFuncName) {
+                info.kind = TailCallInfo::Kind::GeneralCall;
+                info.call = call;
+                return info;
+            }
         }
     }
 

@@ -248,16 +248,82 @@ TEST(TCONotApplied, ReturnWithArithmeticAfterCall) {
 // 3. 互递归不启用 TCO（return other(args) 不是自递归）
 // ============================================================
 
-TEST(TCONotApplied, MutualRecursionNotTCO) {
-    // even/odd 互递归：return odd(n-1) 不是对 even 自身的调用
-    // 三后端都应触发深度限制
+// ============================================================
+// 3. 互递归 TCO（L18 eng-tailcall：OP_TAIL_CALL/REG_TAIL_CALL 帧复用）
+// ============================================================
+
+TEST(TCOApplied, MutualRecursionDeepNoDepthLimit) {
+    // L18: even/odd 互递归 return odd(n-1) 现在由 OP_TAIL_CALL 帧复用，
+    // 深度 1000 > MAX_FRAMES/MAX_RECURSION_DEPTH (256) 不再触发深度限制。
+    // 四后端：Interpreter 蹦床目标切换 / StackVM+IR OP_TAIL_CALL / RegVM REG_TAIL_CALL。
     std::string src = "func even(n) { if (n == 0) { return 1; } return odd(n - 1); }\n"
                       "func odd(n) { if (n == 0) { return 0; } return even(n - 1); }\n"
                       "print(even(1000));\n";
+    EXPECT_EQ(runInterpreter(src), "1");
+    EXPECT_EQ(runStackVM(src), "1");
+    EXPECT_EQ(runStackVM_IR(src), "1");
+    EXPECT_EQ(runRegVM(src), "1");
+}
+
+TEST(TCOApplied, MutualRecursionVeryDeep) {
+    // L18: 深度 10000 互递归，验证帧复用无栈增长
+    std::string src = "func even(n) { if (n == 0) { return 1; } return odd(n - 1); }\n"
+                      "func odd(n) { if (n == 0) { return 0; } return even(n - 1); }\n"
+                      "print(odd(9999));\n"; // 9999 奇数 → 1
+    EXPECT_EQ(runInterpreter(src), "1");
+    EXPECT_EQ(runStackVM(src), "1");
+    EXPECT_EQ(runStackVM_IR(src), "1");
+    EXPECT_EQ(runRegVM(src), "1");
+}
+
+TEST(TCOApplied, GeneralTailCallSmallNMatches) {
+    // L18: 互递归小规模结果正确性（四后端一致）
+    std::string src = "func even(n) { if (n == 0) { return 1; } return odd(n - 1); }\n"
+                      "func odd(n) { if (n == 0) { return 0; } return even(n - 1); }\n"
+                      "print(even(7)); print(even(8));\n";
+    EXPECT_FOUR_BACKENDS(src, "01");
+}
+
+TEST(TCOApplied, GeneralTailCallWithDefaults) {
+    // L18: 互递归目标含默认参数，帧复用路径填充默认值
+    std::string src = "func a(n) { if (n == 0) { return \"A\"; } return b(n - 1); }\n"
+                      "func b(n, tag = 0) { if (n == 0) { return tag; } return a(n - 1); }\n"
+                      "print(b(501));\n"; // 深度 > 256，b 的 tag 默认 0
+    EXPECT_EQ(runInterpreter(src), "A");
+    EXPECT_EQ(runStackVM(src), "A");
+    EXPECT_EQ(runStackVM_IR(src), "A");
+    EXPECT_EQ(runRegVM(src), "A");
+}
+
+TEST(TCONotApplied, GeneralTailCallInTryBlockNotTCO) {
+    // L18: try 块内的互递归尾调用不启用 TCO（handler 清理语义），
+    // 四后端仍触发深度限制并被 catch 捕获返回 0。
+    std::string src = "func a(n) { try { return b(n - 1); } catch (e) { return 0; } }\n"
+                      "func b(n) { try { return a(n - 1); } catch (e) { return 0; } }\n"
+                      "print(a(500));\n";
+    EXPECT_EQ(runInterpreter(src), "0");
+    EXPECT_EQ(runStackVM(src), "0");
+    EXPECT_EQ(runStackVM_IR(src), "0");
+    EXPECT_EQ(runRegVM(src), "0");
+}
+
+TEST(TCONotApplied, GeneralTailCallWithReturnTypeNotTCO) {
+    // L18: 当前函数有返回类型注解时不启用 GeneralCall TCO（类型检查不可跳过），
+    // 回退普通递归：深度 500 触发深度限制。
+    std::string src = "func a(n) -> int { if (n == 0) { return 0; } return b(n - 1); }\n"
+                      "func b(n) -> int { if (n == 0) { return 0; } return a(n - 1); }\n"
+                      "print(a(500));\n";
     EXPECT_TRUE(isRecursionDepthError(runInterpreter(src)));
     EXPECT_TRUE(isRecursionDepthError(runStackVM(src)));
     EXPECT_TRUE(isRecursionDepthError(runStackVM_IR(src)));
     EXPECT_TRUE(isRecursionDepthError(runRegVM(src)));
+}
+
+TEST(TCOApplied, GeneralTailCallToBuiltinDegrades) {
+    // L18: 尾调用目标是内建函数 → 运行时降级为普通调用（语义不变）
+    std::string src = "func f(x) { return len(x); }\n"
+                      "print(f(\"hello\"));\n";
+    EXPECT_FOUR_BACKENDS(src, "5");
 }
 
 // ============================================================

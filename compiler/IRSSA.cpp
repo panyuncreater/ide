@@ -532,9 +532,16 @@ bool ssaConstructPass(IRFunction& ir) {
                 hasControlFlow = true;
                 break;
             }
+            // L17 fix: 含 try/catch 的函数跳过 SSA 构造——TRY_BEGIN 的隐式异常边
+            // 可从块内任意指令跳入 catch handler（中断点在块中间），而
+            // ssaDestruct 只能在前驱块尾部插入 PHI 写回 STORE_LOCAL，异常路径
+            // 上写回永远不执行，catch 内读到陈旧/未定义值（复现：类继承
+            // super.init 链 + try/catch 下 this 读到 null）。异常控制流下的
+            // SSA 需要 landing-pad 级建模，当前保守跳过（该函数仍享受
+            // 折叠+DCE 基础优化，仅跳过 GVN/LICM）。
+            if (instr.op == IROp::TRY_BEGIN)
+                return false;
         }
-        if (hasControlFlow)
-            break;
     }
     if (!hasControlFlow)
         return false;
@@ -672,11 +679,12 @@ bool ssaConstructPass(IRFunction& ir) {
     // vregRepl[vreg] = 替代 vreg（LOAD_LOCAL dest → 当前 slot 值）
     std::unordered_map<uint32_t, uint32_t> vregRepl;
 
-    // 函数参数初始化：slot 0..arity-1 分配初始 vreg
-    for (int i = 0; i < ir.arity; ++i) {
-        uint32_t v = ir.nextVReg++;
-        slotStacks[static_cast<uint32_t>(i)].push_back(v);
-    }
+    // L17 fix: 删除原"函数参数假 vreg 初始化"——原实现为 slot 0..arity-1
+    // 凭空分配初始 vreg 压栈，但该 vreg 无任何定义指令，重命名后参数的
+    // LOAD_LOCAL 被替换为未定义 vreg（如 LT v3 v8 v9 中 v9 无定义），
+    // lowering 后读未初始化寄存器 → 脏值/类型错误（复现：irOptimize 默认
+    // 启用后任意带 while(i<n) 的函数失败）。现在参数 slot 栈初始为空，
+    // LOAD_LOCAL 在栈空时不替换（保留真实帧槽读取），语义正确。
 
     // 递归重命名
     std::function<void(uint32_t)> rename = [&](uint32_t blockId) {
@@ -748,15 +756,18 @@ bool ssaConstructPass(IRFunction& ir) {
             for (uint32_t slot : succIt->second) {
                 // 找到 succId 块中此 slot 的 PHI 指令
                 uint32_t phiDest = phiDestMap[{succId, slot}];
+                // L17 fix: 栈空时跳过——该前驱路径上 slot 的当前值仍在帧槽中
+                //（参数初值由调用协议写入，或更早的 STORE_LOCAL 已写入），
+                // ssaDestruct 无需在该前驱插入 STORE_LOCAL 写回。原实现栈空时
+                // 填 vreg=0，会把无关的 v0 写入参数槽位，破坏参数值。
+                auto& stack = slotStacks[slot];
+                if (stack.empty())
+                    continue;
+                uint32_t vreg = stack.back();
                 // 在 succBlk 中查找 PHI
                 for (auto& instr : succBlk.instructions) {
                     if (instr.op == IROp::PHI && !instr.operands.empty() && instr.operands[0].index == phiDest) {
                         // 追加 (predNodeId, vreg) 对——predNodeId 以 IMM_UINT 存储
-                        uint32_t vreg = 0;
-                        auto& stack = slotStacks[slot];
-                        if (!stack.empty()) {
-                            vreg = stack.back();
-                        }
                         instr.operands.push_back(IROperand::imm(predNodeId));
                         instr.operands.push_back(IROperand::vreg(vreg));
                         break;
@@ -1008,7 +1019,25 @@ bool licmPass(IRFunction& ir) {
     // 正确做法：每次修改后重建 CFG 重跑，直到无更多可外提指令。
     bool modified = false;
 
+    // L17 fix: 不动点迭代燃料上限。多循环函数（如 ackermann 的短路/分支 CFG
+    // 被 NaturalLoopInfo 识别出多个自然循环）中，外提到循环 A 的 preheader
+    // 可能落入循环 B 的 body，下一轮又被当作 B 的不变候选外提回 A 方向，
+    // 候选在循环间乒乓迁移，不动点永不收敛 → 编译期挂死（复现：
+    // irOptimize+irSSAOptimize 编译 ackermann）。LICM 是纯优化，提前停止
+    // 不影响语义，故加燃料上限保证终止：正常收敛只需 O(可外提指令数) 轮。
+    size_t totalInstrs = 0;
+    for (const auto& blk : ir.blocks)
+        totalInstrs += blk.instructions.size();
+    const size_t kMaxIterations = totalInstrs + 16;
+    size_t iterations = 0;
+
     while (true) {
+        if (++iterations > kMaxIterations) {
+            LOG_DEBUG("licmPass: 达到迭代上限 " + std::to_string(kMaxIterations) + "，强制收敛（函数 " +
+                          ir.name + "）",
+                      "IR-SSA");
+            break;
+        }
         IRCFG cfg(ir);
         if (cfg.size() < 2)
             break;
@@ -1042,6 +1071,17 @@ bool licmPass(IRFunction& ir) {
             }
 
             if (preheaderCount != 1 || preheader == IRCFG::kInvalid)
+                continue;
+
+            // L17 fix: preheader 必须支配 header（教科书 LICM 前提条件）。
+            // AstIRBuilder 的尾递归→循环转换会生成回到函数入口的 JUMP，
+            // 产生 header=entry 的自然循环；多处尾调用时存在多个共享 entry
+            // header 的循环，彼此的回边源块互为对方的"非循环前驱"。若不校验
+            // 支配性，指令会被外提到不支配 header 的回边源块：
+            //   (1) 首次进入函数不经过该块 → 读未初始化寄存器（语义错）；
+            //   (2) 候选在两个循环的回边源块间乒乓迁移，不动点永不收敛
+            //   → 编译期挂死（复现：irOptimize 编译 ackermann）。
+            if (!domTree.dominates(preheader, header))
                 continue;
 
             // 收集循环体内定义的所有 vreg
@@ -1169,24 +1209,40 @@ bool inlinePass(IRModule& module) {
             // 不内联含控制流的函数（LABEL 除外）
             if (instr.op == IROp::JUMP || instr.op == IROp::JUMP_IF_FALSE)
                 return false;
+            // L18 eng-tailcall: 不内联含 TAIL_CALL 的函数——TAIL_CALL 的帧复用
+            // 语义依赖自己的帧，内联到 caller 后不成立。
+            if (instr.op == IROp::TAIL_CALL)
+                return false;
             // 不内联含 try/throw 的函数
             if (instr.op == IROp::TRY_BEGIN || instr.op == IROp::TRY_END || instr.op == IROp::THROW)
                 return false;
             // 不内联含 yield 的函数（生成器）
             if (instr.op == IROp::YIELD)
                 return false;
+            // L17 fix: 不内联含闭包/upvalue 指令的函数——MAKE_CLOSURE 的捕获
+            // 列表（isLocal+slot）与 LOAD/STORE/CLOSE_UPVALUE 的 uv 索引均指向
+            // callee 自己的帧/捕获表，内联到 caller 后捕获错误变量（复现：
+            // 内联 outerFn 后闭包误捕 caller 槽位，返回闭包对象而非调用结果）。
+            if (instr.op == IROp::MAKE_CLOSURE || instr.op == IROp::LOAD_UPVALUE ||
+                instr.op == IROp::STORE_UPVALUE || instr.op == IROp::CLOSE_UPVALUE)
+                return false;
             ++count;
         }
         // BUGFIX-P2 #58: 若 callee 含 STORE_LOCAL 写入参数槽位（slot < arity），
         // 说明参数被重新赋值。内联后参数映射（LOAD_LOCAL → 实参 vreg）无法正确
         // 处理后续对同一参数的读取（会读到 caller 的槽位而非更新后的值），拒绝内联。
+        // L17 fix: 扩展为拒绝一切 STORE_LOCAL 与 slot>=arity 的 LOCAL_SLOT 引用——
+        // callee 自有局部变量（slot>=arity）的读写在内联后会直接踩踏 caller 的
+        // 同号槽位（无槽位重映射机制），语义错误。可内联集合收窄为
+        // "纯参数表达式函数"（如 add(a,b)=a+b），这正是小函数内联的目标场景。
         // STORE_LOCAL operands: [slot, src_vreg]，slot 在 operands[0]。
         for (const auto& instr2 : instrs) {
-            if (instr2.op == IROp::STORE_LOCAL &&
-                !instr2.operands.empty() &&
-                instr2.operands[0].kind == IROperandKind::LOCAL_SLOT &&
-                instr2.operands[0].index < static_cast<uint32_t>(fn.arity)) {
-                return false; // 参数被重新赋值，不可内联
+            if (instr2.op == IROp::STORE_LOCAL)
+                return false; // 写局部变量/参数，不可内联
+            for (const auto& opnd : instr2.operands) {
+                if (opnd.kind == IROperandKind::LOCAL_SLOT && opnd.index >= static_cast<uint32_t>(fn.arity)) {
+                    return false; // 引用 callee 自有局部槽位，内联后踩 caller 帧
+                }
             }
         }
         return count <= kInlineThreshold;
@@ -1221,7 +1277,12 @@ bool inlinePass(IRModule& module) {
                     IRFunction* callee = module.findFunction(calleeName);
 
                     // 防递归内联
-                    if (callee && callee != caller && isInlineable(*callee) && totalInlinedOps < kMaxTotalInlineOps) {
+                    // L17 fix3: 实参数量必须等于 callee arity——否则运行时应报
+                    // "参数数量不匹配"错误，内联会吞掉该错误破坏三后端一致性
+                    //（复现：foo(a,b) 调用 foo(1,2,3) 内联后静默成功）。
+                    uint32_t callArgCount = instr.operands[2].index;
+                    if (callee && callee != caller && callArgCount == static_cast<uint32_t>(callee->arity) &&
+                        isInlineable(*callee) && totalInlinedOps < kMaxTotalInlineOps) {
                         // 内联：复制 callee 指令，重映射 vreg
                         uint32_t vregBase = caller->nextVReg;
                         uint32_t calleeVRegCount = callee->nextVReg;
@@ -1285,8 +1346,17 @@ bool inlinePass(IRModule& module) {
                         for (const auto& cInstr : callee->blocks[0].instructions) {
                             if (cInstr.op == IROp::LABEL)
                                 continue;
-                            if (cInstr.op == IROp::RETURN_NULL)
-                                continue; // 隐式返回，跳过
+                            if (cInstr.op == IROp::RETURN_NULL) {
+                                // L17 fix: 隐式/显式 `return;` → CALL 的 dest 必须收到 null。
+                                // 原实现直接跳过，dest vreg 无定义，lowering 后读脏寄存器
+                                //（复现：`fun foo(){return;} var x=foo();` 内联后 x 为闭包脏值）。
+                                uint32_t destVReg = instr.operands[0].index;
+                                newInstrs.emplace_back(IROp::LOAD_NULL,
+                                                       std::vector<IROperand>{IROperand::vreg(destVReg)}, cInstr.line);
+                                // L17 fix2: 首个终结指令后的代码不可达，停止复制——
+                                // 否则 `return 7;` 后的尾随隐式 RETURN_NULL 会把 dest 覆盖为 null。
+                                break;
+                            }
                             if (cInstr.op == IROp::RETURN) {
                                 // return src → 将 src 赋值给 CALL 的 dest
                                 if (!cInstr.operands.empty() && cInstr.operands[0].kind == IROperandKind::VIRTUAL) {
@@ -1297,7 +1367,8 @@ bool inlinePass(IRModule& module) {
                                         std::vector<IROperand>{IROperand::vreg(destVReg), IROperand::vreg(retVal)},
                                         cInstr.line);
                                 }
-                                continue;
+                                // L17 fix2: 同上，首个 RETURN 之后的指令不可达，停止复制。
+                                break;
                             }
 
                             // 参数 LOAD_LOCAL：跳过，记录 dest → 实参 vreg 映射

@@ -558,6 +558,9 @@ public:
     // R164 协程/生成器：标记为生成器函数（fun* 声明），函数体内可使用 yield 表达式。
     // 调用生成器函数返回 Coroutine 值而非直接执行函数体，需通过 .next() 恢复执行。
     bool isGenerator = false;
+    // L18 lang-constfun：const fun 声明——实参全为字面量时编译期沙箱求值折叠为常量。
+    // 沙箱内 output/input/运行时错误 → 回退运行时调用（语义安全）。
+    bool isConstFun = false;
     // R164 协程/生成器：生成器函数体内 yield 表达式总数（由 Parser 在解析 body 后填写）。
     // Interpreter 重放模式用此判断生成器是否已耗尽（currentYieldId >= yieldCount）。
     // VM/RegisterVM 帧快照模式不依赖此字段（依赖 OP_RETURN 后的 done 标志）。

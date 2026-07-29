@@ -81,6 +81,7 @@ constexpr RegOpInfo kRegOpInfo[] = {
     /* REG_FINALLY_END             */ {"REG_FINALLY_END", 1, false},
     /* REG_LEN                     */ {"REG_LEN", 3, false},       // R134: op(1B) + dst(1B) + src(1B)
     /* REG_TYPE_TEST               */ {"REG_TYPE_TEST", 5, false}, // R134: op(1B) + dst(1B) + src(1B) + typeIdx(2B)
+    /* REG_TAIL_CALL               */ {"REG_TAIL_CALL", 5, true},  // L18: 变长 5 + argCount（布局同 REG_CALL）
 };
 } // anonymous namespace
 
@@ -165,6 +166,14 @@ size_t RegBytecodeChunk::instructionSizeAt(size_t offset) const {
     switch (op) {
     case RegOp::REG_CALL: {
         // op + dst + nameIdx(2B) + argCount + args
+        if (offset + 4 < code.size()) {
+            uint8_t argCount = code[offset + 4];
+            return static_cast<size_t>(5 + argCount);
+        }
+        return baseSize;
+    }
+    case RegOp::REG_TAIL_CALL: {
+        // L18 eng-tailcall: 布局同 REG_CALL
         if (offset + 4 < code.size()) {
             uint8_t argCount = code[offset + 4];
             return static_cast<size_t>(5 + argCount);

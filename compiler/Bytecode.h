@@ -164,6 +164,12 @@ enum class OpCode : uint8_t {
     OP_SUB_INT_SPEC,  // int - int → int（无类型检查）
     OP_MUL_INT_SPEC,  // int * int → int（无类型检查）
     OP_LT_INT_SPEC,   // int < int → bool（无类型检查，最常见的循环比较）
+
+    // L18 eng-tailcall: 互递归尾调用 return g(args)。字节布局与 OP_CALL 完全
+    // 相同（nameIdx 2B + argCount 1B，共 4 字节），编译器在其后紧跟 OP_RETURN。
+    // 运行时：目标命中 functionChunks_ 普通函数且当前帧可复用 → 帧复用 TCO
+    //（跳过后随 OP_RETURN）；否则降级为 OP_CALL 语义（返回后执行 OP_RETURN）。
+    OP_TAIL_CALL, // nameIdx(2B) + argCount(1B)
 };
 
 // ============================================================

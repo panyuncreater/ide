@@ -455,7 +455,9 @@ bool isBuiltinFunction(const std::string& name) {
     static const std::unordered_set<std::string> builtinNames = {"len", "type", "str", "int", "abs", "min", "max",
                                                                  "range", "sum",
                                                                  // R136 并发原语构造函数
-                                                                 "channel", "mutex", "rwlock"};
+                                                                 "channel", "mutex", "rwlock",
+                                                                 // 拓展二期：? 传播运算符脱糖目标
+                                                                 "__qmark_unwrap"};
     return builtinNames.count(name) > 0;
 }
 
@@ -834,6 +836,47 @@ Result<Value> executeBuiltinRwlock(const Value* /*args*/, size_t argCount, int l
     return Result<Value>::ok(Value::makeRwLock());
 }
 
+// ---- __qmark_unwrap(r): ? 传播运算符的运行时脱糖目标（拓展二期·语言）----
+/// Parser 将 expr? 脱糖为 __qmark_unwrap(expr)（见 Parser.cpp call()）。
+/// 语义（配套 std/result 的 dict 封装协议 {"tag": ...}）：
+///   - tag=="ok"/"some" → 返回 value 字段（无 value 时返回 null）
+///   - tag=="err" → 运行时错误“? 传播 Err: <error>”（可被 try/catch 捕获）
+///   - tag=="none" → 运行时错误“? 传播 None”
+///   - 非 Result/Option dict → 运行时错误（类型约束）
+/// 共享实现层单一事实源，三后端传播语义自动一致。
+Result<Value> executeBuiltinQmarkUnwrap(const Value* args, size_t argCount, int line, int column) {
+    if (auto r = checkExact("?", argCount, 1, line, column); r.is_err())
+        return r;
+    const Value& v = args[0];
+    if (!v.isDict()) {
+        return Result<Value>::err("? 运算符要求 Result/Option 值（std/result 的 Ok/Err/Some/None），实际为 " +
+                                      v.typeName(),
+                                  line, column);
+    }
+    const auto& entries = v.dictVal();
+    auto tagKey = Value::dictKeyFromValue(Value(std::string("tag")));
+    auto tagIt = tagKey ? entries.find(*tagKey) : entries.end();
+    if (tagIt == entries.end() || !tagIt->second.isString()) {
+        return Result<Value>::err("? 运算符要求 Result/Option 值（缺少 tag 字段）", line, column);
+    }
+    const std::string& tag = tagIt->second.stringVal();
+    if (tag == "ok" || tag == "some") {
+        auto valKey = Value::dictKeyFromValue(Value(std::string("value")));
+        auto vIt = valKey ? entries.find(*valKey) : entries.end();
+        return Result<Value>::ok(vIt != entries.end() ? vIt->second : Value::nullValue());
+    }
+    if (tag == "err") {
+        auto errKey = Value::dictKeyFromValue(Value(std::string("error")));
+        auto eIt = errKey ? entries.find(*errKey) : entries.end();
+        std::string msg = (eIt != entries.end()) ? eIt->second.toString() : "unknown";
+        return Result<Value>::err("? 传播 Err: " + msg, line, column);
+    }
+    if (tag == "none") {
+        return Result<Value>::err("? 传播 None", line, column);
+    }
+    return Result<Value>::err("? 运算符遇到未知 tag: " + tag, line, column);
+}
+
 /// 顶层内置函数注册表（延迟初始化，thread-safe since C++11）
 const std::unordered_map<std::string, SharedBuiltinFn>& builtinFunctionRegistry() {
     static const std::unordered_map<std::string, SharedBuiltinFn> registry = {
@@ -850,6 +893,8 @@ const std::unordered_map<std::string, SharedBuiltinFn>& builtinFunctionRegistry(
         {"channel", executeBuiltinChannel},
         {"mutex", executeBuiltinMutex},
         {"rwlock", executeBuiltinRwlock},
+        // 拓展二期：? 传播运算符脱糖目标（Parser 合成调用）
+        {"__qmark_unwrap", executeBuiltinQmarkUnwrap},
     };
     return registry;
 }

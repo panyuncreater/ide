@@ -113,6 +113,8 @@ const char* irOpName(IROp op) {
         {IROp::TYPE_TEST, "TYPE_TEST"},
         // P2-10 IR SSA 基础设施
         {IROp::PHI, "PHI"},
+        // L18 eng-tailcall
+        {IROp::TAIL_CALL, "TAIL_CALL"},
     };
     auto it = kIrOpNames.find(op);
     if (it != kIrOpNames.end()) {

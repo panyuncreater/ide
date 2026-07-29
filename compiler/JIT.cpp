@@ -281,8 +281,7 @@ JitResult JITBackend::execute(const CompileResult& result) {
     // （支持多次 execute，避免上次 cache 残留指向已释放对象）
     jitContext_.memberGetICPtr = memberGetIC_.data();
     for (auto& e : memberGetIC_) {
-        e.cachedInstancePtr = nullptr;
-        e.cachedFieldValuePtr = nullptr;
+        e = MemberGetInlineCacheEntry{}; // 重置全部 PIC 槽位 + megamorphic 标志
     }
 
     // R153: 重新应用特化方法入口

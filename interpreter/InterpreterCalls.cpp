@@ -1045,6 +1045,9 @@ Value Interpreter::callNamedFunction(FunCall& node) {
     Value result = Value::nullValue();
     std::shared_ptr<Environment> funEnv; // C1 fix: 声明在 try 外以便写回
     bool envFromSnapshot = false;
+    // L18 eng-tailcall: 互递归目标闭包持有者（蹦床切换目标后 closureValPtr
+    // 指向此处，生命周期覆盖整个蹦床循环）。
+    Value tcoTargetClosureHolder;
 
     // RA-A fix: RAII 守卫统一管理 funEnv 的 closeCapturedVariables 与 currentEnv_ 恢复，
     // 消除原 catch(...) + throw; 的 rethrow。
@@ -1053,7 +1056,9 @@ Value Interpreter::callNamedFunction(FunCall& node) {
         Interpreter& interp;
         std::shared_ptr<Environment>& env;
         std::shared_ptr<Environment>& prev;
-        Value* closureVal;        // AUDIT-R6 F5: 快照写回目标闭包（可为 null）
+        Value*& closureVal;       // AUDIT-R6 F5: 快照写回目标闭包（可为 null）
+                                  // L18: 改为指针引用——蹦床互递归切换目标后
+                                  // closureValPtr 指向新目标，析构写回须跟随最新值。
         const bool* fromSnapshot; // AUDIT-R6 F5
         bool dismissed = false;
         ~FunEnvGuard() {
@@ -1134,6 +1139,17 @@ Value Interpreter::callNamedFunction(FunCall& node) {
                     funEnv->closeCapturedVariables();
                 callStack_.pop_back();
                 argValues = std::move(sig.args);
+                // L18 eng-tailcall: 互递归目标切换——信号携带目标 FunDecl 时，
+                // 下一轮用目标函数重跑。目标闭包值持久化到 holder，环境/
+                // 快照重建机制（closureEnv/rebuild）与普通调用入口完全一致。
+                if (sig.target && sig.target.get() != funDecl.get()) {
+                    funDecl = sig.target;
+                    effectiveName = sig.targetName;
+                    tcoTargetClosureHolder = std::move(sig.targetClosure);
+                    closureEnv = tcoTargetClosureHolder.closureEnv();
+                    closureValPtr = &tcoTargetClosureHolder;
+                    envFromSnapshot = false;
+                }
                 fillDefaultArgs(argValues);
             }
         }

@@ -117,6 +117,7 @@ constexpr OpCodeInfo kOpCodeInfo[] = {
     /* 84 OP_SUB_INT_SPEC              */ {"OP_SUB_INT_SPEC", 1, false},  // PERF: int-int 特化
     /* 85 OP_MUL_INT_SPEC              */ {"OP_MUL_INT_SPEC", 1, false},  // PERF: int*int 特化
     /* 86 OP_LT_INT_SPEC               */ {"OP_LT_INT_SPEC", 1, false},   // PERF: int<int 特化
+    /* 87 OP_TAIL_CALL                 */ {"OP_TAIL_CALL", 4, false},      // L18: nameIdx(2B)+argCount(1B)
 };
 } // anonymous namespace
 
@@ -312,6 +313,15 @@ std::string BytecodeChunk::disassembleInstruction(size_t& offset) const {
         uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
         uint8_t argCount = code[offset + 3];
         str += "OP_CALL " + std::to_string(idx) + " (" + constants[idx].stringVal() + ") " + std::to_string(argCount);
+        offset += 4;
+        break;
+    }
+    case OpCode::OP_TAIL_CALL: {
+        // L18 eng-tailcall: 字节布局与 OP_CALL 相同
+        uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
+        uint8_t argCount = code[offset + 3];
+        str += "OP_TAIL_CALL " + std::to_string(idx) + " (" + constants[idx].stringVal() + ") " +
+               std::to_string(argCount);
         offset += 4;
         break;
     }

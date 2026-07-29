@@ -354,11 +354,12 @@ constexpr int kJitOperandStackBytes = 8192;
 constexpr int kJitWinShadowSpace = 32;
 constexpr int kJitLinuxCallAlign = 8;
 
-/// R160: Per-call-site inline cache entry for OP_MEMBER_GET
-/// 单态（monomorphic）inline cache：缓存 (Instance 内部指针, 字段 Value 指针)。
-/// cache 命中时直接从 cachedFieldValuePtr 读取，跳过 unordered_map lookup。
+/// R160 → PIC 升级: Per-call-site polymorphic inline cache for OP_MEMBER_GET
+/// 4 路多态 inline cache：缓存最多 4 个 (Instance 内部指针, 字段 Value 指针) 对。
+/// 当同一 call site 遇到超过 4 种不同 Instance 类型时，标记为 megamorphic，
+/// 后续所有查找直接走慢速路径（unordered_map lookup），避免缓存抖动。
 ///
-/// 安全性论证：
+/// 安全性论证（同原 monomorphic 版本）：
 ///   - cachedInstancePtr 是 InstanceData 的原始地址（从 NaN-boxed Value 的低 48 位提取）
 ///   - cachedFieldValuePtr 指向 unordered_map<string,Value> 中某个 node 的 value
 ///   - C++ 标准：unordered_map 的 node 在 erase 之前地址稳定（rehash 不移动 node）
@@ -368,8 +369,45 @@ constexpr int kJitLinuxCallAlign = 8;
 ///   - 字段值修改：若字段值被 OP_MEMBER_SET 修改，cachedFieldValuePtr 指向的 Value
 ///     会被原地更新（unordered_map operator[] 修改现有 node 的 value，不 invalidate 指针）
 struct MemberGetInlineCacheEntry {
-    const void* cachedInstancePtr = nullptr;    ///< cache key: InstanceData 原始地址
-    const Value* cachedFieldValuePtr = nullptr; ///< cache value: 字段 Value 指针（直接读取）
+    static constexpr int kPICSlots = 4; ///< PIC 槽位数（4 路多态）
+
+    struct Slot {
+        const void* cachedInstancePtr = nullptr;    ///< cache key: InstanceData 原始地址
+        const Value* cachedFieldValuePtr = nullptr; ///< cache value: 字段 Value 指针（直接读取）
+    };
+
+    Slot slots[kPICSlots];       ///< 4 路 PIC 槽位
+    uint8_t slotCount = 0;       ///< 已使用的槽位数（0~kPICSlots）
+    bool megamorphic = false;    ///< 超过 kPICSlots 种类型后置 true，永久走慢速路径
+
+    /// 查找 instPtr 对应的缓存字段指针（命中返回 Value*，未命中返回 nullptr）
+    const Value* lookup(const void* instPtr) const {
+        for (uint8_t i = 0; i < slotCount; ++i) {
+            if (slots[i].cachedInstancePtr == instPtr)
+                return slots[i].cachedFieldValuePtr;
+        }
+        return nullptr;
+    }
+
+    /// 插入新条目。若已满则标记 megamorphic 并返回 false。
+    bool insert(const void* instPtr, const Value* fieldPtr) {
+        if (megamorphic) return false;
+        // 检查是否已存在（避免重复插入）
+        for (uint8_t i = 0; i < slotCount; ++i) {
+            if (slots[i].cachedInstancePtr == instPtr) {
+                slots[i].cachedFieldValuePtr = fieldPtr; // 更新
+                return true;
+            }
+        }
+        if (slotCount >= kPICSlots) {
+            megamorphic = true; // 类型过多，退化为 megamorphic
+            return false;
+        }
+        slots[slotCount].cachedInstancePtr = instPtr;
+        slots[slotCount].cachedFieldValuePtr = fieldPtr;
+        ++slotCount;
+        return true;
+    }
 };
 
 /// R162: JIT try/catch 异常处理器（运行时栈结构）
@@ -379,6 +417,49 @@ struct JitTryHandler {
     void* catchAddr = nullptr;    ///< catch 块的 JIT 代码绝对地址（lea label 解析）
     int64_t* stackBase = nullptr; ///< try 开始时 r15（操作数栈顶），catch 时恢复
     size_t frameIndex = 0;        ///< 所属帧索引（*frameCount 值），用于跨帧异常传播
+};
+
+/// 方法调用 Inline Cache：缓存 (className, methodName) → JitMethodInfo* 的解析结果。
+/// 避免每次方法调用都沿继承链做 string 拼接 + map lookup。
+/// 4 路 PIC：同一 call site 最多缓存 4 个不同类的方法解析结果。
+/// 安全性：MiniLang 方法表在运行时不可变（类定义后方法集合固定），缓存永久有效。
+struct MethodCallICEntry {
+    static constexpr int kSlots = 4;
+
+    struct Slot {
+        const char* classNamePtr = nullptr;   ///< cache key: receiver.className() 的内部指针
+        const JitMethodInfo* method = nullptr; ///< cache value: 解析到的方法信息
+    };
+
+    Slot slots[kSlots];
+    uint8_t slotCount = 0;
+    bool megamorphic = false;
+
+    const JitMethodInfo* lookup(const char* classNamePtr) const {
+        for (uint8_t i = 0; i < slotCount; ++i) {
+            if (slots[i].classNamePtr == classNamePtr)
+                return slots[i].method;
+        }
+        return nullptr;
+    }
+
+    bool insert(const char* classNamePtr, const JitMethodInfo* method) {
+        if (megamorphic) return false;
+        for (uint8_t i = 0; i < slotCount; ++i) {
+            if (slots[i].classNamePtr == classNamePtr) {
+                slots[i].method = method;
+                return true;
+            }
+        }
+        if (slotCount >= kSlots) {
+            megamorphic = true;
+            return false;
+        }
+        slots[slotCount].classNamePtr = classNamePtr;
+        slots[slotCount].method = method;
+        ++slotCount;
+        return true;
+    }
 };
 
 /// JIT 编译后的入口函数签名
@@ -507,12 +588,19 @@ public:
 
     /// R160: 获取 inline cache 统计（OP_MEMBER_GET 属性访问缓存）
     /// @return (hitCount, missCount) — cache 命中/未命中次数
-    std::pair<uint64_t, uint64_t> getInlineCacheStats() const { return {icHitCount_, icMissCount_}; }
+    /// PIC 统计：命中/未命中/megamorphic 回退计数（教学统计用）
+    struct ICStats {
+        uint64_t hit = 0;
+        uint64_t miss = 0;
+        uint64_t megamorphic = 0;
+    };
+    ICStats getInlineCacheStats() const { return {icHitCount_, icMissCount_, icMegamorphicCount_}; }
 
     /// R160: 重置 inline cache 统计（测试用，在 execute 前调用）
     void resetInlineCacheStats() {
         icHitCount_ = 0;
         icMissCount_ = 0;
+        icMegamorphicCount_ = 0;
     }
 
     /// 拓展二期·教学（字节码↔汇编对照）：启用汇编文本捕获。
@@ -954,9 +1042,20 @@ public:
     /// 运行时 jitMemberGetWithIC 通过 callSiteId 索引此数组。
     std::vector<MemberGetInlineCacheEntry> memberGetIC_;
 
-    /// R160: inline cache 命中/未命中计数（教学统计用）
+    /// R160: inline cache 命中/未命中/megamorphic 计数（教学统计用）
     uint64_t icHitCount_ = 0;
     uint64_t icMissCount_ = 0;
+    uint64_t icMegamorphicCount_ = 0;
+
+    /// 方法调用 IC 数据（per-call-site，跨所有 chunk 统一编号）
+    /// 编译期为每个 OP_METHOD_CALL 分配唯一 methodCallSiteId，
+    /// 运行时 jitMethodCall 通过 callSiteId 索引此数组。
+    std::vector<MethodCallICEntry> methodCallIC_;
+    uint64_t nextMethodCallSiteId_ = 0;
+
+    /// 方法调用 IC 统计
+    uint64_t methodIcHitCount_ = 0;
+    uint64_t methodIcMissCount_ = 0;
 
     /// R162: try/catch 异常处理器栈（与 StackVM tryStack_ 对齐）
     /// OP_TRY_BEGIN push，OP_TRY_END pop，OP_THROW 搜索。

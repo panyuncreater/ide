@@ -213,6 +213,8 @@ add_executable(minilang_tests
     # 验证全部导出符号（与 cli/*_core.cpp 同模式）。
     ${MINILANG_ROOT_DIR}/capi/minilang_capi.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/TestCApi.cpp
+    # 拓展二期·语言：运算符重载（instance 算术 dunder 分派）四后端一致性测试
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestOperatorOverload.cpp
     # 高价值改进方向 Top 3：拆分独立 Library.cpp 避免引入 IdeController 依赖
     ${MINILANG_ROOT_DIR}/gui/BugHuntVariantLibrary.cpp
     # 功能 6：学习路径地图——LearnerProgress.cpp 与 LearningPathData.cpp 为独立编译单元，
