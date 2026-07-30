@@ -269,6 +269,8 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
     case IROp::JUMP_IF_FALSE:
     // R164 协程/生成器：YIELD 可中断执行（抛 VMYieldSignal），归入控制流组
     case IROp::YIELD:
+    // 七特性 MVP 阶段 4：AWAIT 同步 drain（可能抛异常/错误），归入控制流组
+    case IROp::AWAIT:
         return lowerControlOp(instr, ir);
 
     // ---- 调用 + 闭包 ----
@@ -630,6 +632,13 @@ bool BytecodeIRBackend::lowerControlOp(const IRInstruction& instr, const IRFunct
     //   - 未命中：保留栈顶值作为 yield 表达式结果（dest 继承 src 的栈位置）
     case IROp::YIELD: {
         chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_YIELD));
+        break;
+    }
+    // 七特性 MVP 阶段 4：AWAIT dest, src → OP_AWAIT（1 字节无操作数，值在栈顶）
+    // 语义：src 的值已由前序指令压栈，OP_AWAIT pop 后同步 drain 协程并 push 最终值
+    //（dest 继承 src 的栈位置）。
+    case IROp::AWAIT: {
+        chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_AWAIT));
         break;
     }
     default:

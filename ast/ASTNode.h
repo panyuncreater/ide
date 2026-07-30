@@ -67,6 +67,13 @@ enum class NodeType {
     NODE_MATCH_EXPR,
     // R164 协程/生成器：yield 表达式（挂起生成器并返回值）
     NODE_YIELD_EXPR,
+    // 七特性 MVP 阶段 2：宏系统（parse 期展开）
+    NODE_MACRO_DECL, // macro name(params) { <expr> } 声明（运行期 no-op）
+    NODE_MACRO_CALL, // name!(args) 调用（expanded 子树已在 parse 期展开）
+    // 七特性 MVP 阶段 3：Trait/Mixin（parse 期方法合入）
+    NODE_TRAIT_DECL, // trait T { fun m() {...} } 声明（运行期 no-op）
+    // 七特性 MVP 阶段 4：async/await
+    NODE_AWAIT_EXPR, // await expr（驱动协程到完成并取最终值）
 };
 
 // ============================================================
@@ -558,6 +565,10 @@ public:
     // R164 协程/生成器：标记为生成器函数（fun* 声明），函数体内可使用 yield 表达式。
     // 调用生成器函数返回 Coroutine 值而非直接执行函数体，需通过 .next() 恢复执行。
     bool isGenerator = false;
+    // 七特性 MVP 阶段 4：async fun 声明标记。async fun 复用生成器机制
+    //（isGenerator 同时置 true，调用返回 Task/协程），体内可用 await/yield。
+    // 本字段仅供 Formatter 区分打印 `async fun` vs `fun*`（语义层二者等价）。
+    bool isAsync = false;
     // L18 lang-constfun：const fun 声明——实参全为字面量时编译期沙箱求值折叠为常量。
     // 沙箱内 output/input/运行时错误 → 回退运行时调用（语义安全）。
     bool isConstFun = false;
@@ -804,6 +815,14 @@ public:
     // R163 泛型类：类型参数列表（如 ["T", "K", "V"]，空 = 非泛型）
     // 与 EnumDecl.typeParams 语义一致：运行时类型擦除，类型参数仅用于跳过类型校验
     std::vector<std::string> typeParams;
+    // 七特性 MVP 阶段 3：Trait/Mixin。
+    // traits：`with T1, T2` 子句中的 trait 名列表（供 Formatter 打印与诊断）。
+    // ownMemberCount：members 前缀中"类自身声明的成员"数量——Parser 在解析完
+    // 类体后将 trait 方法（shared_ptr 共享 FunDecl）append 到 members 尾部，
+    // Formatter 仅打印前 ownMemberCount 个成员（往返等价：重新 parse 时重新合入）。
+    // 未设置（-1）时视为全部成员均为自身成员（兼容无 trait 的类）。
+    std::vector<std::string> traits;
+    int ownMemberCount = -1;
     ClassDecl(const std::string& n, const std::string& super, std::vector<std::shared_ptr<ASTNode>> mems, int ln = 0,
               int col = 0)
         : ASTNode(ln, col), name(n), superClassName(super), members(std::move(mems)) {
@@ -1188,5 +1207,122 @@ public:
         if (value)
             ch.push_back(value.get());
         return ch;
+    }
+};
+
+// ============================================================
+// 七特性 MVP 阶段 2：宏系统（parse 期展开）
+// ============================================================
+// 设计要点：
+//   - 表达式模板宏：`macro name(p1, p2) { <expr> }`，body 限单个表达式。
+//   - 调用语法 `name!(arg1, arg2)`，Parser 在解析现场立即展开：
+//     克隆 body 模板并将参数名 VarRef 替换为实参 AST（见 ast/MacroExpander）。
+//   - 四后端对 MacroCallExpr 一律直接求值/编译 expanded 子树，
+//     零指令集改动，语义天然一致；MacroDecl 运行期为 no-op。
+//   - 实参子树在多处替换点间共享（同 C 宏：`double!(f())` 中 f() 求值两次，
+//     教学对比点：宏展开 vs 函数调用的求值策略差异）。
+//   - Formatter 打印原始声明与 `name!(args)` 调用形式，往返等价。
+
+/// 宏声明节点（运行期 no-op，仅供 Parser 展开与 Formatter 打印）
+class MacroDecl : public ASTNode {
+public:
+    std::string name;                  ///< 宏名
+    std::vector<std::string> params;   ///< 形参名列表
+    std::shared_ptr<ASTNode> bodyExpr; ///< body 表达式模板（含参数 VarRef 占位）
+
+    MacroDecl(std::string n, std::vector<std::string> p, std::shared_ptr<ASTNode> body, int ln = 0, int col = 0)
+        : ASTNode(ln, col), name(std::move(n)), params(std::move(p)), bodyExpr(std::move(body)) {
+        nodeType = NodeType::NODE_MACRO_DECL;
+    }
+    void accept(Visitor& visitor) override;
+    std::string nodeName() const override { return "MacroDecl(" + name + ")"; }
+    std::vector<ASTNode*> children() const override {
+        if (bodyExpr)
+            return {bodyExpr.get()};
+        return {};
+    }
+};
+
+/// 宏调用节点：name!(args)。expanded 为 parse 期展开后的语义子树，
+/// 四后端求值/编译均直接访问 expanded；args 保留原始实参供 Formatter 打印。
+/// 注：args 子树与 expanded 内的替换点共享同一 shared_ptr 节点。
+class MacroCallExpr : public ASTNode {
+public:
+    std::string name;                                ///< 宏名
+    std::vector<std::shared_ptr<ASTNode>> arguments; ///< 原始实参（Formatter 打印用）
+    std::shared_ptr<ASTNode> expanded;               ///< 展开后的语义子树（非空）
+
+    MacroCallExpr(std::string n, std::vector<std::shared_ptr<ASTNode>> args, std::shared_ptr<ASTNode> exp, int ln = 0,
+                  int col = 0)
+        : ASTNode(ln, col), name(std::move(n)), arguments(std::move(args)), expanded(std::move(exp)) {
+        nodeType = NodeType::NODE_MACRO_CALL;
+    }
+    void accept(Visitor& visitor) override;
+    std::string nodeName() const override { return "MacroCall(" + name + "!)"; }
+    std::vector<ASTNode*> children() const override {
+        // 可视化展示展开后的语义子树（而非原始实参，避免共享节点重复展示）
+        if (expanded)
+            return {expanded.get()};
+        return {};
+    }
+};
+
+// ============================================================
+// 七特性 MVP 阶段 3：Trait/Mixin（parse 期方法合入）
+// ============================================================
+// 设计要点：
+//   - `trait T { fun m() {...} ... }` 声明一组方法（MVP 仅支持方法成员）。
+//   - `class C with T1, T2 {...}`（可与继承并存 `class C extends B with T`），
+//     Parser 在解析完类体后将 trait 方法 append 到 ClassDecl.members 尾部
+//     （shared_ptr 共享 FunDecl 节点，多个类混入同一 trait 共享同一方法 AST）。
+//   - 冲突规则：类自身方法优先于 trait 方法；两个 trait 提供同名方法且类未
+//     覆盖 → ParseError（diamond 冲突，组合优于隐式解决的设计哲学）。
+//   - 四后端零改动：合入后的 trait 方法就是普通类方法；TraitDecl 运行期 no-op。
+
+/// trait 声明节点（运行期 no-op，方法在 parse 期合入混入类）
+class TraitDecl : public ASTNode {
+public:
+    std::string name;                               ///< trait 名
+    std::vector<std::shared_ptr<ASTNode>> methods;  ///< 方法列表（均为 FunDecl）
+    int closingBraceLine = 0;                       ///< 闭合 '}' 行号（Formatter 注释注入用）
+
+    TraitDecl(std::string n, std::vector<std::shared_ptr<ASTNode>> ms, int ln = 0, int col = 0)
+        : ASTNode(ln, col), name(std::move(n)), methods(std::move(ms)) {
+        nodeType = NodeType::NODE_TRAIT_DECL;
+    }
+    void accept(Visitor& visitor) override;
+    std::string nodeName() const override { return "TraitDecl(" + name + ")"; }
+    std::vector<ASTNode*> children() const override {
+        std::vector<ASTNode*> ch;
+        for (auto& m : methods)
+            ch.push_back(m.get());
+        return ch;
+    }
+};
+
+// ============================================================
+// 七特性 MVP 阶段 4：async/await
+// ============================================================
+/// await 表达式节点（仅在 async fun 体内合法）
+///
+/// 语义（四后端一致的同步 drain 模型，与 R164 重放模式兼容）：
+///   - `await t`，t 为协程/Task → 循环驱动 t.next() 直到 done，结果为最后一次
+///     next() 的值（自然结束的 return 值或最后一个 yield 值）。
+///   - `await v`，v 非协程 → 恒等返回 v（await 同步值合法）。
+///   - 协作式交错由 yield 挂起点 + std/async 调度器实现；await 是
+///     "等待完成并取值"（教学对比点：yield 让出控制权 vs await 等待结果）。
+class AwaitExpr : public ASTNode {
+public:
+    std::shared_ptr<ASTNode> operand; ///< 被等待的表达式（通常为 Task/协程值）
+
+    AwaitExpr(std::shared_ptr<ASTNode> op, int ln = 0, int col = 0) : ASTNode(ln, col), operand(std::move(op)) {
+        nodeType = NodeType::NODE_AWAIT_EXPR;
+    }
+    void accept(Visitor& visitor) override;
+    std::string nodeName() const override { return "AwaitExpr"; }
+    std::vector<ASTNode*> children() const override {
+        if (operand)
+            return {operand.get()};
+        return {};
     }
 };

@@ -1592,6 +1592,34 @@ VMResult RegisterVM::executeMisc(RegOp op, size_t& ip) {
 // R164 协程/生成器：REG_YIELD 指令执行（重放模式）
 // ============================================================
 VMResult RegisterVM::executeCoroutineOps(RegOp op, size_t& ip) {
+    // 七特性 MVP 阶段 4：REG_AWAIT——同步 drain 协程到完成（与 Interpreter::visitAwaitExpr 对齐）。
+    // dst = src 非协程时的恒等值；src 为协程时循环 callCoroutineNext 直到 done，dst = 最终值。
+    if (op == RegOp::REG_AWAIT) {
+        const RegBytecodeChunk& chunk = *currentFrame().chunk;
+        uint8_t dst = chunk.code[ip + 1];
+        uint8_t src = chunk.code[ip + 2];
+        Value v = reg(src);
+        if (!v.isCoroutine()) {
+            reg(dst) = std::move(v); // await 同步值：恒等
+            ip += 3;
+            return VMResult::VM_OK;
+        }
+        auto* cd = v.coroutineData();
+        Value last = cd->currentValueBox.empty() ? Value::nullValue() : cd->currentValueBox.front();
+        int64_t guard = 0;
+        while (!cd->done) {
+            last = callCoroutineNext(v);
+            if (hasError_) {
+                return VMResult::VM_RUNTIME_ERROR;
+            }
+            if (++guard > RuntimeLimits::MAX_LOOP_ITERATIONS) {
+                return runtimeError("await 驱动协程超出迭代上限（可能是无限生成器）");
+            }
+        }
+        reg(dst) = std::move(last);
+        ip += 3;
+        return VMResult::VM_OK;
+    }
     if (op != RegOp::REG_YIELD) {
         return runtimeError(ErrorFormat::formatStd("未知协程操作码: {}", static_cast<int>(op)));
     }

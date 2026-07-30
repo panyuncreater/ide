@@ -31,6 +31,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -127,6 +128,10 @@ private:
     // 由 BoolScope 在 funDecl 入口保存/重置/恢复。primary() 解析 yield 时若 yieldInLoop_
     // 为 true 则置本字段为 true。funDecl 结尾若本字段为 true，decl->yieldCount = INT_MAX。
     bool currentFunHasYieldInLoop_ = false;
+    // 七特性 MVP 阶段 4：当前是否在 async fun 体内（await 仅在此上下文合法）。
+    // 由 BoolScope 在 funDecl 入口保存/设置/恢复，嵌套函数独立判定
+    //（async fun 内的普通嵌套 fun 体内 await 非法）。
+    bool currentFunIsAsync_ = false;
     static constexpr int MAX_PARSE_DEPTH = RuntimeLimits::MAX_PARSE_DEPTH;
     static constexpr int MAX_BLOCK_DEPTH = RuntimeLimits::MAX_BLOCK_DEPTH;
     // BUG-PARSER-AUDIT-5: 错误数量上限，防止恶意输入触发 O(N) 诊断内存膨胀
@@ -137,6 +142,17 @@ private:
     // instance.field（MemberAccess）—— parser 侧无类型系统，
     // 通过维护已知 enum 名集合进行语法层消歧。enumDecl() 解析后插入。
     std::unordered_set<std::string> knownEnums_;
+
+    // 七特性 MVP 阶段 2：已声明的宏表（宏名 → MacroDecl 裸指针）。
+    // 指针指向 AST 内的节点，生命周期由正在构建的 AST 持有（仅 parse 期使用）。
+    // macroDecl() 解析成功后登记；primary() 遇 `name!(` 时查表展开。
+    // 宏在 body 解析完成后才登记 → 自引用（递归宏）在 body 解析时报"未定义的宏"。
+    std::unordered_map<std::string, MacroDecl*> knownMacros_;
+
+    // 七特性 MVP 阶段 3：已声明的 trait 表（trait 名 → TraitDecl 裸指针）。
+    // 生命周期同 knownMacros_（仅 parse 期使用）。classDecl() 解析 `with T1, T2`
+    // 时查表并将 trait 方法合入类 members（trait 须先声明后使用）。
+    std::unordered_map<std::string, TraitDecl*> knownTraits_;
 
     // ---- 辅助方法 ----
 
@@ -216,7 +232,9 @@ private:
     std::unique_ptr<VarDecl> typedVarDecl(const std::string& typeAnn);
 
     /// 函数声明: fun name(params) { body } 或 function name(params): type { body }
-    std::unique_ptr<FunDecl> funDecl();
+    /// 七特性 MVP 阶段 4：isAsync=true 时为 async fun 声明（复用生成器机制，
+    /// isGenerator 同时置 true，yieldCount 恒为 kDynamicYieldCount，体内允许 await）。
+    std::unique_ptr<FunDecl> funDecl(bool isAsync = false);
 
     /// 带返回类型的函数声明: int fib(int n) { ... }
     std::unique_ptr<FunDecl> typedFunDecl(const std::string& returnType);
@@ -244,6 +262,25 @@ private:
     // R99 枚举与 ADT + match
     /// enum 声明: enum Name<T, U> { Variant1, Variant2(T), ... }
     std::unique_ptr<EnumDecl> enumDecl();
+
+    // 七特性 MVP 阶段 2：宏系统
+    /// 宏声明: macro name(p1, p2) { <expr> }（表达式模板宏）
+    std::unique_ptr<MacroDecl> macroDecl();
+
+    /// 宏调用: name!(args)。调用前提：nameTok 已消耗，当前位置为 '!' '('。
+    /// 查表、解析实参、arity 校验、克隆 body 模板并替换参数，返回 MacroCallExpr。
+    std::unique_ptr<ASTNode> macroCall(const Token& nameTok);
+
+    // 七特性 MVP 阶段 3：Trait/Mixin
+    /// trait 声明: trait T { fun m() {...} ... }（MVP 仅支持方法成员）
+    std::unique_ptr<TraitDecl> traitDecl();
+
+    /// 解析类声明的 `with T1, T2` 子句并把 trait 方法合入 members 尾部。
+    /// 冲突规则：类自身方法优先；两个 trait 同名方法且类未覆盖 → ParseError。
+    /// @param traits [out] with 子句中的 trait 名列表（供 ClassDecl.traits）
+    /// @param members [in/out] 类成员列表（自身成员已解析完毕，trait 方法 append 尾部）
+    void mergeTraitMethods(const std::vector<std::string>& traits, std::vector<std::shared_ptr<ASTNode>>& members,
+                           int line, int col);
 
     /// match 表达式: match scrutinee { case Pattern => body; ... default => body; }
     std::unique_ptr<MatchExpr> matchExpr();

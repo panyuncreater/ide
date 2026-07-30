@@ -238,6 +238,8 @@ static bool isSelfTerminating(ASTNode* node) {
     case NodeType::NODE_BLOCK:
     case NodeType::NODE_DESTRUCTURE_BINDING: // P1 #26 fix: 解构绑定自带 ';'，自终止，避免 formatBlock 双重分号
     case NodeType::NODE_ENUM_DECL:           // P1 #29 fix: enum 以 '}' 结尾，自终止
+    case NodeType::NODE_MACRO_DECL:          // 七特性 MVP 阶段 2: 宏声明以 '}' 结尾，自终止
+    case NodeType::NODE_TRAIT_DECL:          // 七特性 MVP 阶段 3: trait 声明以 '}' 结尾，自终止
     case NodeType::NODE_TRY_STMT:            // P0 fix: try/catch 以 } 结尾，自终止
         return true;
     case NodeType::NODE_IMPORT_STMT: // P0 fix: visitImportStmt 已自行添加 ;
@@ -510,6 +512,58 @@ void Formatter::visitYieldExpr(YieldExpr& node) {
     if (node.value) {
         result += " " + formatNode(node.value.get());
     }
+    lastFormatResult_ = result;
+    return;
+}
+
+// 七特性 MVP 阶段 2：宏声明格式化——打印原始声明语法（body 模板未展开）。
+// 以 '}' 结尾自终止（isSelfTerminating 已登记 NODE_MACRO_DECL）。
+void Formatter::visitMacroDecl(MacroDecl& node) {
+    std::string result = "macro " + node.name + "(";
+    for (size_t i = 0; i < node.params.size(); ++i) {
+        if (i > 0)
+            result += ", ";
+        result += node.params[i];
+    }
+    result += ") { " + (node.bodyExpr ? formatNode(node.bodyExpr.get()) : std::string()) + " }";
+    lastFormatResult_ = result;
+    return;
+}
+
+// 七特性 MVP 阶段 2：宏调用格式化——打印 name!(args) 原始调用形式
+// （而非展开后的子树，保证往返等价：重新 parse 时宏表重建、展开一致）。
+void Formatter::visitMacroCallExpr(MacroCallExpr& node) {
+    std::string result = node.name + "!(";
+    for (size_t i = 0; i < node.arguments.size(); ++i) {
+        if (i > 0)
+            result += ", ";
+        result += formatNode(node.arguments[i].get());
+    }
+    result += ")";
+    lastFormatResult_ = result;
+    return;
+}
+
+// 七特性 MVP 阶段 3：trait 声明格式化——打印完整 trait 体（方法列表）。
+// 以 '}' 结尾自终止（isSelfTerminating 已登记 NODE_TRAIT_DECL）。
+void Formatter::visitTraitDecl(TraitDecl& node) {
+    std::string result = "trait " + node.name + openBrace() + "\n";
+    currentIndent_++;
+    for (const auto& method : node.methods) {
+        if (!method)
+            continue;
+        result += indent() + formatNode(method.get()) + "\n";
+    }
+    currentIndent_--;
+    result += indent() + "}";
+    lastFormatResult_ = result;
+    return;
+}
+
+// 七特性 MVP 阶段 4：await 表达式格式化——打印 `await <operand>`。
+void Formatter::visitAwaitExpr(AwaitExpr& node) {
+    std::string result = "await ";
+    result += node.operand ? formatNode(node.operand.get()) : std::string();
     lastFormatResult_ = result;
     return;
 }
@@ -925,7 +979,9 @@ std::string Formatter::formatFunDecl(FunDecl& node) {
     // R98 W3: 匿名 lambda（name 为空）格式化为 `fun(params)`，具名函数为 `fun name(params)`
     // AUDIT-R6 F7b fix: 生成器函数保留 `fun*` 标记——原实现丢失 '*'，往返后
     // 函数体内的 yield 变为非法语法（"yield 只能出现在 fun* 生成器函数体内"）。
-    const char* funKw = node.isGenerator ? "fun*" : "fun";
+    // 七特性 MVP 阶段 4：async fun 打印 `async fun`（优先于 fun*，二者语义等价，
+    // 恢复原声明形式；async fun 内部 isGenerator 也为 true，但不应打印 fun*）。
+    const char* funKw = node.isAsync ? "async fun" : (node.isGenerator ? "fun*" : "fun");
     if (node.name.empty()) {
         result += funKw;
     } else {
@@ -1416,9 +1472,22 @@ std::string Formatter::formatClassDecl(ClassDecl& node) {
     if (!node.superClassName.empty()) {
         result += " extends " + node.superClassName;
     }
+    // 七特性 MVP 阶段 3：输出 with 混入子句（extends 之后）
+    if (!node.traits.empty()) {
+        result += " with ";
+        for (size_t i = 0; i < node.traits.size(); ++i) {
+            if (i > 0)
+                result += comma();
+            result += node.traits[i];
+        }
+    }
     result += openBrace() + "\n";
     currentIndent_++;
-    for (size_t i = 0; i < node.members.size(); ++i) {
+    // 七特性 MVP 阶段 3：仅打印类自身声明的成员（前 ownMemberCount 个）——
+    // trait 方法在 parse 期 append 到尾部，打印它们会导致往返重复合入。
+    // ownMemberCount < 0 表示未设置（兼容无 trait 路径），打印全部。
+    size_t printCount = node.ownMemberCount >= 0 ? static_cast<size_t>(node.ownMemberCount) : node.members.size();
+    for (size_t i = 0; i < printCount && i < node.members.size(); ++i) {
         auto& member = node.members[i];
         // F-P2-8 fix: 跳过空成员指针，避免 formatNode 返回 "null" 作为类成员
         if (!member)

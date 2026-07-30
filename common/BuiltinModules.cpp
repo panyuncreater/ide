@@ -538,11 +538,58 @@ export fun bpow(base, exp) {
 }
 )";
 
+/// std/async 模块：协作式单线程调度器（七特性 MVP 阶段 4）
+/// 基于 R164 生成器/协程：async fun 调用返回协程值，.next() 驱动一步、.done() 查询。
+/// 调度器用 array 存任务，round-robin 轮流驱动直到全部完成。
+/// 四后端一致：纯 MiniLang 实现，仅依赖已四后端可用的 .next()/.done()。
+const std::string kStdAsync = R"(
+// std/async — 协作式单线程调度器（基于生成器/协程）
+// 教学目的：展示 async/await 下的状态机调度与协作式多任务。
+
+// runAll(tasks): 依次驱动任务数组至全部完成，返回各任务最终值的数组。
+// round-robin：每轮对未完成任务各推进一步 .next()，交错执行直到全部 done。
+export fun runAll(tasks) {
+    var results = [];
+    var i = 0;
+    while (i < tasks.len()) {
+        results.append(null);
+        i = i + 1;
+    }
+    var remaining = tasks.len();
+    while (remaining > 0) {
+        var j = 0;
+        remaining = 0;
+        while (j < tasks.len()) {
+            var t = tasks[j];
+            if (not t.done()) {
+                var v = t.next();
+                if (t.done()) {
+                    results[j] = v;
+                } else {
+                    remaining = remaining + 1;
+                }
+            }
+            j = j + 1;
+        }
+    }
+    return results;
+}
+
+// runTask(task): 驱动单个任务至完成，返回其最终值（等价于 await）。
+export fun runTask(task) {
+    var last = null;
+    while (not task.done()) {
+        last = task.next();
+    }
+    return last;
+}
+)";
+
 /// 内建模块注册表：路径→源码
-const std::unordered_map<std::string, std::string>& moduleRegistry() {
+ const std::unordered_map<std::string, std::string>& moduleRegistry() {
     static const std::unordered_map<std::string, std::string> registry = {
         {"std/math", kStdMath},     {"std/string", kStdString}, {"std/list", kStdList},
-        {"std/result", kStdResult}, {"std/bigint", kStdBigint},
+        {"std/result", kStdResult}, {"std/bigint", kStdBigint}, {"std/async", kStdAsync},
     };
     return registry;
 }

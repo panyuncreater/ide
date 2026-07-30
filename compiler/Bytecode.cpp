@@ -118,6 +118,7 @@ constexpr OpCodeInfo kOpCodeInfo[] = {
     /* 85 OP_MUL_INT_SPEC              */ {"OP_MUL_INT_SPEC", 1, false}, // PERF: int*int 特化
     /* 86 OP_LT_INT_SPEC               */ {"OP_LT_INT_SPEC", 1, false},  // PERF: int<int 特化
     /* 87 OP_TAIL_CALL                 */ {"OP_TAIL_CALL", 4, false},    // L18: nameIdx(2B)+argCount(1B)
+    /* 88 OP_AWAIT                     */ {"OP_AWAIT", 1, false},        // 阶段4: opcode(1B) await 同步 drain
 };
 } // anonymous namespace
 
@@ -660,6 +661,10 @@ std::string BytecodeChunk::disassembleInstruction(size_t& offset) const {
     }
     case OpCode::OP_YIELD:
         str += "OP_YIELD";
+        offset += 1;
+        break;
+    case OpCode::OP_AWAIT:
+        str += "OP_AWAIT";
         offset += 1;
         break;
     case OpCode::OP_ADD_INT_SPEC:

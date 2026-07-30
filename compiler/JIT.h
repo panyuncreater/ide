@@ -284,6 +284,15 @@ struct JitContext {
     // JIT 代码在 OP_LOOP 回边处轮询此标志，非零时调用 jitSafepointGc 收集 roots 并执行 GC。
     // GcManager 的增量触发回调被重定向为设置此标志（而非直接调用 collectCycle）。
     std::atomic<int>* gcNeededFlag = nullptr; // offset 248: 原子 GC 请求标志指针
+    // enum variant 支持：enum 元信息注册表指针（unordered_map<string, VMEnumInfo>*）。
+    // execute() 从 CompileResult.enumInfos 加载到 JITBackend::enumRegistry_ 后指向它。
+    // jitBuildEnumVariant 用其校验 variant 名存在性/arity/字段类型（对齐 VM enumRegistry_）。
+    // 设计为 ctx 指针（而非 backendPtr 成员访问），使 x86-64 与 ARM64 后端共享同一 helper。
+    const void* enumRegistryPtr = nullptr; // offset 256: enum 注册表指针
+    // 并发原语支持：同步对象方法内联处理邮箱。jitMethodCall 遇到 channel/mutex/
+    // rwlock/thread 接收者时经 handleSyncObjectMethod 内联完成调用（结果已压栈），
+    // 置 1 通知 emitMethodCall 生成的代码跳过 jmp methodEntryPtr 直达 returnLabel。
+    int64_t syncMethodHandled = 0; // offset 264: 同步对象方法内联处理标志
 };
 
 // ============================================================
@@ -319,6 +328,8 @@ constexpr int deoptEntryPoint = 216; // R158: 反优化 Tier 1 入口点邮箱
 constexpr int memberGetICPtr = 232;  // R160: inline cache 数组指针
 constexpr int globalsPtr = 240;      // R162: 名称变量表指针
 constexpr int gcNeededFlag = 248;    // Safepoint GC 请求标志指针
+constexpr int enumRegistryPtr = 256; // enum 元信息注册表指针
+constexpr int syncMethodHandled = 264; // 同步对象方法内联处理标志（邮箱）
 } // namespace jit_offset
 static_assert(offsetof(JitContext, hasError) == jit_offset::hasError, "hasError offset");
 static_assert(offsetof(JitContext, globalSlots) == jit_offset::globalSlots, "globalSlots offset");
@@ -347,6 +358,8 @@ static_assert(offsetof(JitContext, deoptEntryPoint) == jit_offset::deoptEntryPoi
 static_assert(offsetof(JitContext, memberGetICPtr) == jit_offset::memberGetICPtr, "memberGetICPtr offset");
 static_assert(offsetof(JitContext, globalsPtr) == jit_offset::globalsPtr, "globalsPtr offset");
 static_assert(offsetof(JitContext, gcNeededFlag) == jit_offset::gcNeededFlag, "gcNeededFlag offset");
+static_assert(offsetof(JitContext, enumRegistryPtr) == jit_offset::enumRegistryPtr, "enumRegistryPtr offset");
+static_assert(offsetof(JitContext, syncMethodHandled) == jit_offset::syncMethodHandled, "syncMethodHandled offset");
 
 // Prologue 栈布局常量
 // 48 = 5 个 callee-saved 寄存器 (r12/r13/r14/r15/rbx) × 8B + 8B 对齐填充
@@ -773,6 +786,21 @@ private:
     void emitFloatBinaryArith(asmjit::x86::Assembler& a, int op, asmjit::Label failLabel, asmjit::Label endLabel,
                               size_t chunkIdx, asmjit::Label divByZeroLabel = {});
     void emitLen(asmjit::x86::Assembler& a, asmjit::Label epilogue);
+    /// enum variant 支持：OP_BUILD_ENUM_VARIANT / OP_ENUM_VARIANT_NAME / OP_ENUM_VARIANT_FIELD
+    /// 统一 C++ 辅助路径（校验逻辑与 VM executeContainerBuildOps/executeEnumOps 对齐）
+    void emitBuildEnumVariant(asmjit::x86::Assembler& a, asmjit::Label epilogue, const char* enumName,
+                              const char* variantName, uint8_t argCount);
+    void emitEnumVariantName(asmjit::x86::Assembler& a, asmjit::Label epilogue, const char* enumName,
+                             const char* variantName);
+    void emitEnumVariantField(asmjit::x86::Assembler& a, asmjit::Label epilogue);
+    /// 并发原语内建函数：spawn/channel/mutex/rwlock（OP_CALL 名称未命中 funcTable 时分流）
+    void emitCallConcurrencyBuiltin(asmjit::x86::Assembler& a, asmjit::Label epilogue, const char* funName,
+                                    uint8_t argCount);
+    /// 闭包同步调用跳板：C 可调用入口 int64_t(*)(JitContext*, uint64_t argCount)。
+    /// 在 compileAllChunks 末尾（主 epilogue 之后）发射，帧布局与主入口 prologue 一致，
+    /// 使闭包内错误路径 jmp 共享 epilogue 时能沿跳板 rbp 帧干净地 ret 回 C++ 调用方。
+    /// spawn 的延迟执行闭包在 thread.join() 时经此跳板同步执行（jitInvokeClosureSync）。
+    void emitClosureTrampoline(asmjit::x86::Assembler& a, asmjit::Label trampLabel);
     void emitDupN(asmjit::x86::Assembler& a, uint8_t depth);
     void emitLoadMutated(asmjit::x86::Assembler& a);
     void emitIndexSet(asmjit::x86::Assembler& a, asmjit::Label epilogue);
@@ -838,6 +866,11 @@ private:
     /// R148: 运行时类注册表（与 StackVM classInfo_ 等价，简化版无 methodCache）
     /// OP_DEFINE_CLASS 执行时填充，OP_CLASS_NEW/OP_MEMBER_GET/SET 查询
     std::unordered_map<std::string, JitClassInfo> classInfo_;
+
+    /// enum 元信息注册表（与 VM enumRegistry_ 对齐）：execute() 从
+    /// CompileResult.enumInfos 加载，jitBuildEnumVariant 经 ctx->enumRegistryPtr 校验
+    /// variant 名存在性 + arity + 字段类型注解（含泛型类型参数擦除与继承链 fallback）。
+    std::unordered_map<std::string, VMEnumInfo> enumRegistry_;
 
     /// R148: OP_INIT_FIELD 执行期间收集字段声明顺序，供 OP_DEFINE_CLASS 提取
     std::vector<std::string> pendingFieldOrder_;
@@ -1087,6 +1120,18 @@ public:
     /// R162: extern "C" helper（jitDefineVar 等）通过 backendPtr 访问，故声明在 public 区
     std::vector<int64_t> globalSlots_; ///< R139: 全局变量 slot 存储（与 StackVM globalSlots_ 等价）
     std::unordered_map<std::string, int> globalNameToSlot_; ///< R147: 名称→slot 映射
+
+    /// 闭包同步调用跳板入口（compileAllChunks 末尾发射，runtime_.add 后解析地址）。
+    /// jitInvokeClosureSync（JITRuntime.cpp）用它从 C++ 同步调用 JIT 编译的闭包：
+    /// spawn 延迟执行模式下 thread.join() 的 pending 闭包经此桥执行。
+    using JitTrampolineFn = int64_t (*)(JitContext*, uint64_t);
+    JitTrampolineFn closureTrampoline_ = nullptr;
+
+    /// 跳板帧地板栈：jitInvokeClosureSync 进入时 push 当前 *frameCount，退出时 pop。
+    /// jitThrow 据此阻止异常跨跳板边界向外层 JIT 帧传播（否则 catch 地址位于外层
+    /// 代码，jmp 过去会在跳板的本机栈上继续执行外层逻辑，造成控制流双重执行）。
+    /// 未在跳板范围内捕获的异常降级为 hasError（"未捕获的异常: X"）。
+    std::vector<size_t> trampolineFrameFloors_;
 
     /// R156: 关闭所有指向 address <= fromAddr 的 open upvalues
     /// 与 StackVM closeUpvaluesFrom(fromSlot) 语义对齐但方向反转：

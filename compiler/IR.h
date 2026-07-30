@@ -172,6 +172,12 @@ enum class IROp : uint8_t {
     //           否则 dest = src，继续执行函数体。
     YIELD,
 
+    // 七特性 MVP 阶段 4：await 表达式
+    // operands: [dest_vreg, src_vreg]  dest = await 结果
+    // 语义（同步 drain）：src 非协程 → dest = src；src 为协程 → 驱动到 done，
+    // dest = 最后一次 next() 的值。lower：StackVM → OP_AWAIT；RegisterVM → REG_AWAIT dst, src。
+    AWAIT,
+
     // ---- 闭包 ----
     MAKE_CLOSURE, // dest = closure(name, upvalues)  operands: [dest, name_idx, uv_count, uv1_isLocal, uv1_idx, ...]
 
@@ -903,6 +909,8 @@ private:
     IROperand visitFunDecl(class FunDecl* node);
     /// R164 协程/生成器：yield 表达式 → IR YIELD 指令
     IROperand visitYieldExpr(class YieldExpr* node);
+    /// 七特性 MVP 阶段 4：await 表达式 → IR AWAIT 指令
+    IROperand visitAwaitExpr(class AwaitExpr* node);
     IROperand visitFunCall(class FunCall* node);
     /// R98 W3: 返回 lambda 的 MAKE_CLOSURE dest vreg（供表达式上下文使用）；
     /// 具名函数返回 vreg(0) 哨兵（具名函数不作为表达式求值）

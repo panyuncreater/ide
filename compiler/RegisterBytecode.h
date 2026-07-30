@@ -78,6 +78,10 @@ enum class RegOp : uint8_t {
     // REG_YIELD dst, src — dst 接收 yield 表达式结果（重放模式 = src），src 提供 yield 值
     REG_YIELD, // dst(1B), src(1B)
 
+    // 七特性 MVP 阶段 4：await 表达式
+    // REG_AWAIT dst, src — dst 接收 await 结果；src 非协程恒等，协程驱动到 done 取最终值
+    REG_AWAIT, // dst(1B), src(1B)
+
     // ---- 调用 ----
     REG_CALL,        // dst, nameIdx(2B), argCount(1B), arg1, arg2, ...  命名函数调用
     REG_CALL_EXPR,   // dst, callee, argCount(1B), arg1, ...             表达式调用

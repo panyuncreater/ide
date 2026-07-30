@@ -383,7 +383,12 @@ private:
     // 互斥锁：lock 阻塞直到获取，unlock 释放，tryLock 非阻塞尝试
     struct MutexData : RefCounted {
         std::shared_ptr<std::mutex> inner;
-        MutexData() : RefCounted(ValueType::VAL_MUTEX), inner(std::make_shared<std::mutex>()) {}
+        // 自死锁检测：记录当前持有锁的线程 id（shared_ptr 使 Value 拷贝共享同一状态）。
+        // 同一线程重复 lock() 会死锁（std::mutex 非递归），持有者匹配时 fail-fast 抛异常。
+        std::shared_ptr<std::atomic<std::thread::id>> owner;
+        MutexData()
+            : RefCounted(ValueType::VAL_MUTEX), inner(std::make_shared<std::mutex>()),
+              owner(std::make_shared<std::atomic<std::thread::id>>()) {}
     };
 
     // 读写锁：readLock 共享获取，writeLock 独占获取，对应 unlock 释放
@@ -1094,6 +1099,13 @@ public:
             std::abort();
         }
         return box_.asPtr<MutexData>()->inner;
+    }
+    // 自死锁检测用：返回记录持有线程 id 的共享原子。与 mutexInner() 共存于同一 MutexData。
+    std::shared_ptr<std::atomic<std::thread::id>> mutexOwner() const {
+        if (!isMutex()) {
+            std::abort();
+        }
+        return box_.asPtr<MutexData>()->owner;
     }
     std::shared_ptr<std::shared_mutex> rwlockInner() const {
         if (!isRwLock()) {

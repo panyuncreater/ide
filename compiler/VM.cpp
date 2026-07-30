@@ -1918,6 +1918,8 @@ VMResult VM::executeOneInstruction() {
 
     // R164 协程/生成器
     case OpCode::OP_YIELD:
+    // 七特性 MVP 阶段 4：await 同步 drain
+    case OpCode::OP_AWAIT:
         return executeCoroutineOps(op, ip);
 
     default:

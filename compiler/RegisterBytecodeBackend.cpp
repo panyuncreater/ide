@@ -213,6 +213,7 @@ void RegisterBytecodeBackend::extendLastUseForLoops(const IRFunction& ir) {
         case IROp::POP:
         case IROp::PRINT:
         case IROp::YIELD:
+        case IROp::AWAIT:
         case IROp::INIT_FIELD:
             return true;
         default:
@@ -574,6 +575,8 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
     case IROp::RETURN_NULL:
     // R164 协程/生成器：YIELD 可中断执行（抛 VMYieldSignal），归入控制流组
     case IROp::YIELD:
+    // 七特性 MVP 阶段 4：AWAIT 同步 drain（可能抛异常/错误），归入控制流组
+    case IROp::AWAIT:
         return lowerControlOps(instr, ir);
 
     // ---- 调用 ----
@@ -1119,6 +1122,19 @@ bool RegisterBytecodeBackend::lowerControlOps(const IRInstruction& instr, const 
         uint8_t dst = vregToReg(instr.operands[0].index);
         uint8_t src = vregToReg(instr.operands[1].index);
         chunk_->writeOp(RegOp::REG_YIELD, line);
+        chunk_->writeReg(dst, line);
+        chunk_->writeReg(src, line);
+        break;
+    }
+    // 七特性 MVP 阶段 4：AWAIT dest, src → REG_AWAIT dst, src（3 字节）
+    // 语义：RegisterVM 执行 REG_AWAIT 时：src 非协程 → dst = src；
+    //   src 为协程 → 驱动到 done，dst = 最后一次 next() 的值。
+    case IROp::AWAIT: {
+        if (instr.operands.size() < 2)
+            return false;
+        uint8_t dst = vregToReg(instr.operands[0].index);
+        uint8_t src = vregToReg(instr.operands[1].index);
+        chunk_->writeOp(RegOp::REG_AWAIT, line);
         chunk_->writeReg(dst, line);
         chunk_->writeReg(src, line);
         break;

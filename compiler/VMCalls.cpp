@@ -1743,6 +1743,41 @@ VMResult VM::invokeClosureSync(const Value& closure, const Value* args, size_t a
 // 注：VM 使用与 Interpreter 相同的重放模式，保证四后端语义一致。
 // ============================================================
 VMResult VM::executeCoroutineOps(OpCode op, size_t& ip) {
+    // 七特性 MVP 阶段 4：OP_AWAIT——同步 drain 协程到完成（与 Interpreter::visitAwaitExpr 对齐）。
+    // pop 栈顶值：非协程恒等 push 回；协程循环 callCoroutineNext 直到 done，
+    // push 最后一次 next() 的值。异常穿透与错误传播仿 dispatchCoroutineBuiltin 的 .next() 路径。
+    if (op == OpCode::OP_AWAIT) {
+        if (stack_.empty()) {
+            return runtimeError("栈下溢: OP_AWAIT");
+        }
+        Value v = pop();
+        if (!v.isCoroutine()) {
+            push(std::move(v)); // await 同步值：恒等
+            ip += 1;
+            return VMResult::VM_OK;
+        }
+        auto* cd = v.coroutineData();
+        Value last = cd->currentValueBox.empty() ? Value::nullValue() : cd->currentValueBox.front();
+        size_t savedTryStackSize = tryStack_.size();
+        int64_t guard = 0;
+        while (!cd->done) {
+            last = callCoroutineNext(v);
+            if (hasError_) {
+                return VMResult::VM_RUNTIME_ERROR;
+            }
+            if (tryStack_.size() < savedTryStackSize) {
+                // 协程体内未捕获 throw 穿透：throwException 已截断栈并 push 异常值，
+                // 不可 push/推进 ip（仿 dispatchCoroutineBuiltin 的 AUDIT-R7 F2 模式）
+                return VMResult::VM_EXCEPTION_THROW;
+            }
+            if (++guard > RuntimeLimits::MAX_LOOP_ITERATIONS) {
+                return runtimeError("await 驱动协程超出迭代上限（可能是无限生成器）");
+            }
+        }
+        push(std::move(last));
+        ip += 1; // OP_AWAIT 是 1 字节指令
+        return VMResult::VM_OK;
+    }
     if (op != OpCode::OP_YIELD) {
         return runtimeError(ErrorFormat::formatStd("未知协程操作码: {}", static_cast<int>(op)));
     }

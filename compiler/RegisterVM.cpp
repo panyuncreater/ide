@@ -433,6 +433,8 @@ VMResult RegisterVM::executeOneInstruction() {
 
     // R164 协程/生成器
     case RegOp::REG_YIELD:
+    // 七特性 MVP 阶段 4：await 同步 drain
+    case RegOp::REG_AWAIT:
         return executeCoroutineOps(op, ip);
 
     default:

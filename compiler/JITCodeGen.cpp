@@ -15,6 +15,7 @@
 #include "common/RuntimeLimits.h"
 #include "common/Utf8Utils.h"
 #include "compiler/JITInternal.h"
+#include "interpreter/BuiltinMethods.h" // isConcurrencyBuiltin（OP_CALL 并发原语分流）
 #include "interpreter/GcManager.h"
 #include "interpreter/Value.h"
 #include <algorithm>
@@ -103,6 +104,9 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
 
     // 用于 OP_RETURN 末帧返回的 epilogue 标签
     Label epilogue = a.new_label();
+
+    // 闭包同步调用跳板入口标签（主 epilogue 之后发射，runtime_.add 后解析地址）
+    Label trampolineLabel = a.new_label();
 
     // ---- C++ 辅助函数调用代码生成 lambda 已提取为成员函数 ----
     // 详见 JITCodeGenHelpers.cpp：emitCallBinaryHelper / emitCallUnaryHelper /
@@ -937,6 +941,17 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
                 break;
             }
 
+            case OpCode::OP_SWAP: {
+                // R99 match 表达式：交换栈顶两个值（仅交换 raw bits，无引用计数变化）
+                // 栈向低地址增长：[r15] = top, [r15+8] = top-1
+                a.mov(x86::rax, x86::qword_ptr(x86::r15));     // rax = top
+                a.mov(x86::rcx, x86::qword_ptr(x86::r15, 8));  // rcx = top-1
+                a.mov(x86::qword_ptr(x86::r15), x86::rcx);     // [top]   = top-1
+                a.mov(x86::qword_ptr(x86::r15, 8), x86::rax);  // [top-1] = top
+                ip += 1;
+                break;
+            }
+
             // ---- R146 阶段 4：数组类型支持（C++ 辅助路径） ----
             // 设计：数组操作涉及动态 count 个元素 + 堆对象 COW，统一通过 C++ 辅助函数实现。
             // JIT 代码在调用前更新 ctx->stackTop = r15，辅助函数通过 ctx->stackTop 读写栈，
@@ -985,6 +1000,58 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
                 uint8_t count = bytecodes[ip + 1];
                 emitBuildTuple(a, epilogue, count);
                 ip += 2;
+                break;
+            }
+
+            // ---- enum variant 支持（R99 字节码，四后端一致性） ----
+            // 校验逻辑（enum 存在性/variant 存在性/arity/字段类型注解）在
+            // jitBuildEnumVariant helper 中与 VM executeContainerBuildOps 对齐，
+            // enum 元信息经 ctx->enumRegistryPtr（execute 从 CompileResult.enumInfos 加载）。
+            case OpCode::OP_BUILD_ENUM_VARIANT: {
+                // 6B 操作数：opcode + enumNameIdx(2B) + variantNameIdx(2B) + argCount(1B)
+                if (ip + 5 >= bytecodes.size()) {
+                    compileError("OP_BUILD_ENUM_VARIANT 操作数越界");
+                    return nullptr;
+                }
+                uint16_t enumIdx =
+                    static_cast<uint16_t>(bytecodes[ip + 1]) | (static_cast<uint16_t>(bytecodes[ip + 2]) << 8);
+                uint16_t varIdx =
+                    static_cast<uint16_t>(bytecodes[ip + 3]) | (static_cast<uint16_t>(bytecodes[ip + 4]) << 8);
+                uint8_t argCount = bytecodes[ip + 5];
+                if (enumIdx >= chunk.constants.size() || varIdx >= chunk.constants.size()) {
+                    compileError("OP_BUILD_ENUM_VARIANT 常量池索引越界");
+                    return nullptr;
+                }
+                // R148 教训：直接引用 chunk.constants 内的字符串，避免局部 std::string
+                // 析构导致 movabs 嵌入的指针悬垂
+                emitBuildEnumVariant(a, epilogue, chunk.constants[enumIdx].stringVal().c_str(),
+                                     chunk.constants[varIdx].stringVal().c_str(), argCount);
+                ip += 6;
+                break;
+            }
+            case OpCode::OP_ENUM_VARIANT_NAME: {
+                // 5B 操作数：opcode + enumNameIdx(2B) + variantNameIdx(2B)
+                if (ip + 4 >= bytecodes.size()) {
+                    compileError("OP_ENUM_VARIANT_NAME 操作数越界");
+                    return nullptr;
+                }
+                uint16_t enumIdx =
+                    static_cast<uint16_t>(bytecodes[ip + 1]) | (static_cast<uint16_t>(bytecodes[ip + 2]) << 8);
+                uint16_t varIdx =
+                    static_cast<uint16_t>(bytecodes[ip + 3]) | (static_cast<uint16_t>(bytecodes[ip + 4]) << 8);
+                if (enumIdx >= chunk.constants.size() || varIdx >= chunk.constants.size()) {
+                    compileError("OP_ENUM_VARIANT_NAME 常量池索引越界");
+                    return nullptr;
+                }
+                emitEnumVariantName(a, epilogue, chunk.constants[enumIdx].stringVal().c_str(),
+                                    chunk.constants[varIdx].stringVal().c_str());
+                ip += 5;
+                break;
+            }
+            case OpCode::OP_ENUM_VARIANT_FIELD: {
+                // 无操作数：栈 [scrut, idx] → [scrut.fields[idx]]
+                emitEnumVariantField(a, epilogue);
+                ip += 1;
                 break;
             }
             case OpCode::OP_INDEX_SET_VAR: {
@@ -1327,6 +1394,16 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
                         // 是类名构造：栈布局与 OP_CLASS_NEW 一致（[argN-1]...[arg0]）
                         // 直接复用 emitClassNew 路径（含 R149 init 方法调用支持）
                         emitClassNew(a, epilogue, chunk.constants[nameIdx].stringVal().c_str(), argCount);
+                        ip += 4;
+                        break;
+                    }
+                    // 并发原语内建函数：spawn(fn, args...) + channel()/mutex()/rwlock()
+                    // 优先级与 StackVM executeCallByName 对齐：用户函数/类名先于内建。
+                    // 经 jitCallConcurrency → 共享层（executeSharedSpawn/
+                    // executeSharedBuiltinFunction）实现，四后端语义一致。
+                    if (funName == "spawn" || isConcurrencyBuiltin(funName)) {
+                        emitCallConcurrencyBuiltin(a, epilogue, chunk.constants[nameIdx].stringVal().c_str(),
+                                                   argCount);
                         ip += 4;
                         break;
                     }
@@ -2145,6 +2222,10 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
     a.pop(x86::rbp);
     a.ret();
 
+    // ---- 闭包同步调用跳板（主 epilogue 之后，仅经 C++ 显式调用可达） ----
+    // spawn 延迟执行闭包在 thread.join() 时经 jitInvokeClosureSync → 此跳板执行
+    emitClosureTrampoline(a, trampolineLabel);
+
     // ---- 编译并加入 runtime ----
     JitEntryFn entry = nullptr;
     // 拓展二期：在 runtime_.add 前读出捕获的汇编文本（add 后 code 内容被搬迁）
@@ -2156,6 +2237,13 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
         compileError(std::string("asmjit JitRuntime::add 失败: ") + DebugUtils::error_as_string(addErr));
         return nullptr;
     }
+
+    // 解析闭包跳板入口地址（spawn-join 的 ClosureInvoker 用）。
+    // 重编译（lazy/特化/OSR）会覆盖为新 CodeHolder 中的跳板；旧代码块按既有
+    // 所有权机制（ownedLazyEntries_/retiredSpecializedEntries_）延迟到安全点释放，
+    // 故覆盖时旧跳板地址仍有效。
+    closureTrampoline_ = reinterpret_cast<JitTrampolineFn>(reinterpret_cast<uintptr_t>(entry) +
+                                                          code.label_offset_from_base(trampolineLabel));
 
     // R149: 填充 methodEntries_（"Class.method" → JitMethodInfo）
     // runtime_.add 内部调用 code.flatten()，之后 label_offset_from_base 返回正确偏移

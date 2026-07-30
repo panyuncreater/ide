@@ -3195,6 +3195,57 @@ void Interpreter::visitYieldExpr(YieldExpr& node) {
     lastValue_ = std::move(yieldValue);
 }
 
+// ============================================================
+// 七特性 MVP 阶段 2：宏系统
+// ============================================================
+// MacroDecl 运行期为 no-op：展开已在 parse 期完成，声明节点仅供
+// Formatter 打印与 AST 可视化。lastValue_ 置 null（与 visitEnumDecl 同模式）。
+void Interpreter::visitMacroDecl(MacroDecl& node) {
+    (void)node;
+    lastValue_ = Value::nullValue();
+}
+
+// MacroCallExpr 直接求值 parse 期展开的语义子树（expanded 非空由 Parser 保证，
+// 防御性检查兼容动态构造的 AST）。
+void Interpreter::visitMacroCallExpr(MacroCallExpr& node) {
+    if (!node.expanded) {
+        runtimeError("宏调用 " + node.name + "! 缺少展开子树（AST 构造错误）", node.line, node.column);
+    }
+    lastValue_ = evaluate(node.expanded.get());
+}
+
+// 七特性 MVP 阶段 3：TraitDecl 运行期 no-op（方法已在 parse 期合入混入类的
+// members，随 visitClassDecl 注册为普通类方法）。
+void Interpreter::visitTraitDecl(TraitDecl& node) {
+    (void)node;
+    lastValue_ = Value::nullValue();
+}
+
+// 七特性 MVP 阶段 4：await 表达式求值（同步 drain 模型）。
+// 语义（四后端一致）：
+//   - operand 为协程/Task → 循环 callCoroutineNext 直到 done，结果为最后一次
+//     next() 的值（自然结束的 return 值或已耗尽时的最终值）。
+//   - operand 非协程 → 恒等返回（await 同步值合法）。
+// 驱动循环受 MAX_LOOP_ITERATIONS 上限保护（无限 yield 生成器会被截断）；
+// 协程体内未捕获异常经 RuntimeError/ThrowException 自然穿透。
+void Interpreter::visitAwaitExpr(AwaitExpr& node) {
+    Value v = evaluate(node.operand.get());
+    if (!v.isCoroutine()) {
+        lastValue_ = std::move(v); // await 同步值：恒等
+        return;
+    }
+    auto* cd = v.coroutineData();
+    Value last = cd->currentValueBox.empty() ? Value::nullValue() : cd->currentValueBox.front();
+    int64_t guard = 0;
+    while (!cd->done) {
+        last = callCoroutineNext(v);
+        if (++guard > RuntimeLimits::MAX_LOOP_ITERATIONS) {
+            runtimeError("await 驱动协程超出迭代上限（可能是无限生成器）", node.line, node.column);
+        }
+    }
+    lastValue_ = std::move(last);
+}
+
 // R134 模式匹配扩展：递归 pattern 匹配 helper。
 // 在 caseEnv 中绑定变量；匹配失败时已绑定的变量留在 caseEnv 中（caseEnv 会被调用方丢弃，无需手动清理）。
 // 递归语义：

@@ -61,6 +61,13 @@ public:
     virtual void visitMatchExpr(MatchExpr& node) = 0;
     // R164 协程/生成器：yield 表达式
     virtual void visitYieldExpr(YieldExpr& node) = 0;
+    // 七特性 MVP 阶段 2：宏系统（MacroDecl 运行期 no-op，MacroCallExpr 求值 expanded）
+    virtual void visitMacroDecl(MacroDecl& node) = 0;
+    virtual void visitMacroCallExpr(MacroCallExpr& node) = 0;
+    // 七特性 MVP 阶段 3：Trait/Mixin（TraitDecl 运行期 no-op，方法 parse 期合入）
+    virtual void visitTraitDecl(TraitDecl& node) = 0;
+    // 七特性 MVP 阶段 4：async/await（await 驱动协程到完成并取最终值）
+    virtual void visitAwaitExpr(AwaitExpr& node) = 0;
 };
 
 // ============================================================
@@ -121,4 +128,13 @@ public:
     void visitEnumVariantExpr(EnumVariantExpr& node) override { defaultVisit(node); }
     void visitMatchExpr(MatchExpr& node) override { defaultVisit(node); }
     void visitYieldExpr(YieldExpr& node) override { defaultVisit(node); }
+    // 七特性 MVP 阶段 2：宏系统默认实现。
+    // 注：继承 DefaultVisitor 的访问者（Compiler/Formatter/LintPass/DocGenerator）
+    // 若需语义处理 MacroCallExpr 必须自行 override（否则默认 no-op 丢失展开子树）。
+    void visitMacroDecl(MacroDecl& node) override { defaultVisit(node); }
+    void visitMacroCallExpr(MacroCallExpr& node) override { defaultVisit(node); }
+    // 七特性 MVP 阶段 3：Trait/Mixin 默认实现（声明节点，多数访问者无需处理）。
+    void visitTraitDecl(TraitDecl& node) override { defaultVisit(node); }
+    // 七特性 MVP 阶段 4：async/await 默认实现。
+    void visitAwaitExpr(AwaitExpr& node) override { defaultVisit(node); }
 };

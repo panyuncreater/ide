@@ -1220,6 +1220,9 @@ bool inlinePass(IRModule& module) {
             // 不内联含 yield 的函数（生成器）
             if (instr.op == IROp::YIELD)
                 return false;
+            // 七特性 MVP 阶段 4：不内联含 await 的函数（同步 drain 可中断，与生成器同类）
+            if (instr.op == IROp::AWAIT)
+                return false;
             // L17 fix: 不内联含闭包/upvalue 指令的函数——MAKE_CLOSURE 的捕获
             // 列表（isLocal+slot）与 LOAD/STORE/CLOSE_UPVALUE 的 uv 索引均指向
             // callee 自己的帧/捕获表，内联到 caller 后捕获错误变量（复现：

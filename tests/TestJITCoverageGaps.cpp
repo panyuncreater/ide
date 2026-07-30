@@ -172,6 +172,98 @@ TEST(JITCoverageGaps, SpawnJoinRunsClosure) {
 }
 
 // ============================================================
+// 第五组：enum/并发原语 JIT 原生化后的严格一致性（补全后 JIT==StackVM）
+// ------------------------------------------------------------
+// 上述 expectVmOkJitGraceful 锁允许「优雅降级 或 正确值」；JIT 补全实现后
+// 以下用 expectJitMatchesStackVM 锁定 JIT 与 StackVM 输出严格一致。
+// ============================================================
+
+TEST(JITCoverageGaps, EnumVariantMatchStrict) {
+    expectJitMatchesStackVM("enum Color { Red, Green, Blue }"
+                            "var c = Color.Green;"
+                            "var r = match (c) {"
+                            "    case Color.Red => \"r\";"
+                            "    case Color.Green => \"g\";"
+                            "    case Color.Blue => \"b\";"
+                            "};"
+                            "print(r);");
+}
+
+TEST(JITCoverageGaps, EnumVariantWithPayloadFieldExtract) {
+    // 带字段 variant 构造 + match 绑定 + 字段提取（OP_BUILD_ENUM_VARIANT +
+    // OP_ENUM_VARIANT_NAME + OP_ENUM_VARIANT_FIELD 全链路）
+    expectJitMatchesStackVM("enum Shape { Circle(int), Rect(int, int) }"
+                            "var s = Shape.Rect(3, 4);"
+                            "var area = match (s) {"
+                            "    case Shape.Circle(r) => r * r * 3;"
+                            "    case Shape.Rect(w, h) => w * h;"
+                            "};"
+                            "print(area);");
+}
+
+TEST(JITCoverageGaps, EnumArityMismatchGraceful) {
+    // arity 不一致：JIT 与 StackVM 均应在运行期报错（不静默构造），且不执行后续 print。
+    // JIT jitBuildEnumVariant 的校验与 VM executeContainerBuildOps 对齐（错误文本一致）。
+    const std::string src = "enum E { V(int) }"
+                            "var x = E.V();"
+                            "print(1);";
+    std::string vmOut = runStackVM(src);
+    std::string jitOut = runJIT(src);
+    // 错误发生在 `var x = E.V()`（print 之前），故输出以错误标记开头（print 未执行，
+    // 无先导输出）。不用 find("1") 判定——错误文本“期望 1 个参数”本身含 "1"。
+    EXPECT_EQ(vmOut.rfind("<", 0), 0u) << "StackVM 应在 print 前报 arity 错误: " << vmOut;
+    EXPECT_EQ(jitOut.rfind("<", 0), 0u) << "JIT 应在 print 前报 arity 错误或优雅降级: " << jitOut;
+}
+
+TEST(JITCoverageGaps, ChannelSendRecvStrict) {
+    expectJitMatchesStackVM("var ch = channel();"
+                            "ch.send(1);"
+                            "ch.send(2);"
+                            "print(ch.recv());"
+                            "print(ch.tryRecv());"
+                            "print(ch.tryRecv());");
+}
+
+TEST(JITCoverageGaps, MutexLockTryLockUnlockStrict) {
+    expectJitMatchesStackVM("var m = mutex();"
+                            "m.lock();"
+                            "print(m.tryLock());"
+                            "m.unlock();"
+                            "print(m.tryLock());"
+                            "m.unlock();");
+}
+
+TEST(JITCoverageGaps, RwLockReadWriteStrict) {
+    expectJitMatchesStackVM("var rw = rwlock();"
+                            "print(rw.tryReadLock());"
+                            "rw.readUnlock();"
+                            "print(rw.tryWriteLock());"
+                            "rw.writeUnlock();");
+}
+
+TEST(JITCoverageGaps, SpawnJoinRunsClosureStrict) {
+    // spawn 延迟执行：join() 在主线程同步执行闭包，副作用（print）应与 StackVM 一致
+    expectJitMatchesStackVM("fun work() { print(6 * 7); }"
+                            "var t = spawn(work);"
+                            "t.join();");
+}
+
+TEST(JITCoverageGaps, SpawnClosureWithArgsStrict) {
+    // spawn 传参 + 闭包内多语句，验证跳板参数传递与返回
+    expectJitMatchesStackVM("fun add(a, b) { print(a + b); }"
+                            "var t = spawn(add, 10, 20);"
+                            "t.join();");
+}
+
+TEST(JITCoverageGaps, ChannelCloseThenRecvStrict) {
+    expectJitMatchesStackVM("var ch = channel();"
+                            "ch.send(7);"
+                            "ch.close();"
+                            "print(ch.recv());"
+                            "print(ch.recv());"); // 关闭且空 → null
+}
+
+// ============================================================
 // 第四组：模块系统（测试 helper 未注入 moduleLoader）
 // ============================================================
 

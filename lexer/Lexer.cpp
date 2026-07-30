@@ -82,6 +82,14 @@ const std::unordered_map<std::string, TokenType>& Lexer::keywords() {
         m["yield"] = TokenType::TK_YIELD;
         // L18 lang-constfun
         m["const"] = TokenType::TK_CONST;
+        // 七特性 MVP 阶段 2：宏系统
+        m["macro"] = TokenType::TK_MACRO;
+        // 七特性 MVP 阶段 3：Trait/Mixin
+        m["trait"] = TokenType::TK_TRAIT;
+        m["with"] = TokenType::TK_WITH;
+        // 七特性 MVP 阶段 4：async/await
+        m["async"] = TokenType::TK_ASYNC;
+        m["await"] = TokenType::TK_AWAIT;
         return m;
     }();
     return kw;
@@ -98,7 +106,8 @@ struct KeywordEntry {
 // 必须严格按字典序排列（std::lower_bound 前提）
 static constexpr KeywordEntry kSortedKeywords[] = {
     {"and", TokenType::TK_AND},         {"array", TokenType::TK_ARRAY},
-    {"as", TokenType::TK_AS},           {"bool", TokenType::TK_BOOL},
+    {"as", TokenType::TK_AS},           {"async", TokenType::TK_ASYNC},
+    {"await", TokenType::TK_AWAIT},     {"bool", TokenType::TK_BOOL},
     {"break", TokenType::TK_BREAK},     {"case", TokenType::TK_CASE},
     {"catch", TokenType::TK_CATCH},     {"class", TokenType::TK_CLASS},
     {"const", TokenType::TK_CONST},     {"continue", TokenType::TK_CONTINUE},
@@ -110,13 +119,15 @@ static constexpr KeywordEntry kSortedKeywords[] = {
     {"from", TokenType::TK_FROM},       {"fun", TokenType::TK_FUN},
     {"func", TokenType::TK_FUN},        {"function", TokenType::TK_FUN},
     {"if", TokenType::TK_IF},           {"import", TokenType::TK_IMPORT},
-    {"int", TokenType::TK_INT},         {"match", TokenType::TK_MATCH},
-    {"not", TokenType::TK_NOT},         {"null", TokenType::TK_NULL},
-    {"or", TokenType::TK_OR},           {"print", TokenType::TK_PRINT},
-    {"return", TokenType::TK_RETURN},   {"string", TokenType::TK_STRING_TYPE},
+    {"int", TokenType::TK_INT},         {"macro", TokenType::TK_MACRO},
+    {"match", TokenType::TK_MATCH},     {"not", TokenType::TK_NOT},
+    {"null", TokenType::TK_NULL},       {"or", TokenType::TK_OR},
+    {"print", TokenType::TK_PRINT},     {"return", TokenType::TK_RETURN},
+    {"string", TokenType::TK_STRING_TYPE},
     {"super", TokenType::TK_SUPER},     {"throw", TokenType::TK_THROW},
-    {"true", TokenType::TK_TRUE},       {"try", TokenType::TK_TRY},
-    {"var", TokenType::TK_VAR},         {"while", TokenType::TK_WHILE},
+    {"trait", TokenType::TK_TRAIT},     {"true", TokenType::TK_TRUE},
+    {"try", TokenType::TK_TRY},        {"var", TokenType::TK_VAR},
+    {"while", TokenType::TK_WHILE},    {"with", TokenType::TK_WITH},
     {"yield", TokenType::TK_YIELD},
 };
 static constexpr size_t kSortedKeywordsCount = sizeof(kSortedKeywords) / sizeof(kSortedKeywords[0]);

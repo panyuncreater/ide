@@ -524,6 +524,39 @@ void Compiler::visitYieldExpr(YieldExpr& node) {
     chunk_.writeOp(OpCode::OP_YIELD, node.line);
 }
 
+// ============================================================
+// 七特性 MVP 阶段 2：宏系统（StackVM 直接编译路径）
+// ============================================================
+// MacroDecl 编译期 no-op：展开已在 parse 期完成，不发射任何指令
+// （与声明类节点自行平衡栈的约定一致，needsPopForExprStmt 返回 false）。
+void Compiler::visitMacroDecl(MacroDecl& node) {
+    (void)node;
+}
+
+// MacroCallExpr 直接编译 parse 期展开的语义子树（与 Interpreter/IR 路径同构，
+// 四后端语义天然一致）。expanded 为空属 AST 构造错误，报编译错误而非崩溃。
+void Compiler::visitMacroCallExpr(MacroCallExpr& node) {
+    if (!node.expanded) {
+        error("宏调用 " + node.name + "! 缺少展开子树（AST 构造错误）", node.line, node.column);
+        return;
+    }
+    compileNode(node.expanded.get());
+}
+
+// 七特性 MVP 阶段 3：TraitDecl 编译期 no-op（方法已在 parse 期合入混入类的
+// members，随 visitClassDecl 编译为普通类方法 chunk）。
+void Compiler::visitTraitDecl(TraitDecl& node) {
+    (void)node;
+}
+
+// 七特性 MVP 阶段 4：await 表达式编译。
+// 编译 operand 到栈顶，发射 OP_AWAIT（同步 drain：非协程恒等，
+// 协程驱动到 done 取最终值）。async 上下文合法性由 Parser 拦截。
+void Compiler::visitAwaitExpr(AwaitExpr& node) {
+    compileNode(node.operand.get());
+    chunk_.writeOp(OpCode::OP_AWAIT, node.line);
+}
+
 bool Compiler::declareFunction(FunDecl& node, const CompileContext& saved, const std::string& effectiveName) {
     // 如果当前在函数内，将当前函数的局部变量保存为外层局部变量（供嵌套函数检测闭包捕获）
     // C-P2-7 fix: 使用 saved.currentLocals（含外层函数局部变量）

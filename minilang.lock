@@ -1,0 +1,25 @@
+{
+    "lockfileVersion": 1,
+    "packages": [
+        {
+            "hash": "sha256:83e73035764c13a85695dc85152238b2121f8c178ef0abd025eba72964176dd2",
+            "name": "math-utils",
+            "version": "1.0.0"
+        },
+        {
+            "hash": "sha256:5d32de7035a5025d1605f4cdd8716f4260f96bbad21fb37e25a1519945e82527",
+            "name": "string-utils",
+            "version": "2.1.0"
+        },
+        {
+            "hash": "sha256:72beb80ed7a13e328577a641bd1d4815646b4da7dd77543402117bf3cd6c2481",
+            "name": "app-pkg",
+            "version": "1.0.0"
+        },
+        {
+            "hash": "sha256:c462ce75eec7aadc0d5af516c5a4c3f35f68339a571402877629c15db3fd58be",
+            "name": "lib-a",
+            "version": "1.0.0"
+        }
+    ]
+}

@@ -175,7 +175,7 @@ test_harness 使用独立的 DebugController stub，不依赖 Qt Widgets，通�
 
 ## 测试统计
 
-项目当前包含 **87 个测试 .cpp 文件**，总计 **3452 个测试用例**（截至 2026-07-25）。测试覆盖三后端语义一致性、教学面板数据完整性、前端组件、IR 优化（含 SSA 基础设施）、调试器（含 DAP pause 同步暂停 + Interpreter 状态回滚）、JIT、模块系统、并发原语、TCO 尾调用优化、try/catch 异常捕获等全部核心模块。
+项目当前包含 **105 个测试 .cpp 文件**，`minilang_tests` 目标总计 **3900 个测试用例 / 495 个测试套件**（截至 2026-07-30）。测试覆盖三后端语义一致性、教学面板数据完整性、前端组件、IR 优化（含 SSA 基础设施）、调试器（含 DAP pause 同步暂停 + Interpreter 状态回滚）、JIT、模块系统、并发原语、TCO 尾调用优化、try/catch 异常捕获等全部核心模块。
 
 ---
 
@@ -265,8 +265,8 @@ TEST(TeachingPanelsXxx, IdUnique) {
 
 | 平台 | 工具 | 行覆盖率阈值 | CI 配置 |
 |------|------|-------------|---------|
-| Windows | OpenCppCoverage | 70% | `.github/workflows/ci.yml` coverage-windows job |
-| Linux | gcovr | 70% | `.github/workflows/ci.yml` coverage-linux job |
+| Windows | OpenCppCoverage | 75% | `.github/workflows/ci.yml` coverage-windows job |
+| Linux | gcovr | 75% | `.github/workflows/ci.yml` coverage-linux job |
 
 阈值检查工具：`scripts/coverage_threshold.py`（解析 Cobertura XML，低于阈值退出码 1）
 
@@ -277,7 +277,7 @@ TEST(TeachingPanelsXxx, IdUnique) {
 | 基线 | 60% | ✅ 已完成 | 初始门槛 |
 | 第 1 步 | 65% | ✅ 已完成（2026-07-24） | 本轮 W3-3 |
 | 第 2 步 | 70% | ✅ 已完成（2026-07-25） | 本轮 P3-19，新增 TestCoverageGaps2.cpp（10 个测试） |
-| 最终 | 75% | 待推进 | 分步提升避免 CI 长期红色 |
+| 最终 | 75% | ✅ 已完成（2026-07-25，P3-A2） | CI 两平台门槛已同步提升至 75.0（ci.yml L409 Windows + L506 Linux） |
 
 ### 本地生成覆盖率报告
 
@@ -294,7 +294,7 @@ OpenCppCoverage --export_type=cobertura:out\build\debug\coverage.xml ^
     -- out\build\debug\tests\minilang_tests.exe
 
 REM 检查阈值
-python scripts/coverage_threshold.py --report out\build\debug\coverage.xml --line-threshold 70
+python scripts/coverage_threshold.py --report out\build\debug\coverage.xml --line-threshold 75
 ```
 
 #### Linux (gcovr)
@@ -302,7 +302,7 @@ python scripts/coverage_threshold.py --report out\build\debug\coverage.xml --lin
 ```bash
 cmake -B out/build/debug -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="--coverage"
 cmake --build out/build/debug --target minilang_tests
-gcovr --xml -o coverage.xml --fail-under-line 70 build/
+gcovr --xml -o coverage.xml --fail-under-line 75 build/
 ```
 
 ### 已识别覆盖率缺口与定向测试
@@ -337,13 +337,25 @@ P3-19 轮次针对「后续覆盖率提升方向」5 个点名的低覆盖区域
 | IR 优化 GVN | `GVNGaps2` (1) | if/else 两分支等价表达式（42+1）跨块消除 | ✅ |
 | IR 优化 inline 阈值边界 | `InlineGaps2` (2) | 14 指令应内联（≤15）/ 16 指令不应内联（>15） | ✅ |
 
+#### 第三批（TestCoverageGaps3.cpp，10 个测试）
+
+针对 P3-19 之后「后续覆盖率提升方向」仍点名的方向 4/5 剩余缺口添加定向测试到 `TestCoverageGaps3.cpp`（10 个测试）：
+
+| 缺口区域 | 测试套件 | 覆盖路径 | 状态 |
+|---------|---------|---------|------|
+| 并发原语 rwlock 读写锁排斥 | `RwLockGaps3` (3) | 读锁持有时写锁被排斥（写者饥饿边界）/ 写锁持有时读锁被排斥 / 读锁释放后写锁可获取，四后端一致 | ✅ |
+| 并发原语 mutex 自死锁检测 | `MutexDeadlockGaps3` (3) | 同线程重复 lock → fail-fast 报死锁 runtime 错误 / lock-unlock-relock 不误报 / 自持时 tryLock 返回 false，四后端一致 | ✅ |
+| IR 优化 LICM 嵌套循环 | `LICMNestedGaps3` (1) | 两层嵌套 while 循环 + 内层循环不变量，LICM 分析不崩溃且控制流完整 | ✅ |
+| IR 优化 GVN 副作用不消除 | `GVNSideEffectGaps3` (1) | 两次相同 CALL f()（含副作用）不被 GVN 值编号消除 | ✅ |
+| IR 优化级联内联 | `InlineCascadeGaps3` (2) | 单趟 main→a→b 残留 1 CALL / 迭代到不动点全部塌缩为 0 CALL | ✅ |
+
 ### 后续覆盖率提升方向
 
 1. **JIT 后端**：浮点边界值（NaN/Infinity/-0.0/subnormal）、递归深度边界（256/257）、异常边角场景（re-throw / finally return）已在 P3-A3 R165 系列覆盖；R161 闭包-字段交互已随 V-P1-6 JIT 同步修复启用（R161Closure* 全部通过）；JIT 模块系统/并发原语/字符串方法/enum+match 已由 `TestJITCoverageGaps.cpp`（14 用例）锁定——字符串拼接/比较/索引与 StackVM 严格一致；字符串方法（jit-runtime 降级）、enum variant（OP_BUILD_ENUM_VARIANT 未实现）、channel/mutex/spawn（内建函数未注册）锁定为“StackVM 正确 + JIT 优雅降级不崩溃”，待 JIT 补全实现后断言自动收紧为一致性
-2. **模块系统**：预编译模块 `.minic` 序列化/反序列化边界（循环导入深层嵌套已在 P3-19 覆盖）
-3. **GUI 组件**：IdeController 生命周期、Worker 线程状态清理、教学面板交互逻辑
-4. **并发原语**：channel 超时 API（`recvTimeout(ms)`）已实现并四后端一致（`ConcurrencyGaps2` 覆盖）；mutex 死锁检测、rwlock 写锁饥饿仍待覆盖（spawn 异常传播已在 P3-A1 修复，三后端一致）
-5. **IR 优化**：LICM 嵌套循环、GVN 含副作用表达式不消除、级联内联（基础 LICM/GVN/inline 边界已在 P3-19 覆盖）
+2. **模块系统**：预编译模块 `.minic` 序列化/反序列化边界（循环导入深层嵌套已在 P3-19 覆盖；反序列化健壮性已由 `BytecodeCacheRobustness`（5 用例：空文件/截断头部/版本不匹配/checksum 失配/payload 截断）覆盖，验证畸形输入安全返回 nullopt 不崩溃）
+3. **GUI 组件**：App 编排层（DebugCoordinator / WorkerManager / PipelineRunner / InterpreterWorker）已由 `minilang_app_tests` 目标的 `TestAppOrchestration.cpp`（47 用例）覆盖（断点/watchpoint 生命周期、Worker prepare/start/stop/forceStop 幂等、跨线程信号、线程安全并发访问）；教学面板交互逻辑已由 `TestTeachingPanelsE2E.cpp` 覆盖；仅 `IdeController` 完整生命周期因拉入完整 GUI 依赖链而未纳入独立测试目标（架构性取舍）
+4. **并发原语**：channel 超时 API（`recvTimeout(ms)`）已实现并四后端一致（`ConcurrencyGaps2` 覆盖）；rwlock 读写锁排斥边界已由 `RwLockGaps3`（3 用例）覆盖；mutex 自死锁检测已实现（MutexData 记录持有线程 id，同线程重复 lock → fail-fast 报 runtime 错误而非挂起，保留跨线程 std::mutex 语义）并由 `MutexDeadlockGaps3`（3 用例，四后端）锁定；spawn 异常传播已在 P3-A1 修复，三后端一致
+5. **IR 优化**：基础 LICM/GVN/inline 边界已在 P3-19 覆盖；LICM 嵌套循环、GVN 含副作用表达式不消除、级联内联已由 `TestCoverageGaps3.cpp`（`LICMNestedGaps3`/`GVNSideEffectGaps3`/`InlineCascadeGaps3`，4 用例）覆盖
 
 ---
 

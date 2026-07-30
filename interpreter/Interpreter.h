@@ -353,6 +353,13 @@ public:
     void visitMatchExpr(MatchExpr& node) override;
     // R164 协程/生成器：yield 表达式求值（重放模式）
     void visitYieldExpr(YieldExpr& node) override;
+    // 七特性 MVP 阶段 2：宏系统（声明运行期 no-op，调用求值 expanded 子树）
+    void visitMacroDecl(MacroDecl& node) override;
+    void visitMacroCallExpr(MacroCallExpr& node) override;
+    // 七特性 MVP 阶段 3：Trait/Mixin（声明运行期 no-op，方法 parse 期已合入类）
+    void visitTraitDecl(TraitDecl& node) override;
+    // 七特性 MVP 阶段 4：async/await（await 同步 drain 协程到完成取最终值）
+    void visitAwaitExpr(AwaitExpr& node) override;
 
     // R99 辅助方法
     /// match case 体的求值（Block 或单表达式）

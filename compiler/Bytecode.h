@@ -170,6 +170,14 @@ enum class OpCode : uint8_t {
     // 运行时：目标命中 functionChunks_ 普通函数且当前帧可复用 → 帧复用 TCO
     // （跳过后随 OP_RETURN）；否则降级为 OP_CALL 语义（返回后执行 OP_RETURN）。
     OP_TAIL_CALL, // nameIdx(2B) + argCount(1B)
+
+    // 七特性 MVP 阶段 4：await 表达式（无操作数，1B）。
+    // 语义（同步 drain 模型，与 Interpreter::visitAwaitExpr 对齐）：
+    //   pop 栈顶值 v：
+    //   - v 非协程 → push v（await 同步值恒等）
+    //   - v 为协程 → 循环 callCoroutineNext 直到 done，push 最后一次 next() 的值
+    // 驱动循环受 MAX_LOOP_ITERATIONS 保护；协程体内未捕获异常经 tryStack 截断检测传播。
+    OP_AWAIT,
 };
 
 // ============================================================

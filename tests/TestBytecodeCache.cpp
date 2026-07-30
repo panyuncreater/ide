@@ -350,6 +350,135 @@ TEST(BytecodeCacheTest, EntryCountAfterStore) {
 }
 
 // ============================================================
+// 反序列化健壮性测试：畸形 .mbc 文件必须安全返回 nullopt 而非崩溃
+// ------------------------------------------------------------
+// 现有 CorruptedFileReturnsNullopt 仅覆盖「整文件垃圾数据」（magic 校验失败）。
+// 本组针对 32 字节头（magic@0 / version@4 / mode@6 / optFlags@7 / srcHash@8 /
+// mtime@16 / checksum@24 / payloadSize@28）逐字段构造精确畸形输入，验证
+// tryLoad 在每个校验点都安全短路返回 nullopt（不越界、不崩溃）。
+// ============================================================
+
+namespace {
+/// 定位缓存目录下第一个 .mbc 文件；找不到返回空路径
+std::filesystem::path findMbcFile(const std::string& dir) {
+    namespace fs = std::filesystem;
+    for (const auto& entry : fs::directory_iterator(dir)) {
+        if (entry.path().extension() == ".mbc")
+            return entry.path();
+    }
+    return {};
+}
+
+/// 读取文件全部字节
+std::vector<uint8_t> readAllBytes(const std::filesystem::path& p) {
+    std::ifstream ifs(p, std::ios::binary);
+    return std::vector<uint8_t>((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+}
+
+/// 覆写文件全部字节
+void writeAllBytes(const std::filesystem::path& p, const std::vector<uint8_t>& bytes) {
+    std::ofstream ofs(p, std::ios::binary | std::ios::trunc);
+    ofs.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+}
+} // namespace
+
+// 空文件（0 字节）：size < kHeaderSize，安全返回 nullopt
+TEST(BytecodeCacheRobustness, EmptyFileReturnsNullopt) {
+    BytecodeCache cache;
+    std::string dir = makeUniqueCacheDir("EmptyFileReturnsNullopt");
+    cache.setCacheDir(dir);
+    std::string src = "var x = 1;";
+    BytecodeCache::CacheKey key{src, 0, 0};
+    cache.store(key, compileSource(src));
+
+    auto file = findMbcFile(dir);
+    ASSERT_FALSE(file.empty());
+    writeAllBytes(file, {}); // 截断为 0 字节
+
+    EXPECT_FALSE(cache.tryLoad(key).has_value());
+}
+
+// 截断头部（仅 10 字节 < 32）：header 读取短路，安全返回 nullopt
+TEST(BytecodeCacheRobustness, TruncatedHeaderReturnsNullopt) {
+    BytecodeCache cache;
+    std::string dir = makeUniqueCacheDir("TruncatedHeaderReturnsNullopt");
+    cache.setCacheDir(dir);
+    std::string src = "var x = 1;";
+    BytecodeCache::CacheKey key{src, 0, 0};
+    cache.store(key, compileSource(src));
+
+    auto file = findMbcFile(dir);
+    ASSERT_FALSE(file.empty());
+    auto bytes = readAllBytes(file);
+    ASSERT_GE(bytes.size(), 10u);
+    bytes.resize(10); // 不足 32 字节头
+    writeAllBytes(file, bytes);
+
+    EXPECT_FALSE(cache.tryLoad(key).has_value());
+}
+
+// 版本号不匹配（version 字段 @offset 4 篡改为 0xFFFF）：version 校验失败
+TEST(BytecodeCacheRobustness, VersionMismatchReturnsNullopt) {
+    BytecodeCache cache;
+    std::string dir = makeUniqueCacheDir("VersionMismatchReturnsNullopt");
+    cache.setCacheDir(dir);
+    std::string src = "var x = 1;";
+    BytecodeCache::CacheKey key{src, 0, 0};
+    cache.store(key, compileSource(src));
+
+    auto file = findMbcFile(dir);
+    ASSERT_FALSE(file.empty());
+    auto bytes = readAllBytes(file);
+    ASSERT_GE(bytes.size(), 32u);
+    // magic 保持有效（跳过 magic 校验），仅篡改 version（u16 @offset 4）
+    bytes[4] = 0xFF;
+    bytes[5] = 0xFF;
+    writeAllBytes(file, bytes);
+
+    EXPECT_FALSE(cache.tryLoad(key).has_value());
+}
+
+// payload 校验和不匹配（翻转一个 payload 字节）：checksum 校验失败
+TEST(BytecodeCacheRobustness, PayloadChecksumMismatchReturnsNullopt) {
+    BytecodeCache cache;
+    std::string dir = makeUniqueCacheDir("PayloadChecksumMismatchReturnsNullopt");
+    cache.setCacheDir(dir);
+    std::string src = "var x = 1; var y = 2;";
+    BytecodeCache::CacheKey key{src, 0, 0};
+    cache.store(key, compileSource(src));
+
+    auto file = findMbcFile(dir);
+    ASSERT_FALSE(file.empty());
+    auto bytes = readAllBytes(file);
+    ASSERT_GT(bytes.size(), 32u) << "payload 应非空";
+    // magic/version/头部全部有效，仅翻转首个 payload 字节（@offset 32）→ checksum 失配
+    bytes[32] ^= 0xFF;
+    writeAllBytes(file, bytes);
+
+    EXPECT_FALSE(cache.tryLoad(key).has_value());
+}
+
+// 头部有效但 payload 被截断（file 短于 kHeaderSize + payloadSize）：大小校验失败
+TEST(BytecodeCacheRobustness, TruncatedPayloadReturnsNullopt) {
+    BytecodeCache cache;
+    std::string dir = makeUniqueCacheDir("TruncatedPayloadReturnsNullopt");
+    cache.setCacheDir(dir);
+    std::string src = "var x = 1; var y = 2;";
+    BytecodeCache::CacheKey key{src, 0, 0};
+    cache.store(key, compileSource(src));
+
+    auto file = findMbcFile(dir);
+    ASSERT_FALSE(file.empty());
+    auto bytes = readAllBytes(file);
+    ASSERT_GT(bytes.size(), 34u);
+    // 保留完整 32 字节头（payloadSize 字段仍声明原大小）+ 仅 2 字节 payload
+    bytes.resize(34);
+    writeAllBytes(file, bytes);
+
+    EXPECT_FALSE(cache.tryLoad(key).has_value());
+}
+
+// ============================================================
 // L13 测试：容器堆类型常量序列化（2026-07-24）
 // ------------------------------------------------------------
 // 验证 BytecodeCache 扩展支持 Array/Dict/Tuple/EnumVariant/BoxedInt

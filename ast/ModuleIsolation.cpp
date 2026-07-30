@@ -470,6 +470,30 @@ void ModuleTopLevelRenamer::renameInNode(ASTNode* node) {
             renameInNode(n->value.get());
         break;
     }
+    // 七特性 MVP 阶段 2：宏系统。
+    // MacroDecl 的 bodyExpr 是未展开的模板（运行期不求值），不参与重命名；
+    // MacroCallExpr 仅重命名 expanded 语义子树（args 子树与 expanded 内替换点
+    // 共享同一节点，重命名 expanded 已同步覆盖 args，重复访问会因 map 查不到
+    // 已改名的新名而幂等，但避免二次遍历更稳健）。
+    case NodeType::NODE_MACRO_DECL:
+        break;
+    // 七特性 MVP 阶段 3：trait 声明——方法已在 parse 期合入混入类的 members
+    // （共享节点经 ClassDecl 分支处理），TraitDecl 本身运行期不求值，不参与重命名。
+    case NodeType::NODE_TRAIT_DECL:
+        break;
+    // 七特性 MVP 阶段 4：await 表达式——重命名 operand 子树。
+    case NodeType::NODE_AWAIT_EXPR: {
+        auto* n = static_cast<AwaitExpr*>(node);
+        if (n->operand)
+            renameInNode(n->operand.get());
+        break;
+    }
+    case NodeType::NODE_MACRO_CALL: {
+        auto* n = static_cast<MacroCallExpr*>(node);
+        if (n->expanded)
+            renameInNode(n->expanded.get());
+        break;
+    }
     case NodeType::NODE_MATCH_EXPR: {
         // 注：MatchPattern 复用 NODE_MATCH_EXPR 类型标记，但 pattern 仅经
         // MatchExpr::cases 可达（本函数不以 pattern 为入口被调用），

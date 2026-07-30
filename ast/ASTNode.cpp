@@ -274,3 +274,26 @@ void MatchExpr::accept(Visitor& visitor) {
 void YieldExpr::accept(Visitor& visitor) {
     visitor.visitYieldExpr(*this);
 }
+
+// 七特性 MVP 阶段 2：宏声明派发至 visitMacroDecl（运行期 no-op）。
+void MacroDecl::accept(Visitor& visitor) {
+    visitor.visitMacroDecl(*this);
+}
+
+// 七特性 MVP 阶段 2：宏调用派发至 visitMacroCallExpr。
+// 访问者直接求值/编译 expanded 子树（parse 期已展开）。
+void MacroCallExpr::accept(Visitor& visitor) {
+    visitor.visitMacroCallExpr(*this);
+}
+
+// 七特性 MVP 阶段 3：trait 声明派发至 visitTraitDecl（运行期 no-op，
+// 方法已在 parse 期合入混入类的 members）。
+void TraitDecl::accept(Visitor& visitor) {
+    visitor.visitTraitDecl(*this);
+}
+
+// 七特性 MVP 阶段 4：await 表达式派发至 visitAwaitExpr。
+// 访问者求值 operand，若为协程则驱动到完成并返回最终值。
+void AwaitExpr::accept(Visitor& visitor) {
+    visitor.visitAwaitExpr(*this);
+}

@@ -1,4 +1,5 @@
 #include "parser/Parser.h"
+#include "ast/MacroExpander.h" // 七特性 MVP 阶段 2：宏展开器
 #include "common/ErrorMessages.h" // P2-12: DiagCodes 常量
 #include "common/Logger.h"
 #include "interpreter/StringIntern.h"
@@ -100,6 +101,20 @@ static void collectVarRefs(ASTNode* node, std::unordered_set<std::string>& names
     case NodeType::NODE_YIELD_EXPR:
         if (auto* y = static_cast<YieldExpr*>(node); y->value)
             collectVarRefs(y->value.get(), names);
+        break;
+    // 七特性 MVP 阶段 2：宏调用——递归展开后的语义子树（实参子树已共享在内）。
+    // 宏声明不应出现在默认参数表达式中，防御性覆盖避免 LOG_WARNING。
+    case NodeType::NODE_MACRO_CALL:
+        collectVarRefs(static_cast<MacroCallExpr*>(node)->expanded.get(), names);
+        break;
+    case NodeType::NODE_MACRO_DECL:
+        break;
+    // 七特性 MVP 阶段 3：trait 声明不应出现在默认参数表达式中，防御性覆盖。
+    case NodeType::NODE_TRAIT_DECL:
+        break;
+    // 七特性 MVP 阶段 4：await 表达式——递归 operand（防御性覆盖）。
+    case NodeType::NODE_AWAIT_EXPR:
+        collectVarRefs(static_cast<AwaitExpr*>(node)->operand.get(), names);
         break;
     default:
         // BUG-011 fix: 未覆盖的节点类型——可能是未来新增的表达式类型。
@@ -445,6 +460,24 @@ std::unique_ptr<ASTNode> Parser::declaration() {
     if (check(TokenType::TK_ENUM))
         return enumDecl();
 
+    // 七特性 MVP 阶段 2：宏声明
+    if (check(TokenType::TK_MACRO))
+        return macroDecl();
+
+    // 七特性 MVP 阶段 3：trait 声明
+    if (check(TokenType::TK_TRAIT))
+        return traitDecl();
+
+    // 七特性 MVP 阶段 4：async fun 声明（async 仅可修饰具名 fun 声明）
+    if (check(TokenType::TK_ASYNC)) {
+        const Token& asyncTok = peek();
+        advance(); // 消耗 async
+        if (check(TokenType::TK_FUN) && !checkNext(TokenType::TK_LPAREN)) {
+            return funDecl(/*isAsync=*/true);
+        }
+        throw ParseError("async 仅可修饰具名函数声明（async fun name(...)）", asyncTok.line, asyncTok.column);
+    }
+
     // F12: import / export 声明
     if (check(TokenType::TK_IMPORT))
         return importStmt();
@@ -643,12 +676,13 @@ std::unique_ptr<VarDecl> Parser::typedVarDecl(const std::string& typeAnn) {
                                      name.column);
 }
 
-std::unique_ptr<FunDecl> Parser::funDecl() {
+std::unique_ptr<FunDecl> Parser::funDecl(bool isAsync) {
     // 消耗 fun 或 function 关键字
     const Token& funTok = advance();
 
     // R164 协程/生成器：检测 fun* 标记生成器函数（类似 JS function* / Python def+yield）
-    bool isGenerator = false;
+    // 七特性 MVP 阶段 4：async fun 复用生成器机制（调用返回 Task/协程）
+    bool isGenerator = isAsync;
     if (match(TokenType::TK_STAR)) {
         isGenerator = true;
     }
@@ -713,6 +747,10 @@ std::unique_ptr<FunDecl> Parser::funDecl() {
     yieldInLoop_ = false;
     BoolScope hasLoopYieldScope{currentFunHasYieldInLoop_};
     currentFunHasYieldInLoop_ = false;
+    // 七特性 MVP 阶段 4：async 上下文标记（await 仅在 async fun 体内合法）。
+    // 嵌套函数独立判定：async fun 内的普通嵌套 fun 体内 await 非法。
+    BoolScope asyncCtxScope{currentFunIsAsync_};
+    currentFunIsAsync_ = isAsync;
 
     consume(TokenType::TK_LBRACE, "期望 '{'");
     auto body = block();
@@ -723,11 +761,15 @@ std::unique_ptr<FunDecl> Parser::funDecl() {
     // R164 协程/生成器：标记生成器函数（fun*），供 Interpreter/VM 在调用时
     // 返回 Coroutine 值而非直接执行函数体。
     decl->isGenerator = isGenerator;
+    // 七特性 MVP 阶段 4：async fun 标记（Formatter 区分打印 async fun vs fun*）
+    decl->isAsync = isAsync;
     // 记录生成器内 yield 总数（供 Interpreter 重放模式判断是否已耗尽）。
     if (isGenerator) {
-        if (currentFunHasYieldInLoop_) {
+        if (isAsync || currentFunHasYieldInLoop_) {
             // 循环内 yield：编译期节点数 ≠ 运行时执行数，用 INT_MAX 标记动态模式，
-            // done 改由函数体自然结束路径判定（避免 currentYieldId >= yieldCount 误判）
+            // done 改由函数体自然结束路径判定（避免 currentYieldId >= yieldCount 误判）。
+            // async fun 恒用动态模式：body 可能无 yield（首次 next() 直接跑完）、
+            // 也可能含 await/yield 混合，静态计数不可靠。
             decl->yieldCount = FunDecl::kDynamicYieldCount;
         } else {
             decl->yieldCount = currentYieldId_;
@@ -1000,6 +1042,21 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
     // 可选的 extends SuperClassName 或 : SuperClassName
     std::string superClassName = parseClassExtends();
 
+    // 七特性 MVP 阶段 3：可选的 `with T1, T2` 混入子句（extends 之后、'{' 之前）
+    std::vector<std::string> traits;
+    if (match(TokenType::TK_WITH)) {
+        do {
+            const Token& traitName = consumeIdentifierOrType("期望 trait 名");
+            // 重复混入检查（同一 trait 混入两次必然同名冲突，提前报更友好的错误）
+            for (const auto& existing : traits) {
+                if (existing == traitName.lexeme) {
+                    throw ParseError("trait 重复混入: " + traitName.lexeme, traitName.line, traitName.column);
+                }
+            }
+            traits.push_back(traitName.lexeme);
+        } while (match(TokenType::TK_COMMA));
+    }
+
     consume(TokenType::TK_LBRACE, "期望 '{'");
 
     // 解析类成员
@@ -1010,11 +1067,102 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
 
     // AUDIT-P2.8 fix: 记录闭合 '}' 所在行号，供 Formatter 注入类体末尾注释。
     int closingBraceLine = previous().line;
+
+    // 七特性 MVP 阶段 3：记录自身成员数后合入 trait 方法（append 到 members 尾部）。
+    // Formatter 仅打印前 ownMemberCount 个成员，保证往返等价。
+    int ownMemberCount = static_cast<int>(members.size());
+    if (!traits.empty()) {
+        mergeTraitMethods(traits, members, classTok.line, classTok.column);
+    }
+
     auto decl = std::make_unique<ClassDecl>(StringIntern::intern(name.lexeme), superClassName, std::move(members),
                                             classTok.line, classTok.column);
     decl->closingBraceLine = closingBraceLine;
     decl->typeParams = std::move(typeParams);
+    decl->traits = std::move(traits);
+    decl->ownMemberCount = ownMemberCount;
     return decl;
+}
+
+// ============================================================
+// 七特性 MVP 阶段 3：Trait/Mixin（parse 期方法合入）
+// ============================================================
+
+std::unique_ptr<TraitDecl> Parser::traitDecl() {
+    // trait T { fun m() {...} ... }（MVP 仅支持方法成员）
+    const Token& traitTok = consume(TokenType::TK_TRAIT, "期望 'trait'");
+    const Token& name = consumeIdentifierOrType("期望 trait 名");
+
+    if (knownTraits_.count(name.lexeme)) {
+        throw ParseError("trait 重复定义: " + name.lexeme, name.line, name.column);
+    }
+
+    consume(TokenType::TK_LBRACE, "期望 '{' 开始 trait 体");
+
+    std::vector<std::shared_ptr<ASTNode>> methods;
+    while (!check(TokenType::TK_RBRACE) && !isAtEnd()) {
+        // 复用 parseClassMembers 的子集：仅允许 fun 方法（字段/其他成员报错，
+        // MVP 限定 trait 为纯方法集，避免字段默认值/槽位分配的三后端合入复杂度）
+        if (!check(TokenType::TK_FUN)) {
+            const Token& tok = peek();
+            throw ParseError("trait 体内仅支持方法声明（fun 开头）", tok.line, tok.column);
+        }
+        auto method = funDecl();
+        // 同 trait 内方法重名检查
+        for (const auto& existing : methods) {
+            if (static_cast<FunDecl*>(existing.get())->name == method->name) {
+                throw ParseError("trait " + name.lexeme + " 内方法重复定义: " + method->name, method->line,
+                                 method->column);
+            }
+        }
+        methods.push_back(std::shared_ptr<ASTNode>(std::move(method)));
+    }
+
+    consume(TokenType::TK_RBRACE, "期望 '}' 结束 trait 体");
+
+    auto decl = std::make_unique<TraitDecl>(name.lexeme, std::move(methods), traitTok.line, traitTok.column);
+    decl->closingBraceLine = previous().line;
+    knownTraits_[decl->name] = decl.get();
+    return decl;
+}
+
+void Parser::mergeTraitMethods(const std::vector<std::string>& traits,
+                               std::vector<std::shared_ptr<ASTNode>>& members, int line, int col) {
+    // 收集类自身方法名（自身方法优先于 trait 方法）
+    std::unordered_set<std::string> ownMethodNames;
+    for (const auto& m : members) {
+        if (m && m->nodeType == NodeType::NODE_FUN_DECL) {
+            ownMethodNames.insert(static_cast<FunDecl*>(m.get())->name);
+        }
+    }
+
+    // 合入各 trait 方法；记录每个合入方法来自哪个 trait，用于 diamond 冲突诊断
+    std::unordered_map<std::string, std::string> mergedFrom; // 方法名 → trait 名
+    for (const auto& traitName : traits) {
+        auto it = knownTraits_.find(traitName);
+        if (it == knownTraits_.end()) {
+            throw ParseError("未定义的 trait: " + traitName + "（trait 须先声明后使用）", line, col);
+        }
+        for (const auto& method : it->second->methods) {
+            auto* fd = static_cast<FunDecl*>(method.get());
+            // 类自身方法优先：跳过被覆盖的 trait 方法
+            if (ownMethodNames.count(fd->name)) {
+                continue;
+            }
+            // diamond 冲突：两个 trait 提供同名方法且类未覆盖
+            auto conflictIt = mergedFrom.find(fd->name);
+            if (conflictIt != mergedFrom.end()) {
+                throw ParseError("trait 方法冲突（diamond）: 方法 " + fd->name + " 同时来自 trait " +
+                                     conflictIt->second + " 与 " + traitName + "，类需自行覆盖以解决冲突",
+                                 line, col);
+            }
+            mergedFrom[fd->name] = traitName;
+            // shared_ptr 共享 FunDecl 节点：多个类混入同一 trait 共享同一方法 AST，
+            // 三后端各自按普通类方法注册/编译（Interpreter 存 shared_ptr，
+            // Compiler/IR 按类名生成独立 chunk，共享节点无状态冲突）。
+            members.push_back(method);
+        }
+    }
 }
 
 std::string Parser::parseClassExtends() {
@@ -1249,6 +1397,103 @@ std::unique_ptr<EnumDecl> Parser::enumDecl() {
     knownEnums_.insert(name.lexeme);
 
     return decl;
+}
+
+// ============================================================
+// 七特性 MVP 阶段 2：宏系统（parse 期展开）
+// ============================================================
+
+std::unique_ptr<MacroDecl> Parser::macroDecl() {
+    // macro name(p1, p2) { <expr> }
+    const Token& macroTok = consume(TokenType::TK_MACRO, "期望 'macro'");
+    const Token& name = consumeIdentifierOrType("期望宏名");
+    std::string macroName = name.lexeme;
+
+    // 重定义检查（宏表是 parse 期全局单一命名空间，重名会静默改变已解析调用的语义）
+    if (knownMacros_.count(macroName)) {
+        throw ParseError("宏重复定义: " + macroName, name.line, name.column);
+    }
+
+    consume(TokenType::TK_LPAREN, "期望 '('");
+    std::vector<std::string> params;
+    if (!check(TokenType::TK_RPAREN)) {
+        do {
+            if (!isIdentifierOrType()) {
+                const Token& tok = peek();
+                throw ParseError("期望宏参数名", tok.line, tok.column);
+            }
+            const Token& p = advance();
+            // 重复参数名检查（重名参数会使替换表静默丢失前一个实参）
+            for (const auto& existing : params) {
+                if (existing == p.lexeme) {
+                    throw ParseError("宏参数名重复: " + p.lexeme, p.line, p.column);
+                }
+            }
+            params.push_back(p.lexeme);
+        } while (match(TokenType::TK_COMMA));
+    }
+    consume(TokenType::TK_RPAREN, "期望 ')'");
+
+    consume(TokenType::TK_LBRACE, "期望 '{' 开始宏体");
+    // body 限单个表达式（表达式模板宏 MVP）；尾部分号可选
+    auto body = expression();
+    match(TokenType::TK_SEMICOLON);
+    consume(TokenType::TK_RBRACE, "期望 '}' 结束宏体（宏体限单个表达式）");
+
+    auto decl = std::make_unique<MacroDecl>(std::move(macroName), std::move(params),
+                                            std::shared_ptr<ASTNode>(std::move(body)), macroTok.line, macroTok.column);
+    // body 解析完成后才登记 → 递归宏（自引用）在 body 解析时报"未定义的宏"，
+    // 从根上消除无限展开。
+    knownMacros_[decl->name] = decl.get();
+    return decl;
+}
+
+std::unique_ptr<ASTNode> Parser::macroCall(const Token& nameTok) {
+    // 调用前提：nameTok 已消耗，当前位置 '!' '('（调用方已 check 确认）
+    advance(); // 消耗 '!'（TK_NOT）
+    advance(); // 消耗 '('
+
+    auto it = knownMacros_.find(nameTok.lexeme);
+    if (it == knownMacros_.end()) {
+        throw ParseError("未定义的宏: " + nameTok.lexeme + "!（宏须先声明后使用）", nameTok.line, nameTok.column);
+    }
+    MacroDecl* decl = it->second;
+
+    // 解析实参列表
+    std::vector<std::shared_ptr<ASTNode>> args;
+    if (!check(TokenType::TK_RPAREN)) {
+        do {
+            args.push_back(expression());
+        } while (match(TokenType::TK_COMMA) && !check(TokenType::TK_RPAREN));
+    }
+    consume(TokenType::TK_RPAREN, "期望 ')' 结束宏调用参数列表");
+
+    if (args.size() != decl->params.size()) {
+        throw ParseError("宏 " + decl->name + "! 期望 " + std::to_string(decl->params.size()) + " 个参数，实际 " +
+                             std::to_string(args.size()) + " 个",
+                         nameTok.line, nameTok.column);
+    }
+
+    // 构建替换表并克隆 body 模板（实参子树 shared_ptr 共享，不克隆实参本身）
+    MacroExpander::SubstMap subst;
+    for (size_t i = 0; i < decl->params.size(); ++i) {
+        subst[decl->params[i]] = args[i];
+    }
+    std::string unsupported;
+    auto expanded = MacroExpander::cloneWithSubstitution(decl->bodyExpr.get(), subst, 0, &unsupported);
+    if (!expanded) {
+        if (unsupported == "<depth-limit>") {
+            throw ParseError("宏展开嵌套过深（超过 " + std::to_string(RuntimeLimits::MAX_MACRO_EXPANSION_DEPTH) +
+                                 " 层）",
+                             nameTok.line, nameTok.column);
+        }
+        throw ParseError("宏 " + decl->name + "! 的 body 含不支持的构造: " + unsupported +
+                             "（表达式模板宏仅支持表达式子集）",
+                         nameTok.line, nameTok.column);
+    }
+
+    return std::make_unique<MacroCallExpr>(nameTok.lexeme, std::move(args), std::move(expanded), nameTok.line,
+                                           nameTok.column);
 }
 
 std::unique_ptr<MatchExpr> Parser::matchExpr() {
@@ -2234,6 +2479,24 @@ std::unique_ptr<ASTNode> Parser::call() {
 }
 
 std::unique_ptr<ASTNode> Parser::primary() {
+    // 七特性 MVP 阶段 4：await 表达式（仅在 async fun 体内合法）
+    // 语法：await <unary>（前缀，结合紧度高于二元运算：await t + 1 = (await t) + 1）
+    // 语义：同步 drain——协程驱动到 done 取最终值；非协程值恒等返回。
+    if (check(TokenType::TK_AWAIT)) {
+        const Token& awaitTok = peek();
+        if (!currentFunIsAsync_) {
+            throw ParseError("await 只能出现在 async fun 声明的函数体内", awaitTok.line, awaitTok.column);
+        }
+        if (parseDepth_ >= MAX_PARSE_DEPTH) {
+            throw ParseError("表达式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）", awaitTok.line,
+                             awaitTok.column);
+        }
+        advance(); // 消耗 await
+        DepthGuard guard{parseDepth_};
+        auto operand = unary();
+        return std::make_unique<AwaitExpr>(std::move(operand), awaitTok.line, awaitTok.column);
+    }
+
     // R99 枚举与 ADT: match 表达式
     if (check(TokenType::TK_MATCH)) {
         if (parseDepth_ >= MAX_PARSE_DEPTH) {
@@ -2356,6 +2619,18 @@ std::unique_ptr<ASTNode> Parser::primary() {
     // 标识符
     if (match(TokenType::TK_IDENTIFIER)) {
         const Token& tok = previous();
+        // 七特性 MVP 阶段 2：宏调用 name!(args)。
+        // `IDENT ! (` 三 token 序列在表达式上下文无其他合法解释
+        // （`!` 单独出现时为 TK_NOT，而 not 是前缀一元运算符不可中缀），
+        // 因此无条件进入宏调用解析，未定义宏报错比回退 VarRef 更友好。
+        if (check(TokenType::TK_NOT) && checkNext(TokenType::TK_LPAREN)) {
+            if (parseDepth_ >= MAX_PARSE_DEPTH) {
+                throw ParseError("表达式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）", tok.line,
+                                 tok.column);
+            }
+            DepthGuard guard{parseDepth_};
+            return macroCall(tok);
+        }
         return std::make_unique<VarRef>(StringIntern::intern(tok.lexeme), tok.line, tok.column);
     }
 
@@ -2513,6 +2788,9 @@ void Parser::synchronize() {
     case TokenType::TK_ARRAY:
     case TokenType::TK_ENUM:  // Bug #39 fix: enum 作为同步点
     case TokenType::TK_MATCH: // Bug #39 fix: match 作为同步点
+    case TokenType::TK_MACRO: // 七特性 MVP 阶段 2：macro 作为同步点
+    case TokenType::TK_TRAIT: // 七特性 MVP 阶段 3：trait 作为同步点
+    case TokenType::TK_ASYNC: // 七特性 MVP 阶段 4：async 作为同步点
     case TokenType::TK_FROM:  // AUDIT-P1-CORRECT fix: from 作为同步点，避免 import 错误恢复时吞掉 from
         return;
     default:
@@ -2567,6 +2845,9 @@ void Parser::synchronize() {
         case TokenType::TK_ARRAY:
         case TokenType::TK_ENUM:  // Bug #39 fix: enum 作为同步点
         case TokenType::TK_MATCH: // Bug #39 fix: match 作为同步点
+        case TokenType::TK_MACRO: // 七特性 MVP 阶段 2：macro 作为同步点
+        case TokenType::TK_TRAIT: // 七特性 MVP 阶段 3：trait 作为同步点
+        case TokenType::TK_ASYNC: // 七特性 MVP 阶段 4：async 作为同步点
         case TokenType::TK_FROM:  // AUDIT-P1-CORRECT fix: from 作为同步点
             return;
         default:

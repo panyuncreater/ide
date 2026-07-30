@@ -698,6 +698,13 @@ void JITBackend::emitMethodCall(x86::Assembler& a, Label epilogue, const char* m
     a.test(x86::rax, x86::rax);
     a.jnz(epilogue);
 
+    // 7b. 同步对象方法内联处理检查：channel/mutex/rwlock/thread 接收者的方法
+    //     已在 jitMethodCall 内经 handleSyncObjectMethod 完成（结果已压栈，
+    //     r15 已在步骤 6 恢复），直接跳过 jmp methodEntryPtr 到返回点。
+    a.mov(x86::rax, x86::qword_ptr(x86::r12, jit_offset::syncMethodHandled));
+    a.test(x86::rax, x86::rax);
+    a.jnz(returnLabel);
+
     // 8. 在新 frame 上设置 returnAddr（jitMethodCall 无法访问 JIT Label，需在调用后写入）
     //    新 frame 在 frames[*frameCount - 1]
     a.mov(x86::rcx, x86::qword_ptr(x86::r12, jit_offset::frameCount)); // rcx = &frameCount_
@@ -1819,6 +1826,234 @@ bool JITBackend::emitCallDispatch(x86::Assembler& a, Label epilogue, const JitFu
     (void)epilogue;
     (void)argCount;
     return false;
+}
+
+// ------------------------------------------------------------------
+// enum variant：OP_BUILD_ENUM_VARIANT / OP_ENUM_VARIANT_NAME / OP_ENUM_VARIANT_FIELD
+// 全部走 C++ 辅助路径（与容器/类支持一致）：同步栈顶 → 调用 helper →
+// 恢复栈顶 → 错误检查。校验逻辑在 jitBuildEnumVariant 等 helper 中与 VM 对齐。
+// ------------------------------------------------------------------
+void JITBackend::emitBuildEnumVariant(x86::Assembler& a, Label epilogue, const char* enumName,
+                                      const char* variantName, uint8_t argCount) {
+    a.mov(x86::qword_ptr(x86::r12, jit_offset::stackTop), x86::r15);
+    a.movabs(x86::r10, reinterpret_cast<uint64_t>(enumName));
+    a.movabs(x86::r11, reinterpret_cast<uint64_t>(variantName));
+#ifdef _WIN32
+    a.mov(x86::rcx, x86::r12);                     // arg1 = ctx
+    a.mov(x86::rdx, x86::r10);                     // arg2 = enumName
+    a.mov(x86::r8, x86::r11);                      // arg3 = variantName
+    a.mov(x86::r9, static_cast<int32_t>(argCount)); // arg4 = argCount
+    a.sub(x86::rsp, 32);
+    a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitBuildEnumVariant));
+    a.call(x86::rax);
+    a.add(x86::rsp, 32);
+#else
+    a.mov(x86::rdi, x86::r12);
+    a.mov(x86::rsi, x86::r10);
+    a.mov(x86::rdx, x86::r11);
+    a.mov(x86::rcx, static_cast<int32_t>(argCount));
+    a.sub(x86::rsp, 16);
+    a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitBuildEnumVariant));
+    a.call(x86::rax);
+    a.add(x86::rsp, 16);
+#endif
+    a.mov(x86::r15, x86::qword_ptr(x86::r12, jit_offset::stackTop));
+    a.mov(x86::rax, x86::qword_ptr(x86::r12, jit_offset::hasError));
+    a.movzx(x86::rax, x86::byte_ptr(x86::rax));
+    a.test(x86::rax, x86::rax);
+    a.jnz(epilogue);
+}
+
+void JITBackend::emitEnumVariantName(x86::Assembler& a, Label epilogue, const char* enumName,
+                                     const char* variantName) {
+    a.mov(x86::qword_ptr(x86::r12, jit_offset::stackTop), x86::r15);
+    a.movabs(x86::r10, reinterpret_cast<uint64_t>(enumName));
+    a.movabs(x86::r11, reinterpret_cast<uint64_t>(variantName));
+#ifdef _WIN32
+    a.mov(x86::rcx, x86::r12); // arg1 = ctx
+    a.mov(x86::rdx, x86::r10); // arg2 = enumName
+    a.mov(x86::r8, x86::r11);  // arg3 = variantName
+    a.sub(x86::rsp, 32);
+    a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitEnumVariantName));
+    a.call(x86::rax);
+    a.add(x86::rsp, 32);
+#else
+    a.mov(x86::rdi, x86::r12);
+    a.mov(x86::rsi, x86::r10);
+    a.mov(x86::rdx, x86::r11);
+    a.sub(x86::rsp, 16);
+    a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitEnumVariantName));
+    a.call(x86::rax);
+    a.add(x86::rsp, 16);
+#endif
+    a.mov(x86::r15, x86::qword_ptr(x86::r12, jit_offset::stackTop));
+    a.mov(x86::rax, x86::qword_ptr(x86::r12, jit_offset::hasError));
+    a.movzx(x86::rax, x86::byte_ptr(x86::rax));
+    a.test(x86::rax, x86::rax);
+    a.jnz(epilogue);
+}
+
+void JITBackend::emitEnumVariantField(x86::Assembler& a, Label epilogue) {
+    a.mov(x86::qword_ptr(x86::r12, jit_offset::stackTop), x86::r15);
+#ifdef _WIN32
+    a.mov(x86::rcx, x86::r12); // arg1 = ctx
+    a.sub(x86::rsp, 32);
+    a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitEnumVariantField));
+    a.call(x86::rax);
+    a.add(x86::rsp, 32);
+#else
+    a.mov(x86::rdi, x86::r12);
+    a.sub(x86::rsp, 16);
+    a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitEnumVariantField));
+    a.call(x86::rax);
+    a.add(x86::rsp, 16);
+#endif
+    a.mov(x86::r15, x86::qword_ptr(x86::r12, jit_offset::stackTop));
+    a.mov(x86::rax, x86::qword_ptr(x86::r12, jit_offset::hasError));
+    a.movzx(x86::rax, x86::byte_ptr(x86::rax));
+    a.test(x86::rax, x86::rax);
+    a.jnz(epilogue);
+}
+
+// ------------------------------------------------------------------
+// 并发原语内建函数：spawn/channel/mutex/rwlock（OP_CALL 分流）
+// jitCallConcurrency 经共享层完成调用，结果压栈（无新帧，非控制流转移）
+// ------------------------------------------------------------------
+void JITBackend::emitCallConcurrencyBuiltin(x86::Assembler& a, Label epilogue, const char* funName,
+                                            uint8_t argCount) {
+    a.mov(x86::qword_ptr(x86::r12, jit_offset::stackTop), x86::r15);
+    // spawn 的 ClosureInvoker 在 join 时需要当前帧信息无关；同步 currentBp 供防御
+    a.mov(x86::qword_ptr(x86::r12, jit_offset::currentBp), x86::r13);
+#ifdef _WIN32
+    a.mov(x86::rcx, x86::r12);                                  // arg1 = ctx
+    a.movabs(x86::rdx, reinterpret_cast<uint64_t>(funName));    // arg2 = funName
+    a.mov(x86::r8, static_cast<int32_t>(argCount));             // arg3 = argCount
+    a.sub(x86::rsp, 32);
+    a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitCallConcurrency));
+    a.call(x86::rax);
+    a.add(x86::rsp, 32);
+#else
+    a.mov(x86::rdi, x86::r12);
+    a.movabs(x86::rsi, reinterpret_cast<uint64_t>(funName));
+    a.mov(x86::edx, static_cast<int32_t>(argCount));
+    a.sub(x86::rsp, 16);
+    a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitCallConcurrency));
+    a.call(x86::rax);
+    a.add(x86::rsp, 16);
+#endif
+    a.mov(x86::r15, x86::qword_ptr(x86::r12, jit_offset::stackTop));
+    a.mov(x86::rax, x86::qword_ptr(x86::r12, jit_offset::hasError));
+    a.movzx(x86::rax, x86::byte_ptr(x86::rax));
+    a.test(x86::rax, x86::rax);
+    a.jnz(epilogue);
+}
+
+// ------------------------------------------------------------------
+// 闭包同步调用跳板：int64_t trampoline(JitContext* ctx, uint64_t argCount)
+// ------------------------------------------------------------------
+// 供 jitInvokeClosureSync（JITRuntime.cpp）从 C++ 同步调用 JIT 编译的闭包：
+// spawn 延迟执行模式下 thread.join() 的 pending 闭包经此桥执行。
+//
+// 关键设计约束：
+//   1. 帧布局与主入口 prologue 完全一致（push rbp + 保存 r12/r13/r14/r15/rbx 到
+//      [rbp-8..-40]）：闭包内错误路径 jmp 共享 epilogue 时，epilogue 的 rbp 相对
+//      恢复序列会沿跳板帧干净地 ret 回 C++ 调用方（与 lazy 编译块共享主帧的
+//      机制同构）。
+//   2. sub rsp, 48 保持 rsp ≡ 0 (mod 16)，与主入口片段执行时的对齐奇偶性一致
+ //     （helper 调用序列 sub rsp,32/16 依赖此奇偶性）；[rbp-48] 同时充当
+//      OP_RETURN 路径的 rbx 暂存槽（与主帧布局一致）。
+//   3. 操作数栈复用主入口已分配的区域（r15 = ctx->stackTop，调用方已压入
+//      closure + args），不另分配 8KB。
+//   4. rbx/r14 重新加载缓存常量（算术热路径依赖，与 OSR 入口 Bug #22 同构）。
+void JITBackend::emitClosureTrampoline(x86::Assembler& a, Label trampLabel) {
+    Label tramReturn = a.new_label();
+    Label tramEpilogue = a.new_label();
+
+    a.bind(trampLabel);
+    // prologue：与主入口帧布局一致
+    a.push(x86::rbp);
+    a.mov(x86::rbp, x86::rsp);
+    a.sub(x86::rsp, kJitCalleeSavedArea); // 48B：callee-saved 保存区 + [rbp-48] 暂存槽，rsp 保持 16B 对齐
+    a.mov(x86::qword_ptr(x86::rbp, -8), x86::r12);
+    a.mov(x86::qword_ptr(x86::rbp, -16), x86::r13);
+    a.mov(x86::qword_ptr(x86::rbp, -24), x86::r14);
+    a.mov(x86::qword_ptr(x86::rbp, -32), x86::r15);
+    a.mov(x86::qword_ptr(x86::rbp, -40), x86::rbx);
+
+#ifdef _WIN32
+    a.mov(x86::r12, x86::rcx); // ctx；rdx = argCount（低 8 位有效，保留待传 jitCallExpr）
+#else
+    a.mov(x86::r12, x86::rdi); // ctx；rsi = argCount
+#endif
+    // 缓存常量（片段算术热路径依赖 rbx/r14）
+    a.movabs(x86::rbx, JIT_INT48_MASK);
+    a.movabs(x86::r14, JIT_INT_TAG_BASE);
+    // r15 = ctx->stackTop（调用方已压入 closure + args）；r13 置为栈顶（哑元，
+    // 仅作为新帧 callerBp 记录，返回后跳板不再使用 r13）
+    a.mov(x86::r15, x86::qword_ptr(x86::r12, jit_offset::stackTop));
+    a.mov(x86::r13, x86::r15);
+
+    // 与 emitCallExpr 同构：同步 callerBp/stackTop → 调用 jitCallExpr 建帧
+    a.mov(x86::qword_ptr(x86::r12, jit_offset::callerBp), x86::r13);
+    a.mov(x86::qword_ptr(x86::r12, jit_offset::stackTop), x86::r15);
+#ifdef _WIN32
+    a.mov(x86::rcx, x86::r12); // arg1 = ctx；rdx 已是 argCount
+    a.sub(x86::rsp, 32);
+    a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitCallExpr));
+    a.call(x86::rax);
+    a.add(x86::rsp, 32);
+#else
+    a.mov(x86::rdi, x86::r12); // arg1 = ctx；rsi 已是 argCount
+    a.sub(x86::rsp, 16);
+    a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitCallExpr));
+    a.call(x86::rax);
+    a.add(x86::rsp, 16);
+#endif
+    a.mov(x86::r15, x86::qword_ptr(x86::r12, jit_offset::stackTop));
+
+    // 错误检查（非闭包值/arity 不匹配等）→ 直接返回（hasError 已置）
+    a.mov(x86::rax, x86::qword_ptr(x86::r12, jit_offset::hasError));
+    a.movzx(x86::rax, x86::byte_ptr(x86::rax));
+    a.test(x86::rax, x86::rax);
+    a.jnz(tramEpilogue);
+
+    // 新帧 returnAddr = tramReturn（frames[*frameCount - 1]）
+    a.mov(x86::rcx, x86::qword_ptr(x86::r12, jit_offset::frameCount));
+    a.mov(x86::rdx, x86::qword_ptr(x86::rcx));
+    a.sub(x86::rdx, 1);
+    a.mov(x86::rcx, x86::qword_ptr(x86::r12, jit_offset::frames));
+    a.imul(x86::rdx, x86::rdx, 72);
+    a.add(x86::rcx, x86::rdx);
+    a.lea(x86::rax, x86::qword_ptr(tramReturn));
+    a.mov(x86::qword_ptr(x86::rcx, 16), x86::rax);
+
+    // r13 = r15 + (methodLocalCount - 1) * 8（普通函数帧，slot 0 = arg0）
+    a.mov(x86::rax, x86::qword_ptr(x86::r12, jit_offset::methodLocalCount));
+    a.dec(x86::rax);
+    a.imul(x86::rax, x86::rax, 8);
+    a.lea(x86::r13, x86::qword_ptr(x86::r15, x86::rax));
+
+    // jmp 闭包入口（空入口防御，与 emitMethodCall Bug #50 同构）
+    a.mov(x86::rax, x86::qword_ptr(x86::r12, jit_offset::methodEntryPtr));
+    a.test(x86::rax, x86::rax);
+    a.jz(tramEpilogue);
+    a.jmp(x86::rax);
+
+    // 闭包 OP_RETURN 返回点：返回值在栈顶（r15），同步给 C++ 读取
+    a.bind(tramReturn);
+    a.mov(x86::qword_ptr(x86::r12, jit_offset::stackTop), x86::r15);
+
+    // epilogue：与主入口同构（rbp 相对恢复）
+    a.bind(tramEpilogue);
+    a.xor_(x86::rax, x86::rax);
+    a.mov(x86::r12, x86::qword_ptr(x86::rbp, -8));
+    a.mov(x86::r13, x86::qword_ptr(x86::rbp, -16));
+    a.mov(x86::r14, x86::qword_ptr(x86::rbp, -24));
+    a.mov(x86::r15, x86::qword_ptr(x86::rbp, -32));
+    a.mov(x86::rbx, x86::qword_ptr(x86::rbp, -40));
+    a.mov(x86::rsp, x86::rbp);
+    a.pop(x86::rbp);
+    a.ret();
 }
 
 #endif // MINILANG_USE_JIT

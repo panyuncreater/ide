@@ -49,6 +49,7 @@ set(MINILANG_CORE_BASE_SOURCES
     # 仅依赖 interpreter/* 内部头文件（与 base 已有强连通核心同层），保留在 base。
     ${MINILANG_ROOT_DIR}/common/MemoryInspectionAPI.cpp
     ${MINILANG_ROOT_DIR}/ast/ASTNode.cpp
+    ${MINILANG_ROOT_DIR}/ast/MacroExpander.cpp
     ${MINILANG_ROOT_DIR}/ast/ModuleIsolation.cpp
     ${MINILANG_ROOT_DIR}/interpreter/Interpreter.cpp
     ${MINILANG_ROOT_DIR}/interpreter/InterpreterCalls.cpp

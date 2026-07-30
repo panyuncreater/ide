@@ -69,6 +69,7 @@ const char* irOpName(IROp op) {
         {IROp::RETURN_NULL, "RETURN_NULL"},
         // R164 协程/生成器
         {IROp::YIELD, "YIELD"},
+        {IROp::AWAIT, "AWAIT"},
         // 闭包
         {IROp::MAKE_CLOSURE, "MAKE_CLOSURE"},
         // 容器

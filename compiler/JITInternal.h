@@ -142,6 +142,19 @@ void jitIndexSet(JitContext* ctx);
 void jitBuildDict(JitContext* ctx, uint8_t pairCount);
 void jitBuildTuple(JitContext* ctx, uint8_t count);
 
+// --- Enum variant (JITRuntime.cpp) ---
+// 校验逻辑与 VM OP_BUILD_ENUM_VARIANT/OP_ENUM_VARIANT_NAME/OP_ENUM_VARIANT_FIELD 对齐；
+// 仅依赖 ctx->enumRegistryPtr/ctx->classInfoPtr/ctx->stackTop，x86-64 与 ARM64 后端共用。
+void jitBuildEnumVariant(JitContext* ctx, const char* enumName, const char* variantName, uint8_t argCount);
+void jitEnumVariantName(JitContext* ctx, const char* enumName, const char* variantName);
+void jitEnumVariantField(JitContext* ctx);
+
+// --- Concurrency builtins (JITRuntime.cpp) ---
+// spawn/channel/mutex/rwlock：经共享层 executeSharedSpawn/executeSharedBuiltinFunction 实现，
+// 与 Interpreter/StackVM/RegisterVM 语义天然一致。spawn 的 ClosureInvoker 经
+// JITBackend::closureTrampoline_ 同步执行 JIT 闭包（仅 x86-64 后端）。
+void jitCallConcurrency(JitContext* ctx, const char* funName, uint8_t argCount);
+
 // --- OOP (JITRuntime.cpp) ---
 void jitClassNew(JitContext* ctx, const char* className, uint8_t argCount);
 void jitInitField(JitContext* ctx, const char* fieldName);

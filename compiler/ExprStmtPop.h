@@ -51,6 +51,11 @@ inline bool needsPopForExprStmt(NodeType nt) {
     case NodeType::NODE_TUPLE_LITERAL:
     // AUDIT-R5 BUG-02 fix: 裸 yield 语句的结果值需 POP（见文件头注释）
     case NodeType::NODE_YIELD_EXPR:
+    // 七特性 MVP 阶段 4：裸 await 语句（`await t;`）的结果是表达式值，需 POP
+    case NodeType::NODE_AWAIT_EXPR:
+    // 七特性 MVP 阶段 2：裸宏调用语句（`name!(x);`）的展开结果是表达式值，需 POP
+    // 防止栈泄漏；MacroDecl 是声明节点不入此表（不产生栈值）。
+    case NodeType::NODE_MACRO_CALL:
         return true;
     default:
         return false;

@@ -103,6 +103,10 @@ constexpr int MAX_PARSE_ERRORS = 100;
 constexpr int MAX_COMPILE_DEPTH = 512;
 // Formatter 最大格式化嵌套深度
 constexpr int MAX_FORMAT_DEPTH = 256;
+// 七特性 MVP 阶段 2：宏展开克隆递归深度上限。
+// 宏 body 是单个表达式（受 MAX_PARSE_DEPTH 约束），嵌套宏调用在 body 解析时
+// 已展开为子树，克隆深度≈展开后 AST 深度。与 MAX_PARSE_DEPTH 对齐。
+constexpr int MAX_MACRO_EXPANSION_DEPTH = 256;
 
 // ---- Value 序列化 / 比较 ----
 // toString 递归深度上限（对齐 Formatter MAX_FORMAT_DEPTH）

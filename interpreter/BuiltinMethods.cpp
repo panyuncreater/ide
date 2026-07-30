@@ -843,11 +843,35 @@ Result<Value> executeBuiltinRwlock(const Value* /*args*/, size_t argCount, int l
 ///   - tag=="err" → 运行时错误“? 传播 Err: <error>”（可被 try/catch 捕获）
 ///   - tag=="none" → 运行时错误“? 传播 None”
 ///   - 非 Result/Option dict → 运行时错误（类型约束）
+/// 七特性 MVP 阶段 1 扩展：同时支持泛型 enum 写法的 Result/Option（如
+/// `enum Result<T, E> { Ok(T), Err(E) }`）——enum variant 值按 variantName 分派：
+///   - Ok/Some → 解包 fields[0]（无 payload 时返回 null）
+///   - Err → 运行时错误“? 传播 Err: <payload>”；None → “? 传播 None”
+///   - 其他 variant 名 → 类型约束错误（与 dict 路径同样文案风格）
 /// 共享实现层单一事实源，三后端传播语义自动一致。
 Result<Value> executeBuiltinQmarkUnwrap(const Value* args, size_t argCount, int line, int column) {
     if (auto r = checkExact("?", argCount, 1, line, column); r.is_err())
         return r;
     const Value& v = args[0];
+    // 泛型 enum variant 路径：按 variantName 分派（enum 名不限定，用户自定义
+    // `enum MyResult { Ok(T), Err(E) }` 同样适用，与 match 的 variantName 比较哲学一致）
+    if (v.isEnumVariant()) {
+        const std::string& vn = v.enumVariantName();
+        const std::vector<Value>& fields = v.enumVariantFields();
+        if (vn == "Ok" || vn == "Some") {
+            return Result<Value>::ok(fields.empty() ? Value::nullValue() : fields[0]);
+        }
+        if (vn == "Err") {
+            std::string msg = fields.empty() ? "unknown" : fields[0].toString();
+            return Result<Value>::err("? 传播 Err: " + msg, line, column);
+        }
+        if (vn == "None") {
+            return Result<Value>::err("? 传播 None", line, column);
+        }
+        return Result<Value>::err("? 运算符要求 Result/Option 值（Ok/Err/Some/None variant），实际为 " +
+                                      v.enumVariantEnumName() + "." + vn,
+                                  line, column);
+    }
     if (!v.isDict()) {
         return Result<Value>::err(
             "? 运算符要求 Result/Option 值（std/result 的 Ok/Err/Some/None），实际为 " + v.typeName(), line, column);
@@ -1156,16 +1180,34 @@ BuiltinMethodResult handleSyncObjectMethod(const std::string& method, Value& obj
     // ---- Mutex 方法 ----
     if (obj.isMutex()) {
         auto inner = obj.mutexInner();
+        auto owner = obj.mutexOwner();
+        const std::thread::id self = std::this_thread::get_id();
         if (method == "lock") {
+            // 自死锁检测：同一线程已持有该锁时再次 lock 会永久死锁（std::mutex 非递归），
+            // fail-fast 抛异常而非挂起，便于教学定位。跨线程 lock 仍走 std::mutex 正常阻塞。
+            if (owner->load() == self) {
+                throw RuntimeError("mutex 死锁检测：当前线程已持有该锁，重复 lock 将死锁（请改用 tryLock 或先 unlock）",
+                                   line, col, "deadlock-detected");
+            }
             inner->lock();
+            owner->store(self);
             return BuiltinMethodResult(Value::nullValue(), false);
         }
         if (method == "unlock") {
+            owner->store(std::thread::id{});
             inner->unlock();
             return BuiltinMethodResult(Value::nullValue(), false);
         }
         if (method == "tryLock") {
+            // 已持有时直接返回 false（避免 std::mutex 同线程 try_lock 的未定义行为），
+            // 与既有 MutexDoubleLockGuardedByTryLock 语义一致。
+            if (owner->load() == self) {
+                return BuiltinMethodResult(Value(false), false);
+            }
             bool acquired = inner->try_lock();
+            if (acquired) {
+                owner->store(self);
+            }
             return BuiltinMethodResult(Value(acquired), false);
         }
         throw RuntimeError("mutex 不支持方法 " + method, line, col, "undefined-function");

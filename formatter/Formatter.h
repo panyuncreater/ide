@@ -168,6 +168,13 @@ public:
     void visitThrowStmt(ThrowStmt& node) override;
     // AUDIT-R6 F7 fix: R164 yield 表达式（原缺失 override，yield 输出为残留文本）
     void visitYieldExpr(YieldExpr& node) override;
+    // 七特性 MVP 阶段 2：宏声明与宏调用（打印原始语法，往返等价）
+    void visitMacroDecl(MacroDecl& node) override;
+    void visitMacroCallExpr(MacroCallExpr& node) override;
+    // 七特性 MVP 阶段 3：trait 声明（打印完整 trait 体，往返等价）
+    void visitTraitDecl(TraitDecl& node) override;
+    // 七特性 MVP 阶段 4：await 表达式（打印 await <operand>）
+    void visitAwaitExpr(AwaitExpr& node) override;
     void visitImportStmt(ImportStmt& node) override;
     void visitExportStmt(ExportStmt& node) override;
     void visitInterpolatedString(InterpolatedString& node) override; // C5 fix

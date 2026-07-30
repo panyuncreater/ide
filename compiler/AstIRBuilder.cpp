@@ -1306,6 +1306,25 @@ IROperand AstIRBuilder::visitNode(ASTNode* node) {
     // R164 协程/生成器：yield 表达式 → IR YIELD 指令
     case NodeType::NODE_YIELD_EXPR:
         return visitYieldExpr(static_cast<YieldExpr*>(node));
+    // 七特性 MVP 阶段 4：await 表达式 → IR AWAIT 指令
+    case NodeType::NODE_AWAIT_EXPR:
+        return visitAwaitExpr(static_cast<AwaitExpr*>(node));
+    // 七特性 MVP 阶段 2：宏系统（parse 期已展开，IR 路径直接处理 expanded 子树）
+    case NodeType::NODE_MACRO_DECL:
+        // 声明运行期 no-op（与 Compiler::visitMacroDecl 对齐）
+        return IROperand::vreg(0);
+    // 七特性 MVP 阶段 3：trait 声明运行期 no-op（方法 parse 期已合入类）
+    case NodeType::NODE_TRAIT_DECL:
+        return IROperand::vreg(0);
+    case NodeType::NODE_MACRO_CALL: {
+        auto* mc = static_cast<MacroCallExpr*>(node);
+        if (!mc->expanded) {
+            irDiagnostics_.addErrorFatal("宏调用 " + mc->name + "! 缺少展开子树（AST 构造错误）", mc->line,
+                                         mc->column, DiagSource::Compiler);
+            return IROperand::vreg(0);
+        }
+        return visitNode(mc->expanded.get());
+    }
     default:
         // 落空会导致 dest vreg 已分配但无指令 emit，后续 lowering 栈深度映射缺失，
         // 静默产生坏代码。用 assert 兜底，Release 构建中 assert 被剥离时返回空 vreg
@@ -2201,6 +2220,18 @@ IROperand AstIRBuilder::visitYieldExpr(YieldExpr* node) {
         emitIR(IROp::LOAD_NULL, {src}, node->line);
     }
     emitIR(IROp::YIELD, {dest, src}, node->line);
+    return dest;
+}
+
+// 七特性 MVP 阶段 4：await 表达式 → IR AWAIT 指令
+// 语义：编译 operand，emit AWAIT dest, src（同步 drain）。
+// 后端 lowering：
+//   - StackVM IR 路径：lower 到 OP_AWAIT（1 字节无操作数，值在栈顶）
+//   - RegisterVM 路径：lower 到 REG_AWAIT dst, src（3 字节）
+IROperand AstIRBuilder::visitAwaitExpr(AwaitExpr* node) {
+    IROperand dest = ir_->allocVReg();
+    IROperand src = visitNode(node->operand.get());
+    emitIR(IROp::AWAIT, {dest, src}, node->line);
     return dest;
 }
 

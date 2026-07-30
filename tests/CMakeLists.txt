@@ -124,6 +124,12 @@ add_executable(minilang_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/TestTuple.cpp
     # R99 枚举与 ADT + match：四后端一致性测试
     ${CMAKE_CURRENT_SOURCE_DIR}/TestEnum.cpp
+    # 七特性 MVP 阶段 1：? 传播运算符 × 泛型 enum Result/Option 四后端一致性
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestResultPropagation.cpp
+    # 七特性 MVP 阶段 2：宏系统（parse 期展开）四后端一致性 + Formatter 往返
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestMacro.cpp
+    # 七特性 MVP 阶段 3：Trait/Mixin（parse 期方法合入）四后端一致性 + Formatter 往返
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestTrait.cpp
     # R163 泛型/模板：四后端一致性 + Formatter/DocGenerator 输出测试
     ${CMAKE_CURRENT_SOURCE_DIR}/TestGenerics.cpp
     # R134 模式匹配扩展（VARIABLE/TUPLE/OR pattern + guard）：四后端一致性测试
@@ -331,6 +337,8 @@ add_executable(minilang_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/TestCoverageGaps.cpp
     # P3-19 覆盖率缺口定向补充测试第二批：循环导入深层嵌套/并发原语边界/IR 优化 pass 验证。
     ${CMAKE_CURRENT_SOURCE_DIR}/TestCoverageGaps2.cpp
+    # 覆盖率缺口定向补充测试第三批：rwlock 读写锁排斥边界/LICM 嵌套循环/GVN 副作用不消除/级联内联。
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestCoverageGaps3.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/TestL14RuntimeErrorCatch.cpp
     # P3-IR-TEST IR 模块专用单元测试：AstIRBuilder / BytecodeIRBackend / RegisterBytecodeBackend
     # 各 AST 节点→IR 指令映射 + IR→StackVM/RegVM 字节码 lowering + 寄存器分配边界
@@ -484,6 +492,12 @@ gtest_discover_tests(minilang_app_tests
         TIMEOUT 300
 )
 minilang_deploy_qt_runtime(minilang_app_tests)
+# LNK2005 fix（fresh 重编译暴露）：启用与 minilang_tests 一致的 PCH。
+# 根因：tests/main.cpp 调用内联 GcManager::instance()（含 static GcManager gc 局部静态），
+# 无 PCH 编译时 MSVC 将 GcManager 构造/析构作为本地定义发射到 main.cpp.obj，
+# 与 minilang_core.lib 的 unity obj 重复定义→ LNK2005/LNK1169；启用 PCH 后该符号
+# 回到 UNDEF 外部引用（由 core.lib 解析），与 minilang_tests 行为一致。
+minilang_enable_pch(minilang_app_tests ${MINILANG_ROOT_DIR})
 
 # ============================================================
 # minilang_gui_smoke — GUI 控件冒烟测试（可选目标）
@@ -526,3 +540,6 @@ gtest_discover_tests(minilang_gui_smoke
 )
 minilang_deploy_qt_runtime(minilang_gui_smoke)
 minilang_deploy_qfluent_runtime(minilang_gui_smoke)
+# LNK2005 fix（同 minilang_app_tests）：tests/main.cpp 无 PCH 时 GcManager 单例构造/析构
+# 被本地定义发射，与 core.lib 重复。启用与 minilang_tests 一致的 PCH 修复。
+minilang_enable_pch(minilang_gui_smoke ${MINILANG_ROOT_DIR})

@@ -59,6 +59,14 @@ enum class TokenType {
     TK_YIELD, // yield 关键字（生成器挂起）
     // L18 lang-constfun：const fun 编译期求值
     TK_CONST, // const 关键字（修饰 fun 声明）
+    // 七特性 MVP 阶段 2：宏系统
+    TK_MACRO, // macro 关键字（表达式模板宏声明）
+    // 七特性 MVP 阶段 3：Trait/Mixin
+    TK_TRAIT, // trait 关键字（方法集声明）
+    TK_WITH,  // with 关键字（类声明混入 trait）
+    // 七特性 MVP 阶段 4：async/await（复用 R164 协程重放模式）
+    TK_ASYNC, // async 关键字（async fun 声明，调用返回 Task/协程）
+    TK_AWAIT, // await 关键字（驱动协程到完成并取最终值）
     // 字面量
     TK_IDENTIFIER,
     TK_INT_LIT,
@@ -218,6 +226,16 @@ struct Token {
             return "YIELD";
         case TokenType::TK_CONST:
             return "CONST";
+        case TokenType::TK_MACRO:
+            return "MACRO";
+        case TokenType::TK_TRAIT:
+            return "TRAIT";
+        case TokenType::TK_WITH:
+            return "WITH";
+        case TokenType::TK_ASYNC:
+            return "ASYNC";
+        case TokenType::TK_AWAIT:
+            return "AWAIT";
         case TokenType::TK_IDENTIFIER:
             return "IDENTIFIER";
         case TokenType::TK_INT_LIT:

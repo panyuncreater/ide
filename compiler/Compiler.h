@@ -551,6 +551,14 @@ private:
     // R164 协程/生成器：yield 表达式编译
     void visitYieldExpr(YieldExpr& node) override;
 
+    // 七特性 MVP 阶段 2：宏系统（声明 no-op，调用编译 expanded 子树）
+    void visitMacroDecl(MacroDecl& node) override;
+    void visitMacroCallExpr(MacroCallExpr& node) override;
+    // 七特性 MVP 阶段 3：Trait/Mixin（声明 no-op，方法 parse 期已合入类）
+    void visitTraitDecl(TraitDecl& node) override;
+    // 七特性 MVP 阶段 4：async/await（编译 operand + OP_AWAIT）
+    void visitAwaitExpr(AwaitExpr& node) override;
+
     // ============================================================
     // 超长函数拆分：visitTryStmt / visitFunDecl / visitClassDecl 子阶段
     // 拆分目的：降低单函数圈复杂度，便于审计与回归测试。

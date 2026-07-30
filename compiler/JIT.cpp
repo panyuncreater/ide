@@ -195,6 +195,20 @@ JitResult JITBackend::execute(const CompileResult& result) {
     pendingFieldOrder_.clear();
     jitContext_.classInfoPtr = &classInfo_;
     jitContext_.pendingFieldOrderPtr = &pendingFieldOrder_;
+
+    // enum 元信息注册表：从 CompileResult.enumInfos 加载（与 VM initExecution 对齐），
+    // jitBuildEnumVariant 经 ctx->enumRegistryPtr 校验 variant 名/arity/字段类型
+    enumRegistry_.clear();
+    for (const auto& info : result.enumInfos) {
+        enumRegistry_[info.name] = info;
+    }
+    jitContext_.enumRegistryPtr = &enumRegistry_;
+
+    // 并发原语：同步对象方法内联处理邮箱 + 闭包跳板帧地板栈重置
+    jitContext_.syncMethodHandled = 0;
+    trampolineFrameFloors_.clear();
+    closureTrampoline_ = nullptr; // compileAllChunks 成功后重新解析
+
     // R149: methodEntries_ 在 compileAllChunks 末尾填充，jitMethodCall 沿继承链查找用
     // callerBp 是运行时邮箱（JIT 代码调用 jitMethodCall 前写入 r13），无需初始化
     jitContext_.methodEntriesPtr = &methodEntries_;
@@ -433,6 +447,11 @@ static_assert(offsetof(JitContext, deoptEntryPoint) == 216,
 static_assert(offsetof(JitContext, deoptChunkIdx) == 224, "JitContext::deoptChunkIdx offset mismatch (expected 224)");
 static_assert(offsetof(JitContext, memberGetICPtr) == 232, "JitContext::memberGetICPtr offset mismatch (expected 232)");
 static_assert(offsetof(JitContext, globalsPtr) == 240, "JitContext::globalsPtr offset mismatch (expected 240)");
+static_assert(offsetof(JitContext, gcNeededFlag) == 248, "JitContext::gcNeededFlag offset mismatch (expected 248)");
+static_assert(offsetof(JitContext, enumRegistryPtr) == 256,
+              "JitContext::enumRegistryPtr offset mismatch (expected 256)");
+static_assert(offsetof(JitContext, syncMethodHandled) == 264,
+              "JitContext::syncMethodHandled offset mismatch (expected 264)");
 
 void verifyNanBoxConstants() {
     // 用 NaNBox 的 public 方法间接验证常量一致性

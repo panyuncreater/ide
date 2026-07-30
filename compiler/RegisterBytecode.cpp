@@ -45,6 +45,7 @@ constexpr RegOpInfo kRegOpInfo[] = {
     /* REG_RETURN                  */ {"REG_RETURN", 2, false},
     /* REG_RETURN_NULL             */ {"REG_RETURN_NULL", 1, false},
     /* REG_YIELD                   */ {"REG_YIELD", 3, false},       // R164: op + dst(1B) + src(1B)
+    /* REG_AWAIT                   */ {"REG_AWAIT", 3, false},       // 阶段4: op + dst(1B) + src(1B)
     /* REG_CALL                    */ {"REG_CALL", 5, true},         // 变长: 5 + argCount
     /* REG_CALL_EXPR               */ {"REG_CALL_EXPR", 4, true},    // 变长: 4 + argCount
     /* REG_METHOD_CALL             */ {"REG_METHOD_CALL", 6, true},  // 变长: 6 + argCount

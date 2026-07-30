@@ -14,8 +14,11 @@
 #include "common/ErrorFormat.h"
 #include "common/ErrorMessages.h"
 #include "common/RuntimeLimits.h"
+#include "common/TypeChecker.h" // enum 字段类型校验：typeMatchValue/isTypeParameter
 #include "common/Utf8Utils.h"
 #include "compiler/JITInternal.h"
+#include "interpreter/BuiltinMethods.h" // 并发原语共享层：executeSharedSpawn/handleSyncObjectMethod 等
+#include "interpreter/RuntimeExceptions.h" // handleSyncObjectMethod 抛 RuntimeError
 #include "interpreter/Value.h"
 #include <algorithm>
 #include <array>
@@ -942,6 +945,303 @@ extern "C" void jitBuildTuple(JitContext* ctx, uint8_t count) {
 }
 
 // ============================================================
+// enum variant 支持（OP_BUILD_ENUM_VARIANT / OP_ENUM_VARIANT_NAME / OP_ENUM_VARIANT_FIELD）
+// ============================================================
+// 设计策略：全部走 C++ 辅助路径（与容器/类支持一致）。
+// 校验逻辑逐条对齐 VM executeContainerBuildOps(OP_BUILD_ENUM_VARIANT) 与
+// executeEnumOps：enum 存在性 → variant 存在性 → arity → 字段类型注解
+// （泛型类型参数擦除 + 实例继承链 fallback），错误文本与 VM 完全一致，
+// 保证四后端（Interpreter/StackVM/RegisterVM/JIT）语义一致。
+// 仅依赖 ctx 字段（enumRegistryPtr/classInfoPtr/stackTop），ARM64 后端可直接复用。
+
+/// OP_BUILD_ENUM_VARIANT：从 JIT 栈 pop argCount 个字段，校验后构造 enum variant 压栈
+/// 栈布局（调用前）：[..., arg0, arg1, ..., argN-1] ← ctx->stackTop 指向 argN-1
+/// 栈布局（调用后）：[..., variant]
+/// @param enumName/variantName C 字符串（编译期从 chunk.constants 解析，生命期跨 execute）
+extern "C" void jitBuildEnumVariant(JitContext* ctx, const char* enumName, const char* variantName,
+                                    uint8_t argCount) {
+    if (!ctx || !ctx->stackTop || !enumName || !variantName) {
+        return;
+    }
+    auto reportError = [&](std::string msg) {
+        if (ctx->hasError && ctx->errorBuffer) {
+            *ctx->hasError = true;
+            *ctx->errorBuffer = std::move(msg);
+        }
+    };
+
+    // R99 enum 校验：运行时检查 enum 已声明、variant 存在、参数 arity 一致（对齐 VM）
+    const auto* registry = static_cast<const std::unordered_map<std::string, VMEnumInfo>*>(ctx->enumRegistryPtr);
+    if (!registry) {
+        reportError(ErrorFormat::formatStd("未定义的 enum: {}", enumName));
+        return;
+    }
+    auto enumIt = registry->find(enumName);
+    if (enumIt == registry->end()) {
+        reportError(ErrorFormat::formatStd("未定义的 enum: {}", enumName));
+        return;
+    }
+    const VMEnumInfo& info = enumIt->second;
+    const VMEnumVariantInfo* varInfo = nullptr;
+    for (const auto& v : info.variants) {
+        if (v.name == variantName) {
+            varInfo = &v;
+            break;
+        }
+    }
+    if (varInfo == nullptr) {
+        reportError(ErrorFormat::formatStd("enum '{}' 没有 variant '{}'", enumName, variantName));
+        return;
+    }
+    if (static_cast<int>(argCount) != varInfo->arity) {
+        reportError(ErrorFormat::formatStd("enum variant '{}.{}' 期望 {} 个参数，得到 {} 个", enumName, variantName,
+                                           varInfo->arity, static_cast<int>(argCount)));
+        return;
+    }
+
+    // pop 字段（借用，与 jitBuildArray 同一所有权约定：弃置栈槽引用由追踪 GC 回收）
+    int64_t* sp = ctx->stackTop;
+    std::vector<Value> fields(argCount);
+    for (int i = argCount - 1; i >= 0; --i) {
+        fields[i] = bitsToValue(*sp);
+        sp += 1; // pop
+    }
+
+    // AUDIT-R6 F3 对齐：字段类型注解校验（泛型类型参数擦除；实例继承链 fallback
+    // 对齐 VM executeContainerBuildOps 的 classInfo_ 查找模式，JIT 侧用 JitClassInfo）
+    for (size_t fi = 0; fi < fields.size() && fi < varInfo->paramTypes.size(); ++fi) {
+        const std::string& expectedType = varInfo->paramTypes[fi];
+        if (expectedType.empty() || minilang::isTypeParameter(expectedType, info.typeParams))
+            continue;
+        if (!minilang::typeMatchValue(fields[fi], expectedType)) {
+            bool inheritOk = false;
+            if (fields[fi].isInstance() && ctx->classInfoPtr) {
+                auto classIt = ctx->classInfoPtr->find(fields[fi].className());
+                int depth = 0;
+                while (classIt != ctx->classInfoPtr->end() && depth < 64) {
+                    if (classIt->second.name == expectedType) {
+                        inheritOk = true;
+                        break;
+                    }
+                    if (classIt->second.superClassName.empty())
+                        break;
+                    classIt = ctx->classInfoPtr->find(classIt->second.superClassName);
+                    ++depth;
+                }
+            }
+            if (!inheritOk) {
+                reportError(ErrorFormat::formatStd("enum variant '{}.{}' 第 {} 个参数类型不匹配：期望 {}，得到 {}",
+                                                   enumName, variantName, fi + 1, expectedType,
+                                                   fields[fi].typeName()));
+                ctx->stackTop = sp; // 已 pop 参数，同步栈顶（错误路径即将中止执行）
+                return;
+            }
+        }
+    }
+
+    Value variant = Value::makeEnumVariant(enumName, variantName, std::move(fields));
+    sp -= 1;
+    *sp = valueToBits(variant); // detach 转移所有权
+    ctx->stackTop = sp;
+}
+
+/// OP_ENUM_VARIANT_NAME：pop scrutinee，检查是否为指定 enum variant，push bool
+/// 与 VM executeEnumOps 对齐：非 enum variant 类型/名字不匹配均 push false（不报错）
+extern "C" void jitEnumVariantName(JitContext* ctx, const char* enumName, const char* variantName) {
+    if (!ctx || !ctx->stackTop || !enumName || !variantName) {
+        return;
+    }
+    int64_t* sp = ctx->stackTop;
+    Value scrut = bitsToValue(*sp);
+    sp += 1; // pop
+    bool matched = false;
+    if (scrut.isEnumVariant()) {
+        matched = (scrut.enumVariantEnumName() == enumName) && (scrut.enumVariantName() == variantName);
+    }
+    Value result(matched);
+    sp -= 1;
+    *sp = valueToBits(result);
+    ctx->stackTop = sp;
+}
+
+/// OP_ENUM_VARIANT_FIELD：pop index、pop scrutinee，push scrutinee.fields[index]
+/// 错误文本与 VM executeEnumOps 完全一致
+extern "C" void jitEnumVariantField(JitContext* ctx) {
+    if (!ctx || !ctx->stackTop) {
+        return;
+    }
+    auto reportError = [&](std::string msg) {
+        if (ctx->hasError && ctx->errorBuffer) {
+            *ctx->hasError = true;
+            *ctx->errorBuffer = std::move(msg);
+        }
+    };
+    int64_t* sp = ctx->stackTop;
+    Value idx = bitsToValue(*sp);
+    sp += 1; // pop index
+    Value scrut = bitsToValue(*sp);
+    sp += 1; // pop scrutinee
+    ctx->stackTop = sp;
+    if (!scrut.isEnumVariant()) {
+        reportError("OP_ENUM_VARIANT_FIELD: 栈顶不是 enum variant");
+        return;
+    }
+    if (!idx.isInt()) {
+        reportError("OP_ENUM_VARIANT_FIELD: 索引必须是整数");
+        return;
+    }
+    int64_t i = idx.intVal();
+    const auto& fields = scrut.enumVariantFields();
+    if (i < 0 || static_cast<size_t>(i) >= fields.size()) {
+        reportError(ErrorFormat::formatStd("OP_ENUM_VARIANT_FIELD: 索引越界 {}, 有效范围 [0, {})",
+                                           static_cast<long long>(i), fields.size()));
+        return;
+    }
+    Value field = fields[static_cast<size_t>(i)]; // 拷贝（addRef）
+    sp -= 1;
+    *sp = valueToBits(field);
+    ctx->stackTop = sp;
+}
+
+// ============================================================
+// 并发原语支持（spawn/channel/mutex/rwlock + 同步对象方法）
+// ============================================================
+// 共享层单一事实源：构造函数走 executeSharedBuiltinFunction（channel/mutex/rwlock），
+// spawn 走 executeSharedSpawn（延迟执行模式：闭包存入 ThreadInner.pending 字段，
+// join() 时由调用线程同步执行），方法分发走 handleSyncObjectMethod。
+// 与 Interpreter/StackVM/RegisterVM 语义天然一致。
+//
+// JIT 特有部分：spawn 的 ClosureInvoker 需要从 C++ 同步调用 JIT 编译的闭包。
+// 实现为闭包跳板（JITBackend::closureTrampoline_，compileAllChunks 末尾发射）：
+//   1. jitInvokeClosureSync 将 closure + args 压入 JIT 操作数栈（经 ctx->stackTop）
+//   2. 跳板（C 可调用）建立与主入口同构的 rbp 帧，调用 jitCallExpr 建帧后
+//      jmp 闭包入口；闭包 OP_RETURN 返回跳板 returnLabel 后 ret 回 C++
+//   3. trampolineFrameFloors_ 记录帧地板，jitThrow 据此阻止异常跨跳板传播
+
+/// 从 C++ 同步调用 JIT 编译的闭包（spawn-join 的 ClosureInvoker 实现）
+/// @return 闭包返回值；闭包内部错误/未捕获异常时返回 err（hasError 已清除，
+///         由调用方（handleSyncObjectMethod join 处理器）重新抛出 RuntimeError）
+// 注：本文件整体处于 extern "C" 块内，此函数返回 C++ 类型 Result<Value>，
+// 需显式 extern "C++" 语言链接（否则 MSVC C4190 + /WX 阻断编译）。
+extern "C++" {
+static Result<Value> jitInvokeClosureSync(JitContext* ctx, const Value& closure, const Value* args, size_t argCount) {
+    auto* backend = ctx ? static_cast<JITBackend*>(ctx->backendPtr) : nullptr;
+    if (!backend || !backend->closureTrampoline_ || !ctx->stackTop) {
+        return Result<Value>::err("JIT 内部错误: 闭包调用跳板未初始化", 0, 0);
+    }
+    if (argCount + 1 > RuntimeLimits::MAX_JIT_ARGS) {
+        return Result<Value>::err("JIT 闭包调用参数过多", 0, 0);
+    }
+
+    // 压入 closure + args（OP_CALL_EXPR 栈布局：[closure, arg0, ..., argN-1]，栈顶 argN-1）
+    int64_t* sp = ctx->stackTop;
+    {
+        Value c = closure; // 拷贝 addRef 后 detach 转移到栈槽
+        sp -= 1;
+        *sp = static_cast<int64_t>(valueToBits(c));
+    }
+    for (size_t i = 0; i < argCount; ++i) {
+        Value v = args[i];
+        sp -= 1;
+        *sp = static_cast<int64_t>(valueToBits(v));
+    }
+    ctx->stackTop = sp;
+
+    // 记录帧地板：jitThrow 据此阻止异常跨跳板边界传播
+    size_t frameFloor = ctx->frameCount ? *ctx->frameCount : 0;
+    backend->trampolineFrameFloors_.push_back(frameFloor);
+    backend->closureTrampoline_(ctx, static_cast<uint64_t>(argCount));
+    backend->trampolineFrameFloors_.pop_back();
+
+    if (ctx->hasError && *ctx->hasError) {
+        // 错误路径：闭包内 runtimeError/未捕获异常 → 帧深度可能未回退，恢复到地板；
+        // 清理跳板范围内残留的 try handler / 续跳目标（frameIndex > floor）
+        if (ctx->frameCount && *ctx->frameCount > frameFloor) {
+            *ctx->frameCount = frameFloor;
+        }
+        while (!backend->tryStack_.empty() && backend->tryStack_.back().frameIndex > frameFloor) {
+            backend->tryStack_.pop_back();
+        }
+        while (!backend->pendingJumpStack_.empty() && backend->pendingJumpStack_.back().frameIndex > frameFloor) {
+            backend->pendingJumpStack_.pop_back();
+        }
+        std::string msg = ctx->errorBuffer ? *ctx->errorBuffer : std::string("JIT 闭包执行错误");
+        *ctx->hasError = false; // 转交上层：join 处理器将重新抛出 RuntimeError
+        if (ctx->errorBuffer)
+            ctx->errorBuffer->clear();
+        return Result<Value>::err(std::move(msg), 0, 0);
+    }
+
+    // 正常路径：闭包返回值在栈顶（emitReturn 已 push 到 callerSp 位置）
+    int64_t* resultSp = ctx->stackTop;
+    Value result = bitsToValue(static_cast<uint64_t>(*resultSp));
+    ctx->stackTop = resultSp + 1; // pop（弃置栈槽引用，追踪 GC 回收，与其他 helper 一致）
+    return Result<Value>::ok(std::move(result));
+}
+} // extern "C++"
+
+/// OP_CALL 分流：并发原语内建函数（spawn/channel/mutex/rwlock）
+/// 栈布局（调用前）：[..., arg0, ..., argN-1] ← ctx->stackTop 指向 argN-1
+/// 栈布局（调用后）：[..., result]
+extern "C" void jitCallConcurrency(JitContext* ctx, const char* funName, uint8_t argCount) {
+    if (!ctx || !ctx->stackTop || !funName) {
+        return;
+    }
+    auto reportError = [&](std::string msg) {
+        if (ctx->hasError && ctx->errorBuffer) {
+            *ctx->hasError = true;
+            *ctx->errorBuffer = std::move(msg);
+        }
+    };
+
+    // pop args（借用）
+    int64_t* sp = ctx->stackTop;
+    std::array<Value, RuntimeLimits::MAX_JIT_ARGS> args;
+    for (int i = argCount - 1; i >= 0; --i) {
+        args[i] = bitsToValue(*sp);
+        sp += 1; // pop
+    }
+    ctx->stackTop = sp;
+
+    std::string name(funName);
+    if (name == "spawn") {
+        // 与 VM executeCallSpawn 对齐：至少 1 个参数（闭包）
+        if (argCount < 1) {
+            reportError("spawn 期望至少 1 个参数（函数），但传入了 0 个");
+            return;
+        }
+        // ClosureInvoker：join() 时在调用线程同步执行（延迟执行模式，无数据竞争）。
+        // 捕获 ctx：ThreadInner 持有 invoker 的生命期不超过本次 execute（每次 execute
+        // 重新编译 + 重建全局状态，旧 Thread 值的 join 在新一轮不可达）。
+        ClosureInvoker invoker = [ctx](const Value& closure, const Value* cargs, size_t cargc, int /*line*/,
+                                       int /*col*/) -> Result<Value> {
+            return jitInvokeClosureSync(ctx, closure, cargs, cargc);
+        };
+        auto r = executeSharedSpawn(args[0], args.data() + 1, static_cast<size_t>(argCount) - 1, invoker, 0, 0);
+        if (r.is_err()) {
+            reportError(r.error().message);
+            return;
+        }
+        Value threadVal = r.value();
+        sp -= 1;
+        *sp = static_cast<int64_t>(valueToBits(threadVal));
+        ctx->stackTop = sp;
+        return;
+    }
+
+    // channel()/mutex()/rwlock()：共享层注册表（含 arity 校验，错误文本与三 VM 一致）
+    auto r = executeSharedBuiltinFunction(name, args.data(), argCount, 0, 0);
+    if (r.is_err()) {
+        reportError(r.error().message);
+        return;
+    }
+    Value result = r.value();
+    sp -= 1;
+    *sp = static_cast<int64_t>(valueToBits(result));
+    ctx->stackTop = sp;
+}
+
+// ============================================================
 // R148 阶段 4c-1+2：类支持（基础：OP_DEFINE_CLASS/INIT_FIELD/CLASS_NEW/MEMBER_GET/SET_VAR/SET_LOCAL）
 // ============================================================
 // 设计策略：全部走 C++ 辅助路径（与 R146 数组/R147 dict 一致）
@@ -1616,6 +1916,9 @@ extern "C" void jitMethodCall(JitContext* ctx, const char* methodName, int64_t p
     if (!ctx || !ctx->stackTop || !methodName) {
         return;
     }
+    // 同步对象方法内联处理邮箱：每次调用先清零，仅在 channel/mutex/rwlock/thread
+    // 接收者分发完成后置 1（emitMethodCall 生成的代码据此跳过 jmp methodEntryPtr）
+    ctx->syncMethodHandled = 0;
 
     uint8_t argCount = static_cast<uint8_t>(packedArgs & 0xFF);
     // W4 fix: receiverLocalSlotByte（bits 8-15）由 emitMethodCall 打包但 jitMethodCall
@@ -1639,6 +1942,34 @@ extern "C" void jitMethodCall(JitContext* ctx, const char* methodName, int64_t p
     int64_t* callerSpAfterPop = sp;    // 调用者恢复 r15 用（pop 完 args+receiver 后的栈顶）
 
     if (!receiver.isInstance()) {
+        // 并发原语：channel/mutex/rwlock/thread 的方法经共享层 handleSyncObjectMethod
+        // 内联分发（与 VM dispatchSyncObjectBuiltin 对齐）。同步对象内部状态经
+        // shared_ptr<Inner> 共享，无需 writeBack。thread.join 的 pending 闭包经
+        // pendingInvoker（spawn 时由 jitCallConcurrency 注入的跳板 invoker）同步执行。
+        if (receiver.isChannel() || receiver.isMutex() || receiver.isRwLock() || receiver.isThread()) {
+            std::vector<Value> argsVec(args.begin(), args.begin() + argCount);
+            try {
+                BuiltinMethodResult br = handleSyncObjectMethod(methodName, receiver, argsVec, 0, 0);
+                Value res = std::move(br.result);
+                int64_t* pushSp = callerSpAfterPop - 1;
+                *pushSp = static_cast<int64_t>(valueToBits(res));
+                ctx->stackTop = pushSp;
+                ctx->syncMethodHandled = 1;
+            } catch (const RuntimeError& e) {
+                if (ctx->hasError && ctx->errorBuffer) {
+                    *ctx->hasError = true;
+                    *ctx->errorBuffer = e.what();
+                }
+                ctx->stackTop = callerSpAfterPop;
+            } catch (const std::exception& e) {
+                if (ctx->hasError && ctx->errorBuffer) {
+                    *ctx->hasError = true;
+                    *ctx->errorBuffer = e.what();
+                }
+                ctx->stackTop = callerSpAfterPop;
+            }
+            return;
+        }
         if (ctx->hasError && ctx->errorBuffer) {
             *ctx->hasError = true;
             *ctx->errorBuffer = "类型 " + receiver.typeName() + " 不支持方法 " + std::string(methodName);
@@ -2163,10 +2494,30 @@ extern "C" void* jitThrow(JitContext* ctx, uint64_t thrownValueBits, int64_t* cu
     // 1. 清空 pendingJumpStack_（异常中断 break/continue 续跳链）
     backend->pendingJumpStack_.clear();
 
+    // 跳板帧地板：spawn-join 闭包经 closureTrampoline_ 执行时，异常不得跨跳板
+    // 边界向外层 JIT 帧传播（catch 地址属于外层代码，在跳板本机栈上 jmp 过去
+    // 会造成控制流双重执行）。currentFrameIdx 回退到地板即视为跳板内未捕获。
+    const bool inTrampoline = !backend->trampolineFrameFloors_.empty();
+    const size_t frameFloor = inTrampoline ? backend->trampolineFrameFloors_.back() : 0;
+
     int64_t* r13 = currentR13;
 
     while (true) {
         size_t currentFrameIdx = ctx->frameCount ? *ctx->frameCount : 0;
+
+        // 跳板内未捕获：降级为 hasError，由 jitInvokeClosureSync 转为 Result::err
+        //（join 处理器重新抛出 RuntimeError，外层以运行时错误终止）。
+        // 必须在 handler 搜索之前检查：frameIndex == frameFloor 的 handler 属于外层代码。
+        if (inTrampoline && currentFrameIdx <= frameFloor) {
+            Value thrownValue = bitsToValue(thrownValueBits);
+            std::string str = thrownValue.toString();
+            ErrorFormat::truncateForError(str);
+            if (ctx->hasError)
+                *ctx->hasError = true;
+            if (ctx->errorBuffer)
+                *ctx->errorBuffer = "未捕获的异常: " + str;
+            return nullptr;
+        }
 
         // 2. 搜索 tryStack_ 顶部当前帧的 handler
         while (!backend->tryStack_.empty()) {
