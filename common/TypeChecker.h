@@ -201,6 +201,12 @@ struct TypeInfo {
     std::string className{};          // INSTANCE 类型的类名
     std::vector<TypeInfo> typeArgs{}; // 泛型类型参数（ARRAY 的元素类型、CLOSURE 的参数/返回类型）
 
+    // 显式构造函数（非聚合化）：避免 TypeInfo{TypeKind::X} 部分初始化触发
+    // GCC -Wextra 的 missing-field-initializers 警告（CI -Werror 拦截）。
+    TypeInfo() = default;
+    explicit TypeInfo(TypeKind k) : kind(k) {}
+    TypeInfo(TypeKind k, std::string cls) : kind(k), className(std::move(cls)) {}
+
     bool isNumeric() const { return kind == TypeKind::INT || kind == TypeKind::FLOAT; }
 
     /// 类型兼容性检查：判断 other 类型的值是否可赋给 this 类型的变量。

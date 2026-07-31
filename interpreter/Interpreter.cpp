@@ -1167,7 +1167,7 @@ Value Interpreter::numericBinaryOp(BinOpType opType, Value left, Value right, in
                 const std::string& rhs = right.stringVal();
                 lhs->reserve(lhs->size() + rhs.size());
                 *lhs += rhs;
-                return std::move(left);
+                return left; // C++20 对函数参数隐式移动，std::move 冗余（GCC -Werror=redundant-move）
             }
             return Value(left.stringVal() + right.stringVal());
         }
@@ -1178,7 +1178,7 @@ Value Interpreter::numericBinaryOp(BinOpType opType, Value left, Value right, in
                 std::string rhs = right.toString();
                 lhs->reserve(lhs->size() + rhs.size());
                 *lhs += rhs;
-                return std::move(left);
+                return left; // 同上：隐式移动，避免 redundant-move 警告
             }
             return Value(left.toString() + right.toString());
         }

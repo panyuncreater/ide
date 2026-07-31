@@ -646,8 +646,8 @@ Value Interpreter::constructClassInstance(FunCall& node) {
     FunDecl* initMethod = findMethod(*cls, "init");
 
     // P0-2 fix: 支持默认参数，参数数量可在 [requiredParamCount, params.size()] 范围内
-    if (initMethod &&
-        (node.arguments.size() < initMethod->requiredParamCount || node.arguments.size() > initMethod->params.size())) {
+    if (initMethod && (node.arguments.size() < static_cast<size_t>(initMethod->requiredParamCount) ||
+                       node.arguments.size() > initMethod->params.size())) {
         runtimeError(ErrorFormat::formatStd("构造函数 init 期望 {}-{} 个参数，但传入了 {} 个",
 
                                             initMethod->requiredParamCount, initMethod->params.size(),

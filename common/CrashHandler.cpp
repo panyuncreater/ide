@@ -540,7 +540,9 @@ void crashHandler(int sig, siginfo_t* info, void* ucontext) {
              tmBuf.tm_mon + 1, tmBuf.tm_mday, tmBuf.tm_hour, tmBuf.tm_min, tmBuf.tm_sec);
 
     // 拼接完整路径（不调用 malloc，使用栈缓冲）
-    char fullPath[1024];
+    // 缓冲容量 = dumpDir 最大长 + '/' + fname 最大长 + NUL，
+    // 保证不可能截断（GCC -Wformat-truncation 否则在 CI -Werror 下拦截）
+    char fullPath[sizeof(g_posixDumpDir) + sizeof(fname) + 1];
     snprintf(fullPath, sizeof(fullPath), "%s/%s", g_posixDumpDir, fname);
 
     // 打开文件（O_CREAT | O_WRONLY | O_TRUNC）

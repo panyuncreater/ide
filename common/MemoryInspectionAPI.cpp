@@ -79,6 +79,20 @@ const char* valueTypeName(int t) {
         return "VAL_INSTANCE";
     case 8:
         return "VAL_CLOSURE";
+    case 9:
+        return "VAL_TUPLE";
+    case 10:
+        return "VAL_ENUM_VARIANT";
+    case 11:
+        return "VAL_CHANNEL";
+    case 12:
+        return "VAL_MUTEX";
+    case 13:
+        return "VAL_RWLOCK";
+    case 14:
+        return "VAL_THREAD";
+    case 15:
+        return "VAL_COROUTINE";
     default:
         return "<unknown>";
     }
@@ -98,6 +112,20 @@ const char* heapStructNameForType(int t) {
         return "InstanceData";
     case 8:
         return "ClosureData";
+    case 9:
+        return "TupleData";
+    case 10:
+        return "EnumVariantData";
+    case 11:
+        return "ChannelData";
+    case 12:
+        return "MutexData";
+    case 13:
+        return "RwLockData";
+    case 14:
+        return "ThreadData";
+    case 15:
+        return "CoroutineData";
     case 1:
     case 2:
     case 3:
@@ -253,6 +281,20 @@ HeapObjectSnapshot MemoryInspectionAPI::inspectHeap(const Value& v) {
         break;
     case ValueType::VAL_CLOSURE:
         snap.fieldCount = v.capturedVars().size();
+        break;
+    case ValueType::VAL_TUPLE:
+        snap.fieldCount = v.tupleVal().size();
+        break;
+    case ValueType::VAL_ENUM_VARIANT:
+        snap.fieldCount = v.enumVariantFields().size();
+        break;
+    case ValueType::VAL_CHANNEL:
+    case ValueType::VAL_MUTEX:
+    case ValueType::VAL_RWLOCK:
+    case ValueType::VAL_THREAD:
+    case ValueType::VAL_COROUTINE:
+        // 并发原语/协程句柄：底层资源经 shared_ptr 封装，无可枚举字段
+        snap.fieldCount = 0;
         break;
     case ValueType::VAL_NULL:
     case ValueType::VAL_FLOAT:
