@@ -14,6 +14,18 @@
 void Interpreter::visitImportStmt(ImportStmt& node) {
     checkBreak(&node);
 
+    // 七特性 MVP 阶段 6：沙箱拦截——禁用文件 import 时仅放行 std/ 内建模块。
+    // std/ 前缀是内建模块唯一标识（与 BuiltinModuleRegistry::isBuiltinModule 同口径），
+    // 其他路径视为文件模块，沙箱下拒绝（防不受信任代码读取本地文件）。
+    if (RuntimeLimits::RuntimeConfig::instance().sandboxBlocksImport()) {
+        const std::string& p = node.modulePath;
+        bool isStdModule = p.rfind("std/", 0) == 0;
+        if (!isStdModule) {
+            runtimeError("沙箱模式禁止导入文件模块: " + p, node.line, node.column);
+            return;
+        }
+    }
+
     // R132-C fix: 拆为 3 个子任务 helper（路径解析/加载+缓存/名称导入），
     // 原函数 208 行 → thin orchestrator ~35 行 + 3 helper。
     // BUG-M4 fix: loaderPath 保留大小写（供 loader 请求），cacheKey 在 Windows 上小写折叠

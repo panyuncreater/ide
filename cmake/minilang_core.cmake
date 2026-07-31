@@ -42,6 +42,7 @@ endif()
 #   debug/DebugController.h → interpreter/Value.h；interpreter/*.cpp → debug/DebugController.h
 set(MINILANG_CORE_BASE_SOURCES
     ${MINILANG_ROOT_DIR}/common/BuiltinModules.cpp
+    ${MINILANG_ROOT_DIR}/common/HostFunctionRegistry.cpp
     ${MINILANG_ROOT_DIR}/common/TypeChecker.cpp
     ${MINILANG_ROOT_DIR}/common/CrashHandler.cpp
     # ARCH-10: 内存检视只读 API（GUI 面板通过此 API 访问 NaNBox/RefCounted/GcManager，

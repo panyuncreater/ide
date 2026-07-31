@@ -505,6 +505,17 @@ void AstIRBuilder::handleImportStmt(ImportStmt& node) {
     // 模块加载编排：路径解析 → 加载模块 → 预扫描/export 收集 → 内联 lowering → 具名导入绑定。
     // 各阶段失败时设置 hasError_ 并提前返回；嵌套 import 失败需回滚 moduleLoadingSet_/Stack。
 
+    // 七特性 MVP 阶段 6：沙箱拦截——禁用文件 import 时仅放行 std/ 内建模块
+    //（IR 路径覆盖 StackVM-IR 与 RegisterVM，与 Interpreter/Compiler 同口径）。
+    if (RuntimeLimits::RuntimeConfig::instance().sandboxBlocksImport()) {
+        const std::string& p = node.modulePath;
+        if (p.rfind("std/", 0) != 0) {
+            irDiagnostics_.addErrorFatal("沙箱模式禁止导入文件模块: " + p, node.line, node.column,
+                                         DiagSource::Compiler);
+            return;
+        }
+    }
+
     // 1. 路径解析 + 安全校验 + run-once / 循环导入延迟加载 / 深度保护
     // BUG-M4 fix: loaderPath 保留大小写（供 loader/预编译解析器），cacheKey 为去重键。
     std::string loaderPath;
@@ -1323,7 +1334,15 @@ IROperand AstIRBuilder::visitNode(ASTNode* node) {
                                          mc->column, DiagSource::Compiler);
             return IROperand::vreg(0);
         }
-        return visitNode(mc->expanded.get());
+        IROperand r = visitNode(mc->expanded.get());
+        // 七特性宏升级：语句宏（expanded 为 Block）visitBlock 返回 vreg(0) 无净值，
+        // 分配新 vreg 载入 null 作为表达式值（与 StackVM 补 OP_NULL 一致，保证语句位置 POP 平衡）。
+        if (!mc->producesValue) {
+            IROperand nullReg = ir_->allocVReg();
+            emitIR(IROp::LOAD_NULL, {nullReg}, mc->line);
+            return nullReg;
+        }
+        return r;
     }
     default:
         // 落空会导致 dest vreg 已分配但无指令 emit，后续 lowering 栈深度映射缺失，

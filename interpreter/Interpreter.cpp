@@ -3211,7 +3211,12 @@ void Interpreter::visitMacroCallExpr(MacroCallExpr& node) {
     if (!node.expanded) {
         runtimeError("宏调用 " + node.name + "! 缺少展开子树（AST 构造错误）", node.line, node.column);
     }
+    // 表达式宏：expanded 为表达式，evaluate 返回其值并写回 lastValue_。
+    // 语句宏：expanded 为 Block，执行后表达式值统一为 null（与 StackVM/IR 补 null 占位一致）。
     lastValue_ = evaluate(node.expanded.get());
+    if (!node.producesValue) {
+        lastValue_ = Value::nullValue();
+    }
 }
 
 // 七特性 MVP 阶段 3：TraitDecl 运行期 no-op（方法已在 parse 期合入混入类的

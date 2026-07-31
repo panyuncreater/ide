@@ -183,10 +183,175 @@ std::shared_ptr<ASTNode> cloneWithSubstitution(const ASTNode* node, const SubstM
         auto exp = cloneWithSubstitution(mc->expanded.get(), subst, d, unsupportedNodeName);
         if (!exp)
             return nullptr;
-        return std::make_shared<MacroCallExpr>(mc->name, std::move(args), std::move(exp), mc->line, mc->column);
+        auto cloned = std::make_shared<MacroCallExpr>(mc->name, std::move(args), std::move(exp), mc->line, mc->column);
+        cloned->producesValue = mc->producesValue;
+        return cloned;
+    }
+    // ============================================================
+    // 七特性宏升级：语句/块体节点克隆（支持语句模板宏）
+    // ------------------------------------------------------------
+    // 赋值目标名（Assignment.name）的形参替换：若实参为简单 VarRef，则替换为
+    // 实参变量名（支持 swap!(x,y) 中 `a=b` → `x=y` 的左值代入）；否则保留原名。
+    // 引入型绑定名（VarDecl.name）不替换（同 C 宏：宏内部 var 可能与实参名碰撞，
+    // 为已知局限，与文本替换宏的卫生性问题一致）。
+    // ============================================================
+    case NodeType::NODE_BLOCK: {
+        const auto* blk = static_cast<const Block*>(node);
+        std::vector<std::shared_ptr<ASTNode>> stmts;
+        if (!cloneList(blk->statements, subst, d, unsupportedNodeName, stmts))
+            return nullptr;
+        auto cloned = std::make_shared<Block>(std::move(stmts), blk->line, blk->column);
+        cloned->closingBraceLine = blk->closingBraceLine;
+        return cloned;
+    }
+    case NodeType::NODE_VAR_DECL: {
+        const auto* vd = static_cast<const VarDecl*>(node);
+        std::shared_ptr<ASTNode> init;
+        if (vd->initializer) {
+            init = cloneWithSubstitution(vd->initializer.get(), subst, d, unsupportedNodeName);
+            if (!init)
+                return nullptr;
+        }
+        return std::make_shared<VarDecl>(vd->name, vd->typeAnnotation, std::move(init), vd->line, vd->column);
+    }
+    case NodeType::NODE_ASSIGNMENT: {
+        const auto* as = static_cast<const Assignment*>(node);
+        auto val = cloneWithSubstitution(as->value.get(), subst, d, unsupportedNodeName);
+        if (!val)
+            return nullptr;
+        // 左值名替换：若形参对应实参为简单 VarRef，代入其变量名
+        std::string targetName = as->name;
+        auto it = subst.find(as->name);
+        if (it != subst.end() && it->second && it->second->nodeType == NodeType::NODE_VAR_REF) {
+            targetName = static_cast<const VarRef*>(it->second.get())->name;
+        }
+        return std::make_shared<Assignment>(targetName, std::move(val), as->line, as->column);
+    }
+    case NodeType::NODE_IF_STMT: {
+        const auto* is = static_cast<const IfStmt*>(node);
+        auto cond = cloneWithSubstitution(is->condition.get(), subst, d, unsupportedNodeName);
+        if (!cond)
+            return nullptr;
+        auto thenB = cloneWithSubstitution(is->thenBranch.get(), subst, d, unsupportedNodeName);
+        if (!thenB)
+            return nullptr;
+        std::shared_ptr<ASTNode> elseB;
+        if (is->elseBranch) {
+            elseB = cloneWithSubstitution(is->elseBranch.get(), subst, d, unsupportedNodeName);
+            if (!elseB)
+                return nullptr;
+        }
+        return std::make_shared<IfStmt>(std::move(cond), std::move(thenB), std::move(elseB), is->line, is->column);
+    }
+    case NodeType::NODE_WHILE_STMT: {
+        const auto* ws = static_cast<const WhileStmt*>(node);
+        auto cond = cloneWithSubstitution(ws->condition.get(), subst, d, unsupportedNodeName);
+        if (!cond)
+            return nullptr;
+        auto body = cloneWithSubstitution(ws->body.get(), subst, d, unsupportedNodeName);
+        if (!body)
+            return nullptr;
+        return std::make_shared<WhileStmt>(std::move(cond), std::move(body), ws->line, ws->column);
+    }
+    case NodeType::NODE_FOR_STMT: {
+        const auto* fs = static_cast<const ForStmt*>(node);
+        std::shared_ptr<ASTNode> init, cond, upd;
+        if (fs->initializer) {
+            init = cloneWithSubstitution(fs->initializer.get(), subst, d, unsupportedNodeName);
+            if (!init)
+                return nullptr;
+        }
+        if (fs->condition) {
+            cond = cloneWithSubstitution(fs->condition.get(), subst, d, unsupportedNodeName);
+            if (!cond)
+                return nullptr;
+        }
+        if (fs->update) {
+            upd = cloneWithSubstitution(fs->update.get(), subst, d, unsupportedNodeName);
+            if (!upd)
+                return nullptr;
+        }
+        auto body = cloneWithSubstitution(fs->body.get(), subst, d, unsupportedNodeName);
+        if (!body)
+            return nullptr;
+        return std::make_shared<ForStmt>(std::move(init), std::move(cond), std::move(upd), std::move(body), fs->line,
+                                         fs->column);
+    }
+    case NodeType::NODE_RETURN_STMT: {
+        const auto* rs = static_cast<const ReturnStmt*>(node);
+        std::shared_ptr<ASTNode> val;
+        if (rs->value) {
+            val = cloneWithSubstitution(rs->value.get(), subst, d, unsupportedNodeName);
+            if (!val)
+                return nullptr;
+        }
+        return std::make_shared<ReturnStmt>(std::move(val), rs->line, rs->column);
+    }
+    case NodeType::NODE_PRINT_STMT: {
+        const auto* ps = static_cast<const PrintStmt*>(node);
+        std::vector<std::shared_ptr<ASTNode>> vals;
+        if (!cloneList(ps->values, subst, d, unsupportedNodeName, vals))
+            return nullptr;
+        return std::make_shared<PrintStmt>(std::move(vals), ps->line, ps->column);
+    }
+    case NodeType::NODE_BREAK_STMT:
+        return std::make_shared<BreakStmt>(node->line, node->column);
+    case NodeType::NODE_CONTINUE_STMT:
+        return std::make_shared<ContinueStmt>(node->line, node->column);
+    case NodeType::NODE_THROW_STMT: {
+        const auto* ts = static_cast<const ThrowStmt*>(node);
+        auto expr = cloneWithSubstitution(ts->expression.get(), subst, d, unsupportedNodeName);
+        if (!expr)
+            return nullptr;
+        return std::make_shared<ThrowStmt>(std::move(expr), ts->line, ts->column);
+    }
+    case NodeType::NODE_INDEX_ASSIGN: {
+        const auto* ia = static_cast<const IndexAssign*>(node);
+        auto obj = cloneWithSubstitution(ia->object.get(), subst, d, unsupportedNodeName);
+        if (!obj)
+            return nullptr;
+        auto idx = cloneWithSubstitution(ia->index.get(), subst, d, unsupportedNodeName);
+        if (!idx)
+            return nullptr;
+        auto val = cloneWithSubstitution(ia->value.get(), subst, d, unsupportedNodeName);
+        if (!val)
+            return nullptr;
+        return std::make_shared<IndexAssign>(std::move(obj), std::move(idx), std::move(val), ia->line, ia->column);
+    }
+    case NodeType::NODE_MEMBER_ASSIGN: {
+        const auto* ma = static_cast<const MemberAssign*>(node);
+        auto obj = cloneWithSubstitution(ma->object.get(), subst, d, unsupportedNodeName);
+        if (!obj)
+            return nullptr;
+        auto val = cloneWithSubstitution(ma->value.get(), subst, d, unsupportedNodeName);
+        if (!val)
+            return nullptr;
+        return std::make_shared<MemberAssign>(std::move(obj), ma->fieldName, std::move(val), ma->line, ma->column);
+    }
+    case NodeType::NODE_TRY_STMT: {
+        const auto* ts = static_cast<const TryStmt*>(node);
+        auto tryB = cloneWithSubstitution(ts->tryBlock.get(), subst, d, unsupportedNodeName);
+        if (!tryB)
+            return nullptr;
+        std::shared_ptr<ASTNode> catchB, finallyB;
+        if (ts->catchBlock) {
+            catchB = cloneWithSubstitution(ts->catchBlock.get(), subst, d, unsupportedNodeName);
+            if (!catchB)
+                return nullptr;
+        }
+        if (ts->finallyBlock) {
+            finallyB = cloneWithSubstitution(ts->finallyBlock.get(), subst, d, unsupportedNodeName);
+            if (!finallyB)
+                return nullptr;
+        }
+        auto cloned = std::make_shared<TryStmt>(std::move(tryB), ts->catchVarName, std::move(catchB),
+                                                std::move(finallyB), ts->line, ts->column);
+        cloned->catchKeywordLine = ts->catchKeywordLine;
+        cloned->finallyKeywordLine = ts->finallyKeywordLine;
+        return cloned;
     }
     default:
-        // 语句/声明/match/yield/lambda 等不在表达式模板宏 MVP 支持范围
+        // match/yield/await/lambda/class/enum 声明等仍不在宏体支持范围
         if (unsupportedNodeName)
             *unsupportedNodeName = node->nodeName();
         return nullptr;

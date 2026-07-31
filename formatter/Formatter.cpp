@@ -525,7 +525,14 @@ void Formatter::visitMacroDecl(MacroDecl& node) {
             result += ", ";
         result += node.params[i];
     }
-    result += ") { " + (node.bodyExpr ? formatNode(node.bodyExpr.get()) : std::string()) + " }";
+    result += ")";
+    // 七特性宏升级：语句宏的 body 是 Block，formatNode 已含 `{ ... }`，直接拼接；
+    // 表达式宏的 body 是单表达式，包以 `{ expr }` 单行形式（保持原有往返）。
+    if (node.isStatementMacro) {
+        result += " " + (node.bodyExpr ? formatNode(node.bodyExpr.get()) : std::string("{}"));
+    } else {
+        result += " { " + (node.bodyExpr ? formatNode(node.bodyExpr.get()) : std::string()) + " }";
+    }
     lastFormatResult_ = result;
     return;
 }

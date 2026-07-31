@@ -1228,7 +1228,10 @@ class MacroDecl : public ASTNode {
 public:
     std::string name;                  ///< 宏名
     std::vector<std::string> params;   ///< 形参名列表
-    std::shared_ptr<ASTNode> bodyExpr; ///< body 表达式模板（含参数 VarRef 占位）
+    std::shared_ptr<ASTNode> bodyExpr; ///< body 模板：表达式宏为单表达式，语句宏为 Block
+    /// 七特性宏升级：语句/块体宏标记。true 时 bodyExpr 为 Block（多语句模板），
+    /// 展开后作为语句执行（不产生表达式值）；false 时为表达式宏。
+    bool isStatementMacro = false;
 
     MacroDecl(std::string n, std::vector<std::string> p, std::shared_ptr<ASTNode> body, int ln = 0, int col = 0)
         : ASTNode(ln, col), name(std::move(n)), params(std::move(p)), bodyExpr(std::move(body)) {
@@ -1251,6 +1254,9 @@ public:
     std::string name;                                ///< 宏名
     std::vector<std::shared_ptr<ASTNode>> arguments; ///< 原始实参（Formatter 打印用）
     std::shared_ptr<ASTNode> expanded;               ///< 展开后的语义子树（非空）
+    /// 七特性宏升级：expanded 是否产生表达式值。表达式宏=true（expanded 压栈一个值）；
+    /// 语句宏=false（expanded 为 Block，后端执行后补一个 null 作为表达式值，保证栈平衡）。
+    bool producesValue = true;
 
     MacroCallExpr(std::string n, std::vector<std::shared_ptr<ASTNode>> args, std::shared_ptr<ASTNode> exp, int ln = 0,
                   int col = 0)

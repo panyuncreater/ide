@@ -193,3 +193,105 @@ TEST(MacroSystem, FormattedSourceStillExecutes) {
     ASSERT_FALSE(formatted.empty());
     EXPECT_ALL_BACKENDS(formatted, "27");
 }
+
+// ============================================================
+// 7. 语句/块体宏（七特性宏升级）
+// ============================================================
+
+// 语句宏：多语句模板（swap 成习，左值参数代入）
+TEST(MacroSystem, StatementMacroSwap) {
+    std::string src = R"(
+macro swap(a, b) { var t = a; a = b; b = t; }
+var x = 1;
+var y = 2;
+swap!(x, y);
+print(x);
+print(y);
+)";
+    EXPECT_ALL_BACKENDS(src, "21");
+}
+
+// 语句宏：内含 if 控制流
+TEST(MacroSystem, StatementMacroWithIf) {
+    std::string src = R"(
+macro log_if(cond, msg) { if (cond) { print(msg); } }
+log_if!(true, "yes");
+log_if!(false, "no");
+print("done");
+)";
+    EXPECT_ALL_BACKENDS(src, "yesdone");
+}
+
+// 语句宏：内含 while 循环 + 左值代入
+TEST(MacroSystem, StatementMacroWithLoop) {
+    std::string src = R"(
+macro repeat_add(target, times, delta) {
+    var i = 0;
+    while (i < times) {
+        target = target + delta;
+        i = i + 1;
+    }
+}
+var sum = 0;
+repeat_add!(sum, 5, 3);
+print(sum);
+)";
+    EXPECT_ALL_BACKENDS(src, "15");
+}
+
+// 语句宏：内含 return（在函数体中展开）
+TEST(MacroSystem, StatementMacroWithReturnInFunction) {
+    std::string src = R"(
+macro guard_zero(v) { if (v == 0) { return -1; } }
+fun reciprocal_or_neg1(n) {
+    guard_zero!(n);
+    return 100 / n;
+}
+print(reciprocal_or_neg1(0));
+print(reciprocal_or_neg1(4));
+)";
+    EXPECT_ALL_BACKENDS(src, "-125");
+}
+
+// 语句宏：裸语句位置调用不泄漏栈（循环内多次调用，验证栈平衡）
+TEST(MacroSystem, StatementMacroInLoopNoStackLeak) {
+    std::string src = R"(
+macro bump(c) { c = c + 1; }
+var n = 0;
+var k = 0;
+while (k < 1000) {
+    bump!(n);
+    k = k + 1;
+}
+print(n);
+)";
+    EXPECT_ALL_BACKENDS(src, "1000");
+}
+
+// 语句宏：Formatter 往返等价
+TEST(MacroSystem, StatementMacroFormatterRoundTrip) {
+    std::string src = "macro swap(a, b) { var t = a; a = b; b = t; }\n"
+                      "var x = 1;\nvar y = 2;\nswap!(x, y);\nprint(x);";
+    std::string result = formatMacroSource(src);
+    EXPECT_NE(result.find("macro swap(a, b)"), std::string::npos) << "实际: " << result;
+    EXPECT_NE(result.find("swap!(x, y)"), std::string::npos) << "实际: " << result;
+    // 往返稳定：二次格式化一致
+    EXPECT_EQ(formatMacroSource(result), result);
+    // format 后重新执行语义不变
+    ASSERT_FALSE(result.empty());
+    EXPECT_ALL_BACKENDS(result, "2");
+}
+
+// 语句宏与表达式宏共存
+TEST(MacroSystem, StatementAndExpressionMacrosCoexist) {
+    std::string src = R"(
+macro square(x) { x * x }
+macro accumulate(acc, v) { acc = acc + square!(v); }
+var total = 0;
+accumulate!(total, 3);
+accumulate!(total, 4);
+print(total);
+)";
+    // 3*3 + 4*4 = 9 + 16 = 25
+    EXPECT_ALL_BACKENDS(src, "25");
+}

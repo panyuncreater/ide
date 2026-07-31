@@ -11,6 +11,7 @@
 #include "interpreter/BuiltinMethods.h"
 #include "common/ErrorFormat.h"       // P3 fix: runtimeErrorFmt 替代 std::to_string 拼接
 #include "common/ErrorMessages.h"     // R97 #1: 三后端共享错误消息常量
+#include "common/HostFunctionRegistry.h" // 七特性 MVP 阶段 7: 宿主函数（插件）注册表
 #include "common/RuntimeLimits.h"     // S1 fix: MAX_RANGE 统一定义
 #include "common/Utf8Utils.h"         // P0-4 fix: UTF-8 码位工具
 #include "interpreter/NumericUtils.h" // BUG9 fix: 溢出检查
@@ -458,7 +459,12 @@ bool isBuiltinFunction(const std::string& name) {
                                                                  "channel", "mutex", "rwlock",
                                                                  // 拓展二期：? 传播运算符脱糖目标
                                                                  "__qmark_unwrap"};
-    return builtinNames.count(name) > 0;
+    if (builtinNames.count(name) > 0)
+        return true;
+    // 七特性 MVP 阶段 7：宿主函数（插件注册）也视为内建函数，使三后端
+    // 均经 executeSharedBuiltinFunction 分发（零指令集改动）。用户自定义同名函数
+    // 优先于宿主函数（调用方先查用户函数，与内建同名覆盖语义一致）。
+    return minilang::HostFunctionRegistry::instance().has(name);
 }
 
 // R136 并发原语构造函数判断（与 isBuiltinFunction 分离，因 spawn 走独立路径）
@@ -615,13 +621,24 @@ Result<Value> executeBuiltinMin(const Value* args, size_t argCount, int line, in
             return Result<Value>::ok(Value(m));
         }
         // 混合数值：转 double 比较（遇非数值 err）
-        double best = 0.0;
+        // 七特性 MVP 阶段 5：先校验全为数值并批量解码到连续 double 缓冲，
+        // 达阈且支持 AVX2 时走 simdMinDouble 内核（与 sum(arr) 的 double SIMD 同策略）。
         for (size_t i = 0; i < arr.size(); ++i) {
             if (!arr[i].isNumber()) {
                 return Result<Value>::err("min 数组含非数值元素: " + arr[i].typeName(), line, column);
             }
+        }
+        if (arr.size() >= minilang::simd::SIMD_MIN_ELEMENTS && minilang::simd::hasAvx2Support()) {
+            std::vector<double> buffer(arr.size());
+            for (size_t i = 0; i < arr.size(); ++i) {
+                buffer[i] = arr[i].toDouble();
+            }
+            return Result<Value>::ok(Value(minilang::simd::simdMinDouble(buffer.data(), buffer.size())));
+        }
+        double best = arr[0].toDouble();
+        for (size_t i = 1; i < arr.size(); ++i) {
             double d = arr[i].toDouble();
-            if (i == 0 || d < best)
+            if (d < best)
                 best = d;
         }
         return Result<Value>::ok(Value(best));
@@ -674,13 +691,23 @@ Result<Value> executeBuiltinMax(const Value* args, size_t argCount, int line, in
             }
             return Result<Value>::ok(Value(m));
         }
-        double best = 0.0;
+        // 七特性 MVP 阶段 5：混合数值 double 路径接入 simdMaxDouble（同 min 策略）
         for (size_t i = 0; i < arr.size(); ++i) {
             if (!arr[i].isNumber()) {
                 return Result<Value>::err("max 数组含非数值元素: " + arr[i].typeName(), line, column);
             }
+        }
+        if (arr.size() >= minilang::simd::SIMD_MIN_ELEMENTS && minilang::simd::hasAvx2Support()) {
+            std::vector<double> buffer(arr.size());
+            for (size_t i = 0; i < arr.size(); ++i) {
+                buffer[i] = arr[i].toDouble();
+            }
+            return Result<Value>::ok(Value(minilang::simd::simdMaxDouble(buffer.data(), buffer.size())));
+        }
+        double best = arr[0].toDouble();
+        for (size_t i = 1; i < arr.size(); ++i) {
             double d = arr[i].toDouble();
-            if (i == 0 || d > best)
+            if (d > best)
                 best = d;
         }
         return Result<Value>::ok(Value(best));
@@ -933,10 +960,55 @@ Result<Value> executeSharedBuiltinFunction(const std::string& funcName, const Va
 
     const auto& registry = builtinFunctionRegistry();
     auto it = registry.find(funcName);
-    if (it == registry.end()) {
-        return Result<Value>::err("未知的内置函数: " + funcName, line, column);
+    if (it != registry.end()) {
+        return it->second(args, argCount, line, column);
     }
-    return it->second(args, argCount, line, column);
+    // 七特性 MVP 阶段 7：宿主函数（插件注册）分发。
+    // Value → HostValue 参数转换（仅 5 种标量；null/bool/int/double/string），
+    // 容器/实例/闭包等复合类型报错（MVP 不支持宿主互操作）。
+    auto& hostReg = minilang::HostFunctionRegistry::instance();
+    if (hostReg.has(funcName)) {
+        std::vector<minilang::HostValue> hostArgs;
+        hostArgs.reserve(argCount);
+        for (size_t i = 0; i < argCount; ++i) {
+            const Value& v = args[i];
+            if (v.isNull()) {
+                hostArgs.push_back(minilang::HostValue::makeNull());
+            } else if (v.isBool()) {
+                hostArgs.push_back(minilang::HostValue::makeBool(v.boolVal()));
+            } else if (v.isInt()) {
+                hostArgs.push_back(minilang::HostValue::makeInt(v.intVal()));
+            } else if (v.isFloat()) {
+                hostArgs.push_back(minilang::HostValue::makeDouble(v.floatVal()));
+            } else if (v.isString()) {
+                hostArgs.push_back(minilang::HostValue::makeString(v.stringVal()));
+            } else {
+                return Result<Value>::err("宿主函数 " + funcName + " 参数仅支持标量类型（null/bool/int/float/string），实际为 " +
+                                              v.typeName(),
+                                          line, column);
+            }
+        }
+        bool found = false;
+        minilang::HostValue result = hostReg.call(funcName, hostArgs.data(), static_cast<int>(hostArgs.size()), &found);
+        if (!found) {
+            return Result<Value>::err("未知的内置函数: " + funcName, line, column);
+        }
+        // HostValue → Value 返回值转换
+        switch (result.type) {
+        case minilang::HostValueType::Null:
+            return Result<Value>::ok(Value::nullValue());
+        case minilang::HostValueType::Bool:
+            return Result<Value>::ok(Value(result.b));
+        case minilang::HostValueType::Int:
+            return Result<Value>::ok(Value(result.i));
+        case minilang::HostValueType::Double:
+            return Result<Value>::ok(Value(result.d));
+        case minilang::HostValueType::String:
+            return Result<Value>::ok(Value(result.s));
+        }
+        return Result<Value>::ok(Value::nullValue());
+    }
+    return Result<Value>::err("未知的内置函数: " + funcName, line, column);
 }
 
 // ============================================================
@@ -950,6 +1022,11 @@ Result<Value> executeSharedInput(const std::function<std::string(const std::stri
                                  size_t argCount, int line, int column) {
     if (auto r = checkRange("input", argCount, 0, 1, line, column); r.is_err())
         return r;
+    // 七特性 MVP 阶段 6：沙箱拦截——禁用 input 时统一报错（三后端共享层单点覆盖）。
+    // 在参数校验后拦截，保证错误优先级与非沙箱路径一致（参数个数错仍先报）。
+    if (RuntimeLimits::RuntimeConfig::instance().sandboxBlocksInput()) {
+        return Result<Value>::err("沙箱模式禁止读取输入（input）", line, column);
+    }
     std::string prompt;
     if (argCount == 1) {
         prompt = args[0].toString();

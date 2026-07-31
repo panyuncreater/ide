@@ -33,6 +33,15 @@
 #include <cstdint>
 #include <cstring>
 
+// 七特性 MVP 阶段 5：运行时 cpuid 检测所需头文件。
+//   - MSVC：<intrin.h> 提供 __cpuidex
+//   - GCC/Clang：<cpuid.h> 提供 __get_cpuid_count（或 __builtin_cpu_supports）
+#if defined(_MSC_VER)
+#include <intrin.h>
+#elif defined(__GNUC__) || defined(__clang__)
+#include <cpuid.h>
+#endif
+
 // ============================================================
 // SIMD 能力检测
 // ============================================================
@@ -245,6 +254,80 @@ inline int64_t simdMaxInt64(const int64_t* data, size_t n) {
 }
 
 // ============================================================
+// simdMinDouble / simdMaxDouble — 双精度浮点批量最小/最大值
+// ------------------------------------------------------------
+// 七特性 MVP 阶段 5：补齐 double 版 min/max 内核（与 int64 版对称）。
+// 输入：data 指向 n 个 double（n >= 1）；输出：min/max(data[0..n-1])。
+// AVX2 使用 _mm256_min_pd / _mm256_max_pd（原生 256-bit 双精度比较）。
+// NaN 处理：_mm256_min_pd/_mm256_max_pd 的 NaN 行为与标量 `<`/`>` 对齐
+//（任一操作数为 NaN 时返回第二操作数）——与标量回退路径的 `if (x < m)`
+// 语义存在细微差异，但 sum/min/max 内建仅在全部元素为数值时走快路径，
+// 含 NaN 的数组由调用方（BuiltinMethods）才会回退，此处不需严格对齐 NaN。
+// ============================================================
+inline double simdMinDouble(const double* data, size_t n) {
+    if (n == 0)
+        return 0.0;
+#if MINILANG_HAS_AVX2
+    if (n >= SIMD_MIN_ELEMENTS) {
+        __m256d acc = _mm256_loadu_pd(data);
+        size_t i = 4;
+        for (; i + 4 <= n; i += 4) {
+            __m256d v = _mm256_loadu_pd(data + i);
+            acc = _mm256_min_pd(acc, v);
+        }
+        // 水平归约：4 lane → 2 lane → 标量
+        __m128d lo = _mm256_castpd256_pd128(acc);
+        __m128d hi = _mm256_extractf128_pd(acc, 1);
+        __m128d m2 = _mm_min_pd(lo, hi);
+        __m128d shuffle = _mm_shuffle_pd(m2, m2, 1);
+        __m128d m1 = _mm_min_pd(m2, shuffle);
+        double result;
+        _mm_storel_pd(&result, m1);
+        for (; i < n; ++i)
+            if (data[i] < result)
+                result = data[i];
+        return result;
+    }
+#endif
+    double m = data[0];
+    for (size_t i = 1; i < n; ++i)
+        if (data[i] < m)
+            m = data[i];
+    return m;
+}
+
+inline double simdMaxDouble(const double* data, size_t n) {
+    if (n == 0)
+        return 0.0;
+#if MINILANG_HAS_AVX2
+    if (n >= SIMD_MIN_ELEMENTS) {
+        __m256d acc = _mm256_loadu_pd(data);
+        size_t i = 4;
+        for (; i + 4 <= n; i += 4) {
+            __m256d v = _mm256_loadu_pd(data + i);
+            acc = _mm256_max_pd(acc, v);
+        }
+        __m128d lo = _mm256_castpd256_pd128(acc);
+        __m128d hi = _mm256_extractf128_pd(acc, 1);
+        __m128d m2 = _mm_max_pd(lo, hi);
+        __m128d shuffle = _mm_shuffle_pd(m2, m2, 1);
+        __m128d m1 = _mm_max_pd(m2, shuffle);
+        double result;
+        _mm_storel_pd(&result, m1);
+        for (; i < n; ++i)
+            if (data[i] > result)
+                result = data[i];
+        return result;
+    }
+#endif
+    double m = data[0];
+    for (size_t i = 1; i < n; ++i)
+        if (data[i] > m)
+            m = data[i];
+    return m;
+}
+
+// ============================================================
 // decodeInt48Batch — NaN-boxed int48 批量解码
 // ------------------------------------------------------------
 // 输入：src 指向 n 个 Value（每个 8 字节，NaN-boxed int48 编码）
@@ -281,13 +364,33 @@ inline void decodeInt48Batch(const uint64_t* srcBits, int64_t* dst, size_t n) {
 // ============================================================
 // hasAvx2Support — 运行时 CPU AVX2 能力检测
 // ------------------------------------------------------------
-// 用于在未全局启用 /arch:AVX2 时做运行时 dispatch。
-// 当前实现：编译期常量（MINILANG_HAS_AVX2），未来可扩展为 cpuid 检测。
+// 七特性 MVP 阶段 5：从编译期常量升级为运行时 cpuid 检测。
+//   - 未启用 /arch:AVX2（MINILANG_HAS_AVX2==0）：内核未编出 AVX2 指令，
+//     检测直接短路返回 false（即使 CPU 支持也不能执行未编出的指令）。
+//   - 启用 /arch:AVX2：首次调用时 cpuid 探测（leaf 7, EBX bit 5 = AVX2），
+//     static 局部变量缓存结果（C++11 保证线程安全初始化）。
+// 注：MINILANG_HAS_AVX2==1 时编译器已假设目标 CPU 支持 AVX2（/arch:AVX2 启用
+// 全局 AVX2 代码生成），运行时检测仅作为防御性确认（在不支持 AVX2 的
+// 旧 CPU 上运行会直接非法指令崩溃，与其他全局 AVX2 代码行为一致）。
 // ============================================================
 inline bool hasAvx2Support() {
 #if MINILANG_HAS_AVX2
-    return true;
+    // 首次调用时运行 cpuid，结果缓存于 static（一次性探测）
+    static const bool supported = []() -> bool {
+#if defined(_MSC_VER)
+        int regs[4] = {0, 0, 0, 0};
+        // leaf 7, subleaf 0：EBX bit 5 = AVX2
+        __cpuidex(regs, 7, 0);
+        return (regs[1] & (1 << 5)) != 0;
+#elif defined(__GNUC__) || defined(__clang__)
+        return __builtin_cpu_supports("avx2") != 0;
 #else
+        return true; // 编译器已启用 AVX2 但无 cpuid 接口，保守信任编译期判定
+#endif
+    }();
+    return supported;
+#else
+    // 未启用 /arch:AVX2：内核未编出 AVX2 指令，无论 CPU 如何都走标量路径。
     return false;
 #endif
 }

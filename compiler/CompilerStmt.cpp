@@ -541,6 +541,12 @@ void Compiler::visitMacroCallExpr(MacroCallExpr& node) {
         return;
     }
     compileNode(node.expanded.get());
+    // 七特性宏升级：语句宏（expanded 为 Block）执行后栈净高 0，不产生表达式值；
+    // 补发 OP_NULL 作为表达式值，使 MacroCallExpr 始终压栈恰好一个值
+    //（needsPopForExprStmt 对 NODE_MACRO_CALL 返回 true，语句位置会 POP 此 null，栈平衡）。
+    if (!node.producesValue) {
+        chunk_.writeOp(OpCode::OP_NULL, node.line);
+    }
 }
 
 // 七特性 MVP 阶段 3：TraitDecl 编译期 no-op（方法已在 parse 期合入混入类的
@@ -1096,6 +1102,15 @@ void Compiler::visitThrowStmt(ThrowStmt& node) {
 }
 
 void Compiler::visitImportStmt(ImportStmt& node) {
+    // 七特性 MVP 阶段 6：沙箱拦截——禁用文件 import 时仅放行 std/ 内建模块
+    //（与 Interpreter::visitImportStmt 同口径，保证三后端沙箱行为一致）。
+    if (RuntimeLimits::RuntimeConfig::instance().sandboxBlocksImport()) {
+        const std::string& p = node.modulePath;
+        if (p.rfind("std/", 0) != 0) {
+            error("沙箱模式禁止导入文件模块: " + p, node.line, node.column);
+            return;
+        }
+    }
     // VM-IMPORT: 编译期模块内联——加载模块源码、解析 AST、预扫描全局槽位、
     // 内联编译模块语句。模块代码在编译期被"展开"到主程序中，VM 运行时无需模块加载机制。
     //

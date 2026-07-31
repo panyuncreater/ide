@@ -183,18 +183,49 @@ public:
         maxInstructions_.store(MAX_INSTRUCTIONS, std::memory_order_relaxed);
         maxParseErrors_.store(MAX_PARSE_ERRORS, std::memory_order_relaxed);
         maxLoopIterations_.store(MAX_LOOP_ITERATIONS, std::memory_order_relaxed);
+        // 七特性 MVP 阶段 6：沙箱能力开关重置为默认（全放行）
+        sandboxEnabled_.store(false, std::memory_order_relaxed);
+        sandboxAllowInput_.store(true, std::memory_order_relaxed);
+        sandboxAllowImport_.store(true, std::memory_order_relaxed);
     }
+
+    // ============================================================
+    // 七特性 MVP 阶段 6：能力级沙箱开关
+    // ------------------------------------------------------------
+    // 与 DoS 限制正交：DoS 限制防资源耗尽，沙箱开关控制能力（IO/import）。
+    // 默认全放行（sandboxEnabled=false）；启用后按子开关拦截。
+    // 拦截点：input（共享层 executeSharedInput）、import（三后端 import 路径
+    //   仅放行 std/ 内建模块）、插件加载（C API）。
+    // atomic 存储保证线程安全（GUI 主线程设置 vs Worker 线程读取）。
+    // ============================================================
+    bool sandboxEnabled() const { return sandboxEnabled_.load(std::memory_order_relaxed); }
+    bool sandboxAllowInput() const { return sandboxAllowInput_.load(std::memory_order_relaxed); }
+    bool sandboxAllowImport() const { return sandboxAllowImport_.load(std::memory_order_relaxed); }
+
+    void setSandboxEnabled(bool v) { sandboxEnabled_.store(v, std::memory_order_relaxed); }
+    void setSandboxAllowInput(bool v) { sandboxAllowInput_.store(v, std::memory_order_relaxed); }
+    void setSandboxAllowImport(bool v) { sandboxAllowImport_.store(v, std::memory_order_relaxed); }
+
+    /// 便捷查询：沙箱启用且 input 被禁。
+    bool sandboxBlocksInput() const { return sandboxEnabled() && !sandboxAllowInput(); }
+    /// 便捷查询：沙箱启用且文件 import 被禁（std/ 内建模块仍放行，由调用方判定）。
+    bool sandboxBlocksImport() const { return sandboxEnabled() && !sandboxAllowImport(); }
 
 private:
     RuntimeConfig()
         : maxInstructions_(MAX_INSTRUCTIONS), maxParseErrors_(MAX_PARSE_ERRORS),
-          maxLoopIterations_(MAX_LOOP_ITERATIONS) {}
+          maxLoopIterations_(MAX_LOOP_ITERATIONS), sandboxEnabled_(false), sandboxAllowInput_(true),
+          sandboxAllowImport_(true) {}
     RuntimeConfig(const RuntimeConfig&) = delete;
     RuntimeConfig& operator=(const RuntimeConfig&) = delete;
 
     std::atomic<int64_t> maxInstructions_;
     std::atomic<int> maxParseErrors_;
     std::atomic<int64_t> maxLoopIterations_;
+    // 七特性 MVP 阶段 6：沙箱能力开关
+    std::atomic<bool> sandboxEnabled_;
+    std::atomic<bool> sandboxAllowInput_;
+    std::atomic<bool> sandboxAllowImport_;
 };
 
 } // namespace RuntimeLimits

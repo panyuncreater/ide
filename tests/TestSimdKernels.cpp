@@ -328,3 +328,68 @@ TEST(SimdKernels, MinMax_EmptyArray_ErrorsAllBackends) {
     EXPECT_FALSE(r.success);
     EXPECT_NE(r.errorMsg.find("空数组"), std::string::npos) << r.errorMsg;
 }
+
+// ============================================================
+// 七特性 MVP 阶段 5：double min/max 内核 + 运行时 cpuid 检测
+// ============================================================
+
+// simdMinDouble：小数组（标量回退）
+TEST(SimdKernels, MinDouble_SmallArray_ScalarFallback) {
+    std::vector<double> data = {3.5, 1.2, 2.8, 0.5, 4.1};
+    EXPECT_DOUBLE_EQ(ms::simdMinDouble(data.data(), data.size()), 0.5);
+}
+
+// simdMaxDouble：小数组
+TEST(SimdKernels, MaxDouble_SmallArray_ScalarFallback) {
+    std::vector<double> data = {3.5, 1.2, 2.8, 0.5, 4.1};
+    EXPECT_DOUBLE_EQ(ms::simdMaxDouble(data.data(), data.size()), 4.1);
+}
+
+// simdMinDouble/simdMaxDouble：边界 15/16/17（跨标量/SIMD/SIMD+尾部）
+TEST(SimdKernels, MinMaxDouble_Boundaries) {
+    for (size_t n : {size_t(15), size_t(16), size_t(17), size_t(256), size_t(257)}) {
+        std::vector<double> data(n);
+        for (size_t i = 0; i < n; ++i)
+            data[i] = static_cast<double>((i * 37 + 5) % 101) + 0.25;
+        // 埋入确定的极值
+        data[n / 2] = -999.5; // 全局最小
+        data[n - 1] = 999.5;  // 全局最大
+        double expectMin = *std::min_element(data.begin(), data.end());
+        double expectMax = *std::max_element(data.begin(), data.end());
+        EXPECT_DOUBLE_EQ(ms::simdMinDouble(data.data(), n), expectMin) << "n=" << n;
+        EXPECT_DOUBLE_EQ(ms::simdMaxDouble(data.data(), n), expectMax) << "n=" << n;
+    }
+}
+
+// simdMinDouble/simdMaxDouble：负数 + 随机数组对拖标量
+TEST(SimdKernels, MinMaxDouble_RandomVsScalar) {
+    std::mt19937 rng(1234);
+    std::uniform_real_distribution<double> dist(-1000.0, 1000.0);
+    for (size_t n : {size_t(20), size_t(100), size_t(513)}) {
+        std::vector<double> data(n);
+        for (auto& d : data)
+            d = dist(rng);
+        EXPECT_DOUBLE_EQ(ms::simdMinDouble(data.data(), n), *std::min_element(data.begin(), data.end()));
+        EXPECT_DOUBLE_EQ(ms::simdMaxDouble(data.data(), n), *std::max_element(data.begin(), data.end()));
+    }
+}
+
+// hasAvx2Support：运行时 cpuid 检测幂等（多次调用结果一致，static 缓存）
+TEST(SimdKernels, HasAvx2Support_Idempotent) {
+    bool first = ms::hasAvx2Support();
+    for (int i = 0; i < 5; ++i) {
+        EXPECT_EQ(ms::hasAvx2Support(), first);
+    }
+}
+
+// 端到端：min/max 浮点数组达阈路径四后端一致（触发 simdMinDouble/simdMaxDouble）
+TEST(SimdKernels, MinMaxDoubleArray_E2E_AllBackends) {
+    // 20 个浮点元素（含 .5 小数确保非全 int），超 SIMD_MIN_ELEMENTS 阈值
+    std::string src = R"(
+var a = [3.5, 1.5, 9.5, 2.5, 7.5, 4.5, 8.5, 0.5, 6.5, 5.5,
+         13.5, 11.5, 19.5, 12.5, 17.5, 14.5, 18.5, 10.5, 16.5, 15.5];
+print(min(a) + "\n");
+print(max(a) + "\n");
+)";
+    EXPECT_ALL_BACKENDS(src, "0.5\n19.5\n");
+}

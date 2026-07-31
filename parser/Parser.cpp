@@ -1435,13 +1435,29 @@ std::unique_ptr<MacroDecl> Parser::macroDecl() {
     consume(TokenType::TK_RPAREN, "期望 ')'");
 
     consume(TokenType::TK_LBRACE, "期望 '{' 开始宏体");
-    // body 限单个表达式（表达式模板宏 MVP）；尾部分号可选
-    auto body = expression();
-    match(TokenType::TK_SEMICOLON);
-    consume(TokenType::TK_RBRACE, "期望 '}' 结束宏体（宏体限单个表达式）");
+    // 七特性宏升级：区分语句宏与表达式宏。
+    // 若首 token 为语句起始关键字（var/if/while/for/return/print/break/continue/throw/try，
+    // 均不是合法表达式起始，无歧义）→ 解析为语句块（Block）；否则解析为单表达式。
+    TokenType bt = peek().type;
+    bool isStmtBody = (bt == TokenType::TK_VAR || bt == TokenType::TK_IF || bt == TokenType::TK_WHILE ||
+                       bt == TokenType::TK_FOR || bt == TokenType::TK_RETURN || bt == TokenType::TK_PRINT ||
+                       bt == TokenType::TK_BREAK || bt == TokenType::TK_CONTINUE || bt == TokenType::TK_THROW ||
+                       bt == TokenType::TK_TRY);
+    std::shared_ptr<ASTNode> body;
+    if (isStmtBody) {
+        // 语句宏：复用 block()（'{' 已消耗，previous() 为 '{'）解析语句列表并消耗 '}'。
+        body = std::shared_ptr<ASTNode>(block());
+    } else {
+        // 表达式宏：body 限单个表达式；尾部分号可选
+        auto expr = expression();
+        match(TokenType::TK_SEMICOLON);
+        consume(TokenType::TK_RBRACE, "期望 '}' 结束宏体（表达式宏限单个表达式）");
+        body = std::shared_ptr<ASTNode>(std::move(expr));
+    }
 
-    auto decl = std::make_unique<MacroDecl>(std::move(macroName), std::move(params),
-                                            std::shared_ptr<ASTNode>(std::move(body)), macroTok.line, macroTok.column);
+    auto decl = std::make_unique<MacroDecl>(std::move(macroName), std::move(params), std::move(body), macroTok.line,
+                                            macroTok.column);
+    decl->isStatementMacro = isStmtBody;
     // body 解析完成后才登记 → 递归宏（自引用）在 body 解析时报"未定义的宏"，
     // 从根上消除无限展开。
     knownMacros_[decl->name] = decl.get();
@@ -1488,12 +1504,17 @@ std::unique_ptr<ASTNode> Parser::macroCall(const Token& nameTok) {
                              nameTok.line, nameTok.column);
         }
         throw ParseError("宏 " + decl->name + "! 的 body 含不支持的构造: " + unsupported +
-                             "（表达式模板宏仅支持表达式子集）",
+                             "（表达式/语句模板宏仅支持表达式与基础语句子集）",
                          nameTok.line, nameTok.column);
     }
 
-    return std::make_unique<MacroCallExpr>(nameTok.lexeme, std::move(args), std::move(expanded), nameTok.line,
-                                           nameTok.column);
+    auto callNode =
+        std::make_unique<MacroCallExpr>(nameTok.lexeme, std::move(args), std::move(expanded), nameTok.line,
+                                        nameTok.column);
+    // 七特性宏升级：语句宏展开为 Block（不产生表达式值），后端执行后补 null
+    // 作为表达式值保证栈平衡；表达式宏 producesValue=true。
+    callNode->producesValue = !decl->isStatementMacro;
+    return callNode;
 }
 
 std::unique_ptr<MatchExpr> Parser::matchExpr() {
