@@ -73,34 +73,18 @@ Lexer → Parser → AST → {
 
 ## 构建与验证
 
-修复 Bug 后，必须验证代码可编译且测试通过。以下为本项目的标准构建和测试流程。
+修复 Bug 后，必须验证代码可编译且测试通过。
 
 ### 强制验证规则
 
 > **每次代码修改后必须立即运行构建 + 测试验证，不得跳过。**
 > 未通过验证的代码不得交付、不得进入下一步修改。
 
-### 构建命令
+### 构建与测试命令
 
-```bash
-# Windows（推荐）：使用预设配置 + 构建
-cmake --preset windows-msvc-debug
-cmake --build out/build/debug
+构建、测试、CMake Preset、环境配置与已知构建问题的排查，以 `minilang-build` Skill（`.qoder/skills/minilang-build/SKILL.md`）为唯一权威源，按其指引执行，不在本文件重复维护命令细节。
 
-# 或使用便捷脚本
-build.bat
-```
-
-### 测试命令
-
-```bash
-# 构建测试目标并运行
-cmake --build out/build/debug --target minilang_tests
-ctest --test-dir out/build/debug --output-on-failure
-
-# 或使用便捷脚本（自动构建 + 运行）
-run_tests.bat
-```
+说明：根目录 `build.bat` / `run_tests.bat` 是 `scripts/build.bat` / `scripts/run_tests.bat` 的转发薄包装，两种入口等价。
 
 ### 验证通过标准
 
