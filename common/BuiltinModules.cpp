@@ -551,15 +551,15 @@ const std::string kStdAsync = R"(
 export fun runAll(tasks) {
     var results = [];
     var i = 0;
-    while (i < tasks.len()) {
-        results.append(null);
+    while (i < len(tasks)) {
+        results.push(null);
         i = i + 1;
     }
-    var remaining = tasks.len();
+    var remaining = len(tasks);
     while (remaining > 0) {
         var j = 0;
         remaining = 0;
-        while (j < tasks.len()) {
+        while (j < len(tasks)) {
             var t = tasks[j];
             if (not t.done()) {
                 var v = t.next();
@@ -586,7 +586,7 @@ export fun runTask(task) {
 )";
 
 /// 内建模块注册表：路径→源码
- const std::unordered_map<std::string, std::string>& moduleRegistry() {
+const std::unordered_map<std::string, std::string>& moduleRegistry() {
     static const std::unordered_map<std::string, std::string> registry = {
         {"std/math", kStdMath},     {"std/string", kStdString}, {"std/list", kStdList},
         {"std/result", kStdResult}, {"std/bigint", kStdBigint}, {"std/async", kStdAsync},

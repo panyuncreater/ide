@@ -130,6 +130,8 @@ add_executable(minilang_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/TestMacro.cpp
     # 七特性 MVP 阶段 3：Trait/Mixin（parse 期方法合入）四后端一致性 + Formatter 往返
     ${CMAKE_CURRENT_SOURCE_DIR}/TestTrait.cpp
+    # 七特性 MVP 阶段 4：async/await + 协作式调度器四后端一致性
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestAsyncAwait.cpp
     # R163 泛型/模板：四后端一致性 + Formatter/DocGenerator 输出测试
     ${CMAKE_CURRENT_SOURCE_DIR}/TestGenerics.cpp
     # R134 模式匹配扩展（VARIABLE/TUPLE/OR pattern + guard）：四后端一致性测试
@@ -219,6 +221,8 @@ add_executable(minilang_tests
     # 验证全部导出符号（与 cli/*_core.cpp 同模式）。
     ${MINILANG_ROOT_DIR}/capi/minilang_capi.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/TestCApi.cpp
+    # 七特性 MVP 阶段 6：沙箱模式（能力级限制）——复用已编入的 capi cpp 验证 C API 沙箱开关
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestSandboxMode.cpp
     # 拓展二期·语言：运算符重载（instance 算术 dunder 分派）四后端一致性测试
     ${CMAKE_CURRENT_SOURCE_DIR}/TestOperatorOverload.cpp
     # 高价值改进方向 Top 3：拆分独立 Library.cpp 避免引入 IdeController 依赖
@@ -349,6 +353,8 @@ add_executable(minilang_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/TestSpellChecker.cpp
     # 覆盖率审计补充：MemoryInspectionAPI 契约测试（NaNBox 编解码/GC 统计/堆检视）
     ${CMAKE_CURRENT_SOURCE_DIR}/TestMemoryInspectionAPI.cpp
+    # 七特性 MVP 阶段 7：插件系统（宿主函数注册 + DLL 加载）——复用已编入的 capi cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestPlugin.cpp
 )
 
 target_link_libraries(minilang_tests PRIVATE
@@ -363,6 +369,25 @@ target_link_libraries(minilang_tests PRIVATE
 # P1-6: 为 minilang_tests 启用 PCH（复用 common/pch.h 标准库头预编译）。
 # 测试目标含 60+ .cpp，普遍包含 <string>/<vector>/<memory>，PCH 加速增量构建。
 minilang_enable_pch(minilang_tests ${MINILANG_ROOT_DIR})
+
+# ============================================================
+# 七特性 MVP 阶段 7：测试插件动态库（minilang_test_plugin）
+# ------------------------------------------------------------
+# 导出 minilang_plugin_init，供 TestPlugin.cpp 的 minilang_load_plugin 加载测试。
+# 仅依赖 capi/minilang_capi.h（纯头声明），不链接 minilang_core（插件自身不需）；
+# 插件内调用的 minilang_register_function 符号由加载方（测试进程）提供。
+# ============================================================
+add_library(minilang_test_plugin SHARED
+    ${CMAKE_CURRENT_SOURCE_DIR}/plugin/test_plugin.cpp
+)
+target_include_directories(minilang_test_plugin PRIVATE ${MINILANG_ROOT_DIR})
+target_link_libraries(minilang_test_plugin PRIVATE minilang_compile_options)
+
+# 将测试插件 DLL 的实际路径注入 TestPlugin.cpp（生成表达式，处理多配置路径）。
+# 并确保插件先于测试构建（加载测试依赖 DLL 已存在）。
+add_dependencies(minilang_tests minilang_test_plugin)
+set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/TestPlugin.cpp APPEND PROPERTY
+    COMPILE_DEFINITIONS "MINILANG_TEST_PLUGIN_PATH=\"$<TARGET_FILE:minilang_test_plugin>\"")
 
 # QFluentKit 组件头文件（PushButton.h / Label.h / CardWidget.h 等）位于 src/QFluent/
 # 子目录，而 QFluent 目标仅导出 src/。补充两个路径以支持 #include "PushButton.h"
