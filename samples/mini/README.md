@@ -20,7 +20,7 @@
 
 ## 主题合并说明
 
-原 14 个特性分类文件夹已按主题归并压缩为 8 个：
+原 14 个特性分类文件夹已按主题归并压缩为 8 个（后续新增 `09-debugging/` 调试主题，现共 9 个）：
 
 - `01-basics/` ← 原 `01-basics/` + `13-comments/`
 - `02-types-and-operators/` ← 原 `02-types/` + `03-operators/` + `12-builtins/`

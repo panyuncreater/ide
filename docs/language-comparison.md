@@ -14,16 +14,19 @@
 | and/or 短路返回 | **返回操作数原值（非布尔）** | 返回布尔 | 返回操作数原值 | 返回布尔 |
 | 字符串 | 不可变 + 拼接新建 | `char` 数组 | 不可变 | 不可变 |
 | 数组 | **COW（写时复制）** | 原生数组 | 引用语义 | 引用语义 |
-| 字典 | COW + key 必须 string | 无原生 | 引用语义 | `HashMap` |
+| 字典 | COW + 键支持 string/int/bool/float | 无原生 | 引用语义 | `HashMap` |
 | 闭包 | 嵌套命名函数 + 匿名 `fun(){}` 表达式 | 不支持 | lambda + 嵌套函数 | lambda |
-| 异常 | `try/catch/finally` + 字符串标签 | 无 | `try/except/finally` | `try/catch/finally` |
-| 类 | 单继承 + `init` 构造 | 无 | 多继承 | 单继承 + `interface` |
+| 异常 | `try/catch/finally` + 字符串标签 + `?` 错误传播（Result） | 无 | `try/except/finally` | `try/catch/finally` |
+| 类 | 单继承 + `init` 构造 + trait/mixin（`with`） | 无 | 多继承 | 单继承 + `interface` |
+| 运算符重载 | `__add`/`__sub` 等 dunder 方法 | 无 | `__add__` 等 dunder | 不支持 |
+| 协程/异步 | 生成器 yield + `async fun`/`await`（std/async 调度器） | 无 | generator + asyncio | 虚拟线程/CompletableFuture |
+| 宏 | 表达式模板宏 `macro name(p) { <expr> }` + `name!(args)` | `#define` 文本宏 | 无 | 无 |
 | 模块系统 | `import "path"` + 循环依赖检测 | `#include` | `import` + `sys.path` | `import` + classpath |
 | 函数提升 | **无提升**（必须先声明后使用） | 无提升 | 有提升 | 有提升 |
 | 类型注解 | 强制（`var x: int = 1`） | 类型声明 | 可选 | 类型声明 |
 | 内存管理 | 引用计数 + mark-sweep GC | 手动 `malloc/free` | 引用计数 + GC | GC |
 | REPL | 内置 + magic 命令 | 无 | 内置 | `jshell` |
-| 编译目标 | 三后端（解释器 / 栈 VM / 寄存器 VM） | 原生机器码 | 字节码 | 字节码 |
+| 编译目标 | 四后端（解释器 / 栈 VM / 寄存器 VM / x86-64 JIT） | 原生机器码 | 字节码 | 字节码 |
 
 ---
 
@@ -45,16 +48,16 @@ MiniLang 是强类型语言，**类型注解一旦写出就强制**：`int x = 1
 数组采用 **COW（Copy-On-Write）**：`var b = a;` 时 `b` 与 `a` 共享底层数据；只有当 `b` 被**修改**（如 `b.push(4)`）且不独占所有权时才触发深拷贝。这看似 Python/Java 的引用语义，但**赋值给新变量不立即复制**——只要任何一方不写，就共享。新手常误以为 `var b = a; b.push(4);` 后 `a` 不变，实际可能仍共享（取决于是否独占）。
 
 ### 字典
-字典同样是 COW，且**键强制为 `string`**。键不存在时返回 `null`（不报错）。与 Python（任意可哈希 key）、Java（`HashMap` 任意 key）不同，MiniLang 的 `{"key": val}` 写法决定了 key 字面量必须是字符串。
+字典同样是 COW。键支持 `string`/`int`/`bool`/`float` 四种标量类型（L4 扩展，`DictKey` variant 按类型区分避免 bool/int 冲突）。键不存在时返回 `null`（不报错）。与 Python（任意可哈希 key）相比仍有限制（不支持堆类型 key）。
 
 ### 闭包
 MiniLang 支持两种闭包载体：**嵌套命名函数**（`fun outer() { fun inner() {...} return inner; }`）与**匿名函数表达式**（`var f = fun(x) { return x * 2; };`，R98 W3 引入）。匿名函数可内联作回调、可立即调用（IIFE），语义与 Python `lambda`（但允许多语句体）/ Java `() -> {}` 对应。
 
 ### 异常
-`try { ... } catch (e) { ... }` + 可选 `finally`。`throw` 可抛任意值（字符串最常见）。`catch` 参数独占 slot，防止覆盖外层变量。语义接近 Java，但异常标签是值而非类型。
+`try { ... } catch (e) { ... }` + 可选 `finally`。`throw` 可抛任意值（字符串最常见）。`catch` 参数独占 slot，防止覆盖外层变量。语义接近 Java，但异常标签是值而非类型。另支持 Rust 风格的错误值范式：`std/result` 模块提供 `Result<T, E>`（泛型 enum），`?` 后缀运算符对 Ok/Some 解包、对 Err/None 向上传播（可被 try/catch 捕获），两种范式互补。
 
 ### 类
-单继承（`class B extends A`），构造函数固定名 `init`。不支持多继承（Python 风格）与 interface（Java 风格）。`super.method()` 调用父类方法，三后端 super 语义一致。字段按继承链展平存储。
+单继承（`class B extends A`），构造函数固定名 `init`。不支持多继承（Python 风格），但支持 **trait/mixin 方法混入**：`trait T { fun m() {...} }` + `class C with T1, T2`（可与 extends 并存，parse 期合入），提供接近 interface + default method 的组合能力。支持算术运算符重载（`__add`/`__sub`/`__mul`/`__div`/`__mod` dunder 方法，四后端一致）。`super.method()` 调用父类方法，多后端 super 语义一致。字段按继承链展平存储。
 
 ### 模块系统
 `import "path"` 路径**相对当前文件**（不是工作区根），有路径遍历防护（拒绝 `..` 与绝对路径），并检测循环依赖。`import {a, b} from "mod";` 选择性导入，`export` 显式导出。非导出的顶层声明通过 `ModuleTopLevelRenamer` 重命名为 `__mod_<hash>__<name>` 确保跨模块不可见。
@@ -72,7 +75,7 @@ MiniLang 支持两种闭包载体：**嵌套命名函数**（`fun outer() { fun 
 内置 REPL 支持 `%magic` 命令（`%help` / `%ast` / `%ir` / `%tokens` / `%disassemble` / `%compare` / `%profile` / `%memory` / `%version` / `%reset`），可快速调用各教学面板的数据获取逻辑。支持多行续行（未闭合 `{ ( [` / 字符串 / `try` 缺 `catch`）。
 
 ### 编译目标
-MiniLang 同时实现**三套执行引擎**（树遍历解释器 / 栈式字节码 VM / 寄存器式 VM）并共享一套 IR 中间表示层。同一源码在三后端必须语义等价，这是项目的核心约束，也是教学价值所在。
+MiniLang 同时实现**三套解释执行引擎**（树遍历解释器 / 栈式字节码 VM / 寄存器式 VM）外加 **x86-64 JIT 第四执行路径**（asmjit 分层编译，不支持场景优雅降级），并共享一套 IR 中间表示层。同一源码在多后端必须语义等价，这是项目的核心约束，也是教学价值所在。
 
 ---
 

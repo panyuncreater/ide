@@ -24,7 +24,7 @@ Thank you for your interest in contributing to MiniLang IDE! This document cover
 | 依赖项 | 最低版本 | 说明 |
 |--------|---------|------|
 | C++ 编译器 | C++20 | MSVC 2022+（19.51+）/ GCC 13+, Clang 16+ |
-| Qt | 6.0+ | Qt 6.0 或更高版本（经 CI 验证 6.10.3） |
+| Qt | 6.0+ | Qt 6.0 或更高版本（CI 验证 6.8.3，本地开发已验证 6.10.3） |
 | CMake | 3.25+ | 构建系统生成器 |
 | Ninja | 1.10+ | 推荐的构建后端（替代 Make） |
 
@@ -149,7 +149,7 @@ type(scope): description
 
 ### 常用 scope
 
-`lexer`, `parser`, `compiler`, `vm`, `ir`, `interpreter`, `gui`, `debug`, `i18n`, `cmake`, `samples`, `docs`
+`lexer`, `parser`, `compiler`, `vm`, `jit`, `ir`, `interpreter`, `gui`, `debug`, `cli`, `capi`, `i18n`, `cmake`, `samples`, `docs`
 
 ### 示例
 
@@ -193,20 +193,22 @@ pool index, which caused type mismatch at runtime.
 
 ## 三后端一致性验证 / Three-Backend Consistency
 
-MiniLang 维护三个执行后端，语义变更必须确保三后端行为一致：
+MiniLang 维护三个解释执行后端（外加 x86-64 JIT 第四执行路径），语义变更必须确保多后端行为一致：
 
 | 后端 | 说明 | 启用方式 |
 |------|------|---------|
 | **Interpreter** | 树遍历解释器（基准） | 默认 |
 | **StackVM** | 栈式虚拟机 | `setVM(true)` |
 | **RegisterVM** | 寄存器式虚拟机 | `setVM(true)` + `setUseRegisterVM(true)` |
+| **JIT** | 栈式 VM 热路径分层编译（asmjit） | `MINILANG_USE_JIT=ON`（x86-64 默认启用），不支持场景优雅降级回 StackVM |
 
 ### 验证方法
 
 1. 编写测试用例覆盖新语义特性
-2. 在 `tests/TestVME2E.cpp` 中添加三后端对比测试
-3. 确保 Interpreter / StackVM / RegisterVM（含 IR 优化）四种组合输出一致
+2. 在 `tests/TestVME2E.cpp`（或用 `tests/common/ThreeBackends.h` 的 `EXPECT_ALL_BACKENDS` 宏）添加多后端对比测试
+3. 确保 Interpreter / StackVM / StackVM-IR / RegisterVM 四种组合输出一致
 4. IR 路径额外验证：`setIR(true)` + `setIROptimize(true)` 不改变语义
+5. 若变更涉及 JIT 已支持场景（算术/控制流/闭包/异常等），同步验证 JIT 路径；未支持场景验证优雅降级（不崩溃不错值）
 
 ---
 
@@ -232,9 +234,12 @@ out\build\debug\minilang_tests.exe
 | `TestCompiler.cpp` | 编译器（字节码生成） |
 | `TestIR.cpp` | IR 中间层 |
 | `TestInterpreterE2E.cpp` | 解释器端到端 |
-| `TestVME2E.cpp` | VM 端到端（含三后端一致性） |
+| `TestVME2E.cpp` | VM 端到端（含多后端一致性） |
+| `TestJIT.cpp` | JIT 后端（与 StackVM 一致性 + 优雅降级） |
 | `TestNaNBox.cpp` | NaN-boxing 编码 |
 | `TestBuiltinMethods.cpp` | 内置方法 |
+| `TestOperatorOverload.cpp` / `TestMacro.cpp` / `TestTrait.cpp` / `TestAsyncAwait.cpp` / `TestResultPropagation.cpp` | 新语言特性（运算符重载/宏/trait/async/`?` 传播） |
+| `TestPlugin.cpp` / `TestSandboxMode.cpp` / `TestCApi.cpp` | 插件系统/沙箱模式/嵌入式 C API |
 | `TestFormatterAudit.cpp` | 代码格式化器 |
 | `TestTeachingPanelsAudit*.cpp` | 教学面板数据完整性 |
 
@@ -280,7 +285,7 @@ cmake -B out/build/debug -G Ninja -DMINILANG_ENABLE_I18N=ON
 # lrelease 编译 .ts -> .qm
 ```
 
-翻译文件位于 `app/translations/minilang_zh_CN.ts`。
+翻译文件位于 `app/translations/minilang_zh_CN.ts` 与 `app/translations/minilang_en_US.ts`（各 1259 条消息）。
 
 ---
 
@@ -289,10 +294,15 @@ cmake -B out/build/debug -G Ninja -DMINILANG_ENABLE_I18N=ON
 ```
 ide/
 ├── app/              # 应用层（IdeController, DebugCoordinator, main.cpp）
-├── ast/              # AST 节点定义
-├── compiler/         # 编译器（Compiler, Bytecode, IR, VM, RegisterVM）
-├── gui/              # GUI 面板与组件
-├── interpreter/      # 树遍历解释器 + NaN-boxing Value
+├── ast/              # AST 节点定义 + MacroExpander 宏展开器
+├── capi/             # 嵌入式 C API（minilang_capi 静态库）
+├── cli/              # 命令行工具（fmt/lint/coverage/doc/fuzz/lsp/dap/pkg/compile + minilang 统一入口）
+├── compiler/         # 编译器（Compiler, Bytecode, IR, VM, RegisterVM, JIT）
+├── debug/            # 调试器（DebugController, ExecutionTraceRecorder）
+├── editors/vscode/   # VS Code 扩展（语法高亮 + LSP + DAP）
+├── formatter/        # 代码格式化器
+├── gui/              # GUI 面板与组件（42 个教学面板）
+├── interpreter/      # 树遍历解释器 + NaN-boxing Value + GcManager
 ├── lexer/            # 词法分析器
 ├── parser/           # 语法分析器
 ├── samples/mini/     # MiniLang 示例程序
@@ -313,4 +323,4 @@ ide/
 
 ---
 
-*最后更新：2026-07-05*
+*最后更新：2026-07-31*

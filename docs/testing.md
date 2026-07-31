@@ -1,12 +1,12 @@
 # MiniLang 测试指南 / Testing Guide
 
-本文档描述 MiniLang 的三后端一致性验证方法论与测试策略。
+本文档描述 MiniLang 的多后端一致性验证方法论与测试策略。
 
 ---
 
-## 三后端一致性验证
+## 四后端一致性验证
 
-MiniLang 维护三个执行后端，任何语义变更必须确保三后端行为一致。
+MiniLang 维护三个解释执行后端（Interpreter / StackVM / RegisterVM）外加 JIT 第四执行路径，任何语义变更必须确保三解释后端行为一致；JIT 对已支持场景与 StackVM 严格一致，未支持场景优雅降级（不崩溃不错值）。
 
 ### 后端矩阵
 
@@ -18,6 +18,7 @@ MiniLang 维护三个执行后端，任何语义变更必须确保三后端行�
 | StackVM + IR + Opt | `setVM(true)` + `setIR(true)` + `setIROptimize(true)` | 栈式 VM + IR 优化 |
 | RegisterVM | `setVM(true)` + `setUseRegisterVM(true)` | 寄存器式 VM |
 | RegisterVM + IR + Opt | 上述 + `setIROptimize(true)` | 寄存器 VM + 全部优化 |
+| JIT | `MINILANG_USE_JIT=ON`（x86-64 默认） | 栈式 VM 热路径分层编译，与 StackVM 一致性断言 + 未支持场景优雅降级断言（TestJIT / TestJITCoverageGaps） |
 
 ### 验证方法
 
@@ -151,7 +152,7 @@ cmake --build out/build/debug --target minilang_tests
 
 ### test_harness/（独立可执行测试）
 
-项目包含 9 个独立于 GoogleTest 的可执行程序（`test_harness/` 目录，约 4100 行），用于特定场景的端到端验证：
+项目包含 9 个独立于 GoogleTest 的可执行程序（`test_harness/` 目录），用于特定场景的端到端验证：
 
 | 工具 | 用途 |
 |------|------|
@@ -175,7 +176,7 @@ test_harness 使用独立的 DebugController stub，不依赖 Qt Widgets，通�
 
 ## 测试统计
 
-项目当前包含 **105 个测试 .cpp 文件**，`minilang_tests` 目标总计 **3900 个测试用例 / 495 个测试套件**（截至 2026-07-30）。测试覆盖三后端语义一致性、教学面板数据完整性、前端组件、IR 优化（含 SSA 基础设施）、调试器（含 DAP pause 同步暂停 + Interpreter 状态回滚）、JIT、模块系统、并发原语、TCO 尾调用优化、try/catch 异常捕获等全部核心模块。
+项目当前包含 **110 个测试 .cpp 文件**，`minilang_tests` 目标总计 **3996 个测试用例 / 501 个测试套件**，全量 ctest（含 minilang_app_tests / minilang_gui_smoke）共 **4076 个测试全部通过**（截至 2026-07-31）。测试覆盖多后端语义一致性、新语言特性（运算符重载、宏模板、trait/mixin、async/await、`?` 错误传播、插件/沙箱/C API）、教学面板数据完整性、前端组件、IR 优化（含 SSA 基础设施）、调试器（含 DAP pause 同步暂停 + Interpreter 状态回滚）、JIT、模块系统、并发原语、TCO 尾调用优化、try/catch 异常捕获等全部核心模块。
 
 ---
 

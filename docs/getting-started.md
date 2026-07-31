@@ -8,7 +8,7 @@
 |------|---------|------|
 | CMake | 3.25 | 构建系统 |
 | C++20 编译器 | MSVC 19.51+ / GCC 13+ / Clang 16+ | 需完整 C++20 支持 |
-| Qt6 | 6.0+ | CI 验证版本 6.8.3；需 Core/Gui/Widgets/Svg/Xml |
+| Qt6 | 6.0+ | CI 验证版本 6.8.3，本地开发已验证 6.10.3；需 Core/Gui/Widgets/Svg/Xml |
 | Ninja | 任意 | CMake 默认生成器（CMakePresets 指定） |
 | GoogleTest | — | 随 `third_party/` 提供，CMake 自动拉取 |
 
@@ -228,7 +228,7 @@ ctest -R "VME2E\..*" --output-on-failure
 
 ## CLI 工具链
 
-项目提供 9 个独立命令行工具，构建后位于对应构建目录下：
+项目提供 10 个命令行工具（9 个独立工具 + `minilang` 统一子命令入口），构建后位于对应构建目录下：
 
 | 工具 | 用途 | 示例 |
 |------|------|------|
@@ -242,7 +242,12 @@ ctest -R "VME2E\..*" --output-on-failure
 | `minilang-compile` | 预编译模块 (.minic) | `minilang-compile --module lib.ml` |
 | `minilang-pkg` | 包管理器 | `minilang-pkg install` |
 
-所有工具支持 `--help` 查看完整参数说明。退出码语义：0=成功、1=有警告、2=错误。
+所有工具支持 `--help` 查看完整参数说明。退出码语义：0=成功，1=有警告，2=错误。
+
+另外提供两个集成入口：
+
+- **嵌入式 C API**：`capi/minilang_capi.h`（`minilang_capi` 静态库目标）提供稳定 C ABI（create/eval/set_backend/set_sandbox/register_function/load_plugin 等），可将 MiniLang 作为嵌入式脚本语言集成到其他 C/C++ 项目。
+- **VS Code 扩展**：`editors/vscode/` 提供语法高亮 + LSP 客户端（补全/悬停/定义/重命名/格式化/诊断）+ DAP 调试器（断点/单步/变量查看），指向 `minilang_lsp`/`minilang_dap` 可执行文件。
 
 ## 构建问题排查
 
