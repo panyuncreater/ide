@@ -1,6 +1,53 @@
-#﻿# Changelog
+# Changelog
 
 本文件记录 MiniLang IDE 的开发演进历史，包括性能优化、正确性修复与工程基础设施改进。所有条目均通过全量单元测试验证。历史版本归档至 [docs/changelog/archive/](docs/changelog/archive/)。
+
+## 2026-07-31 · 插件系统 + 沙箱模式 + HostFunctionRegistry + async/await 阶段 4 测试补全
+
+### 插件系统 + 沙箱模式 + HostFunctionRegistry（七特性 MVP 阶段 6/7）
+
+- **HostFunctionRegistry**：新增 [common/HostFunctionRegistry.h/.cpp](file:///common/HostFunctionRegistry.h)——宿主函数全局注册表（HostValue 五种标量 tagged union，name→fn 映射），三后端在“未定义函数”回退路径查表调用，语义天然一致。
+- **插件加载**：C API 新增 `minilang_load_plugin`（DLL 回调表 ABI），插件经回调表调用 `minilang_register_function` 注册原生能力；测试插件 DLL 目标 [tests/plugin/test_plugin.cpp](file:///tests/plugin/test_plugin.cpp)，路径经生成表达式注入。
+- **沙箱模式**：[common/RuntimeLimits.h](file:///common/RuntimeLimits.h) RuntimeConfig 新增 sandboxEnabled/AllowInput/AllowImport 原子开关——禁 input、禁文件模块导入（std/ 内建模块仍放行）、禁插件加载；C API `minilang_set_sandbox` 同步暴露。
+- **回归锁**：[tests/TestPlugin.cpp](file:///tests/TestPlugin.cpp)（10 用例，真 DLL 加载）+ [tests/TestSandboxMode.cpp](file:///tests/TestSandboxMode.cpp)（13 用例，三后端 × input/import 拦截 + C API 沙箱开关）。
+
+### async/await 阶段 4 测试补全
+
+- 新增 [tests/TestAsyncAwait.cpp](file:///tests/TestAsyncAwait.cpp) 21 用例：await/yield 混合、std/async 调度器（runAll round-robin 交错/runTask）、四后端一致性（自带带 moduleLoader 的 `EXPECT_ALL_BACKENDS_WITH_MODULES` 宏）。
+
+### 验证结果
+
+- 构建：minilang_tests 退出码 0（/W4 + /WX）；全量 ctest 4076/4076 全绿（151s）；ctest -R AsyncAwait 11/11 全绿。
+
+## 2026-07-30 · 七特性 MVP：宏模板 + trait/mixin + async/await + ? 错误传播（三后端全链路）
+
+- **宏模板（阶段 2）**：新增 [ast/MacroExpander.h/.cpp](file:///ast/MacroExpander.h)——`macro name(p1,p2) { <expr> }` 表达式模板宏，Parser 遇 `name!(args)` 调用 `cloneWithSubstitution` 克隆宏 body 并替换形参 VarRef（同一形参多次出现共享实参子树，同 C 宏语义），递归深度上限保护；parse 期展开后三后端零改动。
+- **trait/mixin（阶段 3）**：新增 TK_TRAIT/TK_WITH 词法 + `TraitDecl` AST 节点，`trait T { fun m() {...} }` + `class C with T1, T2`（可与 extends 并存），trait 方法在 parse 期合入混入类（四后端零改动）。
+- **async/await（阶段 4）**：TK_ASYNC/TK_AWAIT 词法，复用 R164 协程重放模式；调度器以纯 MiniLang 实现于内建模块 std/async（runAll/runTask）。
+- **`?` 错误传播（阶段 1）**：`?` 脱糖为共享内联 `__qmark_unwrap`（三后端自动一致），Ok/Some 解包、Err/None 可捕获传播，配套 std/result 泛型 enum 模块；贯穿 lexer/parser/AST/解释器/编译器/JIT。
+- **构建修复**：[tests/CMakeLists.txt](file:///tests/CMakeLists.txt) 为 minilang_app_tests、minilang_gui_smoke 补挂 PCH，修复 fresh 重编译时 GcManager 单例 LNK2005/LNK1169（unity-build ODR 预存缺陷清偿）。
+- **回归锁**：TestMacro（15 用例，含嵌套宏/递归宏报错/Formatter 保留宏语法）/ TestTrait / TestResultPropagation（20 用例）/ TestCoverageGaps3。
+- **验证**：minilang_tests 构建通过（W4+/WX），ctest 4028/4028 全绿（173s）。
+
+## 2026-07-29 · 运算符重载（dunder）+ const fun 编译期求值 + CI 修复
+
+### 运算符重载（拓展二期·语言）
+
+- instance 算术 dunder 分派（`__add`/`__sub`/`__mul`/`__div`/`__mod`）：Interpreter 在 numericBinaryOp 报错前分派（[interpreter/Interpreter.cpp](file:///interpreter/Interpreter.cpp) tryOperatorOverload，含继承链查找与 1 参数校验）；StackVM 在 executeArithOps 帧注入（栈布局 [left,right]=[this,arg]）；RegisterVM 在 executeArith 经 executeCallImpl 注入（returnReg=dst，含 methodCache 缓存）；JIT 适配。无 dunder 时回退原“算术运算需要数值类型”报错（回归锁）。
+- **回归锁**：[tests/TestOperatorOverload.cpp](file:///tests/TestOperatorOverload.cpp) Vec 类全运算符覆盖，`EXPECT_ALL_BACKENDS` 四后端一致。
+
+### const fun 编译期求值（L18 lang-constfun）
+
+- 新增 [common/ConstFunEval.h](file:///common/ConstFunEval.h)（header-only 三后端共享）：折叠条件为直接名称调用 + 实参全字面量 + arity 匹配 + 独立 Interpreter 沙箱求值成功无副作用（print/input 置 impure 标志）+ 结果原始类型；任一条件不满足返回 nullopt 回退运行时调用（语义安全）。Compiler/AstIRBuilder 在 visitFunCall 折叠点集成。
+
+### CI 修复（5 个失败任务 + 弃用 actions 升级）
+
+- ubuntu lrelease6 缺失（补装 qt6-tools-dev，验证步骤 lrelease6/lrelease/lrelease-qt6 三名兜底）；macOS Clang 4 项编译错误（含 Interpreter.h atomic<shared_ptr>→mutex）；Windows /WX C4189；Docker 补 `-DMINILANG_BUILD_TEST_HARNESS=OFF -DMINILANG_BUILD_CLI=OFF`；89 文件 clang-format 就地格式化；actions/upload-artifact@v6、ilammy/msvc-dev-cmd@v1.13.0。
+- CrashHandler.cpp：windows.h 必须先于 dbghelp.h 包含（Unity build）。
+
+### 验证结果
+
+- Windows Debug 构建通过，3965 个测试全部通过。
 
 ## 2026-07-28 · 已知限制清偿批次：B1 Interpreter TCO 蹦床 + B1-Shadow 三 VM 死循环修复 + E3 channel.recvTimeout + E1 stale obj 自动修复 + 文档过时项清理
 
