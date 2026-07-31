@@ -85,7 +85,7 @@ TEST(BytecodeIRBackendConst, LoadConstIntEmitsOP_INT) {
     LowerFixture f("const_int");
     uint32_t c = f.ir.addConstant(Value(42));
     IROperand v = f.ir.allocVReg();
-    f.emit(IROp::LOAD_CONST, { v, IROperand::constant(c) });
+    f.emit(IROp::LOAD_CONST, {v, IROperand::constant(c)});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -96,7 +96,7 @@ TEST(BytecodeIRBackendConst, LoadConstFloatEmitsOP_FLOAT) {
     LowerFixture f("const_float");
     uint32_t c = f.ir.addConstant(Value(3.14));
     IROperand v = f.ir.allocVReg();
-    f.emit(IROp::LOAD_CONST, { v, IROperand::constant(c) });
+    f.emit(IROp::LOAD_CONST, {v, IROperand::constant(c)});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -107,7 +107,7 @@ TEST(BytecodeIRBackendConst, LoadConstStringEmitsOP_STRING) {
     LowerFixture f("const_str");
     uint32_t c = f.ir.addConstant(Value(std::string("hello")));
     IROperand v = f.ir.allocVReg();
-    f.emit(IROp::LOAD_CONST, { v, IROperand::constant(c) });
+    f.emit(IROp::LOAD_CONST, {v, IROperand::constant(c)});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -117,7 +117,7 @@ TEST(BytecodeIRBackendConst, LoadConstStringEmitsOP_STRING) {
 TEST(BytecodeIRBackendConst, LoadNullEmitsOP_NULL) {
     LowerFixture f("const_null");
     IROperand v = f.ir.allocVReg();
-    f.emit(IROp::LOAD_NULL, { v });
+    f.emit(IROp::LOAD_NULL, {v});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -127,7 +127,7 @@ TEST(BytecodeIRBackendConst, LoadNullEmitsOP_NULL) {
 TEST(BytecodeIRBackendConst, LoadTrueEmitsOP_TRUE) {
     LowerFixture f("const_true");
     IROperand v = f.ir.allocVReg();
-    f.emit(IROp::LOAD_TRUE, { v });
+    f.emit(IROp::LOAD_TRUE, {v});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -137,7 +137,7 @@ TEST(BytecodeIRBackendConst, LoadTrueEmitsOP_TRUE) {
 TEST(BytecodeIRBackendConst, LoadFalseEmitsOP_FALSE) {
     LowerFixture f("const_false");
     IROperand v = f.ir.allocVReg();
-    f.emit(IROp::LOAD_FALSE, { v });
+    f.emit(IROp::LOAD_FALSE, {v});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -153,7 +153,7 @@ TEST(BytecodeIRBackendArith, AddEmitsOP_ADD) {
     IROperand v0 = f.ir.allocVReg();
     IROperand v1 = f.ir.allocVReg();
     IROperand v2 = f.ir.allocVReg();
-    f.emit(IROp::ADD, { v2, v0, v1 });
+    f.emit(IROp::ADD, {v2, v0, v1});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -165,7 +165,7 @@ TEST(BytecodeIRBackendArith, SubEmitsOP_SUBTRACT) {
     IROperand v0 = f.ir.allocVReg();
     IROperand v1 = f.ir.allocVReg();
     IROperand v2 = f.ir.allocVReg();
-    f.emit(IROp::SUB, { v2, v0, v1 });
+    f.emit(IROp::SUB, {v2, v0, v1});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -177,7 +177,7 @@ TEST(BytecodeIRBackendArith, MulEmitsOP_MULTIPLY) {
     IROperand v0 = f.ir.allocVReg();
     IROperand v1 = f.ir.allocVReg();
     IROperand v2 = f.ir.allocVReg();
-    f.emit(IROp::MUL, { v2, v0, v1 });
+    f.emit(IROp::MUL, {v2, v0, v1});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -189,7 +189,7 @@ TEST(BytecodeIRBackendArith, DivEmitsOP_DIVIDE) {
     IROperand v0 = f.ir.allocVReg();
     IROperand v1 = f.ir.allocVReg();
     IROperand v2 = f.ir.allocVReg();
-    f.emit(IROp::DIV, { v2, v0, v1 });
+    f.emit(IROp::DIV, {v2, v0, v1});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -201,7 +201,7 @@ TEST(BytecodeIRBackendArith, ModEmitsOP_MODULO) {
     IROperand v0 = f.ir.allocVReg();
     IROperand v1 = f.ir.allocVReg();
     IROperand v2 = f.ir.allocVReg();
-    f.emit(IROp::MOD, { v2, v0, v1 });
+    f.emit(IROp::MOD, {v2, v0, v1});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -212,7 +212,7 @@ TEST(BytecodeIRBackendArith, NegateEmitsOP_NEGATE) {
     LowerFixture f;
     IROperand v0 = f.ir.allocVReg();
     IROperand v1 = f.ir.allocVReg();
-    f.emit(IROp::NEGATE, { v1, v0 });
+    f.emit(IROp::NEGATE, {v1, v0});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -228,7 +228,7 @@ TEST(BytecodeIRBackendCompare, EqEmitsOP_EQUAL) {
     IROperand v0 = f.ir.allocVReg();
     IROperand v1 = f.ir.allocVReg();
     IROperand v2 = f.ir.allocVReg();
-    f.emit(IROp::EQ, { v2, v0, v1 });
+    f.emit(IROp::EQ, {v2, v0, v1});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -240,7 +240,7 @@ TEST(BytecodeIRBackendCompare, NeqEmitsOP_NOT_EQUAL) {
     IROperand v0 = f.ir.allocVReg();
     IROperand v1 = f.ir.allocVReg();
     IROperand v2 = f.ir.allocVReg();
-    f.emit(IROp::NEQ, { v2, v0, v1 });
+    f.emit(IROp::NEQ, {v2, v0, v1});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -252,7 +252,7 @@ TEST(BytecodeIRBackendCompare, LtEmitsOP_LESS) {
     IROperand v0 = f.ir.allocVReg();
     IROperand v1 = f.ir.allocVReg();
     IROperand v2 = f.ir.allocVReg();
-    f.emit(IROp::LT, { v2, v0, v1 });
+    f.emit(IROp::LT, {v2, v0, v1});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -264,7 +264,7 @@ TEST(BytecodeIRBackendCompare, GtEmitsOP_GREATER) {
     IROperand v0 = f.ir.allocVReg();
     IROperand v1 = f.ir.allocVReg();
     IROperand v2 = f.ir.allocVReg();
-    f.emit(IROp::GT, { v2, v0, v1 });
+    f.emit(IROp::GT, {v2, v0, v1});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -276,7 +276,7 @@ TEST(BytecodeIRBackendCompare, LteEmitsOP_LESS_EQUAL) {
     IROperand v0 = f.ir.allocVReg();
     IROperand v1 = f.ir.allocVReg();
     IROperand v2 = f.ir.allocVReg();
-    f.emit(IROp::LTE, { v2, v0, v1 });
+    f.emit(IROp::LTE, {v2, v0, v1});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -288,7 +288,7 @@ TEST(BytecodeIRBackendCompare, GteEmitsOP_GREATER_EQUAL) {
     IROperand v0 = f.ir.allocVReg();
     IROperand v1 = f.ir.allocVReg();
     IROperand v2 = f.ir.allocVReg();
-    f.emit(IROp::GTE, { v2, v0, v1 });
+    f.emit(IROp::GTE, {v2, v0, v1});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -299,7 +299,7 @@ TEST(BytecodeIRBackendCompare, NotEmitsOP_NOT) {
     LowerFixture f;
     IROperand v0 = f.ir.allocVReg();
     IROperand v1 = f.ir.allocVReg();
-    f.emit(IROp::NOT, { v1, v0 });
+    f.emit(IROp::NOT, {v1, v0});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -313,7 +313,7 @@ TEST(BytecodeIRBackendCompare, NotEmitsOP_NOT) {
 TEST(BytecodeIRBackendVar, LoadLocalEmitsOP_GET_LOCAL) {
     LowerFixture f;
     IROperand v = f.ir.allocVReg();
-    f.emit(IROp::LOAD_LOCAL, { v, IROperand::local(0) });
+    f.emit(IROp::LOAD_LOCAL, {v, IROperand::local(0)});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -323,7 +323,7 @@ TEST(BytecodeIRBackendVar, LoadLocalEmitsOP_GET_LOCAL) {
 TEST(BytecodeIRBackendVar, StoreLocalEmitsOP_SET_LOCAL) {
     LowerFixture f;
     IROperand v = f.ir.allocVReg();
-    f.emit(IROp::STORE_LOCAL, { IROperand::local(0), v });
+    f.emit(IROp::STORE_LOCAL, {IROperand::local(0), v});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -336,7 +336,7 @@ TEST(BytecodeIRBackendVar, LoadGlobalEmitsOP_GET_GLOBAL) {
     uint32_t g = f.ir.addGlobal("x");
     // 槽位版路径：LOAD_GLOBAL 的源操作数为 IMM_UINT（全局槽位号）时
     // lowering 为 OP_GET_GLOBAL slot(2B)；GLOBAL_NAME kind 则走名称版 OP_GET_VAR。
-    f.emit(IROp::LOAD_GLOBAL, { v, IROperand::imm(g) });
+    f.emit(IROp::LOAD_GLOBAL, {v, IROperand::imm(g)});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -348,7 +348,7 @@ TEST(BytecodeIRBackendVar, LoadGlobalByNameEmitsOP_GET_VAR) {
     LowerFixture f;
     IROperand v = f.ir.allocVReg();
     uint32_t g = f.ir.addGlobal("x");
-    f.emit(IROp::LOAD_GLOBAL, { v, IROperand::global(g) });
+    f.emit(IROp::LOAD_GLOBAL, {v, IROperand::global(g)});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -360,7 +360,7 @@ TEST(BytecodeIRBackendVar, StoreGlobalEmitsOP_SET_GLOBAL) {
     IROperand v = f.ir.allocVReg();
     uint32_t g = f.ir.addGlobal("x");
     // 槽位版：目标操作数 IMM_UINT → OP_SET_GLOBAL；GLOBAL_NAME → OP_SET_VAR
-    f.emit(IROp::STORE_GLOBAL, { IROperand::imm(g), v });
+    f.emit(IROp::STORE_GLOBAL, {IROperand::imm(g), v});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -372,7 +372,7 @@ TEST(BytecodeIRBackendVar, DefineGlobalEmitsOP_DEFINE_GLOBAL) {
     IROperand v = f.ir.allocVReg();
     uint32_t g = f.ir.addGlobal("x");
     // 槽位版：目标操作数 IMM_UINT → OP_DEFINE_GLOBAL；GLOBAL_NAME → OP_DEFINE_VAR
-    f.emit(IROp::DEFINE_GLOBAL, { IROperand::imm(g), v });
+    f.emit(IROp::DEFINE_GLOBAL, {IROperand::imm(g), v});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -387,9 +387,9 @@ TEST(BytecodeIRBackendControl, JumpIfFalseEmitsOP_JUMP_IF_FALSE) {
     LowerFixture f;
     IROperand v = f.ir.allocVReg();
     uint32_t target = f.ir.allocLabel();
-    f.emit(IROp::JUMP_IF_FALSE, { v, IROperand::label(target) });
+    f.emit(IROp::JUMP_IF_FALSE, {v, IROperand::label(target)});
     // 目标 LABEL 必须存在，否则 patchJumps 回填阶段找不到标签失败
-    f.emit(IROp::LABEL, { IROperand::label(target) });
+    f.emit(IROp::LABEL, {IROperand::label(target)});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -399,9 +399,9 @@ TEST(BytecodeIRBackendControl, JumpIfFalseEmitsOP_JUMP_IF_FALSE) {
 TEST(BytecodeIRBackendControl, JumpEmitsOP_JUMP) {
     LowerFixture f;
     uint32_t target = f.ir.allocLabel();
-    f.emit(IROp::JUMP, { IROperand::label(target) });
+    f.emit(IROp::JUMP, {IROperand::label(target)});
     // 目标 LABEL 必须存在，否则 patchJumps 回填阶段找不到标签失败
-    f.emit(IROp::LABEL, { IROperand::label(target) });
+    f.emit(IROp::LABEL, {IROperand::label(target)});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -412,7 +412,7 @@ TEST(BytecodeIRBackendControl, LabelDoesNotEmitBytecode) {
     // LABEL 是基本块标记，不应产生字节码
     LowerFixture f;
     uint32_t label = f.ir.allocLabel();
-    f.emit(IROp::LABEL, { IROperand::label(label) });
+    f.emit(IROp::LABEL, {IROperand::label(label)});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -424,9 +424,9 @@ TEST(BytecodeIRBackendControl, ForwardJumpResolvesToTargetOffset) {
     LowerFixture f;
     uint32_t start = f.ir.allocLabel();
     uint32_t end = f.ir.allocLabel();
-    f.emit(IROp::LABEL, { IROperand::label(start) });
-    f.emit(IROp::JUMP, { IROperand::label(end) });
-    f.emit(IROp::LABEL, { IROperand::label(end) });
+    f.emit(IROp::LABEL, {IROperand::label(start)});
+    f.emit(IROp::JUMP, {IROperand::label(end)});
+    f.emit(IROp::LABEL, {IROperand::label(end)});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -441,8 +441,8 @@ TEST(BytecodeIRBackendControl, BackwardJumpResolvesToTargetOffset) {
     // JUMP backward → 回到前序 LABEL 位置
     LowerFixture f;
     uint32_t loopStart = f.ir.allocLabel();
-    f.emit(IROp::LABEL, { IROperand::label(loopStart) });
-    f.emit(IROp::JUMP, { IROperand::label(loopStart) });
+    f.emit(IROp::LABEL, {IROperand::label(loopStart)});
+    f.emit(IROp::JUMP, {IROperand::label(loopStart)});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -459,7 +459,7 @@ TEST(BytecodeIRBackendControl, BackwardJumpResolvesToTargetOffset) {
 TEST(BytecodeIRBackendCall, ReturnEmitsOP_RETURN) {
     LowerFixture f;
     IROperand v = f.ir.allocVReg();
-    f.emit(IROp::RETURN, { v });
+    f.emit(IROp::RETURN, {v});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -482,7 +482,7 @@ TEST(BytecodeIRBackendCall, CallEmitsOP_CALL) {
     LowerFixture f;
     IROperand dst = f.ir.allocVReg();
     uint32_t nameIdx = f.ir.addGlobal("f");
-    f.emit(IROp::CALL, { dst, IROperand::global(nameIdx), IROperand::imm(0) });
+    f.emit(IROp::CALL, {dst, IROperand::global(nameIdx), IROperand::imm(0)});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -496,7 +496,7 @@ TEST(BytecodeIRBackendCall, CallEmitsOP_CALL) {
 TEST(BytecodeIRBackendContainer, BuildArrayEmitsOP_BUILD_ARRAY) {
     LowerFixture f;
     IROperand dst = f.ir.allocVReg();
-    f.emit(IROp::BUILD_ARRAY, { dst, IROperand::imm(0) });
+    f.emit(IROp::BUILD_ARRAY, {dst, IROperand::imm(0)});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -506,7 +506,7 @@ TEST(BytecodeIRBackendContainer, BuildArrayEmitsOP_BUILD_ARRAY) {
 TEST(BytecodeIRBackendContainer, BuildDictEmitsOP_BUILD_DICT) {
     LowerFixture f;
     IROperand dst = f.ir.allocVReg();
-    f.emit(IROp::BUILD_DICT, { dst, IROperand::imm(0) });
+    f.emit(IROp::BUILD_DICT, {dst, IROperand::imm(0)});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -518,7 +518,7 @@ TEST(BytecodeIRBackendContainer, IndexGetEmitsOP_INDEX_GET) {
     IROperand dst = f.ir.allocVReg();
     IROperand obj = f.ir.allocVReg();
     IROperand idx = f.ir.allocVReg();
-    f.emit(IROp::INDEX_GET, { dst, obj, idx });
+    f.emit(IROp::INDEX_GET, {dst, obj, idx});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -530,7 +530,7 @@ TEST(BytecodeIRBackendContainer, IndexSetEmitsOP_INDEX_SET) {
     IROperand obj = f.ir.allocVReg();
     IROperand idx = f.ir.allocVReg();
     IROperand val = f.ir.allocVReg();
-    f.emit(IROp::INDEX_SET, { obj, idx, val });
+    f.emit(IROp::INDEX_SET, {obj, idx, val});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -546,7 +546,7 @@ TEST(BytecodeIRBackendMember, MemberGetEmitsOP_MEMBER_GET) {
     IROperand dst = f.ir.allocVReg();
     IROperand obj = f.ir.allocVReg();
     uint32_t fieldName = f.ir.addGlobal("x");
-    f.emit(IROp::MEMBER_GET, { dst, obj, IROperand::field(fieldName) });
+    f.emit(IROp::MEMBER_GET, {dst, obj, IROperand::field(fieldName)});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -558,7 +558,7 @@ TEST(BytecodeIRBackendMember, MemberSetEmitsOP_MEMBER_SET) {
     IROperand obj = f.ir.allocVReg();
     uint32_t fieldName = f.ir.addGlobal("x");
     IROperand val = f.ir.allocVReg();
-    f.emit(IROp::MEMBER_SET, { obj, IROperand::field(fieldName), val });
+    f.emit(IROp::MEMBER_SET, {obj, IROperand::field(fieldName), val});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -572,9 +572,9 @@ TEST(BytecodeIRBackendMember, MemberSetEmitsOP_MEMBER_SET) {
 TEST(BytecodeIRBackendException, TryBeginEmitsOP_TRY_BEGIN) {
     LowerFixture f;
     uint32_t catchLabel = f.ir.allocLabel();
-    f.emit(IROp::TRY_BEGIN, { IROperand::label(catchLabel) });
+    f.emit(IROp::TRY_BEGIN, {IROperand::label(catchLabel)});
     // catch 目标 LABEL 必须存在且位于 TRY_BEGIN 之后（相对偏移回填要求）
-    f.emit(IROp::LABEL, { IROperand::label(catchLabel) });
+    f.emit(IROp::LABEL, {IROperand::label(catchLabel)});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -593,7 +593,7 @@ TEST(BytecodeIRBackendException, TryEndEmitsOP_TRY_END) {
 TEST(BytecodeIRBackendException, ThrowEmitsOP_THROW) {
     LowerFixture f;
     IROperand v = f.ir.allocVReg();
-    f.emit(IROp::THROW, { v });
+    f.emit(IROp::THROW, {v});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -607,7 +607,7 @@ TEST(BytecodeIRBackendException, ThrowEmitsOP_THROW) {
 TEST(BytecodeIRBackendMisc, PrintEmitsOP_PRINT) {
     LowerFixture f;
     IROperand v = f.ir.allocVReg();
-    f.emit(IROp::PRINT, { v });
+    f.emit(IROp::PRINT, {v});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -618,7 +618,7 @@ TEST(BytecodeIRBackendMisc, DupEmitsOP_DUP) {
     LowerFixture f;
     IROperand dst = f.ir.allocVReg();
     IROperand src = f.ir.allocVReg();
-    f.emit(IROp::DUP, { dst, src });
+    f.emit(IROp::DUP, {dst, src});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -628,7 +628,7 @@ TEST(BytecodeIRBackendMisc, DupEmitsOP_DUP) {
 TEST(BytecodeIRBackendMisc, PopEmitsOP_POP) {
     LowerFixture f;
     IROperand v = f.ir.allocVReg();
-    f.emit(IROp::POP, { v });
+    f.emit(IROp::POP, {v});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -645,7 +645,8 @@ TEST(BytecodeIRBackendModule, LowerModuleProducesMainChunk) {
     mainFn->name = "main";
     IRBasicBlock block;
     block.labelIndex = mainFn->allocLabel();
-    IROperand v = mainFn->allocVReg();
+    // [[maybe_unused]]：仅需 allocVReg 的分配副作用，返回值不参与断言
+    [[maybe_unused]] IROperand v = mainFn->allocVReg();
     block.instructions.emplace_back(IROp::RETURN_NULL, std::vector<IROperand>{}, 1);
     mainFn->blocks.push_back(std::move(block));
     module.mainFunction = std::move(mainFn);
@@ -676,7 +677,7 @@ TEST(BytecodeIRBackendModule, LowerModuleWithSubFunctionProducesFunctionChunk) {
     IRBasicBlock subBlock;
     subBlock.labelIndex = subFn->allocLabel();
     IROperand rv = subFn->allocVReg();
-    subBlock.instructions.emplace_back(IROp::RETURN, std::vector<IROperand>{ rv }, 1);
+    subBlock.instructions.emplace_back(IROp::RETURN, std::vector<IROperand>{rv}, 1);
     subFn->blocks.push_back(std::move(subBlock));
     module.addFunction(std::move(subFn));
 
@@ -702,9 +703,9 @@ TEST(BytecodeIRBackendOffsetMap, EachIRInstructionMapsToBytecodeOffset) {
     IROperand v0 = f.ir.allocVReg();
     IROperand v1 = f.ir.allocVReg();
     IROperand v2 = f.ir.allocVReg();
-    f.emit(IROp::LOAD_CONST, { v0, IROperand::constant(c0) }, 1);
-    f.emit(IROp::LOAD_CONST, { v1, IROperand::constant(c1) }, 2);
-    f.emit(IROp::ADD, { v2, v0, v1 }, 3);
+    f.emit(IROp::LOAD_CONST, {v0, IROperand::constant(c0)}, 1);
+    f.emit(IROp::LOAD_CONST, {v1, IROperand::constant(c1)}, 2);
+    f.emit(IROp::ADD, {v2, v0, v1}, 3);
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);
@@ -734,7 +735,7 @@ TEST(BytecodeIRBackendEdge, EmptyBlockProducesEmptyChunk) {
     LowerFixture f;
     // 仅 LABEL，无指令
     uint32_t label = f.ir.allocLabel();
-    f.emit(IROp::LABEL, { IROperand::label(label) });
+    f.emit(IROp::LABEL, {IROperand::label(label)});
     ASSERT_TRUE(f.lower());
     auto chunk = f.takeChunk();
     ASSERT_NE(chunk, nullptr);

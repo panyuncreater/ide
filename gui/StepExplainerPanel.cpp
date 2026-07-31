@@ -322,6 +322,8 @@ QString describeOperands(const BytecodeChunk& chunk, size_t ip, OpCode op) {
     case OpCode::OP_FINALLY_END:
     case OpCode::OP_ENUM_VARIANT_FIELD:
     case OpCode::OP_LEN:
+    case OpCode::OP_YIELD: // R164 协程：yield 表达式（无操作数，重放模式）
+    case OpCode::OP_AWAIT: // 七特性 MVP 阶段 4：await 表达式（无操作数，同步 drain）
     case OpCode::OP_ADD_INT_SPEC:
     case OpCode::OP_SUB_INT_SPEC:
     case OpCode::OP_MUL_INT_SPEC:
@@ -361,6 +363,7 @@ QString describeOperands(const BytecodeChunk& chunk, size_t ip, OpCode op) {
     case OpCode::OP_SET_VAR:
     case OpCode::OP_DELETE_VAR:
     case OpCode::OP_INDEX_SET_VAR:
+    case OpCode::OP_WRITEBACK_INDEX_VAR: // 索引写回全局变量（varIdx 2B，与 OP_INDEX_SET_VAR 同布局）
     case OpCode::OP_MEMBER_GET:
     case OpCode::OP_MEMBER_SET:
     case OpCode::OP_SUPER_MEMBER_GET:
@@ -388,6 +391,7 @@ QString describeOperands(const BytecodeChunk& chunk, size_t ip, OpCode op) {
 
     // 名称索引(2B) + 参数个数(1B)
     case OpCode::OP_CALL:
+    case OpCode::OP_TAIL_CALL: // L18 尾调用：字节布局与 OP_CALL 完全相同
     case OpCode::OP_CLASS_NEW: {
         uint16_t nameIdx = readShortOperand(chunk, ip);
         uint8_t argCount = (ip + 3 < chunk.code.size()) ? chunk.code[ip + 3] : 0;

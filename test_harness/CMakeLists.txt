@@ -85,6 +85,11 @@ add_executable(debug_test
 )
 target_include_directories(debug_test BEFORE PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 set_target_properties(debug_test PROPERTIES AUTOMOC OFF)
+# GNU ld 默认对桩/真实实现的同名符号报 multiple definition（MSVC 则 .obj 优先）；
+# --allow-multiple-definition 保留“命令行目标文件（桩）优先于库”语义，与 MSVC 行为对齐。
+if(NOT MSVC)
+    target_link_options(debug_test PRIVATE -Wl,--allow-multiple-definition)
+endif()
 target_link_libraries(debug_test PRIVATE
     minilang_core
     minilang_compile_options

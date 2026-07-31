@@ -1706,7 +1706,6 @@ bool CodeEditor::handleEditorActionKeys(QKeyEvent* event) {
         tc.beginEditBlock();
         if (tc.hasSelection()) {
             // 选区复制：在选区末尾插入选区文本副本
-            int selStart = tc.selectionStart();
             int selEnd = tc.selectionEnd();
             QString selText = tc.selectedText();
             // QTextCursor.selectedText 用 U+2029 替换换行符，需还原

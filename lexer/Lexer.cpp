@@ -105,29 +105,51 @@ struct KeywordEntry {
 };
 // 必须严格按字典序排列（std::lower_bound 前提）
 static constexpr KeywordEntry kSortedKeywords[] = {
-    {"and", TokenType::TK_AND},         {"array", TokenType::TK_ARRAY},
-    {"as", TokenType::TK_AS},           {"async", TokenType::TK_ASYNC},
-    {"await", TokenType::TK_AWAIT},     {"bool", TokenType::TK_BOOL},
-    {"break", TokenType::TK_BREAK},     {"case", TokenType::TK_CASE},
-    {"catch", TokenType::TK_CATCH},     {"class", TokenType::TK_CLASS},
-    {"const", TokenType::TK_CONST},     {"continue", TokenType::TK_CONTINUE},
-    {"default", TokenType::TK_DEFAULT}, {"dict", TokenType::TK_DICT},
-    {"else", TokenType::TK_ELSE},       {"enum", TokenType::TK_ENUM},
-    {"export", TokenType::TK_EXPORT},   {"extends", TokenType::TK_EXTENDS},
-    {"false", TokenType::TK_FALSE},     {"finally", TokenType::TK_FINALLY},
-    {"float", TokenType::TK_FLOAT},     {"for", TokenType::TK_FOR},
-    {"from", TokenType::TK_FROM},       {"fun", TokenType::TK_FUN},
-    {"func", TokenType::TK_FUN},        {"function", TokenType::TK_FUN},
-    {"if", TokenType::TK_IF},           {"import", TokenType::TK_IMPORT},
-    {"int", TokenType::TK_INT},         {"macro", TokenType::TK_MACRO},
-    {"match", TokenType::TK_MATCH},     {"not", TokenType::TK_NOT},
-    {"null", TokenType::TK_NULL},       {"or", TokenType::TK_OR},
-    {"print", TokenType::TK_PRINT},     {"return", TokenType::TK_RETURN},
+    {"and", TokenType::TK_AND},
+    {"array", TokenType::TK_ARRAY},
+    {"as", TokenType::TK_AS},
+    {"async", TokenType::TK_ASYNC},
+    {"await", TokenType::TK_AWAIT},
+    {"bool", TokenType::TK_BOOL},
+    {"break", TokenType::TK_BREAK},
+    {"case", TokenType::TK_CASE},
+    {"catch", TokenType::TK_CATCH},
+    {"class", TokenType::TK_CLASS},
+    {"const", TokenType::TK_CONST},
+    {"continue", TokenType::TK_CONTINUE},
+    {"default", TokenType::TK_DEFAULT},
+    {"dict", TokenType::TK_DICT},
+    {"else", TokenType::TK_ELSE},
+    {"enum", TokenType::TK_ENUM},
+    {"export", TokenType::TK_EXPORT},
+    {"extends", TokenType::TK_EXTENDS},
+    {"false", TokenType::TK_FALSE},
+    {"finally", TokenType::TK_FINALLY},
+    {"float", TokenType::TK_FLOAT},
+    {"for", TokenType::TK_FOR},
+    {"from", TokenType::TK_FROM},
+    {"fun", TokenType::TK_FUN},
+    {"func", TokenType::TK_FUN},
+    {"function", TokenType::TK_FUN},
+    {"if", TokenType::TK_IF},
+    {"import", TokenType::TK_IMPORT},
+    {"int", TokenType::TK_INT},
+    {"macro", TokenType::TK_MACRO},
+    {"match", TokenType::TK_MATCH},
+    {"not", TokenType::TK_NOT},
+    {"null", TokenType::TK_NULL},
+    {"or", TokenType::TK_OR},
+    {"print", TokenType::TK_PRINT},
+    {"return", TokenType::TK_RETURN},
     {"string", TokenType::TK_STRING_TYPE},
-    {"super", TokenType::TK_SUPER},     {"throw", TokenType::TK_THROW},
-    {"trait", TokenType::TK_TRAIT},     {"true", TokenType::TK_TRUE},
-    {"try", TokenType::TK_TRY},        {"var", TokenType::TK_VAR},
-    {"while", TokenType::TK_WHILE},    {"with", TokenType::TK_WITH},
+    {"super", TokenType::TK_SUPER},
+    {"throw", TokenType::TK_THROW},
+    {"trait", TokenType::TK_TRAIT},
+    {"true", TokenType::TK_TRUE},
+    {"try", TokenType::TK_TRY},
+    {"var", TokenType::TK_VAR},
+    {"while", TokenType::TK_WHILE},
+    {"with", TokenType::TK_WITH},
     {"yield", TokenType::TK_YIELD},
 };
 static constexpr size_t kSortedKeywordsCount = sizeof(kSortedKeywords) / sizeof(kSortedKeywords[0]);
@@ -779,7 +801,8 @@ void Lexer::string(bool isInterp) {
     // P0 fix: 限制 reserve 上限，防止未闭合字符串触发 GB 级内存分配
     // BUG-LEX-AUDIT-5 fix: 上限从 1MB 降为 64KB。原 1MB 在 MAX_INTERP_DEPTH=64 嵌套场景
     // 峰值 reserved 达 64MB 但大多未使用；64KB 上限下嵌套峰值仅 4MB，平衡 OOM 防护与内存压力。
-    size_t reserveCap = current_ < source_.size() ? (source_.size() - current_) : 0;
+    size_t reserveCap =
+        static_cast<size_t>(current_) < source_.size() ? (source_.size() - static_cast<size_t>(current_)) : 0;
     if (reserveCap > 64 * 1024)
         reserveCap = 64 * 1024;
     value.reserve(reserveCap);
@@ -808,15 +831,15 @@ void Lexer::string(bool isInterp) {
         // 故批量扫描在遇到它们时停止，由下次循环迭代调用 advance()。
         // 多字节 UTF-8 字节（0x80-0xFF）均不与特殊字符（\=0x5C、{=0x7B、"=0x22、
         // \r=0x0D、\n=0x0A）冲突，可安全批量扫描。
-        size_t runStart = current_;
+        size_t runStart = static_cast<size_t>(current_);
         while (!isAtEnd()) {
             char c = source_[current_];
             if (c == '"' || c == '\\' || c == '{' || c == '\r' || c == '\n')
                 break;
             current_++;
         }
-        if (current_ > runStart) {
-            value.append(source_.data() + runStart, current_ - runStart);
+        if (static_cast<size_t>(current_) > runStart) {
+            value.append(source_.data() + runStart, static_cast<size_t>(current_) - runStart);
         } else {
             // 首个字符即为 \r/\n（其他特殊字符已被外层 if 拦截），
             // 调用 advance() 维护行号并将规范化后的字符（\n）加入 value

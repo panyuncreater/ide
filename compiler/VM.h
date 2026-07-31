@@ -923,5 +923,12 @@ private:
     /// P-2 perf: __forceinline 提示 MSVC 尝试内联到 execute() 主循环，
     /// 消除函数调用开销 + 允许编译器优化冗余帧获取和 hasError_ 检查。
     /// 若函数体过大（>50 case switch），MSVC 会优雅忽略此提示。
+    /// 注：仅 MSVC 使用 __forceinline——函数体在 VM.cpp，VMCalls.cpp 等其它 TU
+    /// 也会调用，GCC 的 always_inline 在函数体不可见时会硬错误，故 GCC/Clang
+    /// 下使用普通声明（__forceinline 也非 ISO 关键字，GCC 无法解析）。
+#ifdef _MSC_VER
     __forceinline VMResult executeOneInstruction();
+#else
+    VMResult executeOneInstruction();
+#endif
 };

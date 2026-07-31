@@ -39,17 +39,27 @@ static std::string escapeJson(const std::string& s) {
     out.reserve(s.size() + 16);
     for (char c : s) {
         switch (c) {
-            case '"': out += "\\\""; break;
-            case '\\': out += "\\\\"; break;
-            case '\n': out += "\\n"; break;
-            case '\r': out += "\\r"; break;
-            case '\t': out += "\\t"; break;
-            default: out += c;
+        case '"':
+            out += "\\\"";
+            break;
+        case '\\':
+            out += "\\\\";
+            break;
+        case '\n':
+            out += "\\n";
+            break;
+        case '\r':
+            out += "\\r";
+            break;
+        case '\t':
+            out += "\\t";
+            break;
+        default:
+            out += c;
         }
     }
     return out;
 }
-
 
 namespace {
 
@@ -599,7 +609,9 @@ std::string normalizeErrorPhase(const std::string& encoded) {
 }
 
 // 判断是否为解析失败（三后端都是 parse-fail）
-bool isParseFailure(const std::string& s) {
+// [[maybe_unused]]：当前差分逻辑经 hasErrorTag 统一判定，本函数保留供
+// 后续细分 parse/compile 阶段失败时使用，避免 GCC -Werror=unused-function。
+[[maybe_unused]] bool isParseFailure(const std::string& s) {
     return s == "<parse-fail>";
 }
 
@@ -749,9 +761,8 @@ FuzzSummary runFuzzBatch(const FuzzOptions& opts) {
 
         // 非 quiet 模式实时输出进度
         if (!opts.quiet && (i % 10 == 0 || i == static_cast<int64_t>(opts.iterations) - 1)) {
-            std::fprintf(stdout, "[%lld/%d] crashes=%d disagreements=%d\n",
-                         static_cast<long long>(i + 1), opts.iterations, summary.crashes,
-                         summary.disagreements);
+            std::fprintf(stdout, "[%lld/%d] crashes=%d disagreements=%d\n", static_cast<long long>(i + 1),
+                         opts.iterations, summary.crashes, summary.disagreements);
             std::fflush(stdout);
         }
     }
@@ -1101,8 +1112,8 @@ std::string formatSummaryJson(const FuzzSummary& summary) {
     oss << "  \"crashCases\": [\n";
     for (size_t i = 0; i < summary.crashCases.size(); ++i) {
         const auto& c = summary.crashCases[i];
-        oss << "    {\"index\": " << i << ", \"phase\": \"" << c.errorPhase << "\", \"source\": \"" << escapeJson(c.source)
-            << "\"}";
+        oss << "    {\"index\": " << i << ", \"phase\": \"" << c.errorPhase << "\", \"source\": \""
+            << escapeJson(c.source) << "\"}";
         if (i + 1 < summary.crashCases.size())
             oss << ",";
         oss << "\n";
@@ -1111,9 +1122,9 @@ std::string formatSummaryJson(const FuzzSummary& summary) {
     oss << "  \"disagreementCases\": [\n";
     for (size_t i = 0; i < summary.disagreementCases.size(); ++i) {
         const auto& d = summary.disagreementCases[i];
-        oss << "    {\"index\": " << i << ", \"reason\": \"" << escapeJson(d.errorMessage) << "\", \"interp\": \"" << escapeJson(d.interpOutput)
-            << "\", \"stackvm\": \"" << escapeJson(d.stackvmOutput) << "\", \"regvm\": \"" << escapeJson(d.regvmOutput) << "\", \"source\": \""
-            << escapeJson(d.source) << "\"}";
+        oss << "    {\"index\": " << i << ", \"reason\": \"" << escapeJson(d.errorMessage) << "\", \"interp\": \""
+            << escapeJson(d.interpOutput) << "\", \"stackvm\": \"" << escapeJson(d.stackvmOutput) << "\", \"regvm\": \""
+            << escapeJson(d.regvmOutput) << "\", \"source\": \"" << escapeJson(d.source) << "\"}";
         if (i + 1 < summary.disagreementCases.size())
             oss << ",";
         oss << "\n";

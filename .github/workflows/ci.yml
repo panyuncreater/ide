@@ -167,7 +167,9 @@ jobs:
           which lrelease6 && sudo ln -sf "$(which lrelease6)" /usr/local/bin/lrelease || true
           # 验证至少一种 lrelease 变体可用（不强制 lrelease6，CMake find_program 会兜底）
           which lrelease6 || which lrelease || which lrelease-qt6
-          lrelease6 --version 2>/dev/null || lrelease --version
+          # 注：Qt 工具链仅接受单横线 -version，--version 会被视为未知选项
+          # → 打印用法并退出码 1，导致此步骤（set -e）误报失败
+          lrelease6 -version 2>/dev/null || lrelease -version
 
       - name: 配置 CMake (Linux Preset)
         if: runner.os == 'Linux'

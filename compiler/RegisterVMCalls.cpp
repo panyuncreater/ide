@@ -150,8 +150,9 @@ VMResult RegisterVM::executeCallOps(RegOp op, size_t& ip) {
         // 帧复用：保留 returnIp/returnReg（调用者信息），切换 chunk/ip/寄存器窗口
         fr.chunk = &target;
         fr.ip = 0;
-        fr.registerCount = static_cast<uint8_t>(
-            target.registerCount <= RegCallFrame::MAX_REGISTERS ? target.registerCount : RegCallFrame::MAX_REGISTERS);
+        fr.registerCount = static_cast<uint8_t>(target.registerCount <= static_cast<int>(RegCallFrame::MAX_REGISTERS)
+                                                    ? target.registerCount
+                                                    : static_cast<int>(RegCallFrame::MAX_REGISTERS));
         for (uint8_t i = 0; i < fr.registerCount; ++i) {
             fr.registers[i] = Value::nullValue(); // 清旧帧残值（与新帧零初始化对齐）
         }
@@ -507,9 +508,10 @@ VMResult RegisterVM::executeCallImpl(size_t& ip, const std::string& funName, uin
         newFrame.returnIp = ip + returnOffset; // C-8 fix: 用 returnOffset 替代硬编码 5+argCount
         newFrame.returnReg = dstReg;
         // #8 fix: 定长 array，仅记录激活数量
-        newFrame.registerCount = static_cast<uint8_t>(calleeChunk.registerCount <= RegCallFrame::MAX_REGISTERS
-                                                          ? calleeChunk.registerCount
-                                                          : RegCallFrame::MAX_REGISTERS);
+        newFrame.registerCount =
+            static_cast<uint8_t>(calleeChunk.registerCount <= static_cast<int>(RegCallFrame::MAX_REGISTERS)
+                                     ? calleeChunk.registerCount
+                                     : static_cast<int>(RegCallFrame::MAX_REGISTERS));
         // 填充参数
         for (uint8_t i = 0; i < argCount; ++i) {
             if (i < newFrame.registerCount) {
@@ -517,7 +519,7 @@ VMResult RegisterVM::executeCallImpl(size_t& ip, const std::string& funName, uin
             }
         }
         for (uint8_t i = argCount; i < adjustedArgCount; ++i) {
-            if (i < newFrame.registerCount && i - argCount < defaults.size()) {
+            if (i < newFrame.registerCount && static_cast<size_t>(i - argCount) < defaults.size()) {
                 newFrame.registers[i] = defaults[i - argCount];
             }
         }
@@ -541,8 +543,9 @@ VMResult RegisterVM::executeCallImpl(size_t& ip, const std::string& funName, uin
     newFrame.returnReg = dstReg;
     // #8 fix: 定长 array，仅记录激活数量
     newFrame.registerCount =
-        static_cast<uint8_t>(calleeChunk.registerCount <= RegCallFrame::MAX_REGISTERS ? calleeChunk.registerCount
-                                                                                      : RegCallFrame::MAX_REGISTERS);
+        static_cast<uint8_t>(calleeChunk.registerCount <= static_cast<int>(RegCallFrame::MAX_REGISTERS)
+                                 ? calleeChunk.registerCount
+                                 : static_cast<int>(RegCallFrame::MAX_REGISTERS));
 
     // 填充参数
     for (uint8_t i = 0; i < argCount && i < newFrame.registerCount; ++i) {
@@ -819,8 +822,9 @@ VMResult RegisterVM::invokeClosureSync(const Value& closure, const Value* args, 
     newFrame.returnIp = 0;                         // 哨兵值——内部循环检测帧弹出，不依赖 returnIp
     newFrame.returnReg = static_cast<int>(dstReg); // 闭包返回值写入调用者 dstReg
     newFrame.registerCount =
-        static_cast<uint8_t>(targetChunk.registerCount <= RegCallFrame::MAX_REGISTERS ? targetChunk.registerCount
-                                                                                      : RegCallFrame::MAX_REGISTERS);
+        static_cast<uint8_t>(targetChunk.registerCount <= static_cast<int>(RegCallFrame::MAX_REGISTERS)
+                                 ? targetChunk.registerCount
+                                 : static_cast<int>(RegCallFrame::MAX_REGISTERS));
     // 填充参数
     uint8_t effectiveArgCount = static_cast<uint8_t>(argCount);
     for (uint8_t i = 0; i < effectiveArgCount && i < newFrame.registerCount; ++i) {
@@ -1717,8 +1721,10 @@ Value RegisterVM::callCoroutineNext(Value& coroVal) {
     newFrame.ip = 0;
     newFrame.returnIp = currentFrame().ip;
     newFrame.returnReg = -1;
-    newFrame.registerCount = static_cast<uint8_t>(
-        genChunk->registerCount <= RegCallFrame::MAX_REGISTERS ? genChunk->registerCount : RegCallFrame::MAX_REGISTERS);
+    newFrame.registerCount =
+        static_cast<uint8_t>(genChunk->registerCount <= static_cast<int>(RegCallFrame::MAX_REGISTERS)
+                                 ? genChunk->registerCount
+                                 : static_cast<int>(RegCallFrame::MAX_REGISTERS));
     uint8_t argCount =
         static_cast<uint8_t>(std::min(cd->args.size(), static_cast<size_t>(std::numeric_limits<uint8_t>::max())));
     for (uint8_t i = 0; i < argCount && i < newFrame.registerCount; ++i)

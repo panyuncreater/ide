@@ -185,8 +185,9 @@ void RegisterVM::initExecution(const RegisterCompileResult& result) {
     mainFrame.ip = 0;
     // #8 fix: 定长 array，无需 resize，仅记录激活数量
     mainFrame.registerCount =
-        static_cast<uint8_t>(mainChunk_.registerCount <= RegCallFrame::MAX_REGISTERS ? mainChunk_.registerCount
-                                                                                     : RegCallFrame::MAX_REGISTERS);
+        static_cast<uint8_t>(mainChunk_.registerCount <= static_cast<int>(RegCallFrame::MAX_REGISTERS)
+                                 ? mainChunk_.registerCount
+                                 : static_cast<int>(RegCallFrame::MAX_REGISTERS));
     frames_.push_back(std::move(mainFrame));
 
     initialized_ = true;

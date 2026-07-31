@@ -273,7 +273,10 @@ if(MINILANG_USE_JIT)
     set(ASMJIT_STATIC ON CACHE BOOL "Build asmjit as static library" FORCE)
     set(ASMJIT_TEST OFF CACHE BOOL "Build asmjit tests" FORCE)
     set(ASMJIT_NO_INSTALL ON CACHE BOOL "Disable asmjit install" FORCE)
-    add_subdirectory(third_party/asmjit)
+    # SYSTEM：将 asmjit 导出的头文件目录标记为系统包含路径，
+    # 抑制其头文件在本项目 TU 中触发的 -Wpedantic 警告
+    # （如匿名 struct）——第三方代码不受本项目 -Werror 门禁约束。
+    add_subdirectory(third_party/asmjit SYSTEM)
     add_compile_definitions(MINILANG_USE_JIT)
     message(STATUS "JIT backend enabled (asmjit ${ASMJIT_VERSION})")
 endif()

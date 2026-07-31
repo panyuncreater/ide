@@ -63,7 +63,10 @@ std::string readFileContent(const std::string& path) {
     std::fseek(f, 0, SEEK_SET);
     if (size > 0) {
         content.resize(static_cast<size_t>(size));
-        std::fread(&content[0], 1, static_cast<size_t>(size), f);
+        // glibc 对 fread 标记 warn_unused_result：读取不足时截断到实际字节数
+        size_t readBytes = std::fread(&content[0], 1, static_cast<size_t>(size), f);
+        if (readBytes < static_cast<size_t>(size))
+            content.resize(readBytes);
     }
     std::fclose(f);
     return content;

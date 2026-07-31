@@ -1373,7 +1373,8 @@ TEST(ExecutionTraceRecorderRollback, StackVM_RestoresGlobalsAfterRollback) {
     ASSERT_EQ(targetSnap->backend, TraceBackend::StackVM);
 
     // 验证快照包含 globals 数据
-    bool hasX = false, hasY = false;
+    // [[maybe_unused]]：下方注释说明不强制断言 x/y 存在，仅保留扫描逻辑供调试观察
+    [[maybe_unused]] bool hasX = false, hasY = false;
     for (const auto& kv : targetSnap->globalsValues) {
         if (kv.first == "x")
             hasX = true;
@@ -1602,8 +1603,7 @@ TEST(ExecutionTraceRecorderInterpreterRollback, StringsOnlyModeLeavesInterpreter
     for (size_t i = 0; i < r.size(); ++i) {
         auto snap = r.stepAt(i);
         ASSERT_TRUE(snap.has_value());
-        EXPECT_FALSE(snap->interpreterState)
-            << "StringsOnly 模式下 interpreterState 应为空（快照 idx=" << i << "）";
+        EXPECT_FALSE(snap->interpreterState) << "StringsOnly 模式下 interpreterState 应为空（快照 idx=" << i << "）";
     }
 
     r.endSession();

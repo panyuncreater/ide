@@ -2,6 +2,28 @@
 
 本文件记录 MiniLang IDE 的开发演进历史，包括性能优化、正确性修复与工程基础设施改进。所有条目均通过全量单元测试验证。历史版本归档至 [docs/changelog/archive/](docs/changelog/archive/)。
 
+## 2026-07-31 · CI 修复（Linux GCC -Werror 全量补全 + Ubuntu lrelease + asmjit SYSTEM）
+
+### 背景
+
+commit `2d3301c` 仅修复 5 个文件的 GCC -Werror 问题，遗漏 18 个文件，导致 CI / Performance Tracking / Nightly 流水线全部失败：Code Style（clang-format，非阻塞 continue-on-error）、Docker Build（GCC -Werror）、Build & Test ubuntu（lrelease `--version` 误报）、Build & Test macOS（GCC -Werror）、Performance Tracking（Lexer.cpp sign-compare）。
+
+### 修复内容（18 文件）
+
+- **sign-compare**：[lexer/Lexer.cpp](file:///lexer/Lexer.cpp) `current_`(int) vs `source_.size()`(size_t) 比较 → `static_cast<size_t>`；[compiler/RegisterBytecodeBackend.cpp](file:///compiler/RegisterBytecodeBackend.cpp) 11 处 `N+i` vs `operands.size()` → `static_cast<size_t>`；[compiler/RegisterVMCalls.cpp](file:///compiler/RegisterVMCalls.cpp) `i-argCount` vs `defaults.size()` → `static_cast<size_t>`；[compiler/RegisterVM.cpp](file:///compiler/RegisterVM.cpp) / RegisterVMCalls 4 处 `registerCount` vs `MAX_REGISTERS` 三元 → `static_cast<int>(MAX_REGISTERS)`。
+- **unused-function / unused-but-set-variable**：[cli/fuzz_core.cpp](file:///cli/fuzz_core.cpp) `isParseFailure`、[compiler/JIT.cpp](file:///compiler/JIT.cpp) `verifyNanBoxConstants` + 5 局部变量、[gui/VariableInspectorPanel.cpp](file:///gui/VariableInspectorPanel.cpp) `bitsToBinary` → `[[maybe_unused]]`；[tests/TestBytecodeIRBackend.cpp](file:///tests/TestBytecodeIRBackend.cpp) / [tests/TestExecutionTraceRecorder.cpp](file:///tests/TestExecutionTraceRecorder.cpp) 同类。
+- **warn_unused_result（glibc fread）**：[cli/dap_core.cpp](file:///cli/dap_core.cpp) `fread` 返回值检查 + 截断到实际字节数。
+- **VM.h `__forceinline` 平台守卫**：`__forceinline` 非 ISO 关键字，GCC 无法解析；且函数体在 VM.cpp（其他 TU 调用时不可见），GCC `always_inline` 会硬错误。改为 `_MSC_VER` 守卫，GCC/Clang 用普通声明。
+- **CMakeLists.txt asmjit SYSTEM**：`add_subdirectory(third_party/asmjit SYSTEM)` 抑制第三方头文件的 -Wpedantic 警告（匿名 struct 等），第三方代码不受 -Werror 门禁约束。
+- **ci.yml lrelease `-version`**：Qt 工具链仅接受单横线 `-version`，`--version` 被视为未知选项打印用法退出码 1，导致 set -e 误报失败。
+- **app/ide.cpp Qt 6.8 deprecated API**：`associatedWidgets()` → `associatedObjects()` + `qobject_cast`；4 处未使用参数/变量清理。
+- **gui/StepExplainerPanel.cpp switch 缺 case**：补全 `OP_YIELD`/`OP_AWAIT`/`OP_WRITEBACK_INDEX_VAR`/`OP_TAIL_CALL`（GCC -Werror=switch）。
+- **test_harness/CMakeLists.txt**：GNU ld `--allow-multiple-definition`（桩/真实实现同名符号，与 MSVC .obj 优先语义对齐）。
+
+### 验证结果
+
+- Windows MSVC Debug：minilang_core + minilang_tests 构建零错误，LexerTest/CompilerTest/RegisterBytecodeBackend/JIT 测试全绿。
+
 ## 2026-07-31 · 插件系统 + 沙箱模式 + HostFunctionRegistry + async/await 阶段 4 测试补全
 
 ### 插件系统 + 沙箱模式 + HostFunctionRegistry（七特性 MVP 阶段 6/7）

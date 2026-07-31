@@ -120,7 +120,9 @@ std::string valueToBitsHex(const Value& v) {
     return MemoryInspectionAPI::inspectValue(v).bitsHex;
 }
 
-std::string bitsToBinary(uint64_t bits) {
+// [[maybe_unused]]：位模式展示当前经 bitsHex 路径，二进制转换保留供
+// 教学面板扩展使用，避免 GCC -Werror=unused-function（匿名命名空间）。
+[[maybe_unused]] std::string bitsToBinary(uint64_t bits) {
     std::string s(64, '0');
     for (int i = 0; i < 64; ++i) {
         if (bits & (1ULL << (63 - i)))

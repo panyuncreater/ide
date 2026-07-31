@@ -352,7 +352,6 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
         if (c.isDigit() || (c == '.' && pos + 1 < len && text[pos + 1].isDigit())) {
             int start = pos;
             bool hasDot = false;
-            bool hasExp = false;
 
             // 整数部分（如果有，前导点场景无整数部分）
             while (pos < len && text[pos].isDigit()) {
@@ -376,7 +375,6 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
                     pos++;
                 }
                 if (pos < len && text[pos].isDigit()) {
-                    hasExp = true;
                     while (pos < len && text[pos].isDigit()) {
                         pos++;
                     }

@@ -152,7 +152,7 @@
 // ============================================================
 
 /// 递归填充文件树子节点：仅列出 .mini/.ml 文件与子目录，设置 Fluent 图标与完整路径 tooltip。
-static void populateDirChildren(QTreeWidget* tree, QTreeWidgetItem* parentItem, const QString& dirPath, int depth) {
+static void populateDirChildren(QTreeWidget* /*tree*/, QTreeWidgetItem* parentItem, const QString& dirPath, int depth) {
     if (depth > 8)
         return;
     QDir dir(dirPath);
@@ -188,7 +188,7 @@ static void populateDirChildren(QTreeWidget* tree, QTreeWidgetItem* parentItem, 
 }
 
 /// 解析文件树右键菜单的目标目录：目录自身取其路径，文件则取其父目录路径。
-static QString resolveTreeContextMenuTargetDir(QTreeWidget* tree, QTreeWidgetItem* item) {
+static QString resolveTreeContextMenuTargetDir(QTreeWidget* /*tree*/, QTreeWidgetItem* item) {
     if (!item)
         return QString();
     bool isDir = item->data(0, Qt::UserRole + 1).toBool();
@@ -1225,7 +1225,6 @@ void Ide::handleEditorContextAction(const QString& action) {
         syncVmBreakpoints();
     } else if (action == "editBreakpointCondition") {
         // 复用 CodeEditor 的断点条件编辑
-        int line = codeEditor_->textCursor().blockNumber() + 1;
         // 通过 LineNumberArea 的右键菜单触发——直接发射 breakpointConditionRequested
         // CodeEditor 没有公共 API，这里简化为提示用户使用行号区右键
         QToolTip::showText(QCursor::pos(), mlTr("请在行号左侧右键点击断点设置条件"), codeEditor_);
@@ -6173,6 +6172,7 @@ void Ide::appendOutput(const QString& text, OutputLevel level) {
 
 /// 向错误列表追加诊断项（带行/列与严重级别）。
 void Ide::appendError(const QString& text, int line, int column, DiagLevel level, const std::string& diagCode) {
+    (void)column; // 列号暂未展示（保留参数以维持接口稳定）
     if (!errorPanelHasErrors_) {
         errorListWidget_->clear();
         errorPanelHasErrors_ = true;
@@ -7721,7 +7721,6 @@ void Ide::populateHelpDialogShortcuts(QGridLayout* grid, QDialog* dlg) {
          },
          8},
     };
-    int row = 0;
     int leftCol = 0, rightCol = 2;
     int leftRow = 0, rightRow = 0;
     int groupIdx = 0;
@@ -7778,7 +7777,16 @@ void Ide::startGuidedTour() {
                          mlTr("下一步 →"), mlTr("跳过引导"));
 
     // 步骤 2：高亮运行按钮（F5）
-    guidedTour_->addStep(runAction_ ? runAction_->associatedWidgets().value(0) : nullptr, mlTr("② 运行程序"),
+    // Qt 6.8: associatedWidgets() 已弃用，改用 associatedObjects() + qobject_cast
+    QWidget* runButtonWidget = nullptr;
+    if (runAction_) {
+        const QList<QObject*> assocObjs = runAction_->associatedObjects();
+        for (QObject* obj : assocObjs) {
+            if ((runButtonWidget = qobject_cast<QWidget*>(obj)))
+                break;
+        }
+    }
+    guidedTour_->addStep(runButtonWidget, mlTr("② 运行程序"),
                          mlTr("点击工具栏的 <b>▶ 运行</b> 按钮，或按 <b>F5</b> 运行你的代码。<br><br>"
                               "程序会被编译为字节码，由虚拟机执行。"),
                          mlTr("下一步 →"), mlTr("跳过引导"));

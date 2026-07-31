@@ -453,22 +453,26 @@ static_assert(offsetof(JitContext, enumRegistryPtr) == 256,
 static_assert(offsetof(JitContext, syncMethodHandled) == 264,
               "JitContext::syncMethodHandled offset mismatch (expected 264)");
 
-void verifyNanBoxConstants() {
+// 注：仅供调试/教学验证手动调用，无运行时调用点；
+// [[maybe_unused]] 避免 GCC -Werror=unused-function（匿名命名空间内未使用即报警）。
+[[maybe_unused]] void verifyNanBoxConstants() {
     // 用 NaNBox 的 public 方法间接验证常量一致性
     // NaNBox::fromInt/fromBool/fromPtr/fromFloat 编码后，rawBits 应与 JIT 常量一致
-    NaNBox intBox = NaNBox::fromInt(0);
+    // [[maybe_unused]]：Release（NDEBUG）下 assert 展开为空，变量仅写不读，
+    // 避免 GCC -Werror=unused-but-set-variable。
+    [[maybe_unused]] NaNBox intBox = NaNBox::fromInt(0);
     assert((intBox.rawBits() & JIT_TAG_FIELD_MASK) == JIT_INT_TAG_BASE && "JIT_INT_TAG_BASE 与 NaNBox.h 不一致");
-    NaNBox boolBox = NaNBox::fromBool(false);
+    [[maybe_unused]] NaNBox boolBox = NaNBox::fromBool(false);
     assert((boolBox.rawBits() & JIT_TAG_FIELD_MASK) == JIT_BOOL_TAG_BASE && "JIT_BOOL_TAG_BASE 与 NaNBox.h 不一致");
-    NaNBox nullBox = NaNBox::null();
+    [[maybe_unused]] NaNBox nullBox = NaNBox::null();
     assert(nullBox.rawBits() == JIT_NULL_BITS && "JIT_NULL_BITS 与 NaNBox.h 不一致");
     // R143 阶段 3b：验证 JIT_NAN_BOXED_FLOAT_MARKER 与 NaNBox.h NAN_BOXED_FLOAT_MARKER 一致
     // NaNBox::fromFloat(quiet NaN) 会触发 isBoxedNaN 分支，用 NAN_BOXED_FLOAT_MARKER 替换
     // 构造一个 tag field 在 0x7FF8..0x7FFB 范围的 double（即 quiet NaN）
     // 简单验证：fromFloat(0.0) 的 raw bits 应等于 0.0 的 IEEE 754 表示（非 boxed NaN）
-    NaNBox zeroFloat = NaNBox::fromFloat(0.0);
+    [[maybe_unused]] NaNBox zeroFloat = NaNBox::fromFloat(0.0);
     double zeroDouble = 0.0;
-    uint64_t expectedZeroBits = 0;
+    [[maybe_unused]] uint64_t expectedZeroBits = 0;
     std::memcpy(&expectedZeroBits, &zeroDouble, sizeof(double));
     assert(zeroFloat.rawBits() == expectedZeroBits && "JIT float 编码与 NaNBox.h 不一致");
 }
