@@ -758,11 +758,14 @@ void JITBackend::emitCheckInt(x86::Assembler& a, x86::Gp val, Label failLabel) {
         a.mov(x86::qword_ptr(x86::r12, jit_offset::osrSavedBp), x86::r13); // osrSavedBp = r13
         a.mov(x86::qword_ptr(x86::r12, jit_offset::osrSavedSp), x86::r15); // osrSavedSp = r15
         a.mov(x86::qword_ptr(x86::r12, jit_offset::stackTop), x86::r15);   // 同步栈顶
-        a.mov(x86::rcx, x86::r12);                                         // arg1 = ctx
-        a.mov(x86::rdx, static_cast<int32_t>(currentChunkIdx_));           // arg2 = chunkIdx
+        // ABI fix: 参数寄存器按平台选择（Win64: rcx/rdx；SysV: rdi/rsi）
 #ifdef _WIN32
+        a.mov(x86::rcx, x86::r12);                               // arg1 = ctx
+        a.mov(x86::rdx, static_cast<int32_t>(currentChunkIdx_)); // arg2 = chunkIdx
         a.sub(x86::rsp, 32); // shadow space (32) + 8B 对齐填充
 #else
+        a.mov(x86::rdi, x86::r12);                               // arg1 = ctx
+        a.mov(x86::esi, static_cast<int32_t>(currentChunkIdx_)); // arg2 = chunkIdx
         a.sub(x86::rsp, 16); // 16-byte alignment
 #endif
         a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitDeoptimize));
@@ -794,11 +797,14 @@ void JITBackend::emitCheckInt(x86::Assembler& a, x86::Gp val, Label failLabel) {
         a.mov(x86::qword_ptr(x86::r12, jit_offset::osrSavedBp), x86::r13); // osrSavedBp = r13
         a.mov(x86::qword_ptr(x86::r12, jit_offset::osrSavedSp), x86::r15); // osrSavedSp = r15
         a.mov(x86::qword_ptr(x86::r12, jit_offset::stackTop), x86::r15);   // 同步栈顶
-        a.mov(x86::rcx, x86::r12);                                         // arg1 = ctx
-        a.mov(x86::rdx, static_cast<int32_t>(currentChunkIdx_));           // arg2 = chunkIdx
+        // ABI fix: 同上，参数寄存器按平台选择
 #ifdef _WIN32
+        a.mov(x86::rcx, x86::r12);                               // arg1 = ctx
+        a.mov(x86::rdx, static_cast<int32_t>(currentChunkIdx_)); // arg2 = chunkIdx
         a.sub(x86::rsp, 32); // shadow space (32) + 8B 对齐填充
 #else
+        a.mov(x86::rdi, x86::r12);                               // arg1 = ctx
+        a.mov(x86::esi, static_cast<int32_t>(currentChunkIdx_)); // arg2 = chunkIdx
         a.sub(x86::rsp, 16); // 16-byte alignment
 #endif
         a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitDeoptimize));
@@ -1468,11 +1474,15 @@ void JITBackend::emitLoop(x86::Assembler& a, Label epilogue, Label jumpTarget, s
             a.mov(x86::qword_ptr(x86::r12, jit_offset::stackTop), x86::r15);
             // c. 调用 jitTriggerOsrMigration(ctx, chunkIdx)
             //    触发特化重编译（含 OSR 入口点生成），通过 ctx->osrEntryPoint 返回
+            // ABI fix: 参数寄存器按平台选择（Win64: rcx/rdx；SysV: rdi/rsi），
+            // 原实现硬编码 rcx/rdx 导致 Linux 下 ctx 传入垃圾值 → SIGSEGV。
+#ifdef _WIN32
             a.mov(x86::rcx, x86::r12);                       // arg1 = ctx
             a.mov(x86::rdx, static_cast<int32_t>(chunkIdx)); // arg2 = chunkIdx
-#ifdef _WIN32
             a.sub(x86::rsp, 32); // shadow space (32) + 8B 对齐填充
 #else
+            a.mov(x86::rdi, x86::r12);                       // arg1 = ctx
+            a.mov(x86::esi, static_cast<int32_t>(chunkIdx)); // arg2 = chunkIdx
             a.sub(x86::rsp, 16); // 16-byte alignment
 #endif
             a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitTriggerOsrMigration));
@@ -1494,11 +1504,14 @@ void JITBackend::emitLoop(x86::Assembler& a, Label epilogue, Label jumpTarget, s
         } else {
             // R157: 简化版 OSR（仅触发特化重编译，不迁移栈帧，下次 execute 生效）
             a.mov(x86::qword_ptr(x86::r12, jit_offset::stackTop), x86::r15); // 同步栈顶
-            a.mov(x86::rcx, x86::r12);                                       // arg1 = ctx
-            a.mov(x86::rdx, static_cast<int32_t>(chunkIdx));                 // arg2 = chunkIdx
+            // ABI fix: 同上，参数寄存器按平台选择
 #ifdef _WIN32
+            a.mov(x86::rcx, x86::r12);                       // arg1 = ctx
+            a.mov(x86::rdx, static_cast<int32_t>(chunkIdx)); // arg2 = chunkIdx
             a.sub(x86::rsp, 32); // shadow space (32) + 8B 对齐填充
 #else
+            a.mov(x86::rdi, x86::r12);                       // arg1 = ctx
+            a.mov(x86::esi, static_cast<int32_t>(chunkIdx)); // arg2 = chunkIdx
             a.sub(x86::rsp, 16); // 16-byte alignment
 #endif
             a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitTriggerOsrRecompile));
@@ -1812,11 +1825,20 @@ bool JITBackend::emitCallDispatch(x86::Assembler& a, Label epilogue, const JitFu
         // 8. 栈溢出错误路径（必须在 returnLabel 之前，避免 fall-through 误触发）
         //    罕见路径，C++ 调用开销可忽略；错误消息与 jitCallByName 对齐
         a.bind(overflowLabel);
+        // ABI fix: 参数寄存器/栈预留按平台选择（原硬编码 Win64 rcx+32B shadow）
+#ifdef _WIN32
         a.mov(x86::rcx, x86::r12); // arg1 = ctx
         a.sub(x86::rsp, 32);       // shadow space + 对齐
         a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitReportStackOverflow));
         a.call(x86::rax);
         a.add(x86::rsp, 32);
+#else
+        a.mov(x86::rdi, x86::r12); // arg1 = ctx
+        a.sub(x86::rsp, 16);       // 16-byte alignment
+        a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitReportStackOverflow));
+        a.call(x86::rax);
+        a.add(x86::rsp, 16);
+#endif
         a.jmp(epilogue);
 
         // 9. 绑定返回 Label（函数 OP_RETURN 后跳回此处）

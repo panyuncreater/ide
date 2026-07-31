@@ -327,11 +327,14 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
                     //    Windows x64: rcx=ctx, rdx=chunkIdx; 需要 shadow space 32B
                     //    栈对齐：方法 chunk 入口 rsp%16==8，sub 40 后 rsp%16==0，
                     //    call 后 rsp%16==8（标准入口对齐），与 emitMethodCall 一致
+                    // ABI fix: SysV 下参数寄存器为 rdi/rsi（原硬编码 rcx/rdx 导致 Linux 下崩溃）
+#ifdef _WIN32
                     a.mov(x86::rcx, x86::r12);                       // arg1 = ctx
                     a.mov(x86::rdx, static_cast<int32_t>(chunkIdx)); // arg2 = chunkIdx
-#ifdef _WIN32
                     a.sub(x86::rsp, 32); // shadow space (32) + 8B 对齐填充
 #else
+                    a.mov(x86::rdi, x86::r12);                       // arg1 = ctx
+                    a.mov(x86::esi, static_cast<int32_t>(chunkIdx)); // arg2 = chunkIdx
                     a.sub(x86::rsp, 16); // 16-byte alignment
 #endif
                     a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitTriggerRecompile));
