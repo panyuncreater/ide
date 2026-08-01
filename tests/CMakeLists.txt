@@ -432,6 +432,9 @@ enable_testing()
 include(GoogleTest)
 gtest_discover_tests(minilang_tests
     DISCOVERY_MODE PRE_TEST
+    # 发现超时（--gtest_list_tests 启动耗时）：Release 大 exe 在 ctest -j 并行
+    # 下多目标同时 discovery 易超默认 5s（Windows CI 实测超时失败）
+    DISCOVERY_TIMEOUT 120
     PROPERTIES
         TIMEOUT 300
 )
@@ -465,6 +468,8 @@ endif()
 # 注册到 CTest（独立于 minilang_tests 的测试发现）
 gtest_discover_tests(minilang_perf_test
     DISCOVERY_MODE PRE_TEST
+    # 同 minilang_tests：发现超时提升至 120s（并行 discovery 启动耗时）
+    DISCOVERY_TIMEOUT 120
     PROPERTIES
         TIMEOUT 600
 )
@@ -515,6 +520,8 @@ endif()
 
 gtest_discover_tests(minilang_app_tests
     DISCOVERY_MODE PRE_TEST
+    # 同 minilang_tests：发现超时提升至 120s（并行 discovery 启动耗时）
+    DISCOVERY_TIMEOUT 120
     PROPERTIES
         TIMEOUT 300
 )
@@ -562,6 +569,8 @@ endif()
 
 gtest_discover_tests(minilang_gui_smoke
     DISCOVERY_MODE PRE_TEST
+    # 同 minilang_tests：发现超时提升至 120s（并行 discovery 启动耗时）
+    DISCOVERY_TIMEOUT 120
     PROPERTIES
         TIMEOUT 120
 )
