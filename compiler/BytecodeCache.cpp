@@ -185,8 +185,9 @@ SourceMeta computeSourceMeta(const std::string& sourcePath) {
     if (ec)
         return meta;
 
-    // C++20: file_time_type 可通过 clock_cast 转换到 system_clock
-    auto sctp = std::chrono::clock_cast<std::chrono::system_clock>(ftime);
+    // C++20 跨平台：file_time_type → system_clock 用「差值平移」法（不依赖
+    // clock_cast/to_sys——Apple libc++ 无 clock_cast，MSVC file_clock 无 to_sys）
+    auto sctp = std::chrono::system_clock::now() + (ftime - std::filesystem::file_time_type::clock::now());
     meta.mtimeMs = std::chrono::duration_cast<std::chrono::milliseconds>(sctp.time_since_epoch()).count();
 
     // 读取源码内容计算 hash

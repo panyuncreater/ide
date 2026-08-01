@@ -326,13 +326,13 @@ public:
     void setStepCallbackEnabled(bool enabled);
 
     /// 是否发生过运行时错误
-    bool hasError() const;
+    bool hasError() const override;
 
     /// 获取最后的运行时错误
-    std::string getLastError() const;
+    std::string getLastError() const override;
 
     /// 获取最后错误的源码行号（1-based，0=无位置信息）
-    int getLastErrorLine() const;
+    int getLastErrorLine() const override;
 
     /// 获取诊断信息（ARCH-09 fix: IBackend override）
     const DiagnosticBag& getDiagnostics() const override { return diagnostics_; }

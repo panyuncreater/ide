@@ -173,6 +173,10 @@ inline QStringList availableMiniLangLocales() {
 
 #define ML_TR_CONTEXT "MiniLang"
 
+/// QSettings 中持久化用户语言偏好的键名（与启用分支一致，
+/// 供 I18N=OFF 下仍编译的引用点（如 buildLanguageMenu）使用）
+inline constexpr const char* kLocaleSettingsKey = "ui/locale";
+
 /// 翻译宏（默认上下文，i18n 关闭时退化为 fromUtf8）
 #define mlTr(string) QString::fromUtf8(string)
 

@@ -111,8 +111,8 @@ public:
     /// 错误状态
     /// P2-12: hasError_/getLastError()/getLastErrorLine() 从 diagnostics_ 派生，
     /// 消除 lastError_/lastErrorLine_ 字段冗余（与 VM 改造对齐）。
-    bool hasError() const { return hasError_ || diagnostics_.hasErrors(); }
-    std::string getLastError() const {
+    bool hasError() const override { return hasError_ || diagnostics_.hasErrors(); }
+    std::string getLastError() const override {
         const auto& diags = diagnostics_.all();
         for (auto it = diags.rbegin(); it != diags.rend(); ++it) {
             if (it->isError())
@@ -120,7 +120,7 @@ public:
         }
         return {};
     }
-    int getLastErrorLine() const {
+    int getLastErrorLine() const override {
         const auto& diags = diagnostics_.all();
         for (auto it = diags.rbegin(); it != diags.rend(); ++it) {
             if (it->isError())
