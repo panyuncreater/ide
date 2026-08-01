@@ -10,6 +10,10 @@
 #   native-fuzz      — 构建并运行 minilang-fuzz 原生三后端差分模糊测试
 #                      （拓展计划·基建：崩溃/分歧用例自动归档 artifact）
 #   sanitize-tsan    — TSan 竞态检测（并发/GUI 测试子集，信息性）
+#   pipeline-diff    — testing/ 差分流水线：生成式四后端批量投票 + CTest 回归守护
+#                      （命中自动归档 artifact，供人工缩减登记，见 testing/README.md）
+#   pipeline-sanitize — testing/ Sanitizer 矩阵：ASan+UBSan 扫生成程序
+#                      （Qt 已知误报由 testing/sanitizer/*.supp 抑制；命中自动归档）
 #   formatter-audit  — 构建并运行 formatter_audit 审计工具
 #                      （ci.yml 的 test-harness 仅构建不运行，此处实际执行）
 #   pgo-linux        — PGO 两趟构建验证（GENERATE → 跑代表性负载 → USE）
@@ -194,6 +198,161 @@ jobs:
         # -R 正则筛选竞态高风险测试：并发原语/channel/协程/GUI 烟雾/Worker
         run: ctest -j 2 --output-on-failure -R 'Concurrency|Channel|Thread|Coroutine|GuiSmoke|Worker|Async'
 
+
+  # ============================================================
+  # 作业 1.7：差分流水线（testing/ 阶段二+五：生成式四后端差分 + 回归守护）
+  # ------------------------------------------------------------
+  # 构建 mini_diff_runner（MINILANG_BUILD_TESTING_PIPELINE=ON）后：
+  #   1) ctest -L pipeline 跑既有回归（pipeline.diff.* / pipeline.fuzz.replay /
+  #      pipeline.regression.*，WILL_FAIL 机制守护已知 bug 并自动提醒转正）
+  #   2) diff_test.py 批量生成式差分（时间派生种子，每夜不同、可复现；默认安全
+  #      子集规避已知 RegisterVM 容量限制）。命中（disagreement/crash/hang/
+  #      jit_deviation）→ 作业失败 + 命中用例与报告自动归档 artifact（30 天）。
+  # 后续人工流程：下载 artifact → testing/reduce.py --register 缩减并登记回归。
+  # ============================================================
+  pipeline-diff:
+    name: Differential Pipeline (testing/)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: 应用 QFluentKit 本地补丁
+        shell: bash
+        run: git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+
+      - name: 安装 Qt6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          aqtversion: ${{ env.AQT_VERSION }}
+          cache: true
+
+      - name: 设置 QTDIR 环境变量
+        shell: bash
+        run: echo "QTDIR=${{ env.QT_ROOT_DIR }}/.." >> $GITHUB_ENV
+
+      - name: 安装 Qt Linguist 工具 (lrelease)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qt6-l10n-tools
+          which lrelease6 && sudo ln -sf "$(which lrelease6)" /usr/local/bin/lrelease || true
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2.23
+        with:
+          key: ${{ runner.os }}-pipeline-diff
+
+      - name: 配置 CMake（启用测试流水线）
+        run: cmake --preset linux-gcc-release -DMINILANG_USE_CCACHE=ON -DMINILANG_BUILD_TESTING_PIPELINE=ON
+
+      - name: 构建 mini_diff_runner + fuzz_parser_replay
+        run: cmake --build out/build/linux-release --target mini_diff_runner fuzz_parser_replay --parallel
+
+      - name: 运行流水线回归（pipeline.* CTest）
+        working-directory: out/build/linux-release
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ctest -L pipeline --output-on-failure
+
+      - name: 批量生成式差分（300 种子，时间派生）
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          SEED=$(date +%s)
+          echo "差分种子: $SEED（复现：python3 testing/diff_test.py --n 300 --seed $SEED）"
+          python3 testing/diff_test.py --n 300 --seed "$SEED" \
+            --runner out/build/linux-release/testing/mini_diff_runner \
+            --out-dir out/build/linux-release/testing_artifacts_pipeline
+
+      - name: 上传命中用例与报告（发现问题时）
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: pipeline-findings-${{ github.run_id }}
+          path: out/build/linux-release/testing_artifacts_pipeline/
+          if-no-files-found: ignore
+          retention-days: 30
+
+  # ============================================================
+  # 作业 1.8：Sanitizer 矩阵（testing/ 阶段三：ASan+UBSan 扫生成程序）
+  # ------------------------------------------------------------
+  # linux-gcc-asan 预设（MINILANG_SANITIZE=both，ASan+UBSan）构建 sanitized
+  # mini_diff_runner，以 --sanitized 跑 N 个生成种子：对编译器/VM 自身的内存
+  # 安全/UB 自动归类（与差分投票正交：输出可能四后端一致但内存不安全）。
+  # 命中 → 作业失败 + 用例与原始 stderr 归档 artifact。Qt 已知误报（QGlobalStatic/
+  # vptr 等）由 testing/sanitizer/{asan,lsan,ubsan}.supp 抑制，涉及 minilang_core
+  # 的命中一律不抑制。
+  # ============================================================
+  pipeline-sanitize:
+    name: Sanitizer Pipeline (ASan+UBSan)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: 应用 QFluentKit 本地补丁
+        shell: bash
+        run: git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+
+      - name: 安装 Qt6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          aqtversion: ${{ env.AQT_VERSION }}
+          cache: true
+
+      - name: 设置 QTDIR 环境变量
+        shell: bash
+        run: echo "QTDIR=${{ env.QT_ROOT_DIR }}/.." >> $GITHUB_ENV
+
+      - name: 安装 Qt Linguist 工具 (lrelease)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qt6-l10n-tools
+          which lrelease6 && sudo ln -sf "$(which lrelease6)" /usr/local/bin/lrelease || true
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2.23
+        with:
+          key: ${{ runner.os }}-pipeline-san
+
+      - name: 配置 CMake（ASan+UBSan Preset + 流水线）
+        run: cmake --preset linux-gcc-asan -DMINILANG_USE_CCACHE=ON -DMINILANG_BUILD_TESTING_PIPELINE=ON
+
+      - name: 构建 sanitized mini_diff_runner
+        run: cmake --build out/build/linux-asan --target mini_diff_runner --parallel
+
+      - name: 批量 sanitizer 差分（200 种子，时间派生）
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          SEED=$(date +%s)
+          echo "sanitizer 种子: $SEED（复现：python3 testing/diff_test.py --sanitized --n 200 --seed $SEED）"
+          python3 testing/diff_test.py --sanitized --n 200 --seed "$SEED" \
+            --san-runner out/build/linux-asan/testing/mini_diff_runner \
+            --out-dir out/build/linux-asan/testing_artifacts_san
+
+      - name: 上传 sanitizer 命中用例与报告（发现问题时）
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: pipeline-sanitizer-findings-${{ github.run_id }}
+          path: out/build/linux-asan/testing_artifacts_san/
+          if-no-files-found: ignore
+          retention-days: 30
 
   # ============================================================
   # 作业 2：formatter_audit 构建 + 运行
