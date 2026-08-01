@@ -57,7 +57,7 @@ inline void animateShow(QWidget* panel, int targetHeight) {
     group->addAnimation(heightAnim);
 
     // 动画结束后恢复最大高度约束（允许后续手动调整）
-    QObject::connect(group, &QParallelAnimationGroup::finished, panel, [panel, targetHeight]() {
+    QObject::connect(group, &QParallelAnimationGroup::finished, panel, [panel]() {
         panel->setMaximumHeight(16777215); // QWIDGETSIZE_MAX
     });
 

@@ -5531,7 +5531,7 @@ void Ide::onFileTreeContextMenu(const QPoint& pos) {
     copyRelPathAct->setEnabled(hasPath && !workspaceDir_.isEmpty());
     revealAct->setEnabled(hasPath);
 
-    connect(copyPathAct, &QAction::triggered, this, [this, itemPath]() {
+    connect(copyPathAct, &QAction::triggered, this, [itemPath]() {
         if (itemPath.isEmpty())
             return;
         QApplication::clipboard()->setText(QDir::toNativeSeparators(itemPath));
@@ -5543,7 +5543,7 @@ void Ide::onFileTreeContextMenu(const QPoint& pos) {
         QString relPath = baseDir.relativeFilePath(itemPath);
         QApplication::clipboard()->setText(QDir::toNativeSeparators(relPath));
     });
-    connect(revealAct, &QAction::triggered, this, [this, itemPath]() {
+    connect(revealAct, &QAction::triggered, this, [itemPath]() {
         if (itemPath.isEmpty())
             return;
 #ifdef Q_OS_WIN
