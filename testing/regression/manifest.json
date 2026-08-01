@@ -21,6 +21,27 @@
       "match_error": "getter",
       "origin": "testing/artifacts/disagreement/seed_functions_and_closures.mini",
       "notes": "block-scope named fun not registered by compiled backends: interp yields closure value; stackvm/stackvm-ir/regvm report undefined variable getter (README finding 1)"
+    },
+    {
+      "name": "jit_field_default_init_override",
+      "file": "jit_field_default_init_override.mini",
+      "status": "fixed",
+      "lines": 9,
+      "created": "2026-08-01",
+      "kind": "diff",
+      "mode": "jit_deviation",
+      "backends": [
+        "interp",
+        "stackvm",
+        "stackvm-ir",
+        "regvm",
+        "jit"
+      ],
+      "suspects": [
+        "jit"
+      ],
+      "origin": "build_debug/probe_vE.mini",
+      "notes": "JIT 方法帧字段槽未同步：init 内 this.f0=p0 直接改实例 fields()，jitMethodReturn 用陈旧字段槽（默认值）覆盖回写；修复 jitMemberSetLocal 在 slot0+方法帧时同步字段槽"
     }
   ]
 }

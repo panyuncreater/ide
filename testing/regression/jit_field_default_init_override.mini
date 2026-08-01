@@ -1,0 +1,9 @@
+﻿var cs = 0;
+class K0 {
+    var f0 = 1 + 2;
+    fun init(p0) { this.f0 = p0; }
+    fun m0() { return this.f0; }
+}
+var o0 = K0(5);
+cs = (cs * 31 + o0.m0()) % 1000003;
+print(cs);

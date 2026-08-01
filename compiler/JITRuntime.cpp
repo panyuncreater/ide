@@ -1786,6 +1786,24 @@ extern "C" void jitMemberSetLocal(JitContext* ctx, uint8_t slot, int64_t* frameB
     if (obj.isInstance()) {
         obj.fields()[fieldName] = val; // 非 const 触发 COW detach
         *slotPtr = valueToBits(obj);   // 写回新 bits
+        // BUG-JIT-FIELDSLOT fix: 若接收者是当前方法帧的 this（slot 0），同步更新方法帧
+        // 字段槽。否则 jitMethodReturn 返回时用未同步的陈旧字段槽（字段默认值拷贝）覆盖
+        // 回写 this.fields()，导致 init/方法内的字段赋值丢失（字段默认值 + init 覆盖
+        // 场景：JIT 输出默认值而非 init 写入值，三后端不一致）。
+        if (slot == 0 && ctx->frameCount && *ctx->frameCount > 0) {
+            JitFrame* cur = &ctx->frames[*ctx->frameCount - 1];
+            if (cur->methodBp == frameBase && cur->methodFieldOrder && cur->fieldCount > 0) {
+                for (int64_t i = 0; i < cur->fieldCount &&
+                                    i < static_cast<int64_t>(cur->methodFieldOrder->size());
+                     ++i) {
+                    if ((*cur->methodFieldOrder)[static_cast<size_t>(i)] == fieldName) {
+                        Value fieldCopy = val; // 拷贝（addRef），valueToBits 需要 non-const
+                        cur->methodBp[-(i + 1)] = valueToBits(fieldCopy); // detach 到字段槽
+                        break;
+                    }
+                }
+            }
+        }
         return;
     }
     if (obj.isDict()) {
