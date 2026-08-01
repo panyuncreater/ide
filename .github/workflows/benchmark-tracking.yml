@@ -103,7 +103,7 @@ jobs:
           python -c "import json; print('Total entries:', len(json.load(open('perf-benchmark-action.json'))))"
 
       - name: 上传测量结果 artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: perf-tracking-result
           path: |

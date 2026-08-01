@@ -244,7 +244,7 @@ jobs:
           cat SHA256SUMS.txt
 
       - name: 上传构建产物
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact_name }}
           path: release-assets/*
@@ -297,7 +297,7 @@ jobs:
             "release-assets/MiniLangIDE-${{ steps.relver.outputs.version }}-vscode.vsix"
 
       - name: 上传构建产物
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: minilang-ide-vsix
           path: release-assets/*
