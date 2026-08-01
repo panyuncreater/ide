@@ -78,24 +78,26 @@ target_link_libraries(stress_test PRIVATE
 # 作为 .obj 直接链接到 debug_test.exe。MSVC 链接器优先使用
 # .obj 中的符号（先于 minilang_core.lib 中的同名符号），
 # 无多重定义冲突。AUTOMOC OFF：桩无 Q_OBJECT，不需 MOC。
+# 注：GNU ld 用 --allow-multiple-definition 对齐“命令行 .o 优先于库”
+# 语义；Apple ld64 无等价选项（库成员被拉取后与桩 .o 重复定义
+# 直接报 duplicate symbol），故 macOS 不构建本目标
+# （桩机制为 MSVC 语义验证工具，CI 的 test-harness job 仅在 Windows 运行）。
 # ================================================================
-add_executable(debug_test
-    debug_test.cpp
-    debug/DebugController.cpp
-)
-target_include_directories(debug_test BEFORE PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-set_target_properties(debug_test PROPERTIES AUTOMOC OFF)
-# GNU ld 默认对桩/真实实现的同名符号报 multiple definition（MSVC 则 .obj 优先）；
-# --allow-multiple-definition 保留“命令行目标文件（桩）优先于库”语义，与 MSVC 行为对齐。
-# 注：Apple ld64 天然“命令行 .o 优先于库成员”（库成员仅在符号未解析时拉取），
-# 且不认识 --allow-multiple-definition（报 unknown option），故 macOS 必须排除。
-if(NOT MSVC AND NOT APPLE)
-    target_link_options(debug_test PRIVATE -Wl,--allow-multiple-definition)
+if(NOT APPLE)
+    add_executable(debug_test
+        debug_test.cpp
+        debug/DebugController.cpp
+    )
+    target_include_directories(debug_test BEFORE PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    set_target_properties(debug_test PROPERTIES AUTOMOC OFF)
+    if(NOT MSVC)
+        target_link_options(debug_test PRIVATE -Wl,--allow-multiple-definition)
+    endif()
+    target_link_libraries(debug_test PRIVATE
+        minilang_core
+        minilang_compile_options
+    )
 endif()
-target_link_libraries(debug_test PRIVATE
-    minilang_core
-    minilang_compile_options
-)
 
 # ================================================================
 # super_notfound_test：超类方法未找到测试（gtest）
