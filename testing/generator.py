@@ -16,9 +16,17 @@ MiniLang 程序，程序末尾输出一个全局状态校验和（print），作
   - 字典（dict）不变量：字面量值恒为规范化 int，键为确定字符串键集合；索引读/values 索引
     仅用存活键（生成器跟踪 set/remove 后的键存活集合）；get 恒带默认值；has/contains 的键
     存在性由生成器确定。故 dict 操作绝不触发键缺失/类型错误。
+  - 字符串（str）不变量：ASCII 字面量 + upper/lower/substr(0,k)/拼接 int 的变换链，生成器
+    以 Python 镜像同步跟踪每个字符串变量的静态内容；变换语句仅生成在顶层直接语句
+    （镜像恒等于运行时内容）；substr 参数恒界内；indexOf/contains/startsWith/endsWith 的
+    参数恒为字面量（镜像静态计算，缺失时 indexOf 返回 -1、布尔为 false）。
+  - 闭包（closure）不变量：顶层 fun outer 内嵌 fun inner（函数体顶层，非块内，规避发现 1），
+    inner 捕获 outer 首个参数（upvalue）+ 自身参数 q + 常量，返回规范化 int；
+    outer 返回 inner（函数值），顶层 var cv = outer(...) 后以 cv(q) 调用折入校验和。
+    生成时全局容器（数组/字典/字符串）尚未声明，函数体绝不引用全局。
 
 可复现：同一 seed 必生成逐字节相同的程序（仅用 random.Random(seed)）。
-可配置：程序规模、嵌套深度、特性开关（数组/字典/函数/循环）。
+可配置：程序规模、嵌套深度、特性开关（数组/字典/字符串/闭包/函数/循环）。
 
 无第三方依赖，兼容 Python 3.8+。可被 diff_test.py 作为库导入（generate/Config）。
 """
@@ -44,6 +52,8 @@ class Config:
     enable_functions: bool = True # 顶层函数定义与调用
     enable_arrays: bool = True    # 数组字面量 + 索引 + len/sum
     enable_dicts: bool = True     # 字典字面量 + 索引 + has/len/values/get
+    enable_strings: bool = True   # 字符串字面量 + upper/lower/substr/拼接/indexOf/contains
+    enable_closures: bool = True  # 闭包工厂（内嵌 fun 捕获外层参数）
     max_loop_iters: int = 12      # 循环最大迭代次数（确定性上界）
 
 
@@ -59,6 +69,9 @@ class _Gen:
         self.arrays = []          # 当前可见的数组变量名
         self.dicts = []           # 当前可见的字典变量名
         self.dict_keys = {}       # 字典名 → 存活键集合（set/remove 后跟踪）
+        self.strings = []         # 当前可见的字符串变量名
+        self.str_mirror = {}      # 字符串名 → 静态内容镜像（Python str，恒等于运行时内容）
+        self.closures = []        # 已生成闭包工厂名（函数值变量）
         self.funcs = []           # 已定义顶层函数 (name, arity)
         self._tmp = 0
         self._loopvar = 0
@@ -111,6 +124,9 @@ class _Gen:
         # 字典读取（存在键索引 / len / values 索引 / get 带默认值）作为整型来源
         if self.cfg.enable_dicts and self.dicts and self.rng.random() < 0.15:
             return self.dict_int()
+        # 字符串派生 int（len / indexOf 字面量，镜像静态计算）
+        if self.cfg.enable_strings and self.strings and self.rng.random() < 0.12:
+            return self.string_int()
         if depth >= 2 or self.rng.random() < 0.45:
             return self.atom()
         op = self.rng.choice(["+", "-", "*", "/", "%"])
@@ -140,16 +156,70 @@ class _Gen:
             return f"({d}.values()[{self.small_const()} % len({d}.values())])"
         return f"{d}.get({k!r}, {self.small_const()})"  # 带默认值恒安全
 
+    # ---- 字符串（ASCII 字面量；镜像静态跟踪保证 substr 界内 / indexOf 确定）----
+    _STR_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+    def _rand_literal(self, min_len=2, max_len=10):
+        """随机 ASCII 字母串（避免转义/大小写敏感字符集差异）。"""
+        n = self.rng.randint(min_len, max_len)
+        return "".join(self.rng.choice(self._STR_CHARS) for _ in range(n))
+
+    def gen_string(self):
+        """顶层字符串变量：ASCII 字面量（内容镜像同步）。"""
+        name = f"s{len(self.strings)}"
+        content = self._rand_literal()
+        self.emit(f'var {name} = "{content}";')
+        self.strings.append(name)
+        self.str_mirror[name] = content
+
+    def string_int(self):
+        """字符串派生 int：len / indexOf（参数恒为字面量，镜像静态计算，缺失返回 -1）。"""
+        s = self.rng.choice(self.strings)
+        m = self.str_mirror[s]
+        if self.rng.random() < 0.6:
+            return f"len({s})"
+        if len(m) > 1 and self.rng.random() < 0.5:
+            # 真实子串 → indexOf 恒 >= 0
+            i = self.rng.randint(0, len(m) - 2)
+            j = self.rng.randint(i + 1, len(m))
+            sub = m[i:j]
+        else:
+            # 镜像中不存在的子串 → indexOf 恒 -1
+            sub = self._rand_literal(3, 6)
+            for _ in range(8):
+                if sub not in m:
+                    break
+                sub = self._rand_literal(3, 6)
+        return f"{s}.indexOf({sub!r})"
+
+    def string_bool(self):
+        """字符串布尔：contains/startsWith/endsWith（镜像静态计算，真/假变体混合）。"""
+        s = self.rng.choice(self.strings)
+        m = self.str_mirror[s]
+        meth = self.rng.choice(["contains", "startsWith", "endsWith"])
+        if m and self.rng.random() < 0.7:
+            i = self.rng.randint(0, len(m) - 1)
+            j = self.rng.randint(i + 1, len(m))
+            sub = m[i:j]
+        else:
+            sub = self._rand_literal(3, 6)
+            for _ in range(8):
+                if sub not in m:
+                    break
+                sub = self._rand_literal(3, 6)
+        return f"{s}.{meth}({sub!r})"
+
     def normalized(self, expr):
         """把任意整型表达式规范化回 [0, MOD)。"""
         return f"(({expr}) % {MOD} + {MOD}) % {MOD}"
 
     def bool_expr(self, depth=0):
-        """布尔表达式：比较/字典 has 之上叠加 and/or/not（操作数恒为布尔）。"""
-        cmp = self.rng.choice(["<", ">", "<=", ">=", "==", "!="])
-        base = f"{self.atom()} {cmp} {self.atom()}"
-        # 字典 has/contains：存在性由生成器确定（存活键 → true；absent 键 → false）
-        if self.cfg.enable_dicts and self.dicts and self.rng.random() < 0.25:
+        """布尔表达式：比较/字典 has/字符串 contains 之上叠加 and/or/not（操作数恒为布尔）。"""
+        r0 = self.rng.random()
+        if self.cfg.enable_strings and self.strings and r0 < 0.2:
+            base = self.string_bool()
+        elif self.cfg.enable_dicts and self.dicts and r0 < 0.42:
+            # 字典 has/contains：存在性由生成器确定（存活键 → true；absent 键 → false）
             d = self.rng.choice(self.dicts)
             if self.rng.random() < 0.7 and self.dict_keys[d]:
                 k = self.rng.choice(sorted(self.dict_keys[d]))
@@ -157,6 +227,9 @@ class _Gen:
                 k = self._absent_key(d)
             meth = self.rng.choice(["has", "contains"])
             base = f"{d}.{meth}({k!r})"
+        else:
+            cmp = self.rng.choice(["<", ">", "<=", ">=", "==", "!="])
+            base = f"{self.atom()} {cmp} {self.atom()}"
         if depth < self.cfg.max_depth and self.rng.random() < 0.35:
             conn = self.rng.choice(["and", "or"])
             rhs_cmp = self.rng.choice(["<", ">", "<=", ">=", "==", "!="])
@@ -267,6 +340,36 @@ class _Gen:
         self.dict_keys[d].discard(k)
         self.mix(f"len({d})")
 
+    # ---- 字符串语句（变换链仅顶层直接语句 → 镜像恒等于运行时内容）----
+    def stmt_string_op(self, depth):
+        # 仅顶层直接语句：if/循环体内条件或重复执行会使运行时内容偏离镜像，
+        # 后续 substr 界内/长度可观测将不再安全（for 体内还有 continue 跳过路径）。
+        if depth != 0 or not self.strings:
+            return
+        s = self.rng.choice(self.strings)
+        m = self.str_mirror[s]
+        r = self.rng.random()
+        if r < 0.3:
+            expr, new_m = f"{s}.upper()", m.upper()
+        elif r < 0.55:
+            expr, new_m = f"{s}.lower()", m.lower()
+        elif r < 0.85:
+            k = self.rng.randint(1, max(1, len(m)))  # substr 界内且非空
+            expr, new_m = f"{s}.substr(0, {k})", m[:k]
+        else:
+            n = self.rng.randint(0, 999)  # int→str 自动转换拼接（样例证实）
+            expr, new_m = f"({s} + {n})", m + str(n)
+        if self.rng.random() < 0.5 and len(self.strings) < 6:
+            target = f"s{len(self.strings)}"
+            self.strings.append(target)
+            self.str_mirror[target] = new_m
+            self.emit(f"var {target} = {expr};")
+        else:
+            target = s
+            self.str_mirror[target] = new_m
+            self.emit(f"{target} = {expr};")
+        self.mix(f"len({target})")
+
     def block_body(self, depth):
         """块体：1-3 条语句。"""
         k = self.rng.randint(1, 3)
@@ -279,6 +382,8 @@ class _Gen:
             choices += ["if", "while", "for"]
         if self.cfg.enable_dicts and self.dicts:
             choices += ["dict_set", "dict_remove"]
+        if self.cfg.enable_strings and self.strings:
+            choices += ["string_op"]
         kind = self.rng.choice(choices)
         if kind == "assign":
             self.stmt_assign()
@@ -294,6 +399,8 @@ class _Gen:
             self.stmt_dict_set()
         elif kind == "dict_remove":
             self.stmt_dict_remove(depth)
+        elif kind == "string_op":
+            self.stmt_string_op(depth)
 
     # ---- 顶层函数定义（纯整型、无副作用、必返回 [0,MOD)）----
     def gen_function(self):
@@ -315,6 +422,47 @@ class _Gen:
         self.emit("}")
         self.funcs.append((name, arity))
 
+    # ---- 闭包工厂（顶层 fun 内嵌 fun，捕获外层参数 → upvalue 生命周期差分点）----
+    def gen_closure(self):
+        """生成闭包工厂 + 调用链：
+        fun outer(p0, p1) { fun inner(q) { …捕获 p0… } return inner; }
+        var cv = outer(a, b);  …mix(cv(q))…
+
+        生成时机在全局变量/容器声明之前（与 gen_function 一致）：inner 体仅引用
+        捕获参数/自身参数/常量/先前函数，绝不引用全局，规避顺序依赖。
+        """
+        idx = len(self.closures)
+        oname = f"outer{idx}"
+        iname = f"inner{idx}"
+        arity = self.rng.randint(1, 2)
+        params = [f"p{i}" for i in range(arity)]
+        self.emit(f"fun {oname}({', '.join(params)}) {{")
+        self.indent += 1
+        # inner 定义（函数体顶层，非块内）：捕获 params[0]（upvalue），自身参数 q
+        saved_vars = self.vars
+        self.emit(f"fun {iname}(q) {{")
+        self.indent += 1
+        self.vars = params[:1] + ["q"]
+        # acc 初始化强制引用捕获参数 p0（保证 inner 真实持有 upvalue，而非普通嵌套函数）
+        self.emit(f"var acc = {self.normalized(f'({params[0]} + {self.atom()})')};")
+        self.vars = params[:1] + ["q", "acc"]
+        for _ in range(self.rng.randint(1, 3)):
+            self.emit(f"acc = {self.normalized(self.int_expr())};")
+        self.emit("return acc;")
+        self.vars = saved_vars
+        self.indent -= 1
+        self.emit("}")
+        self.emit(f"return {iname};")
+        self.indent -= 1
+        self.emit("}")
+        # 调用链（顶层，必然执行）：cv = outer(args)；折叠 cv(q)（q 为常量/全局变量）
+        args = ", ".join(self.atom() for _ in range(arity))
+        cv = f"cv{idx}"
+        self.emit(f"var {cv} = {oname}({args});")
+        self.closures.append(cv)
+        self.funcs.append((cv, 1))  # 闭包值可被后续 int_expr 作为函数调用
+        self.mix(f"{cv}({self.atom()})")
+
     # ---- 顶层生成 ----
     def gen_dict(self):
         """生成一个全局字典：{'k0': <int>, 'k1': <int>, ...}（值规范化，键集合确定）。"""
@@ -332,10 +480,13 @@ class _Gen:
         self.emit("// deterministic; no runtime error by construction; ends with print(cs)")
         self.emit("var cs = 0;")
 
-        # 顶层函数
+        # 顶层函数与闭包工厂（先于全局声明 → 函数体不引用全局）
         if cfg.enable_functions:
             for _ in range(self.rng.randint(1, 3)):
                 self.gen_function()
+        if cfg.enable_closures:
+            for _ in range(self.rng.randint(1, 2)):
+                self.gen_closure()
 
         # 全局整型变量
         for _ in range(cfg.num_globals):
@@ -356,6 +507,11 @@ class _Gen:
         if cfg.enable_dicts:
             for _ in range(self.rng.randint(1, 2)):
                 self.gen_dict()
+
+        # 字符串（ASCII 字面量，镜像跟踪 → substr 界内/indexOf 确定）
+        if cfg.enable_strings:
+            for _ in range(self.rng.randint(1, 2)):
+                self.gen_string()
 
         # 主体语句
         for _ in range(cfg.num_statements):
@@ -388,6 +544,8 @@ def build_parser():
     p.add_argument("--no-functions", action="store_true", help="禁用顶层函数")
     p.add_argument("--no-arrays", action="store_true", help="禁用数组")
     p.add_argument("--no-dicts", action="store_true", help="禁用字典")
+    p.add_argument("--no-strings", action="store_true", help="禁用字符串")
+    p.add_argument("--no-closures", action="store_true", help="禁用闭包工厂")
     p.add_argument("--out", default=None, help="输出文件（默认 stdout）")
     return p
 
@@ -403,6 +561,8 @@ def config_from_args(args):
         enable_functions=not args.no_functions,
         enable_arrays=not args.no_arrays,
         enable_dicts=not args.no_dicts,
+        enable_strings=not args.no_strings,
+        enable_closures=not args.no_closures,
     )
 
 

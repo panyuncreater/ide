@@ -229,7 +229,7 @@ python testing/generator.py --seed 42 --statements 40 --max-depth 4 --no-arrays
 ```
 
 特性开关：`--statements`、`--globals`、`--max-depth`、`--max-loop-iters`、
-`--no-loops`、`--no-functions`、`--no-arrays`、`--no-dicts`。
+`--no-loops`、`--no-functions`、`--no-arrays`、`--no-dicts`、`--no-strings`、`--no-closures`。
 
 **无运行时错误不变量**（保证可复现且不被已知 bug 淹没）：所有整型值恒被规范到
 `[0, MOD)`；除法/取模除数恒为正小常量（不除零）；乘法仅「变量×小常量」（不溢出提升
@@ -239,6 +239,13 @@ python testing/generator.py --seed 42 --statements 40 --max-depth 4 --no-arrays
 后的键集合），get 恒带默认值，has/contains 存在性由生成器确定——且 remove 仅生成在
 顶层直接语句（无条件执行恰一次）、新键仅生成在必然执行上下文（顶层/循环体），
 保证运行时键集合与生成期静态集合一致，绝不触发键缺失/空 values 索引。
+**字符串**（str）为 ASCII 字面量 + upper/lower/substr(0,k)/拼接 int 变换链，生成器以
+Python 镜像同步跟踪静态内容（变换语句仅顶层直接语句 → 镜像恒等于运行时内容），
+substr 参数恒界内，indexOf/contains/startsWith/endsWith 参数恒为字面量（缺失时
+indexOf 返回 -1、布尔为 false）。**闭包**（closure）为顶层 fun outer 内嵌 fun inner
+（函数体顶层，非块内，规避发现 1）：inner 强制捕获 outer 首个参数（upvalue 生命周期
+差分点）+ 自身参数 + 常量，返回规范化 int；outer 返回 inner 函数值，以 `cv=outer(..)`
+后 `cv(q)` 调用折入校验和。
 
 ### 10.2 差分测试 `diff_test.py`
 

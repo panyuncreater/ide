@@ -138,6 +138,8 @@ def make_config(args):
         enable_functions=not args.no_functions,
         enable_arrays=not args.no_arrays,
         enable_dicts=not args.no_dicts,
+        enable_strings=not args.no_strings,
+        enable_closures=not args.no_closures,
     )
 
 
@@ -347,6 +349,8 @@ def build_parser():
     p.add_argument("--no-functions", action="store_true")
     p.add_argument("--no-arrays", action="store_true")
     p.add_argument("--no-dicts", action="store_true")
+    p.add_argument("--no-strings", action="store_true")
+    p.add_argument("--no-closures", action="store_true")
 
     # 单文件模式
     p.add_argument("--file", default=None, help="单文件模式：对给定 .mini 做差分")
