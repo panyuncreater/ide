@@ -1,0 +1,14 @@
+# ============================================================
+# AddressSanitizer 抑制（testing/sanitizer/asan.supp）
+# ------------------------------------------------------------
+# 一般无需 ASan 抑制——ASan 报告的越界/UAF 多为真实内存错误。
+# 仅在确认为第三方库（Qt 插件 dlopen 交互等）误报时，才在此按
+# interceptor_via_lib 抑制。默认留空以最大化真实 bug 命中率。
+#
+# 用法：driver.py --sanitized 经 ASAN_OPTIONS=...:suppressions=<本文件> 加载
+# （仅 Linux/Clang(GCC) 生效；MSVC ASan 不支持 suppressions 文件，见 README）。
+#
+# 示例（默认注释，确有误报再启用）：
+# interceptor_via_lib:libQt6Core
+# odr_violation:libQt6Core
+# ============================================================

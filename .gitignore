@@ -71,7 +71,8 @@ build_out.txt
 build_err.txt
 test*_err.txt
 test*_out.txt
-Testing/
+# 注：无根 Testing/ 目录（CTest 临时目录仅存在于 out/、build_*/ 构建树内，已由上方规则忽略）；
+# 裸 Testing/ 在 Windows core.ignorecase=true 下会误伤 testing/（差分流水线），故不写。
 
 # --- 一次性构建/测试脚本（P2/P3 迭代期间产生） ---
 _build_*.bat

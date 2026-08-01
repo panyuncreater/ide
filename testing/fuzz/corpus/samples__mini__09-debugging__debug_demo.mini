@@ -1,0 +1,13 @@
+fun factor(n) {
+    if (n == 1) { return 1; }
+    return factor(n - 1)*n;
+}
+
+var a=factor(4);
+var b=factor(5);
+var c=factor(6);
+print(a,b,c);
+
+for (int i=0;i<10;i=i+1){
+    print(i);
+    }

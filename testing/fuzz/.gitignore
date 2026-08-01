@@ -1,0 +1,8 @@
+# libFuzzer 运行期产物（不纳入版本控制）
+# 保留：corpus/ 种子、crashes/.gitkeep、脚本、字典、README。
+/fuzz_parser
+/fuzz_parser.exe
+/corpus_work/
+/last_run.log
+crashes/*
+!crashes/.gitkeep

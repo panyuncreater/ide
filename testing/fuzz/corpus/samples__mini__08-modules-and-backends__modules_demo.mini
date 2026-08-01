@@ -1,0 +1,59 @@
+// modules_demo.mini - 模块系统演示（另一个入口，导入 math_helpers）
+// 覆盖特性：import 导入、export 导出、模块隔离（非导出名不可见）、
+//           组合使用多个模块函数
+// 与 main.mini 不同，本文件导入 math_helpers.mini 演示模块隔离与私有函数
+// ============================================================
+
+// 导入 math_helpers 模块的全部导出名
+import "math_helpers.mini";
+
+print("=== 模块导入演示 ===");
+
+// 使用 math_helpers 导出的常量
+print("E = {E}");
+print("PHI = {PHI}");
+
+// 使用 math_helpers 导出的函数
+print("");
+print("power(2, 10) = {power(2, 10)}");
+print("abs(-42) = {abs(-42)}");
+print("max(7, 3) = {max(7, 3)}");
+print("min(7, 3) = {min(7, 3)}");
+print("safeSqrt(144) = {safeSqrt(144)}");
+
+// 模块隔离验证：validatePositive 是 math_helpers 的非导出函数
+// 在此处不可见，尝试调用会报"未定义"错误
+print("");
+print("=== 模块隔离 ===");
+print("validatePositive is private to math_helpers");
+print("Only exported names are visible to importers");
+
+// 组合使用多个函数
+print("");
+print("=== 组合计算 ===");
+var base = 3;
+var exp = 4;
+var result = power(base, exp);
+print("{base}^{exp} = {result}");
+print("sqrt({result}) = {safeSqrt(result)}");
+print("abs({-result}) = {abs(-result)}");
+
+// 预期输出：
+// === 模块导入演示 ===
+// E = 2.71828
+// PHI = 1.61803
+//
+// power(2, 10) = 1024
+// abs(-42) = 42
+// max(7, 3) = 7
+// min(7, 3) = 3
+// safeSqrt(144) = 12
+//
+// === 模块隔离 ===
+// validatePositive is private to math_helpers
+// Only exported names are visible to importers
+//
+// === 组合计算 ===
+// 3^4 = 81
+// sqrt(81) = 9
+// abs(-81) = 81

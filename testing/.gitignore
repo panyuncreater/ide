@@ -1,0 +1,4 @@
+# 运行期产物（不纳入版本控制）
+# 命中用例的官方沉淀路径是 regression/（经 reduce.py 缩减后登记）；
+# artifacts/ 为批量运行临时产物，CI 命中时输出到构建目录（--out-dir），不入库。
+/artifacts/

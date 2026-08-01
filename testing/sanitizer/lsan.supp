@@ -1,0 +1,24 @@
+# ============================================================
+# LeakSanitizer 抑制（testing/sanitizer/lsan.supp）
+# ------------------------------------------------------------
+# Qt 的全局单例 / 静态资源按设计在进程退出时不释放（QGlobalStatic、
+# QMetaType 注册表、线程本地数据等），LSan 会将其报为 "leak"。这些
+# 属第三方（Qt）已知误报，非 MiniLang 编译器/VM 的真实泄漏，故抑制。
+#
+# 用法：driver.py --sanitized 会自动经 LSAN_OPTIONS=suppressions=<本文件> 加载
+# （仅 Linux/Clang(GCC) 生效；MSVC ASan 不含 LSan）。
+#
+# 判定原则：只抑制"栈顶落在 Qt 库/Qt 全局设施"的泄漏；凡栈涉及
+# minilang_core（Compiler/VM/Interpreter/AstIRBuilder 等）的泄漏一律不抑制，
+# 保证能发现编译器/VM 自身的真实泄漏。
+# ============================================================
+leak:libQt6Core
+leak:libQt6Gui
+leak:libQt6Widgets
+leak:libicui18n
+leak:libicuuc
+leak:QGlobalStatic
+leak:QMetaType
+leak:QThreadData
+leak:QCoreApplicationPrivate
+leak:qRegisterResourceData

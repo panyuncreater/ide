@@ -418,6 +418,19 @@ if(MINILANG_BUILD_CLI)
 endif()
 
 # ============================================================
+# testing 子目录（自动化 bug 挖掘流水线：差分测试 / Fuzzing / Sanitizer）
+# ------------------------------------------------------------
+# 默认 OFF：与主工程/CI 默认构建完全解耦，仅在显式启用时构建
+# mini_diff_runner 并注册 pipeline.diff.* 回归用例：
+#   cmake -DMINILANG_BUILD_TESTING_PIPELINE=ON ...
+# 全部内容位于 testing/ 目录，只新增测试代码，不改编译器实现。
+# ============================================================
+option(MINILANG_BUILD_TESTING_PIPELINE "Build automated bug-hunting pipeline (differential/fuzzing/sanitizer) under testing/" OFF)
+if(MINILANG_BUILD_TESTING_PIPELINE)
+    add_subdirectory(testing)
+endif()
+
+# ============================================================
 # 性能基准回归测试（独立可执行目标 minilang_perf_test）
 # ------------------------------------------------------------
 # 默认 ON 以便常规构建仍能跑性能测试；CI 覆盖率构建显式关闭，

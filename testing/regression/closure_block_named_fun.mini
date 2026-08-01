@@ -1,0 +1,5 @@
+var fns = [];
+for (var i = 0; i < 3; i = i + 1) {
+    fun getter() {}
+    fns.push(getter);
+}

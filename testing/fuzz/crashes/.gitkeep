@@ -1,0 +1,2 @@
+# 占位：保持 crashes/ 目录纳入版本控制。
+# libFuzzer 发现的 crash 用例由 run_fuzz.sh 归档到 crashes/archive_<时间戳>/。

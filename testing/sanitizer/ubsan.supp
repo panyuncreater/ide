@@ -1,0 +1,18 @@
+# ============================================================
+# UndefinedBehaviorSanitizer 抑制（testing/sanitizer/ubsan.supp）
+# ------------------------------------------------------------
+# 抑制 Qt / 第三方库内部已知的 UB 模式（vptr、函数指针类型不匹配等），
+# 这些非 MiniLang 编译器/VM 代码。凡涉及本项目源文件的 UB 一律不抑制。
+#
+# 用法：driver.py --sanitized 会自动经 UBSAN_OPTIONS=suppressions=<本文件> 加载
+# （需 Clang/GCC UBSan；MSVC 对 UBSan 支持有限，见 README 阶段三）。
+#
+# 语法：<check>:<module-or-symbol-regex>
+# 常见 check：vptr / function / alignment / vla-bound / null / shift 等。
+# ============================================================
+vptr:libQt6Core
+vptr:libQt6Gui
+vptr:libQt6Widgets
+function:libQt6Core
+# 如遇 asmjit 生成代码相关的 function/alignment 误报，可按需追加：
+# function:asmjit

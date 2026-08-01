@@ -1,0 +1,51 @@
+# ============================================================
+# testing/static-analysis/.clang-tidy — 阶段六静态分析专用配置
+# ------------------------------------------------------------
+# 与根目录 .clang-tidy（CI 信息性检查，聚焦 bugprone/modernize/performance/
+# readability/misc，且 WarningsAsErrors 会阻塞）**刻意分离**：
+#   - 本配置聚焦「找 bug」的三组：bugprone-* / clang-analyzer-* / cppcoreguidelines-*。
+#   - 纯报告用途：不设 WarningsAsErrors（阶段六「只报告不修改」）。
+#   - 由 run_clang_tidy.py 通过 --config-file 显式加载，**不覆盖**根配置、不影响 CI。
+#
+# 只新增工具/配置代码，不修改编译器实现逻辑，也不改动根 .clang-tidy。
+# ============================================================
+Checks: >
+  -*,
+  bugprone-*,
+  clang-analyzer-*,
+  cppcoreguidelines-*,
+  -bugprone-easily-swappable-parameters,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -cppcoreguidelines-macro-usage,
+  -cppcoreguidelines-non-private-member-variables-in-classes,
+  -cppcoreguidelines-avoid-c-arrays,
+  -cppcoreguidelines-pro-bounds-array-to-pointer-decay,
+  -cppcoreguidelines-pro-bounds-constant-array-index,
+  -cppcoreguidelines-pro-bounds-avoid-unchecked-container-access
+
+# 说明（为何忽略以上少数 cppcoreguidelines 检查——均为本代码库中高噪声/低信号项）：
+#   avoid-magic-numbers            : 与根配置 readability-magic-numbers 重复，NaN-boxing/位掩码大量误报。
+#   macro-usage                    : 项目大量使用 X-Macro / OpCode 表宏，属刻意设计。
+#   non-private-member-variables   : 与根配置同名 misc 检查重复，POD/值类型故意公开成员。
+#   avoid-c-arrays                 : VMStack/寄存器帧刻意用定长 C 数组（零堆分配）。
+#   pro-bounds-*-array-*           : 定长数组按设计索引，逐条报告无信号。
+#   pro-bounds-avoid-unchecked-container-access : 每个 operator[] 都告警，纯噪声（教学 VM 大量下标访问）。
+# 其余 cppcoreguidelines-*（init-variables / pro-type-* / special-member-functions /
+# owning-memory / slicing 等）**全部保留**，因其常指向真实生命周期/初始化问题。
+
+CheckOptions:
+  # clang-analyzer 深度分析：让路径敏感检查更充分地展开（发现更多真实 bug）。
+  - key: cppcoreguidelines-pro-type-member-init.IgnoreArrays
+    value: 'true'
+  # NaN-boxing 大量使用 reinterpret/位运算，narrowing 归一到位宽属刻意；不作为错误，仅报告。
+  - key: cppcoreguidelines-narrowing-conversions.WarnOnFloatingPointNarrowingConversion
+    value: 'false'
+
+# 纯报告：不把任何检查升级为错误（阶段六「只报告，修复由人决定」）。
+WarningsAsErrors: ''
+
+# 只分析项目自有头文件；排除 Qt / 三方库 / 生成代码（autogen/moc/qrc）。
+HeaderFilterRegex: '.*\.(h|hpp)$'
+ExcludeHeaderFilterRegex: '.*(third_party|_deps|autogen|moc_|qrc_|ui_|/Qt|/qt).*'
+
+FormatStyle: none

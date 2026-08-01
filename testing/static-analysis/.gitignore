@@ -1,0 +1,4 @@
+# clang-tidy 缓存与明细数据（不纳入版本控制）
+# 保留：.clang-tidy 配置、驱动脚本、README、reports/*.md（分级统计 + Top 20）。
+/.cache-clang-tidy/
+/reports/*.jsonl

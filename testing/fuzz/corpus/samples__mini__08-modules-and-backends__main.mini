@@ -1,0 +1,53 @@
+// main.mini - 模块系统与执行后端演示入口
+// 覆盖特性：import 导入（全量 import "path" + 选择性 import { names } from "path"）、
+//           export 导出（函数/变量/类）、模块隔离（非导出名不可见）、
+//           跨文件 import 的同目录文件协作
+// 跨文件示例：本文件 import math_utils.mini / string_utils.mini / shapes.mini
+//             modules_demo.mini 是另一个入口（import math_helpers.mini）
+//             backends_showcase.mini 是独立的执行后端演示
+// import 按「当前文件所在目录」解析，请保持该目录完整。
+// ============================================================
+
+import "math_utils.mini";
+import "string_utils.mini";
+import "shapes.mini";
+
+// ---- 使用 math_utils（全量导入）----
+print("=== Math Utils ===");
+print("add(3, 4) = " + add(3, 4));
+print("multiply(5, 6) = " + multiply(5, 6));
+print("factorial(5) = " + factorial(5));
+print("fibonacci(10) = " + fibonacci(10));
+print("PI = " + PI);
+
+// ---- 使用 string_utils ----
+print("");
+print("=== String Utils ===");
+print(greet("MiniLang"));
+print(repeat("*", 20));
+print("isEmpty('') = " + isEmpty(""));
+print("isEmpty('hi') = " + isEmpty("hi"));
+print(padLeft("42", 5, "0"));
+
+// ---- 使用 shapes（shapes.mini 内部用选择性导入 import { PI } from math_utils）----
+print("");
+print("=== Shapes ===");
+var c = Circle(5);
+print(c.describe());
+
+var r = Rectangle(4, 6);
+print(r.describe());
+
+// ---- 数组/字典 ----
+print("");
+print("=== Data Structures ===");
+var shapesArr = [Circle(3), Rectangle(2, 5), Circle(7)];
+for (var i = 0; i < shapesArr.len(); i = i + 1) {
+    print(shapesArr[i].describe());
+}
+
+var config = {"version": "1.0", "author": "MiniLang"};
+print("config version: " + config["version"]);
+
+print("");
+print("All tests passed!");

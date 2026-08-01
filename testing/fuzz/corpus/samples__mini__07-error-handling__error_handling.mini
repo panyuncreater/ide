@@ -1,0 +1,133 @@
+// error_handling.mini - 异常处理演示
+// 覆盖特性：try/catch 语句、throw 抛出异常、异常传播、
+//           catch 变量绑定、嵌套 try/catch、try/finally（无 catch）、
+//           try/catch/finally（正常与异常路径）
+// ============================================================
+
+// 安全除法：除数为零时抛出异常
+fun safeDivide(a, b) {
+    if (b == 0) {
+        throw "DivisionByZero: cannot divide " + a + " by zero";
+    }
+    return a / b;
+}
+
+// 演示异常传播：调用 safeDivide 但不捕获，让异常向上传播
+fun computeRatio(x, y) {
+    var result = safeDivide(x, y);
+    return result * 100;
+}
+
+// ---- 基本 try/catch ----
+print("=== 基本 try/catch ===");
+try {
+    var r = safeDivide(10, 3);
+    print("10 / 3 = {r}");
+} catch (e) {
+    print("Error: {e}");
+}
+
+// ---- 捕获除零异常 ----
+print("");
+print("=== 捕获除零异常 ===");
+try {
+    var r = safeDivide(5, 0);
+    print("result = {r}");
+} catch (e) {
+    print("Caught: {e}");
+}
+
+// ---- 异常传播 ----
+print("");
+print("=== 异常传播 ===");
+try {
+    var ratio = computeRatio(20, 0);
+    print("ratio = {ratio}");
+} catch (e) {
+    print("Propagated: {e}");
+}
+
+// ---- 嵌套 try/catch ----
+print("");
+print("=== 嵌套 try/catch ===");
+try {
+    try {
+        throw "inner error";
+    } catch (inner) {
+        print("Inner catch: {inner}");
+        throw "outer error: caused by " + inner;
+    }
+} catch (outer) {
+    print("Outer catch: {outer}");
+}
+
+print("");
+print("Done - all exceptions handled.");
+
+// ---- try / finally ----
+print("");
+print("=== try / catch / finally（正常路径）===");
+fun riskyDivide(a, b) {
+    if (b == 0) {
+        throw "DivisionByZero";
+    }
+    return a / b;
+}
+try {
+    print("result = {riskyDivide(10, 2)}");
+} catch (e) {
+    print("caught: {e}");
+} finally {
+    print("finally ran (normal path)");
+}
+
+print("");
+print("=== try / catch / finally（异常路径）===");
+try {
+    print("result = {riskyDivide(10, 0)}");
+} catch (e) {
+    print("caught: {e}");
+} finally {
+    print("finally ran (exception path)");
+}
+
+print("");
+print("=== 仅 try / finally（无 catch）===");
+try {
+    print("doing work...");
+} finally {
+    print("cleanup always runs");
+}
+
+print("");
+print("done.");
+
+// 预期输出：
+// === 基本 try/catch ===
+// 10 / 3 = 3
+//
+// === 捕获除零异常 ===
+// Caught: DivisionByZero: cannot divide 5 by zero
+//
+// === 异常传播 ===
+// Propagated: DivisionByZero: cannot divide 20 by zero
+//
+// === 嵌套 try/catch ===
+// Inner catch: inner error
+// Outer catch: outer error: caused by inner error
+//
+// Done - all exceptions handled.
+//
+// === try / catch / finally（正常路径）===
+// result = 5
+// finally ran (normal path)
+//
+// === try / catch / finally（异常路径）===
+// caught: DivisionByZero
+// finally ran (exception path)
+//
+// === 仅 try / finally（无 catch）===
+// doing work...
+// cleanup always runs
+//
+// done.

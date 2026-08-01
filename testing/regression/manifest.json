@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "closure_block_named_fun",
+      "file": "closure_block_named_fun.mini",
+      "status": "open",
+      "lines": 5,
+      "created": "2026-07-31",
+      "kind": "diff",
+      "mode": "disagreement",
+      "backends": [
+        "interp",
+        "stackvm",
+        "stackvm-ir",
+        "regvm"
+      ],
+      "suspects": [
+        "interp"
+      ],
+      "match_error": "getter",
+      "origin": "testing/artifacts/disagreement/seed_functions_and_closures.mini",
+      "notes": "block-scope named fun not registered by compiled backends: interp yields closure value; stackvm/stackvm-ir/regvm report undefined variable getter (README finding 1)"
+    }
+  ]
+}
