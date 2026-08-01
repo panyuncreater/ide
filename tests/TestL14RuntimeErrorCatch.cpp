@@ -95,7 +95,22 @@ std::string runRegVM(const std::string& src) {
     return out;
 }
 
+// JIT 仅在 x86-64 平台启用（CMakeLists.txt 平台检测自动关闭非 x64），
+// 非 x64 平台（macOS arm64 等）JIT 断言编译为空操作。
+#ifdef MINILANG_USE_JIT
+#define EXPECT_JIT_EQ(expr, expected) EXPECT_EQ(expr, expected)
+#define EXPECT_JIT_NE(expr, expected) EXPECT_NE(expr, expected)
+#else
+#define EXPECT_JIT_EQ(expr, expected) \
+    do { \
+    } while (0)
+#define EXPECT_JIT_NE(expr, expected) \
+    do { \
+    } while (0)
+#endif
+
 std::string runJIT(const std::string& src) {
+#ifdef MINILANG_USE_JIT
     Lexer lx;
     auto tk = lx.scan(src);
     Parser p;
@@ -119,6 +134,9 @@ std::string runJIT(const std::string& src) {
         return out + err;
     }
     return out;
+#else
+    return {};
+#endif
 }
 
 } // namespace
@@ -134,7 +152,7 @@ TEST(L14RuntimeErrorCatch, DivisionByZeroCaught) {
     EXPECT_EQ(runInterpreter(src), expected);
     EXPECT_EQ(runStackVM(src), expected);
     EXPECT_EQ(runRegVM(src), expected);
-    EXPECT_EQ(runJIT(src), expected);
+    EXPECT_JIT_EQ(runJIT(src), expected);
 }
 
 // 取模除零被 try/catch 捕获
@@ -144,7 +162,7 @@ TEST(L14RuntimeErrorCatch, ModuloByZeroCaught) {
     EXPECT_EQ(runInterpreter(src), expected);
     EXPECT_EQ(runStackVM(src), expected);
     EXPECT_EQ(runRegVM(src), expected);
-    EXPECT_EQ(runJIT(src), expected);
+    EXPECT_JIT_EQ(runJIT(src), expected);
 }
 
 // 浮点除零（通过 C++ 辅助路径）
@@ -155,7 +173,7 @@ TEST(L14RuntimeErrorCatch, FloatDivisionByZeroCaught) {
     EXPECT_EQ(runStackVM(src), expected);
     EXPECT_EQ(runRegVM(src), expected);
     // JIT 浮点除零走 C++ 辅助路径（jitDivGeneric），通过 jitCheckAndRethrow 转异常
-    EXPECT_EQ(runJIT(src), expected);
+    EXPECT_JIT_EQ(runJIT(src), expected);
 }
 
 // 除零在函数内，catch 在外层
@@ -166,7 +184,7 @@ TEST(L14RuntimeErrorCatch, DivisionByZeroInFunctionCaughtByCaller) {
     EXPECT_EQ(runInterpreter(src), expected);
     EXPECT_EQ(runStackVM(src), expected);
     EXPECT_EQ(runRegVM(src), expected);
-    EXPECT_EQ(runJIT(src), expected);
+    EXPECT_JIT_EQ(runJIT(src), expected);
 }
 
 // try 内未发生错误时正常执行
@@ -176,7 +194,7 @@ TEST(L14RuntimeErrorCatch, NoErrorNormalExecution) {
     EXPECT_EQ(runInterpreter(src), expected);
     EXPECT_EQ(runStackVM(src), expected);
     EXPECT_EQ(runRegVM(src), expected);
-    EXPECT_EQ(runJIT(src), expected);
+    EXPECT_JIT_EQ(runJIT(src), expected);
 }
 
 // 除零错误未被 try/catch 捕获时正常报错
@@ -187,7 +205,7 @@ TEST(L14RuntimeErrorCatch, UncaughtDivisionByZeroStillErrors) {
     // StackVM/RegisterVM/JIT 返回错误
     EXPECT_NE(runStackVM(src).find("除零错误"), std::string::npos);
     EXPECT_NE(runRegVM(src).find("除零错误"), std::string::npos);
-    EXPECT_NE(runJIT(src).find("除零错误"), std::string::npos);
+    EXPECT_JIT_NE(runJIT(src).find("除零错误"), std::string::npos);
 }
 
 // catch 后继续执行后续代码
@@ -198,7 +216,7 @@ TEST(L14RuntimeErrorCatch, ExecutionContinuesAfterCatch) {
     EXPECT_EQ(runInterpreter(src), expected);
     EXPECT_EQ(runStackVM(src), expected);
     EXPECT_EQ(runRegVM(src), expected);
-    EXPECT_EQ(runJIT(src), expected);
+    EXPECT_JIT_EQ(runJIT(src), expected);
 }
 
 // finally 块在 runtimeError 被捕获后仍然执行
@@ -209,5 +227,5 @@ TEST(L14RuntimeErrorCatch, FinallyRunsAfterRuntimeErrorCaught) {
     EXPECT_EQ(runInterpreter(src), expected);
     EXPECT_EQ(runStackVM(src), expected);
     EXPECT_EQ(runRegVM(src), expected);
-    EXPECT_EQ(runJIT(src), expected);
+    EXPECT_JIT_EQ(runJIT(src), expected);
 }

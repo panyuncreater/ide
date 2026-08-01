@@ -401,6 +401,9 @@ TEST(ErrorUnificationRegisterVM, RestoreFromSnapshotClearsError) {
 // ============================================================
 // 测试套件 6：JIT 后端 DiagSource::JIT 验证
 // ============================================================
+// JIT 仅在 x86-64 平台启用（CMakeLists.txt 平台检测自动关闭非 x64），
+// 非 x64 平台（macOS arm64 等）跳过本套件。
+#ifdef MINILANG_USE_JIT
 
 // JIT 运行时错误应使用 DiagSource::JIT 来源（不再复用 VM/Compiler）
 TEST(ErrorUnificationJIT, JITErrorUsesJITDiagSource) {
@@ -448,6 +451,8 @@ TEST(ErrorUnificationJIT, JITErrorQueryDerivedFromDiagnostics) {
         EXPECT_FALSE(jit.getLastError().empty());
     }
 }
+
+#endif // MINILANG_USE_JIT
 
 // ============================================================
 // 测试套件 6：IR 错误恢复（P2-12 fatal/recoverable 区分 + 多错误收集）
