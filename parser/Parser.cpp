@@ -1,5 +1,5 @@
 #include "parser/Parser.h"
-#include "ast/MacroExpander.h" // 七特性 MVP 阶段 2：宏展开器
+#include "ast/MacroExpander.h"    // 七特性 MVP 阶段 2：宏展开器
 #include "common/ErrorMessages.h" // P2-12: DiagCodes 常量
 #include "common/Logger.h"
 #include "interpreter/StringIntern.h"
@@ -1126,8 +1126,8 @@ std::unique_ptr<TraitDecl> Parser::traitDecl() {
     return decl;
 }
 
-void Parser::mergeTraitMethods(const std::vector<std::string>& traits,
-                               std::vector<std::shared_ptr<ASTNode>>& members, int line, int col) {
+void Parser::mergeTraitMethods(const std::vector<std::string>& traits, std::vector<std::shared_ptr<ASTNode>>& members,
+                               int line, int col) {
     // 收集类自身方法名（自身方法优先于 trait 方法）
     std::unordered_set<std::string> ownMethodNames;
     for (const auto& m : members) {
@@ -1439,10 +1439,10 @@ std::unique_ptr<MacroDecl> Parser::macroDecl() {
     // 若首 token 为语句起始关键字（var/if/while/for/return/print/break/continue/throw/try，
     // 均不是合法表达式起始，无歧义）→ 解析为语句块（Block）；否则解析为单表达式。
     TokenType bt = peek().type;
-    bool isStmtBody = (bt == TokenType::TK_VAR || bt == TokenType::TK_IF || bt == TokenType::TK_WHILE ||
-                       bt == TokenType::TK_FOR || bt == TokenType::TK_RETURN || bt == TokenType::TK_PRINT ||
-                       bt == TokenType::TK_BREAK || bt == TokenType::TK_CONTINUE || bt == TokenType::TK_THROW ||
-                       bt == TokenType::TK_TRY);
+    bool isStmtBody =
+        (bt == TokenType::TK_VAR || bt == TokenType::TK_IF || bt == TokenType::TK_WHILE || bt == TokenType::TK_FOR ||
+         bt == TokenType::TK_RETURN || bt == TokenType::TK_PRINT || bt == TokenType::TK_BREAK ||
+         bt == TokenType::TK_CONTINUE || bt == TokenType::TK_THROW || bt == TokenType::TK_TRY);
     std::shared_ptr<ASTNode> body;
     if (isStmtBody) {
         // 语句宏：复用 block()（'{' 已消耗，previous() 为 '{'）解析语句列表并消耗 '}'。
@@ -1508,9 +1508,8 @@ std::unique_ptr<ASTNode> Parser::macroCall(const Token& nameTok) {
                          nameTok.line, nameTok.column);
     }
 
-    auto callNode =
-        std::make_unique<MacroCallExpr>(nameTok.lexeme, std::move(args), std::move(expanded), nameTok.line,
-                                        nameTok.column);
+    auto callNode = std::make_unique<MacroCallExpr>(nameTok.lexeme, std::move(args), std::move(expanded), nameTok.line,
+                                                    nameTok.column);
     // 七特性宏升级：语句宏展开为 Block（不产生表达式值），后端执行后补 null
     // 作为表达式值保证栈平衡；表达式宏 producesValue=true。
     callNode->producesValue = !decl->isStatementMacro;

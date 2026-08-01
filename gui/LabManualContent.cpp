@@ -1010,7 +1010,8 @@ const std::vector<LabChapter>& LabManualContent::chapters() {
             "- 🐛 [Bug 狩猎](panel:bug-hunt)：三档分级挑战，把本章方法论变成实战训练\n"
             "- 🎲 [模糊测试游乐场](panel:fuzz-playground)：让机器帮你拿随机输入撞 Bug\n"
             "- 📝 [交互式练习评分](panel:exercise-grader)：写代码当场判对错，即时反馈\n\n"
-            "🧭 **下一步**：八个实验全部通关后，去学习路径的「自由项目」给 MiniLang 设计一个新特性——你已经有这个实力了。",
+            "🧭 **下一步**：八个实验全部通关后，去学习路径的「自由项目」给 MiniLang "
+            "设计一个新特性——你已经有这个实力了。",
             "var a = 7 / 2;\nvar b = 7.0 / 2;\nprint(a);\nprint(b);",
             // P1-1 fix (F6): lab-08 exercises (2: 1 CHOICE + 1 EXPECTED_OUTPUT)
             {LabExercise{LabExerciseType::CHOICE,

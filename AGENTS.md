@@ -94,3 +94,127 @@ Lexer → Parser → AST（MacroExpander 宏展开在 parse 期完成）→ {
 2. **相关测试全绿**：`ctest` 返回退出码 0，所有测试通过
 3. **三后端一致性**：若修改涉及执行语义，需确认 Interpreter / StackVM / RegisterVM 三条路径行为一致（JIT 对已支持场景同步验证，未支持场景验证优雅降级不崩溃不错值）
 
+
+
+<!-- >>> Agent Windows PowerShell Rules >>> -->
+## Windows PowerShell 鎵ц瑙勫垯
+
+- 褰撲换鍔℃湭鏄庣‘鎸囧畾 shell 鏃讹紝鏈満榛樿浣跨敤 `pwsh`锛屽嵆 PowerShell 7銆?
+- 涓嶈娣风敤 bash 璇硶銆傝嫢鐢ㄦ埛鏄庣‘瑕佹眰浣跨敤 Git Bash銆乄SL 鎴?cmd锛屽垯鍒囨崲鍒板搴?shell 瑙勫垯銆?
+- 璋冪敤 PowerShell 鏃剁粺涓€浣跨敤锛?
+
+  ```bash
+  pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "..."
+  ```
+
+- 澶嶆潅鑴氭湰蹇呴』鍐欏叆涓存椂 `.ps1` 鏂囦欢锛岀劧鍚庢墽琛岋細
+
+  ```bash
+  pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "C:\path\temp.ps1"
+  ```
+
+- Agent 鎵ц涓嶅緱渚濊禆 PowerShell Profile銆傛瘡鏉″懡浠ゆ垨鑴氭湰鍐呴儴蹇呴』鏄惧紡璁剧疆锛?
+
+  ```powershell
+  [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+  $OutputEncoding = [System.Text.Encoding]::UTF8
+  $ErrorActionPreference = 'Stop'
+  ```
+
+- 绂佹浣跨敤浜や簰寮忓懡浠わ細
+  - `Read-Host`
+  - `Pause`
+  - `Out-GridView`
+  - `Get-Credential`
+  - `notepad`
+  - `explorer`
+  - `Invoke-Item`
+  - 浠讳綍闇€瑕佺敤鎴风偣鍑绘垨杈撳叆鐨勫懡浠?
+
+- 涓嶈浣跨敤 bash 鍛戒护鎯€э細
+  - 涓嶈鐢?`grep`锛岀敤 `Select-String`
+  - 涓嶈鐢?`sed`锛岀敤 PowerShell 瀛楃涓叉浛鎹㈡垨姝ｅ垯
+  - 涓嶈鐢?`awk`锛岀敤 `Select-Object` / `ForEach-Object`
+  - 涓嶈鐢?`xargs`锛岀敤绠￠亾鎴?`ForEach-Object`
+  - 涓嶈鐢?`export`锛岀敤 `$env:NAME = "value"`
+  - 涓嶈鐢?`touch`锛岀敤 `New-Item -ItemType File -Force`
+  - 涓嶈鍋囪 `ls -la` 鍙敤锛岀敤 `Get-ChildItem -Force`
+
+- 鍛戒护涓茶仈锛?
+  - 浠呯‘璁ょ洰鏍囨槸 PowerShell 7 鏃朵娇鐢?`&&`
+  - 鑻ュ彲鑳芥槸 Windows PowerShell 5.1锛屼竴寰嬩娇鐢ㄥ垎鍙?`;`
+
+- 璋冪敤澶栭儴绋嬪簭鍚庡繀椤绘鏌ラ€€鍑虹爜锛?
+
+  ```powershell
+  & npm --version
+  if ($LASTEXITCODE -ne 0) { throw "npm failed with exit code $LASTEXITCODE" }
+  ```
+
+- 姣忔潯鍛戒护鍙兘鍦ㄥ叏鏂颁細璇濇墽琛岋細
+  - `cd` 缁撴灉涓嶈法鍛戒护淇濈暀
+  - 鐜鍙橀噺涓嶈法鍛戒护淇濈暀
+  - 闇€瑕佷娇鐢ㄧ粷瀵硅矾寰勶紝鎴栧湪鍚屼竴鏉″懡浠ゅ唴瀹屾垚
+
+- 璺緞瑙勫垯锛?
+  - 鎵€鏈夎矾寰勪娇鐢ㄥ弻寮曞彿鍖呰９
+  - 璺緞鎷兼帴浣跨敤 `Join-Path`
+  - 鏂囦欢鎿嶄綔浼樺厛浣跨敤 `-LiteralPath`
+
+- 鍐欐枃鏈枃浠讹細
+  - 浼樺厛浣跨敤 `[IO.File]::WriteAllText(...)`
+  - 鎴?`Set-Content -Encoding utf8`
+  - 鍏抽敭閰嶇疆鏂囦欢閬垮厤浣跨敤 `>` 閲嶅畾鍚?
+
+- 涓嬭浇鏂囦欢锛?
+
+  ```powershell
+  Invoke-WebRequest -Uri $url -OutFile $outFile
+  ```
+
+  涓嶈鍋囪 `curl` 鎸囧悜鐪熸鐨?curl銆?
+
+- 杈撳嚭杈冮暱鏃讹細
+
+  ```powershell
+  | Out-String -Width 4096
+  ```
+
+  闃叉琛ㄦ牸琚帶鍒跺彴瀹藉害鎴柇銆?
+
+- 闇€瑕佽 Agent 瑙ｆ瀽鐨勭粨鏋滃繀椤昏緭鍑?JSON锛?
+
+  ```powershell
+  @{
+    ok = $true
+    data = $result
+  } | ConvertTo-Json -Depth 10
+  ```
+
+- 澶辫触鏃惰緭鍑?JSON 骞惰繑鍥為潪闆堕€€鍑虹爜锛?
+
+  ```powershell
+  @{
+    ok = $false
+    error = $_.Exception.Message
+    detail = $_.ToString()
+  } | ConvertTo-Json -Depth 10
+
+  exit 1
+  ```
+
+- 瀹夎銆佸垹闄ゃ€佹洿鏂扮被鍛戒护蹇呴』甯﹂潤榛樺弬鏁帮細
+  - `-y`
+  - `--yes`
+  - `--silent`
+  - `/quiet`
+  - `/S`
+  - `--accept-package-agreements`
+  - `--accept-source-agreements`
+
+- 鎵€鏈夊閮ㄥ懡浠よ皟鐢ㄥ繀椤昏缃秴鏃讹細
+  - 鏅€氬懡浠ら粯璁?60 绉?
+  - 瀹夎绫诲懡浠ら粯璁?600 绉?
+
+- 涓€鏉″懡浠ゅ彧鍋氫竴浠朵簨銆傚鏉傛搷浣滄媶鎴愬姝ワ紝姣忔鎵ц鍚庨獙璇佸啀缁х画銆?
+<!-- <<< Agent Windows PowerShell Rules <<< -->

@@ -61,7 +61,9 @@ const std::vector<LearningActivity>& LearningPathData::activities() {
         LearningActivity{
             "vm-sandbox",
             "💻 VM 栈沙盒",
-            "📍 自己动手 push/pop，模拟一台栈式虚拟机。试过几次就明白：每条指令其实都只在拨弄栈顶那几个数——这正是字节码执行的全部秘密。",
+            "📍 自己动手 "
+            "push/"
+            "pop，模拟一台栈式虚拟机。试过几次就明白：每条指令其实都只在拨弄栈顶那几个数——这正是字节码执行的全部秘密。",
             0,
             {},
             15,
@@ -141,7 +143,8 @@ const std::vector<LearningActivity>& LearningPathData::activities() {
                          "lab"},
         LearningActivity{"syntax-explorer",
                          "📜 语法探索器",
-                         "📍 10 条核心语法产生式，每条配 EBNF、人话翻译和可运行的样例代码。想查语法就来这——相当于一本会动的语法说明书。",
+                         "📍 10 条核心语法产生式，每条配 "
+                         "EBNF、人话翻译和可运行的样例代码。想查语法就来这——相当于一本会动的语法说明书。",
                          1,
                          {"lab-01"},
                          20,

@@ -382,7 +382,7 @@ JitA64EntryFn JITA64Backend::compileMainChunk(const CompileResult& result) {
             if (op == OpCode::OP_DIVIDE) {
                 a.sdiv(a64::regs::x4, a64::regs::x2, a64::regs::x3); // q = lhs / rhs
             } else {
-                a.sdiv(a64::regs::x4, a64::regs::x2, a64::regs::x3);           // q
+                a.sdiv(a64::regs::x4, a64::regs::x2, a64::regs::x3);                // q
                 a.msub(a64::regs::x4, a64::regs::x4, a64::regs::x3, a64::regs::x2); // rem = lhs - q*rhs
             }
             a.and_(a64::regs::x4, a64::regs::x4, JIT_INT48_MASK);

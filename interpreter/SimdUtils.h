@@ -35,10 +35,12 @@
 
 // 七特性 MVP 阶段 5：运行时 cpuid 检测所需头文件。
 //   - MSVC：<intrin.h> 提供 __cpuidex
-//   - GCC/Clang：<cpuid.h> 提供 __get_cpuid_count（或 __builtin_cpu_supports）
+//   - GCC/Clang（仅 x86 架构）：<cpuid.h> 提供 __get_cpuid_count（或 __builtin_cpu_supports）
+// 注：Apple clang（Xcode 26+）的 <cpuid.h> 在 arm64 上是 x86-only 头文件，
+// 无条件包含会报 "this header is for x86 only" 编译错误（macOS arm64 CI 失败）。
 #if defined(_MSC_VER)
 #include <intrin.h>
-#elif defined(__GNUC__) || defined(__clang__)
+#elif (defined(__GNUC__) || defined(__clang__)) && (defined(__x86_64__) || defined(__i386__))
 #include <cpuid.h>
 #endif
 
@@ -260,7 +262,7 @@ inline int64_t simdMaxInt64(const int64_t* data, size_t n) {
 // 输入：data 指向 n 个 double（n >= 1）；输出：min/max(data[0..n-1])。
 // AVX2 使用 _mm256_min_pd / _mm256_max_pd（原生 256-bit 双精度比较）。
 // NaN 处理：_mm256_min_pd/_mm256_max_pd 的 NaN 行为与标量 `<`/`>` 对齐
-//（任一操作数为 NaN 时返回第二操作数）——与标量回退路径的 `if (x < m)`
+// （任一操作数为 NaN 时返回第二操作数）——与标量回退路径的 `if (x < m)`
 // 语义存在细微差异，但 sum/min/max 内建仅在全部元素为数值时走快路径，
 // 含 NaN 的数组由调用方（BuiltinMethods）才会回退，此处不需严格对齐 NaN。
 // ============================================================

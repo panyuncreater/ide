@@ -129,6 +129,18 @@ jobs:
           mkdir -p gh-pages/dev/bench
           # 若 gh-pages 不存在（checkout 失败），创建空目录
           [ -f gh-pages/index.html ] || echo "<html><body>MiniLang gh-pages</body></html>" > gh-pages/index.html
+          # gh-pages 分支不存在时 checkout 失败（continue-on-error），目录不是 git 仓库，
+          # 后续「推送更新到 gh-pages」的 git add 会报 "not a git repository"。
+          # 首次运行自愈：初始化空 git 仓库（孤儿分支），后续推送步骤正常 commit + push -u。
+          if [ ! -d gh-pages/.git ]; then
+            cd gh-pages
+            git init -b gh-pages
+            git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+            git config user.name  'github-actions[bot]'
+            git config user.email 'github-actions[bot]@users.noreply.github.com'
+            cd ..
+            echo "gh-pages branch not found; initialized empty repo (first run)"
+          fi
 
       - name: 更新 benchmark 数据
         if: ${{ github.event_name != 'pull_request' }}
@@ -138,9 +150,11 @@ jobs:
           tool: customBiggerIsBetter
           output-file-path: perf-benchmark-action.json
           external-data-json-path: gh-pages/dev/bench/data.js
-          # 失败阈值：与最近一次比较，超 3x 才 fail（信息性，主要为了通知）
-          alert-threshold: '3.0'
-          fail-threshold: '5.0'
+          # 失败阈值：与最近一次比较，超 3x 才 fail（信息性，主要为了通知）。
+          # 注：benchmark-action v1 要求百分比格式（'200%' = 2x），
+          # 传 '3.0'/'5.0' 会报 "'alert-threshold' input must ends with '%'" 导致 CI 失败。
+          alert-threshold: '300%'
+          fail-threshold: '500%'
           # PR 不评论（避免噪音），仅 push/schedule 触发时评论
           comment-on-alert: ${{ github.event_name == 'push' || github.event_name == 'schedule' }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -187,7 +201,12 @@ jobs:
             echo "No benchmark data changes to commit"
           else
             git commit -m "Update performance benchmark data (${{ github.sha }})"
-            git push origin gh-pages
+            # 首次推送（分支刚初始化）用 -u 建立上游跟踪；后续推送直接 push
+            if git rev-parse --abbrev-ref --symbolic-full-name @{u} >/dev/null 2>&1; then
+              git push origin gh-pages
+            else
+              git push -u origin gh-pages
+            fi
             echo "=== Pushed benchmark data to gh-pages/dev/bench/ ==="
           fi
 

@@ -323,12 +323,12 @@ constexpr int osrLoopThresholdsPtr = 176;  // R157: per-chunk OSR 阈值数组�
 constexpr int osrRecompiledFlagsPtr = 184; // R157: per-chunk OSR 已触发标志数组指针
 constexpr int osrSavedBp = 192;
 constexpr int osrSavedSp = 200;
-constexpr int osrEntryPoint = 208;   // R158: OSR 入口点地址邮箱
-constexpr int deoptEntryPoint = 216; // R158: 反优化 Tier 1 入口点邮箱
-constexpr int memberGetICPtr = 232;  // R160: inline cache 数组指针
-constexpr int globalsPtr = 240;      // R162: 名称变量表指针
-constexpr int gcNeededFlag = 248;    // Safepoint GC 请求标志指针
-constexpr int enumRegistryPtr = 256; // enum 元信息注册表指针
+constexpr int osrEntryPoint = 208;     // R158: OSR 入口点地址邮箱
+constexpr int deoptEntryPoint = 216;   // R158: 反优化 Tier 1 入口点邮箱
+constexpr int memberGetICPtr = 232;    // R160: inline cache 数组指针
+constexpr int globalsPtr = 240;        // R162: 名称变量表指针
+constexpr int gcNeededFlag = 248;      // Safepoint GC 请求标志指针
+constexpr int enumRegistryPtr = 256;   // enum 元信息注册表指针
 constexpr int syncMethodHandled = 264; // 同步对象方法内联处理标志（邮箱）
 } // namespace jit_offset
 static_assert(offsetof(JitContext, hasError) == jit_offset::hasError, "hasError offset");

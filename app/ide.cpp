@@ -1843,7 +1843,7 @@ void Ide::finalizeTeachingPanelShow(const QString& panelId, const QList<int>& sa
     // 均可引导；不再维护面板白名单，改为排除式集合（入门导览类纯浏览面板自身
     // 就是引导形态，首访再叠加气泡引导反而打断阅读，故排除）。
     static const QSet<QString> kNoAutoTourPanels = {
-        QStringLiteral("welcome"),      QStringLiteral("code-journey"), QStringLiteral("learning-path"),
+        QStringLiteral("welcome"),       QStringLiteral("code-journey"), QStringLiteral("learning-path"),
         QStringLiteral("course-system"), QStringLiteral("glossary"),
     };
     if (!kNoAutoTourPanels.contains(panelId)) {
@@ -4026,8 +4026,9 @@ void Ide::registerDebugInspectorPanels(
                 appendOutput(mlTr("已回滚到步 %1（行 %2），可继续单步执行").arg(stepIndex).arg(snap->line),
                              OutputLevel::Success);
             } else {
-                appendOutput(mlTr("回滚失败：需先在「可回放执行时间轴」以 FullState 模式录制，且当前执行引擎需与快照后端匹配"),
-                             OutputLevel::Warning);
+                appendOutput(
+                    mlTr("回滚失败：需先在「可回放执行时间轴」以 FullState 模式录制，且当前执行引擎需与快照后端匹配"),
+                    OutputLevel::Warning);
             }
         });
         return reverseTimelinePanel_;
@@ -7259,8 +7260,7 @@ GuidedTour* Ide::createGenericPanelTour(const QString& panelId) {
 
     auto* tour = new GuidedTour(this, this);
     // 步骤 1：面板用途（Markdown → HTML，与帮助弹窗渲染一致）
-    tour->addStep(header ? static_cast<QWidget*>(header) : container,
-                  mlTr("「%1」是干什么的？").arg(title),
+    tour->addStep(header ? static_cast<QWidget*>(header) : container, mlTr("「%1」是干什么的？").arg(title),
                   MarkdownRenderer::markdownToHtmlFragment(doc.purpose));
     // 步骤 2：推荐使用顺序（锚定学习路径按钮，提示下一站去哪）
     QWidget* pathAnchor = header ? header->learningPathButton() : nullptr;

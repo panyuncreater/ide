@@ -130,7 +130,7 @@ private:
     bool currentFunHasYieldInLoop_ = false;
     // 七特性 MVP 阶段 4：当前是否在 async fun 体内（await 仅在此上下文合法）。
     // 由 BoolScope 在 funDecl 入口保存/设置/恢复，嵌套函数独立判定
-    //（async fun 内的普通嵌套 fun 体内 await 非法）。
+    // （async fun 内的普通嵌套 fun 体内 await 非法）。
     bool currentFunIsAsync_ = false;
     static constexpr int MAX_PARSE_DEPTH = RuntimeLimits::MAX_PARSE_DEPTH;
     static constexpr int MAX_BLOCK_DEPTH = RuntimeLimits::MAX_BLOCK_DEPTH;

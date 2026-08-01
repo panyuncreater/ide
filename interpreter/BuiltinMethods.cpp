@@ -9,13 +9,13 @@
 // 自行将 Result<Value>::is_err() 转换为 RuntimeError 抛出（通过 to_runtime_error()）。
 
 #include "interpreter/BuiltinMethods.h"
-#include "common/ErrorFormat.h"       // P3 fix: runtimeErrorFmt 替代 std::to_string 拼接
-#include "common/ErrorMessages.h"     // R97 #1: 三后端共享错误消息常量
+#include "common/ErrorFormat.h"          // P3 fix: runtimeErrorFmt 替代 std::to_string 拼接
+#include "common/ErrorMessages.h"        // R97 #1: 三后端共享错误消息常量
 #include "common/HostFunctionRegistry.h" // 七特性 MVP 阶段 7: 宿主函数（插件）注册表
-#include "common/RuntimeLimits.h"     // S1 fix: MAX_RANGE 统一定义
-#include "common/Utf8Utils.h"         // P0-4 fix: UTF-8 码位工具
-#include "interpreter/NumericUtils.h" // BUG9 fix: 溢出检查
-#include "interpreter/SimdUtils.h"    // R134: SIMD 向量化内核
+#include "common/RuntimeLimits.h"        // S1 fix: MAX_RANGE 统一定义
+#include "common/Utf8Utils.h"            // P0-4 fix: UTF-8 码位工具
+#include "interpreter/NumericUtils.h"    // BUG9 fix: 溢出检查
+#include "interpreter/SimdUtils.h"       // R134: SIMD 向量化内核
 #include <cctype>
 #include <charconv>
 #include <chrono> // R136 channel.tryRecv 超时
@@ -983,7 +983,8 @@ Result<Value> executeSharedBuiltinFunction(const std::string& funcName, const Va
             } else if (v.isString()) {
                 hostArgs.push_back(minilang::HostValue::makeString(v.stringVal()));
             } else {
-                return Result<Value>::err("宿主函数 " + funcName + " 参数仅支持标量类型（null/bool/int/float/string），实际为 " +
+                return Result<Value>::err("宿主函数 " + funcName +
+                                              " 参数仅支持标量类型（null/bool/int/float/string），实际为 " +
                                               v.typeName(),
                                           line, column);
             }

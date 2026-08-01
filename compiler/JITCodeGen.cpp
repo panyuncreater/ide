@@ -331,11 +331,11 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
 #ifdef _WIN32
                     a.mov(x86::rcx, x86::r12);                       // arg1 = ctx
                     a.mov(x86::rdx, static_cast<int32_t>(chunkIdx)); // arg2 = chunkIdx
-                    a.sub(x86::rsp, 32); // shadow space (32) + 8B 对齐填充
+                    a.sub(x86::rsp, 32);                             // shadow space (32) + 8B 对齐填充
 #else
                     a.mov(x86::rdi, x86::r12);                       // arg1 = ctx
                     a.mov(x86::esi, static_cast<int32_t>(chunkIdx)); // arg2 = chunkIdx
-                    a.sub(x86::rsp, 16); // 16-byte alignment
+                    a.sub(x86::rsp, 16);                             // 16-byte alignment
 #endif
                     a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitTriggerRecompile));
                     a.call(x86::rax);
@@ -947,10 +947,10 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
             case OpCode::OP_SWAP: {
                 // R99 match 表达式：交换栈顶两个值（仅交换 raw bits，无引用计数变化）
                 // 栈向低地址增长：[r15] = top, [r15+8] = top-1
-                a.mov(x86::rax, x86::qword_ptr(x86::r15));     // rax = top
-                a.mov(x86::rcx, x86::qword_ptr(x86::r15, 8));  // rcx = top-1
-                a.mov(x86::qword_ptr(x86::r15), x86::rcx);     // [top]   = top-1
-                a.mov(x86::qword_ptr(x86::r15, 8), x86::rax);  // [top-1] = top
+                a.mov(x86::rax, x86::qword_ptr(x86::r15));    // rax = top
+                a.mov(x86::rcx, x86::qword_ptr(x86::r15, 8)); // rcx = top-1
+                a.mov(x86::qword_ptr(x86::r15), x86::rcx);    // [top]   = top-1
+                a.mov(x86::qword_ptr(x86::r15, 8), x86::rax); // [top-1] = top
                 ip += 1;
                 break;
             }
@@ -1405,8 +1405,7 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
                     // 经 jitCallConcurrency → 共享层（executeSharedSpawn/
                     // executeSharedBuiltinFunction）实现，四后端语义一致。
                     if (funName == "spawn" || isConcurrencyBuiltin(funName)) {
-                        emitCallConcurrencyBuiltin(a, epilogue, chunk.constants[nameIdx].stringVal().c_str(),
-                                                   argCount);
+                        emitCallConcurrencyBuiltin(a, epilogue, chunk.constants[nameIdx].stringVal().c_str(), argCount);
                         ip += 4;
                         break;
                     }
@@ -2246,7 +2245,7 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
     // 所有权机制（ownedLazyEntries_/retiredSpecializedEntries_）延迟到安全点释放，
     // 故覆盖时旧跳板地址仍有效。
     closureTrampoline_ = reinterpret_cast<JitTrampolineFn>(reinterpret_cast<uintptr_t>(entry) +
-                                                          code.label_offset_from_base(trampolineLabel));
+                                                           code.label_offset_from_base(trampolineLabel));
 
     // R149: 填充 methodEntries_（"Class.method" → JitMethodInfo）
     // runtime_.add 内部调用 code.flatten()，之后 label_offset_from_base 返回正确偏移

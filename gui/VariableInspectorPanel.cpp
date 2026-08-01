@@ -104,8 +104,8 @@ const std::vector<VariableTypeExample>& VariableInspectorLibrary::examples() {
                             "编译期生成 OP_TYPE_CHECK 指令，运行时若实际类型与注解不符则抛出 TypeError。"
                             "三后端（Interpreter / StackVM / RegisterVM）需统一此检查行为与错误消息文本。"},
         // ---- 需求 8 扩充：新语言特性类型（元组/枚举/协程）+ 装箱/COW/继承场景 ----
-        VariableTypeExample{"type-tuple", "tuple", "📦 tuple 类型（R98）", "var t = (1, \"a\", true);",
-                            "(1, a, true)", "（堆指针，tag bits=0x7FFB）",
+        VariableTypeExample{"type-tuple", "tuple", "📦 tuple 类型（R98）", "var t = (1, \"a\", true);", "(1, a, true)",
+                            "（堆指针，tag bits=0x7FFB）",
                             "TupleData* (RefCounted) { refCount: 1; elements: Value[3] (immutable); }",
                             "📦 不可变容器：元素在构造（OP_BUILD_TUPLE）后禁止赋值，t[0] = 9 报错。"
                             "支持索引读 t[0] 与解构 var (a, b, c) = t。不可变性使共享无需 COW 检查——"
@@ -125,9 +125,8 @@ const std::vector<VariableTypeExample>& VariableInspectorLibrary::examples() {
                             "🔄 生成器协程：调用 fun* 不执行函数体，而是返回协程对象。每次 g.next() 以重放"
                             "模式重新执行函数体到目标 yield 点（OP_YIELD 计数器命中即抛 YieldSignal）。"
                             "await 协程 = 循环 next() 到 done。四后端重放语义一致。"},
-        VariableTypeExample{"type-boxed-int", "int", "⚠️ 装箱大整数（BoxedInt）",
-                            "var huge = 100000000000000000;", "100000000000000000",
-                            "（堆指针，tag bits=0x7FFB）",
+        VariableTypeExample{"type-boxed-int", "int", "⚠️ 装箱大整数（BoxedInt）", "var huge = 100000000000000000;",
+                            "100000000000000000", "（堆指针，tag bits=0x7FFB）",
                             "BoxedIntData* (RefCounted) { refCount: 1; value: int64 = 100000000000000000; }",
                             "⚠️ 超出 int48 内联范围（|v| ≥ 2^47）的整数自动装箱为 BoxedIntData*：同一个 int "
                             "类型在 NaN-box 里有两种物理表示（内联标量 vs 堆指针）。算术运算对两种表示"

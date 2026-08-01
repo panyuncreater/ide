@@ -5258,8 +5258,8 @@ def main():
     print("Messages kept as-is (pure code):", kept)
     print("Output written to:", DST)
     print("Valid XML:", valid)
-    if total != 1251:
-        print("WARNING: expected 1251 messages, got", total, file=sys.stderr)
+    if total != 1296:
+        print("WARNING: expected 1296 messages, got", total, file=sys.stderr)
     return 0 if valid else 2
 
 

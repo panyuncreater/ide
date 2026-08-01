@@ -135,8 +135,7 @@ const std::vector<OpCodeDocEntry>& BytecodeTraceLibrary::opCodeDocs() {
                        "📤 复制栈顶值并压入（栈顶出现两份相同值）。用于需要保留原值的复合赋值等场景。",
                        "arr[i] = arr[i] + 1;"},
         OpCodeDocEntry{"OP_DUP_N", "control", "depth(1B)", "push 1",
-                       "📤 复制栈中第 depth 个值到栈顶（不弹出原值）。用于索引写回时保留索引值。",
-                       "m[k] = m[k] + 1;"},
+                       "📤 复制栈中第 depth 个值到栈顶（不弹出原值）。用于索引写回时保留索引值。", "m[k] = m[k] + 1;"},
         OpCodeDocEntry{"OP_SWAP", "control", "无", "swap top 2",
                        "🔀 交换栈顶两个值。match 表达式 case body 完成后将 [scrutinee, 结果] 变为 "
                        "[结果, scrutinee]，随后 OP_POP 弹出 scrutinee 留下结果。",
@@ -225,8 +224,7 @@ const std::vector<OpCodeDocEntry>& BytecodeTraceLibrary::opCodeDocs() {
                        "⚡ int - int 特化减法（无类型检查）。与 OP_ADD_INT_SPEC 同族，编译期类型推断"
                        "驱动的热路径优化。",
                        "var n = m - 1;"},
-        OpCodeDocEntry{"OP_MUL_INT_SPEC", "arith", "无", "pop 2 / push 1",
-                       "⚡ int * int 特化乘法（无类型检查）。",
+        OpCodeDocEntry{"OP_MUL_INT_SPEC", "arith", "无", "pop 2 / push 1", "⚡ int * int 特化乘法（无类型检查）。",
                        "var sq = x * x;"},
         OpCodeDocEntry{"OP_LT_INT_SPEC", "arith", "无", "pop 2 / push 1",
                        "⚡ int < int 特化比较（最常见的循环条件），压入 bool。配合 OP_JUMP_IF_FALSE "

@@ -506,7 +506,7 @@ void AstIRBuilder::handleImportStmt(ImportStmt& node) {
     // 各阶段失败时设置 hasError_ 并提前返回；嵌套 import 失败需回滚 moduleLoadingSet_/Stack。
 
     // 七特性 MVP 阶段 6：沙箱拦截——禁用文件 import 时仅放行 std/ 内建模块
-    //（IR 路径覆盖 StackVM-IR 与 RegisterVM，与 Interpreter/Compiler 同口径）。
+    // （IR 路径覆盖 StackVM-IR 与 RegisterVM，与 Interpreter/Compiler 同口径）。
     if (RuntimeLimits::RuntimeConfig::instance().sandboxBlocksImport()) {
         const std::string& p = node.modulePath;
         if (p.rfind("std/", 0) != 0) {
@@ -1330,8 +1330,8 @@ IROperand AstIRBuilder::visitNode(ASTNode* node) {
     case NodeType::NODE_MACRO_CALL: {
         auto* mc = static_cast<MacroCallExpr*>(node);
         if (!mc->expanded) {
-            irDiagnostics_.addErrorFatal("宏调用 " + mc->name + "! 缺少展开子树（AST 构造错误）", mc->line,
-                                         mc->column, DiagSource::Compiler);
+            irDiagnostics_.addErrorFatal("宏调用 " + mc->name + "! 缺少展开子树（AST 构造错误）", mc->line, mc->column,
+                                         DiagSource::Compiler);
             return IROperand::vreg(0);
         }
         IROperand r = visitNode(mc->expanded.get());

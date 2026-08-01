@@ -81,23 +81,21 @@ void TeachingSubPageBar::updateButtonStyles() {
     // hover 时切换为浅蓝底 + 主题色文字/边框、pressed 进一步加深，形成
     // 灰(常态) → 浅蓝(hover) → 蓝(选中) 的清晰视觉层级，并为选中态补充 pressed 反馈。
     const QString selectedPressedBg = TeachingTheme::primaryPressed().name();
-    const QString primaryStyle =
-        QString("QPushButton { background: %1; color: %2; border: 1px solid %1; "
-                "border-radius: 6px; padding: 7px 16px; font-weight: bold; }"
-                "QPushButton:hover { background: %3; border-color: %3; }"
-                "QPushButton:pressed { background: %4; border-color: %4; }")
-            .arg(TeachingTheme::primary().name(), TeachingTheme::onPrimary().name(),
-                 TeachingTheme::primaryHover().name(), selectedPressedBg);
+    const QString primaryStyle = QString("QPushButton { background: %1; color: %2; border: 1px solid %1; "
+                                         "border-radius: 6px; padding: 7px 16px; font-weight: bold; }"
+                                         "QPushButton:hover { background: %3; border-color: %3; }"
+                                         "QPushButton:pressed { background: %4; border-color: %4; }")
+                                     .arg(TeachingTheme::primary().name(), TeachingTheme::onPrimary().name(),
+                                          TeachingTheme::primaryHover().name(), selectedPressedBg);
 
     const QString normalPressedBg = TeachingTheme::primaryHoverBg().darker(110).name();
-    const QString secondaryStyle =
-        QString("QPushButton { background: %1; color: %2; border: 1px solid %3; "
-                "border-radius: 6px; padding: 7px 16px; font-weight: 500; }"
-                "QPushButton:hover { background: %4; color: %5; border-color: %5; }"
-                "QPushButton:pressed { background: %6; color: %5; border-color: %5; }")
-            .arg(TeachingTheme::surfaceHover().name(), TeachingTheme::textPrimary().name(),
-                 TeachingTheme::border().name(), TeachingTheme::primaryHoverBg().name(),
-                 TeachingTheme::primary().name(), normalPressedBg);
+    const QString secondaryStyle = QString("QPushButton { background: %1; color: %2; border: 1px solid %3; "
+                                           "border-radius: 6px; padding: 7px 16px; font-weight: 500; }"
+                                           "QPushButton:hover { background: %4; color: %5; border-color: %5; }"
+                                           "QPushButton:pressed { background: %6; color: %5; border-color: %5; }")
+                                       .arg(TeachingTheme::surfaceHover().name(), TeachingTheme::textPrimary().name(),
+                                            TeachingTheme::border().name(), TeachingTheme::primaryHoverBg().name(),
+                                            TeachingTheme::primary().name(), normalPressedBg);
     for (int i = 0; i < buttons_.size(); ++i) {
         buttons_[i]->setStyleSheet(i == stack_->currentIndex() ? primaryStyle : secondaryStyle);
     }

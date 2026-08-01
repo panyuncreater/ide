@@ -762,11 +762,11 @@ void JITBackend::emitCheckInt(x86::Assembler& a, x86::Gp val, Label failLabel) {
 #ifdef _WIN32
         a.mov(x86::rcx, x86::r12);                               // arg1 = ctx
         a.mov(x86::rdx, static_cast<int32_t>(currentChunkIdx_)); // arg2 = chunkIdx
-        a.sub(x86::rsp, 32); // shadow space (32) + 8B 对齐填充
+        a.sub(x86::rsp, 32);                                     // shadow space (32) + 8B 对齐填充
 #else
         a.mov(x86::rdi, x86::r12);                               // arg1 = ctx
         a.mov(x86::esi, static_cast<int32_t>(currentChunkIdx_)); // arg2 = chunkIdx
-        a.sub(x86::rsp, 16); // 16-byte alignment
+        a.sub(x86::rsp, 16);                                     // 16-byte alignment
 #endif
         a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitDeoptimize));
         a.call(x86::rax);
@@ -797,15 +797,15 @@ void JITBackend::emitCheckInt(x86::Assembler& a, x86::Gp val, Label failLabel) {
         a.mov(x86::qword_ptr(x86::r12, jit_offset::osrSavedBp), x86::r13); // osrSavedBp = r13
         a.mov(x86::qword_ptr(x86::r12, jit_offset::osrSavedSp), x86::r15); // osrSavedSp = r15
         a.mov(x86::qword_ptr(x86::r12, jit_offset::stackTop), x86::r15);   // 同步栈顶
-        // ABI fix: 同上，参数寄存器按平台选择
+                                                                           // ABI fix: 同上，参数寄存器按平台选择
 #ifdef _WIN32
         a.mov(x86::rcx, x86::r12);                               // arg1 = ctx
         a.mov(x86::rdx, static_cast<int32_t>(currentChunkIdx_)); // arg2 = chunkIdx
-        a.sub(x86::rsp, 32); // shadow space (32) + 8B 对齐填充
+        a.sub(x86::rsp, 32);                                     // shadow space (32) + 8B 对齐填充
 #else
         a.mov(x86::rdi, x86::r12);                               // arg1 = ctx
         a.mov(x86::esi, static_cast<int32_t>(currentChunkIdx_)); // arg2 = chunkIdx
-        a.sub(x86::rsp, 16); // 16-byte alignment
+        a.sub(x86::rsp, 16);                                     // 16-byte alignment
 #endif
         a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitDeoptimize));
         a.call(x86::rax);
@@ -1479,11 +1479,11 @@ void JITBackend::emitLoop(x86::Assembler& a, Label epilogue, Label jumpTarget, s
 #ifdef _WIN32
             a.mov(x86::rcx, x86::r12);                       // arg1 = ctx
             a.mov(x86::rdx, static_cast<int32_t>(chunkIdx)); // arg2 = chunkIdx
-            a.sub(x86::rsp, 32); // shadow space (32) + 8B 对齐填充
+            a.sub(x86::rsp, 32);                             // shadow space (32) + 8B 对齐填充
 #else
             a.mov(x86::rdi, x86::r12);                       // arg1 = ctx
             a.mov(x86::esi, static_cast<int32_t>(chunkIdx)); // arg2 = chunkIdx
-            a.sub(x86::rsp, 16); // 16-byte alignment
+            a.sub(x86::rsp, 16);                             // 16-byte alignment
 #endif
             a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitTriggerOsrMigration));
             a.call(x86::rax);
@@ -1504,15 +1504,15 @@ void JITBackend::emitLoop(x86::Assembler& a, Label epilogue, Label jumpTarget, s
         } else {
             // R157: 简化版 OSR（仅触发特化重编译，不迁移栈帧，下次 execute 生效）
             a.mov(x86::qword_ptr(x86::r12, jit_offset::stackTop), x86::r15); // 同步栈顶
-            // ABI fix: 同上，参数寄存器按平台选择
+                                                                             // ABI fix: 同上，参数寄存器按平台选择
 #ifdef _WIN32
             a.mov(x86::rcx, x86::r12);                       // arg1 = ctx
             a.mov(x86::rdx, static_cast<int32_t>(chunkIdx)); // arg2 = chunkIdx
-            a.sub(x86::rsp, 32); // shadow space (32) + 8B 对齐填充
+            a.sub(x86::rsp, 32);                             // shadow space (32) + 8B 对齐填充
 #else
             a.mov(x86::rdi, x86::r12);                       // arg1 = ctx
             a.mov(x86::esi, static_cast<int32_t>(chunkIdx)); // arg2 = chunkIdx
-            a.sub(x86::rsp, 16); // 16-byte alignment
+            a.sub(x86::rsp, 16);                             // 16-byte alignment
 #endif
             a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitTriggerOsrRecompile));
             a.call(x86::rax);
@@ -1855,15 +1855,15 @@ bool JITBackend::emitCallDispatch(x86::Assembler& a, Label epilogue, const JitFu
 // 全部走 C++ 辅助路径（与容器/类支持一致）：同步栈顶 → 调用 helper →
 // 恢复栈顶 → 错误检查。校验逻辑在 jitBuildEnumVariant 等 helper 中与 VM 对齐。
 // ------------------------------------------------------------------
-void JITBackend::emitBuildEnumVariant(x86::Assembler& a, Label epilogue, const char* enumName,
-                                      const char* variantName, uint8_t argCount) {
+void JITBackend::emitBuildEnumVariant(x86::Assembler& a, Label epilogue, const char* enumName, const char* variantName,
+                                      uint8_t argCount) {
     a.mov(x86::qword_ptr(x86::r12, jit_offset::stackTop), x86::r15);
     a.movabs(x86::r10, reinterpret_cast<uint64_t>(enumName));
     a.movabs(x86::r11, reinterpret_cast<uint64_t>(variantName));
 #ifdef _WIN32
-    a.mov(x86::rcx, x86::r12);                     // arg1 = ctx
-    a.mov(x86::rdx, x86::r10);                     // arg2 = enumName
-    a.mov(x86::r8, x86::r11);                      // arg3 = variantName
+    a.mov(x86::rcx, x86::r12);                      // arg1 = ctx
+    a.mov(x86::rdx, x86::r10);                      // arg2 = enumName
+    a.mov(x86::r8, x86::r11);                       // arg3 = variantName
     a.mov(x86::r9, static_cast<int32_t>(argCount)); // arg4 = argCount
     a.sub(x86::rsp, 32);
     a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitBuildEnumVariant));
@@ -1886,8 +1886,7 @@ void JITBackend::emitBuildEnumVariant(x86::Assembler& a, Label epilogue, const c
     a.jnz(epilogue);
 }
 
-void JITBackend::emitEnumVariantName(x86::Assembler& a, Label epilogue, const char* enumName,
-                                     const char* variantName) {
+void JITBackend::emitEnumVariantName(x86::Assembler& a, Label epilogue, const char* enumName, const char* variantName) {
     a.mov(x86::qword_ptr(x86::r12, jit_offset::stackTop), x86::r15);
     a.movabs(x86::r10, reinterpret_cast<uint64_t>(enumName));
     a.movabs(x86::r11, reinterpret_cast<uint64_t>(variantName));
@@ -1941,15 +1940,14 @@ void JITBackend::emitEnumVariantField(x86::Assembler& a, Label epilogue) {
 // 并发原语内建函数：spawn/channel/mutex/rwlock（OP_CALL 分流）
 // jitCallConcurrency 经共享层完成调用，结果压栈（无新帧，非控制流转移）
 // ------------------------------------------------------------------
-void JITBackend::emitCallConcurrencyBuiltin(x86::Assembler& a, Label epilogue, const char* funName,
-                                            uint8_t argCount) {
+void JITBackend::emitCallConcurrencyBuiltin(x86::Assembler& a, Label epilogue, const char* funName, uint8_t argCount) {
     a.mov(x86::qword_ptr(x86::r12, jit_offset::stackTop), x86::r15);
     // spawn 的 ClosureInvoker 在 join 时需要当前帧信息无关；同步 currentBp 供防御
     a.mov(x86::qword_ptr(x86::r12, jit_offset::currentBp), x86::r13);
 #ifdef _WIN32
-    a.mov(x86::rcx, x86::r12);                                  // arg1 = ctx
-    a.movabs(x86::rdx, reinterpret_cast<uint64_t>(funName));    // arg2 = funName
-    a.mov(x86::r8, static_cast<int32_t>(argCount));             // arg3 = argCount
+    a.mov(x86::rcx, x86::r12);                               // arg1 = ctx
+    a.movabs(x86::rdx, reinterpret_cast<uint64_t>(funName)); // arg2 = funName
+    a.mov(x86::r8, static_cast<int32_t>(argCount));          // arg3 = argCount
     a.sub(x86::rsp, 32);
     a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitCallConcurrency));
     a.call(x86::rax);
@@ -1982,7 +1980,7 @@ void JITBackend::emitCallConcurrencyBuiltin(x86::Assembler& a, Label epilogue, c
 //      恢复序列会沿跳板帧干净地 ret 回 C++ 调用方（与 lazy 编译块共享主帧的
 //      机制同构）。
 //   2. sub rsp, 48 保持 rsp ≡ 0 (mod 16)，与主入口片段执行时的对齐奇偶性一致
- //     （helper 调用序列 sub rsp,32/16 依赖此奇偶性）；[rbp-48] 同时充当
+//     （helper 调用序列 sub rsp,32/16 依赖此奇偶性）；[rbp-48] 同时充当
 //      OP_RETURN 路径的 rbx 暂存槽（与主帧布局一致）。
 //   3. 操作数栈复用主入口已分配的区域（r15 = ctx->stackTop，调用方已压入
 //      closure + args），不另分配 8KB。

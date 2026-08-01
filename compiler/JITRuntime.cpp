@@ -17,7 +17,7 @@
 #include "common/TypeChecker.h" // enum 字段类型校验：typeMatchValue/isTypeParameter
 #include "common/Utf8Utils.h"
 #include "compiler/JITInternal.h"
-#include "interpreter/BuiltinMethods.h" // 并发原语共享层：executeSharedSpawn/handleSyncObjectMethod 等
+#include "interpreter/BuiltinMethods.h"    // 并发原语共享层：executeSharedSpawn/handleSyncObjectMethod 等
 #include "interpreter/RuntimeExceptions.h" // handleSyncObjectMethod 抛 RuntimeError
 #include "interpreter/Value.h"
 #include <algorithm>
@@ -958,8 +958,7 @@ extern "C" void jitBuildTuple(JitContext* ctx, uint8_t count) {
 /// 栈布局（调用前）：[..., arg0, arg1, ..., argN-1] ← ctx->stackTop 指向 argN-1
 /// 栈布局（调用后）：[..., variant]
 /// @param enumName/variantName C 字符串（编译期从 chunk.constants 解析，生命期跨 execute）
-extern "C" void jitBuildEnumVariant(JitContext* ctx, const char* enumName, const char* variantName,
-                                    uint8_t argCount) {
+extern "C" void jitBuildEnumVariant(JitContext* ctx, const char* enumName, const char* variantName, uint8_t argCount) {
     if (!ctx || !ctx->stackTop || !enumName || !variantName) {
         return;
     }
@@ -1031,8 +1030,7 @@ extern "C" void jitBuildEnumVariant(JitContext* ctx, const char* enumName, const
             }
             if (!inheritOk) {
                 reportError(ErrorFormat::formatStd("enum variant '{}.{}' 第 {} 个参数类型不匹配：期望 {}，得到 {}",
-                                                   enumName, variantName, fi + 1, expectedType,
-                                                   fields[fi].typeName()));
+                                                   enumName, variantName, fi + 1, expectedType, fields[fi].typeName()));
                 ctx->stackTop = sp; // 已 pop 参数，同步栈顶（错误路径即将中止执行）
                 return;
             }
@@ -1793,11 +1791,10 @@ extern "C" void jitMemberSetLocal(JitContext* ctx, uint8_t slot, int64_t* frameB
         if (slot == 0 && ctx->frameCount && *ctx->frameCount > 0) {
             JitFrame* cur = &ctx->frames[*ctx->frameCount - 1];
             if (cur->methodBp == frameBase && cur->methodFieldOrder && cur->fieldCount > 0) {
-                for (int64_t i = 0; i < cur->fieldCount &&
-                                    i < static_cast<int64_t>(cur->methodFieldOrder->size());
+                for (int64_t i = 0; i < cur->fieldCount && i < static_cast<int64_t>(cur->methodFieldOrder->size());
                      ++i) {
                     if ((*cur->methodFieldOrder)[static_cast<size_t>(i)] == fieldName) {
-                        Value fieldCopy = val; // 拷贝（addRef），valueToBits 需要 non-const
+                        Value fieldCopy = val;                            // 拷贝（addRef），valueToBits 需要 non-const
                         cur->methodBp[-(i + 1)] = valueToBits(fieldCopy); // detach 到字段槽
                         break;
                     }
@@ -2524,7 +2521,7 @@ extern "C" void* jitThrow(JitContext* ctx, uint64_t thrownValueBits, int64_t* cu
         size_t currentFrameIdx = ctx->frameCount ? *ctx->frameCount : 0;
 
         // 跳板内未捕获：降级为 hasError，由 jitInvokeClosureSync 转为 Result::err
-        //（join 处理器重新抛出 RuntimeError，外层以运行时错误终止）。
+        // （join 处理器重新抛出 RuntimeError，外层以运行时错误终止）。
         // 必须在 handler 搜索之前检查：frameIndex == frameFloor 的 handler 属于外层代码。
         if (inTrampoline && currentFrameIdx <= frameFloor) {
             Value thrownValue = bitsToValue(thrownValueBits);

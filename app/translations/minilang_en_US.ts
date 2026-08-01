@@ -6311,35 +6311,209 @@ Train debugging skills through real bugs accumulated by the project itself: read
     </message>
     <message>
         <source>⑥ 字节码↔汇编对照</source>
-        <translation>⑥ Bytecode ↔ Assembly</translation>
+        <translation type="finished">⑥ Bytecode↔汇compile compare</translation>
     </message>
     <message>
         <source>&lt;b&gt;字节码↔汇编对照&lt;/b&gt;：编辑源码后点击「编译并对照」，左栏展示栈式字节码反汇编，右栏展示 JIT 真实发射的 x86-64 汇编（含机器码字节，asmjit StringLogger 捕获）。</source>
-        <translation>&lt;b&gt;Bytecode ↔ Assembly&lt;/b&gt;: edit the source and click "Compile &amp;amp; Compare". Left pane shows stack bytecode disassembly; right pane shows the actual x86-64 assembly emitted by the JIT (with machine-code bytes, captured via asmjit StringLogger).</translation>
+        <translation type="finished">&lt;b&gt;Bytecode↔汇compile compare&lt;/b&gt;:Edit Source after click"Compile and compare",left 栏demonstrate stack-based Bytecode disassembly,right 栏demonstrate JIT true actual 发射 x86-64 汇compile(contain 机器code byte,asmjit StringLogger capture)。</translation>
     </message>
     <message>
         <source>编译并对照</source>
-        <translation>Compile &amp;&amp; Compare</translation>
+        <translation type="finished">Compile and compare</translation>
     </message>
     <message>
         <source>字节码反汇编：</source>
-        <translation>Bytecode disassembly:</translation>
+        <translation type="finished">Bytecode disassembly:</translation>
     </message>
     <message>
         <source>JIT 发射的 x86-64 汇编：</source>
-        <translation>JIT-emitted x86-64 assembly:</translation>
+        <translation type="finished">JIT 发射 x86-64 汇compile:</translation>
     </message>
     <message>
         <source>编译中...</source>
-        <translation>Compiling...</translation>
+        <translation type="finished">Compile in...</translation>
     </message>
     <message>
         <source>❌ 失败：%1</source>
-        <translation>❌ Failed: %1</translation>
+        <translation type="finished">❌ fail:%1</translation>
     </message>
     <message>
         <source>✅ 成功（输出：%1）</source>
-        <translation>✅ Success (output: %1)</translation>
+        <translation type="finished">✅ success(Output:%1)</translation>
+    </message>
+    <message>
+        <source>
+1. 先在「可回放执行时间轴」开启录制并跑一遍代码
+2. 回本面板点击任意历史步回滚
+3. 回滚后继续单步，验证不同分支的行为
+        </source>
+        <translation type="finished">
+1. first in"can back put execute time 轴"开启录制and 跑one 遍code
+2. back this Panel click any 历史步back 滚
+3. back 滚after Continue Step,verify different branch behavior
+        </translation>
+    </message>
+    <message>
+        <source>
+1. 先搞懂普通断点怎么用
+2. 在本面板添加要监视的变量
+3. 运行代码，看哪行代码改了它
+        </source>
+        <translation type="finished">
+1. first 搞懂Normal breakpoint 怎么use
+2. in this Panel Add 要watch Variable
+3. Run code,看which Line code 改 it
+        </translation>
+    </message>
+    <message>
+        <source>
+1. 读面板遇到陌生词，打开本面板查
+2. 点术语条目跳去相关教学面板，边看释义边动手验证
+3. 配合「学习路径地图」把术语系统过一遍
+4. 学完一个阶段，回来用搜索框自测：能不能用自己的话讲清每个术语
+        </source>
+        <translation type="finished">
+1. read Panel 遇to 陌生词,Open this Panel lookup
+2. point 术语entry jump 去related Teaching panel,edge 看释义edge 动手verify
+3. 配合"learn path ly diagram" 术语系统 one 遍
+4. 学完one phase,back 来use search 框自测:can cannot use own 话讲clear each 术语
+        </translation>
+    </message>
+    <message>
+        <source>AST 构建器：拖节点搭出一棵抽象语法树，亲眼看看运算符优先级和结合性是怎么决定树长什么样的。树长歪了，结果就歪了——这面板让你手动把树掰正。记住一句话：**树的形状就是计算的顺序**——`1+2*3` 和 `(1+2)*3` 的差别，全在树根是 `+` 还是 `*`。</source>
+        <translation type="finished">AST build 器:拖Node 搭出one 棵抽象syntax tree,亲眼看看operator 优first 级and 结合性is 怎么determine tree 长什么样 。tree 长歪,result 就歪 ——this Panel 你manually tree 掰positive。记住one 句话:**tree 形状就is compute order**——`1+2*3` and `(1+2)*3` difference,all in tree root is `+` still is `*`。</translation>
+    </message>
+    <message>
+        <source>IR 优化回放：把 const-fold / DCE / copy-prop / CSE / loop-unroll 这五种优化 pass 一步步演给你看，每步都解释「为什么这么改」。编译器不是魔法，是一步步把代码变瘦变快。IR（中间表示）之所以存在，是因为**优化只想写一次**：在 IR 上做完优化，再 lowering 到栈式或寄存器式后端，三个后端共享同一份优化成果。</source>
+        <translation type="finished">IR optimization back put: const-fold / DCE / copy-prop / CSE / loop-unroll this 五种optimization pass one 步步演give 你看,every 步all solve 释"why this 么改"。Compiler is not 魔法,is one 步步 code change 瘦change fast。IR(middle representation)the reason why exist in,is because**optimization only want write once**:in IR on do 完optimization,then lowering to stack-based or register-based backend,three backend share the same 份optimization become result。</translation>
+    </message>
+    <message>
+        <source>Token 拼图：拖着一个个 Token 把源码拼回去，直观感受词法分析器是怎么把字符流切成「有类型的零件」的。关卡通关后自动解锁下一关——像闯关，不像上课。**词法分析（Lexical Analysis）是编译的第一步**：它不关心含义，只负责断词——把 `var x = 1;` 切成关键字、标识符、运算符、字面量、分隔符五类零件。</source>
+        <translation type="finished">Token 拼diagram:拖 one Token Source 拼back 去,directly 观感受Lexer is 怎么 character flow 切become"has Type zero file" 。关卡via 关after automatically solve 锁below one 关——像闯关,not 像on 课。**lexical analysis(Lexical Analysis)is Compile first 步**:it not 关心meaning,only negative 责break 词—— `var x = 1;` 切become keyword,identifier,operator,literal,delimiter 五Class zero file。</translation>
+    </message>
+    <message>
+        <source>VM 栈沙盒：自己动手 push 字节码、单步执行，看着操作数栈一会儿压进去、一会儿弹出来。栈式虚拟机就这么点事儿——把指令一条条喂进去，看栈怎么变。核心心法：**表达式让栈净增 1，语句让栈净增 0**——栈平衡是字节码正确性的第一不变量，违反它就是「栈泄漏」Bug。</source>
+        <translation type="finished">VM Stack 沙盒:self 动手 push Bytecode,single-step execution,看 operand stack one will 儿压进去,one will 儿pop 来。stack-based Virtual machine 就this 么point 事儿—— instruction one item 喂进去,看Stack 怎么change。core 心法:**Expression Stack 净增 1,Statement Stack 净增 0**——stack balance is Bytecode correct 性 first invariant,violate it 就is"stack leak"Bug。</translation>
+    </message>
+    <message>
+        <source>① 栈沙盒</source>
+        <translation type="finished">① Stack 沙盒</translation>
+    </message>
+    <message>
+        <source>② 真实字节码追踪</source>
+        <translation type="finished">② true actual Bytecode 追踪</translation>
+    </message>
+    <message>
+        <source>「%1」是干什么的？</source>
+        <translation type="finished">"%1"is 干什么?</translation>
+    </message>
+    <message>
+        <source>一行 MiniLang 代码从出生到结果，要走过 6 个阶段：`源码 → Token → AST → IR → 字节码 → 输出`。这个面板就是把这趟旅程摊开给你看——每个阶段都带示例和跳转按钮，点一下就能去对应的专题面板动手玩。看完这张图，你脑子里就有了一张**心智地图**：之后的每个专题面板，都是这张图上某一站的放大镜。</source>
+        <translation type="finished">one Line MiniLang code from 出生to result,要走 6 phase:`Source → Token → AST → IR → Bytecode → Output`。this Panel 就is this 趟旅程摊开give 你看——each phase all 带Example and jump button,point one below 就can 去corresponds to 专problem Panel 动手玩。看完this 张diagram,你脑子里就has one 张**心智ly diagram**:after each 专problem Panel,all is this 张diagram on some one 站 put big 镜。</translation>
+    </message>
+    <message>
+        <source>关联概念：%1&lt;br/&gt;随时点这里的「这是什么？」可再次查看完整说明。</source>
+        <translation type="finished">关联concept:%1&lt;br/&gt;随when point here "this is 什么?"can again View 完entire description。</translation>
+    </message>
+    <message>
+        <source>内存模型可视化：把 NaN-boxing 编码、写时复制（COW）容器、GC 的 mark-sweep 全做成了实时动画。值到底在内存里怎么放、怎么共享、怎么回收，看动画比看文档直观十倍。三个关键词各管一件事：**NaN-boxing** 管「一个值怎么用 8 字节装下」，**COW** 管「共享的容器什么时候才复制」，**mark-sweep** 管「循环引用的垃圾怎么兜底回收」。</source>
+        <translation type="finished">Memory model visualization: NaN-boxing encoding,write when copy(COW)container,GC mark-sweep all do become actual when 动画。Value to bottom in in exist 里怎么put,怎么share,怎么Collection,看动画比看text 档directly 观十倍。three key 词each 管one file 事:**NaN-boxing** 管"one Value 怎么use 8 byte 装below",**COW** 管"share container 什么time only then copy",**mark-sweep** 管"reference cycle 垃圾怎么兜bottom Collection"。</translation>
+    </message>
+    <message>
+        <source>反向调试 / 状态回滚 / 快照 / FullState 录制</source>
+        <translation type="finished">反to Debug / Status back 滚 / snapshot / FullState 录制</translation>
+    </message>
+    <message>
+        <source>反向调试时间轴</source>
+        <translation type="finished">反to Debug time 轴</translation>
+    </message>
+    <message>
+        <source>反向调试时间轴：把执行历史摆成一排可点击的历史步，点哪步就回滚到哪步——调试不再是单行道，走过头了可以倒回去重来。需先在「可回放执行时间轴」开启录制。</source>
+        <translation type="finished">反to Debug time 轴: execute 历史摆become one 排can click 历史步,point which 步就back 滚to which 步——Debug no longer is single Line 道,走 head can 倒back deduplication 来。needs first in"can back put execute time 轴"开启录制。</translation>
+    </message>
+    <message>
+        <source>变量检查器：把作用域链、闭包捕获、变量生命周期画出来。一个变量在哪个作用域看得见、活多久，这个面板替你盯着。记住一条规则：**找变量永远从最内层作用域开始，一层层往外找**——这条链就是 Environment 链，找到第一个同名变量就停，所以内层同名变量会「遮住」外层。</source>
+        <translation type="finished">Variable inspector: scope chain,Closure capture,Variable lifetime 画出来。one Variable in which scope 看get 见,live multi 久,this Panel 替你盯 。记住one 规then:**find Variable 永远from innermost scope start,one layer layer 往outside find**——this item chain 就is Environment chain,find to first same name Variable 就停,so inner same name Variable will"遮住"outer。</translation>
+    </message>
+    <message>
+        <source>回滚失败：需先在「可回放执行时间轴」以 FullState 模式录制，且当前执行引擎需与快照后端匹配</source>
+        <translation type="finished">back 滚fail:needs first in"can back put execute time 轴"by FullState mode 录制,and current execution engine needs and snapshot backend match</translation>
+    </message>
+    <message>
+        <source>字节码追踪：指令级执行回放，每条字节码跑完都记一下操作数栈、寄存器、IP 的状态。想搞清楚「这条指令到底改了什么」，就靠它来回溯。先记住一个概念：**IP（指令指针）**永远指向下一条要执行的指令——顺序执行就是 IP+1，分支和循环就是把 IP 改成别的值，仅此而已。</source>
+        <translation type="finished">Bytecode 追踪:instruction 级execute back put,every item Bytecode 跑完all 记one below operand stack,Register,IP Status。want 搞clear 楚"this instructions to bottom 改 什么",就靠it 来back 溯。first 记住one concept:**IP(instruction pointer)**永远points to below one 要execute instruction——order execute 就is IP+1,branch and loop 就is IP 改become do not Value,only this while 。</translation>
+    </message>
+    <message>
+        <source>完成 ✓</source>
+        <translation type="finished">complete ✓</translation>
+    </message>
+    <message>
+        <source>实验手册：一套从基础到进阶的结构化练习，每个实验都给了目标、步骤和验证标准。想系统学一遍，跟着它走就行。8 个实验正好对应编译原理的 8 个主题：**词法 → 语法 → 语义 → 目标代码 → 中间代码 → 三后端一致性 → 内存模型 → Bug 狩猎**，每章还带迷你实验和章节练习题，学完能自测。</source>
+        <translation type="finished">Lab manual:one wrap from basis to advanced structure 化练习,each experiment all give goal,Step and verify 标准。want 系统学one 遍,跟 it 走就Line。8 experiment positive good corresponds to Compile principle 8 主problem:**lexical → syntax → semantics → goal code → middle code → three-backend consistency → Memory model → Bug Hunt**,every 章still 带迷你experiment and chapter 练习problem,学完can 自测。</translation>
+    </message>
+    <message>
+        <source>已回滚到步 %1（行 %2），可继续单步执行</source>
+        <translation type="finished">back 滚to 步 %1(Line %2),can Continue single-step execution</translation>
+    </message>
+    <message>
+        <source>异常流可视化：把 try/catch/finally 的传播路径和栈效应画出来。异常抛出后怎么沿着调用栈往上爬、最后在哪被抓住，看一眼就明白。这个过程的术语叫**栈展开（Stack Unwinding）**：异常从抛出点开始逐帧弹栈找 catch，沿途每层的 finally 都会被执行——这保证了资源清理不会被异常跳过。</source>
+        <translation type="finished">exception flow visualization: try/catch/finally propagation path and stack effect 画出来。Exception throw after 怎么along Call stack 往on 爬,finally in which 抓住,看one 眼就明白。this 程 术语叫**stack unwinding(Stack Unwinding)**:Exception from throw point start frame by frame pop find catch,along the way each layer finally all will execute——this guarantee resource cleanup will not Exception skip。</translation>
+    </message>
+    <message>
+        <source>性能仪表盘：把三后端的耗时摆一起比，再列个 opcode 执行次数 Top 10 热点。你的代码慢在哪、该从哪优化，看这张图就有方向了。背后是性能分析的第一原则：**先测量，再优化**——热点通常集中在极少数代码上（二八律），凭感觉优化往往白忙。</source>
+        <translation type="finished">性can 仪table 盘: three backends 耗when 摆one 起比,then Column opcode execute times count Top 10 hot spot。你 code slow in which,the from which optimization,看this 张diagram 就has 方to 。背after is performance analysis first original then:**first 测量,then optimization**——hot spot usually 集in in 极few count code on(二八律),凭感觉optimization 往往白忙。</translation>
+    </message>
+    <message>
+        <source>想深入？</source>
+        <translation type="finished">want deep enter?</translation>
+    </message>
+    <message>
+        <source>推荐这样学</source>
+        <translation type="finished">push 荐this way 学</translation>
+    </message>
+    <message>
+        <source>教学面板</source>
+        <translation type="finished">Teaching panel</translation>
+    </message>
+    <message>
+        <source>数据断点 / Watchpoint / 变量监视 / 调试</source>
+        <translation type="finished">count 据Breakpoint / Watchpoint / variable watch / Debug</translation>
+    </message>
+    <message>
+        <source>数据断点（Watchpoint）：盯住某个变量或字段，一旦它被修改就立刻暂停——不用猜「到底是谁改了我的变量」，让调试器当场抓住那只手。</source>
+        <translation type="finished">count 据Breakpoint(Watchpoint):盯住some Variable or Field,one 旦it Modify 就立刻Pause——not use 猜"to bottom is 谁改 我 Variable", Debug 器when 场抓住那only 手。</translation>
+    </message>
+    <message>
+        <source>术语 / 释义 / 概念索引 / 跨面板跳转 / NaN-boxing / COW / upvalue / SSA</source>
+        <translation type="finished">术语 / 释义 / concept index / 跨Panel jump / NaN-boxing / COW / upvalue / SSA</translation>
+    </message>
+    <message>
+        <source>术语表：把 MiniLang IDE 的核心术语（词法 / 语法 / IR / 字节码 / VM / 内存模型……）按类归在一起，每条都配简明释义、详细讲解和跳转按钮。碰到不认识的概念，随时来翻。几个高频术语先混个脸熟：**NaN-boxing**（用 8 字节 double 的 NaN 空闲位编码所有类型的值）、**COW**（写时复制，共享容器写前才复制）、**upvalue**（闭包捕获的外层变量）、**SSA**（静态单赋值，每个值只写一次，方便优化分析）、**lowering**（把 IR 降低成具体后端指令）。支持搜索和分类筛选，术语条目还能一键跳到对应教学面板动手验证。</source>
+        <translation type="finished">术语table: MiniLang IDE core 术语(lexical / syntax / IR / Bytecode / VM / Memory model……)by Class 归in one 起,every item all 配简明释义,detailed 讲solve and jump button。碰to not 认识 concept,随when 来翻。several high-frequency 术语first 混 脸熟:**NaN-boxing**(use 8 byte double NaN empty 闲bits compile code all Type Value),**COW**(write when copy,share container write before only then copy),**upvalue**(Closure capture outer variable),**SSA**(静态single assign,each Value only write once,方便optimization analyze),**lowering**(IR reduce become 具体backend instruction)。support search and classification 筛选,术语entry still can one key jump to the corresponding Teaching panel 动手verify。</translation>
+    </message>
+    <message>
+        <source>条件断点可视化：把断点条件的求值沙箱和命中次数摆出来。条件断点到底什么时候算、什么时候命中，不是玄学——这个面板把它摊开给你看。关键设计是**沙箱求值（Sandbox Evaluation）**：条件表达式在隔离环境里算，算崩了、死循环了都不能影响主程序——调试器自己不能比被调的程序先挂。</source>
+        <translation type="finished">conditional breakpoint visualization: Breakpoint condition evaluate sandbox and hit count 摆出来。conditional breakpoint to bottom 什么time 算,什么time hit,is not 玄学——this Panel it 摊开give 你看。key 设计is**sandbox evaluate(Sandbox Evaluation)**:conditional expression in 隔离环境里算,算崩,死loop all cannot affect 主program——Debug 器self cannot 比 call program first 挂。</translation>
+    </message>
+    <message>
+        <source>编译管线可视化：把源码变成运行结果的全过程拆成 6 个阶段，一步步演示给你看。每推进一步，都能看到这一步吃进去什么、吐出来什么（输入/输出数据结构和中间产物）。推进时留意数据形态的变化：`字符流 → Token 流 → AST → IR → 字节码 → 值`——**理解了数据形态怎么变，就理解了编译的本质**。</source>
+        <translation type="finished">Compilation pipeline visualization: Source change become Run result all 程拆become 6 phase,one 步步Demo give 你看。every push further,all can 看to this one 步吃进去什么,吐出来什么(input/Output count 据structure and middle 产物)。push 进when 留meaning count 据形态 change:`character flow → Token flow → AST → IR → Bytecode → Value`——**understand count 据形态怎么change,就understand Compile this 质**。</translation>
+    </message>
+    <message>
+        <source>语法浏览器：把 MiniLang 的所有语法结构和示例代码摊在一张表里。点一个语法节点，就能看到它对应的 AST 长相和典型用法——相当于一本会动的语法说明书。背后的概念叫**产生式（Production）**：每条语法规则都在说「这个结构由哪些零件组成」，递归下降解析器就是照着产生式一条条写出来的函数。</source>
+        <translation type="finished">syntax 浏览器: MiniLang all syntax structure and example code 摊in one 张table 里。point one syntax Node,就can 看to it corresponds to AST 长mutual and 典型use 法——mutual when at one this will 动 syntax description 书。背after concept 叫**production(Production)**:every item syntax 规then all in 说"this structure by which zero file compose",recursive descent Parser 就is 照 production one item write 出来 Function。</translation>
+    </message>
+    <message>
+        <source>语法规则 / 产生式 / 语法节点 / AST</source>
+        <translation type="finished">syntax 规then / production / syntax Node / AST</translation>
+    </message>
+    <message>
+        <source>调用栈检查器：把函数调用时的栈帧结构、参数怎么传、返回地址在哪，全画了出来。函数一层套一层时，谁调用了谁、返回去哪儿，一目了然。核心概念是**栈帧（Stack Frame）**：每次调用函数就压入一帧（装着参数、局部变量、返回地址），函数返回就弹出一帧——递归爆栈，爆的就是这个栈。</source>
+        <translation type="finished">Call stack inspector: function call when stack frame structure,argument 怎么传,return address in which,all 画 出来。Function one layer wrap one layer when,谁call 谁,return 去which 儿,one 目 then。core concept is**stack frame(Stack Frame)**:each time call Function 就push one frame(装 argument,local variable,return address),function return 就pop one frame——recursion 爆Stack,爆 就is this Stack。</translation>
+    </message>
+    <message>
+        <source>闭包检查器：把 upvalue 的一生（capture / heap / access / close / destroy）画出来。闭包到底是怎么抓住外面那个变量、又怎么一直抱着不放的，这个面板说清楚了。一句话建立直觉：**闭包 = 函数 + 它记住的外层变量（upvalue）**——外层函数返回后局部变量本该消亡，但被捕获的变量会「逃」到堆上继续活着，这就是 close upvalue 的意义。</source>
+        <translation type="finished">Closure inspector: upvalue one 生(capture / heap / access / close / destroy)画出来。Closure to bottom is 怎么抓住outside 面那 Variable,又怎么always 抱 not put,this Panel 说clear 楚 。one 句话establish directly 觉:**Closure = Function + it 记住 outer variable(upvalue)**——outer function return after local variable this the 消亡,but capture Variable will"逃"to on the heap Continue live,this 就is close upvalue meaning。</translation>
     </message>
 </context>
 </TS>

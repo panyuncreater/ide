@@ -235,7 +235,8 @@ const std::vector<ClosureScenario>& ClosureInspectorLibrary::scenarios() {
          "缓存状态对外不可见（私有），但在多次调用间持久——"
          "这是函数式编程中经典的记忆化（memoization）模式。",
          "fun makeMemoSquare() {\n    var cache = {};\n    fun square(n) {\n        var key = \"\" + n;\n        "
-         "if (cache.has(key)) {\n            print(\"cache hit!\");\n            return cache[key];\n        }\n        "
+         "if (cache.has(key)) {\n            print(\"cache hit!\");\n            return cache[key];\n        }\n       "
+         " "
          "cache[key] = n * n;\n        return cache[key];\n    }\n    return square;\n}\n\nvar sq = "
          "makeMemoSquare();\nprint(sq(9));  // 81（计算）\nprint(sq(9));  // cache hit! 81（缓存）",
          {"cache"},

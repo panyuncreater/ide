@@ -111,10 +111,21 @@ COPY debug/ debug/
 COPY formatter/ formatter/
 COPY gui/ gui/
 COPY tests/ tests/
+# lint/、doc/ 与 cli/ 也必须 COPY：
+#   - minilang_core 的 minilang_frontend OBJECT 库引用 lint/LintPass.cpp 与
+#     doc/DocGenerator.cpp（无文件则 configure 报 "Cannot find source file"，
+#     minilang_frontend 空目标，generate 阶段连锁报 "No SOURCES given"）
+#   - minilang_ide 目标无条件引用 cli/fuzz_core.cpp 与 cli/lint_core.cpp
+#     （教学面板复用，不受 MINILANG_BUILD_CLI=OFF 影响）
+COPY lint/ lint/
+COPY doc/ doc/
+COPY cli/ cli/
 
 # 配置并构建 IDE（关闭测试与 i18n 以加速）
-# 注：test_harness/ 和 cli/ 目录未 COPY 到 Docker 上下文（构建 IDE 镜像无需这些工具），
+# 注：test_harness/ 未 COPY 到 Docker 上下文（构建 IDE 镜像无需这些工具），
 # 必须显式关闭对应选项，否则 add_subdirectory 会因目录不存在而报 CMake Error。
+# lint/、doc/ 与 cli/ 已 COPY（minilang_core/minilang_ide 引用其中源文件），
+# MINILANG_BUILD_CLI=OFF 仅不构建 cli 可执行目标，不影响 IDE 引用其源文件。
 RUN cmake --preset linux-gcc-release \
     -DMINILANG_BUILD_TESTS=OFF \
     -DMINILANG_ENABLE_I18N=OFF \

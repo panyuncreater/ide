@@ -566,7 +566,7 @@ public:
     // 调用生成器函数返回 Coroutine 值而非直接执行函数体，需通过 .next() 恢复执行。
     bool isGenerator = false;
     // 七特性 MVP 阶段 4：async fun 声明标记。async fun 复用生成器机制
-    //（isGenerator 同时置 true，调用返回 Task/协程），体内可用 await/yield。
+    // （isGenerator 同时置 true，调用返回 Task/协程），体内可用 await/yield。
     // 本字段仅供 Formatter 区分打印 `async fun` vs `fun*`（语义层二者等价）。
     bool isAsync = false;
     // L18 lang-constfun：const fun 声明——实参全为字面量时编译期沙箱求值折叠为常量。
@@ -1288,9 +1288,9 @@ public:
 /// trait 声明节点（运行期 no-op，方法在 parse 期合入混入类）
 class TraitDecl : public ASTNode {
 public:
-    std::string name;                               ///< trait 名
-    std::vector<std::shared_ptr<ASTNode>> methods;  ///< 方法列表（均为 FunDecl）
-    int closingBraceLine = 0;                       ///< 闭合 '}' 行号（Formatter 注释注入用）
+    std::string name;                              ///< trait 名
+    std::vector<std::shared_ptr<ASTNode>> methods; ///< 方法列表（均为 FunDecl）
+    int closingBraceLine = 0;                      ///< 闭合 '}' 行号（Formatter 注释注入用）
 
     TraitDecl(std::string n, std::vector<std::shared_ptr<ASTNode>> ms, int ln = 0, int col = 0)
         : ASTNode(ln, col), name(std::move(n)), methods(std::move(ms)) {

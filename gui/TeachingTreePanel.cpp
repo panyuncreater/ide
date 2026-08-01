@@ -4,7 +4,7 @@
 
 #include "gui/TeachingTreePanel.h"
 #include "gui/I18n.h"
-#include "gui/PanelCatalog.h"   // P2-1 fix: 抽取统一面板目录
+#include "gui/PanelCatalog.h"  // P2-1 fix: 抽取统一面板目录
 #include "gui/TeachingTheme.h" // UX-R fix: 硬编码颜色迁移到语义色
 
 #include <QFrame>
@@ -50,28 +50,28 @@ TeachingTreePanel::TeachingTreePanel(QWidget* parent) : QWidget(parent) {
     // background:transparent + color:white，防止被祖先 palette 覆盖成白底白字。
     // UX-R fix: 渐变/文字色从硬编码（#268BD2/#1E6FA3/white）迁移到 TeachingTheme 语义色。
     const QColor onPrimary = TeachingTheme::onPrimary();
-    headerBanner_->setStyleSheet(QStringLiteral("QWidget#teachingBanner {"
-                                                "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
-                                                "    stop:0 %1, stop:1 %2);"
-                                                "}"
-                                                "QWidget#teachingBanner QLabel {"
-                                                "  background: transparent;"
-                                                "  color: %3;"
-                                                "  border: none;"
-                                                "}"
-                                                "QLabel#teachingBannerTitle {"
-                                                "  font-size: 15px;"
-                                                "  font-weight: 600;"
-                                                "}"
-                                                "QLabel#teachingBannerSubtitle {"
-                                                "  font-size: 11px;"
-                                                "  color: rgba(%4,%5,%6,220);"
-                                                "}")
-                                     .arg(TeachingTheme::primary().name(), TeachingTheme::primaryPressed().name(),
-                                          onPrimary.name())
-                                     .arg(onPrimary.red())
-                                     .arg(onPrimary.green())
-                                     .arg(onPrimary.blue()));
+    headerBanner_->setStyleSheet(
+        QStringLiteral("QWidget#teachingBanner {"
+                       "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+                       "    stop:0 %1, stop:1 %2);"
+                       "}"
+                       "QWidget#teachingBanner QLabel {"
+                       "  background: transparent;"
+                       "  color: %3;"
+                       "  border: none;"
+                       "}"
+                       "QLabel#teachingBannerTitle {"
+                       "  font-size: 15px;"
+                       "  font-weight: 600;"
+                       "}"
+                       "QLabel#teachingBannerSubtitle {"
+                       "  font-size: 11px;"
+                       "  color: rgba(%4,%5,%6,220);"
+                       "}")
+            .arg(TeachingTheme::primary().name(), TeachingTheme::primaryPressed().name(), onPrimary.name())
+            .arg(onPrimary.red())
+            .arg(onPrimary.green())
+            .arg(onPrimary.blue()));
     layout->addWidget(headerBanner_);
 
     // B3: 搜索框
@@ -227,8 +227,8 @@ void TeachingTreePanel::buildTree() {
             leafItem->setText(0, leafText);
             leafItem->setData(0, Qt::UserRole, QString::fromUtf8(leaf.id));
             // B5/UX-R fix: 叶子节点 tooltip —— 难度分级 + 入口行为提示
-            leafItem->setToolTip(0, mlTr("难度：") + mlTr(PanelCatalog::levelName(leaf.level)) +
-                                        QStringLiteral("\n") + QString::fromUtf8("点击进入 ") + mlTr(leaf.label));
+            leafItem->setToolTip(0, mlTr("难度：") + mlTr(PanelCatalog::levelName(leaf.level)) + QStringLiteral("\n") +
+                                        QString::fromUtf8("点击进入 ") + mlTr(leaf.label));
             idToItem_[QString::fromUtf8(leaf.id)] = leafItem;
         }
         // 默认全部折叠，下面单独展开前两个分类

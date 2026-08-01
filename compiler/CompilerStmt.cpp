@@ -543,7 +543,7 @@ void Compiler::visitMacroCallExpr(MacroCallExpr& node) {
     compileNode(node.expanded.get());
     // 七特性宏升级：语句宏（expanded 为 Block）执行后栈净高 0，不产生表达式值；
     // 补发 OP_NULL 作为表达式值，使 MacroCallExpr 始终压栈恰好一个值
-    //（needsPopForExprStmt 对 NODE_MACRO_CALL 返回 true，语句位置会 POP 此 null，栈平衡）。
+    // （needsPopForExprStmt 对 NODE_MACRO_CALL 返回 true，语句位置会 POP 此 null，栈平衡）。
     if (!node.producesValue) {
         chunk_.writeOp(OpCode::OP_NULL, node.line);
     }
@@ -1103,7 +1103,7 @@ void Compiler::visitThrowStmt(ThrowStmt& node) {
 
 void Compiler::visitImportStmt(ImportStmt& node) {
     // 七特性 MVP 阶段 6：沙箱拦截——禁用文件 import 时仅放行 std/ 内建模块
-    //（与 Interpreter::visitImportStmt 同口径，保证三后端沙箱行为一致）。
+    // （与 Interpreter::visitImportStmt 同口径，保证三后端沙箱行为一致）。
     if (RuntimeLimits::RuntimeConfig::instance().sandboxBlocksImport()) {
         const std::string& p = node.modulePath;
         if (p.rfind("std/", 0) != 0) {

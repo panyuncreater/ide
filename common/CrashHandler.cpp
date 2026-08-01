@@ -32,8 +32,13 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #define NOGDI
+// clang-format off
+// 顺序敏感：dbghelp.h 依赖 <windows.h> 先定义 PCWSTR 等类型，
+// clang-format 的 include 排序会把 dbghelp.h 排到 windows.h 前导致 C2065，
+// 故此处禁用格式化（见 CI macOS/Docker 修复记录）。
 #include <windows.h>
 #include <dbghelp.h>
+// clang-format on
 #pragma comment(lib, "dbghelp.lib")
 #else
 #include <cerrno>

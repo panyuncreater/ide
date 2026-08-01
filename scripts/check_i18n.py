@@ -105,7 +105,9 @@ def main() -> int:
     # ratchet 基线：存量未同步欠账（2026-07-28 盘点为 806 条，历史上
     # 部分面板字符串未跑 lupdate）。新增未同步字符串使缺口超过阈値即红；
     # 补同步后应下调此默认値（只减不增）。
-    parser.add_argument("--max-missing", type=int, default=806,
+    # 2026-08-01：同步 37 条新增教学面板字符串（sync_i18n_zh.py）后降至 787，
+    # 默认値随之下调至 787 锁住成果。
+    parser.add_argument("--max-missing", type=int, default=787,
                         help="允许的未同步字符串上限（ratchet 基线，只减不增）")
     args = parser.parse_args()
     root = pathlib.Path(args.repo_root).resolve()

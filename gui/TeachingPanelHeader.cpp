@@ -10,7 +10,7 @@
 
 #include "gui/TeachingPanelHeader.h"
 #include "gui/I18n.h"
-#include "gui/LearningPathData.h"  // P2-C fix: 派生活动数 / 阶段数
+#include "gui/LearningPathData.h" // P2-C fix: 派生活动数 / 阶段数
 #include "gui/MarkdownRenderer.h" // 帮助文案 Markdown → HTML 统一渲染
 #include "gui/PanelCatalog.h"     // UX-R fix: 帮助弹窗展示难度分级/所属分类
 #include "gui/TeachingTheme.h"    // P3-18 fix: 硬编码颜色迁移到语义色
@@ -49,10 +49,9 @@ QString learningPathSummaryText() {
 const QHash<QString, HelpDoc>& helpDocs() {
     static const QHash<QString, HelpDoc> docs = {
         {QStringLiteral("code-journey"),
-         {mlTr(
-              "一行 MiniLang 代码从出生到结果，要走过 6 个阶段：`源码 → Token → AST → IR → 字节码 → "
-              "输出`。这个面板就是把这趟旅程摊开给你看——每个阶段都带示例和跳转按钮，点一下就能去对应的专题面板动手玩。"
-              "看完这张图，你脑子里就有了一张**心智地图**：之后的每个专题面板，都是这张图上某一站的放大镜。"),
+         {mlTr("一行 MiniLang 代码从出生到结果，要走过 6 个阶段：`源码 → Token → AST → IR → 字节码 → "
+               "输出`。这个面板就是把这趟旅程摊开给你看——每个阶段都带示例和跳转按钮，点一下就能去对应的专题面板动手玩。"
+               "看完这张图，你脑子里就有了一张**心智地图**：之后的每个专题面板，都是这张图上某一站的放大镜。"),
           mlTr("1. 先在本面板把全流程溜一遍\n2. 看中哪个阶段，点底部按钮跳过去\n3. 在对应面板里真正动手试"),
           mlTr("词法分析 / 语法分析 / IR / 字节码 / 虚拟机")}},
         {QStringLiteral("learning-path"),
@@ -108,7 +107,8 @@ const QHash<QString, HelpDoc>& helpDocs() {
         {QStringLiteral("memory-model"),
          {mlTr("内存模型可视化：把 NaN-boxing 编码、写时复制（COW）容器、GC 的 mark-sweep "
                "全做成了实时动画。值到底在内存里怎么放、怎么共享、怎么回收，看动画比看文档直观十倍。"
-               "三个关键词各管一件事：**NaN-boxing** 管「一个值怎么用 8 字节装下」，**COW** 管「共享的容器什么时候才复制」，"
+               "三个关键词各管一件事：**NaN-boxing** 管「一个值怎么用 8 字节装下」，**COW** "
+               "管「共享的容器什么时候才复制」，"
                "**mark-sweep** 管「循环引用的垃圾怎么兜底回收」。"),
           mlTr("1. 先搞懂 Value 类型（看「变量检查器」）\n2. 在本面板盯着 GC 动画看\n3. "
                "配合「闭包检查器」看堆里对象的寿命"),
@@ -427,15 +427,15 @@ TeachingPanelHeader::TeachingPanelHeader(const QString& panelId, const QString& 
                                  "#teachingBackBtn:pressed {"
                                  "  background: %9;"
                                  "}")
-                      .arg(TeachingTheme::primaryHoverBg().name(),   // %1 渐变起点/hover 淡蓝
-                           TeachingTheme::surface().name(),          // %2 渐变终点/返回钮背景
-                           TeachingTheme::border().name(),           // %3 分隔线/边框
-                           TeachingTheme::textPrimary().name(),      // %4 标题/正文色
-                           TeachingTheme::primary().name(),          // %5 主题色
-                           TeachingTheme::onPrimary().name(),        // %6 主色上前景
-                           TeachingTheme::primaryHover().name(),     // %7 主色 hover
-                           TeachingTheme::primaryPressed().name(),   // %8 主色 pressed
-                           TeachingTheme::surfaceHover().name()));   // %9 返回钮 hover 背景
+                      .arg(TeachingTheme::primaryHoverBg().name(), // %1 渐变起点/hover 淡蓝
+                           TeachingTheme::surface().name(),        // %2 渐变终点/返回钮背景
+                           TeachingTheme::border().name(),         // %3 分隔线/边框
+                           TeachingTheme::textPrimary().name(),    // %4 标题/正文色
+                           TeachingTheme::primary().name(),        // %5 主题色
+                           TeachingTheme::onPrimary().name(),      // %6 主色上前景
+                           TeachingTheme::primaryHover().name(),   // %7 主色 hover
+                           TeachingTheme::primaryPressed().name(), // %8 主色 pressed
+                           TeachingTheme::surfaceHover().name())); // %9 返回钮 hover 背景
 }
 
 void TeachingPanelHeader::setTitle(const QString& title) {
@@ -465,18 +465,18 @@ void TeachingPanelHeader::showHelpDialog() {
     // 中性白 QSS：背景 surface，文字 textPrimary，padding 12px（R74: 回退 Solarized 米黄）
     // 「知道了」按钮保持 PrimaryButton 自带 Fluent 主色样式，不覆盖
     // UX-R fix: 硬编码颜色迁移到 TeachingTheme 语义色
-    const QString kDialogQss = QStringLiteral("QDialog#helpDialog {"
-                                              "  background: %1;"
-                                              "}"
-                                              "QTextBrowser#helpBrowser {"
-                                              "  background: %1;"
-                                              "  color: %2;"
-                                              "  border: 1px solid %3;"
-                                              "  border-radius: 6px;"
-                                              "  padding: 12px;"
-                                              "}")
-                                   .arg(TeachingTheme::surface().name(), TeachingTheme::textPrimary().name(),
-                                        TeachingTheme::border().name());
+    const QString kDialogQss =
+        QStringLiteral("QDialog#helpDialog {"
+                       "  background: %1;"
+                       "}"
+                       "QTextBrowser#helpBrowser {"
+                       "  background: %1;"
+                       "  color: %2;"
+                       "  border: 1px solid %3;"
+                       "  border-radius: 6px;"
+                       "  padding: 12px;"
+                       "}")
+            .arg(TeachingTheme::surface().name(), TeachingTheme::textPrimary().name(), TeachingTheme::border().name());
 
     const auto& docs = helpDocs();
     auto it = docs.find(panelId_);
