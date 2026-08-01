@@ -136,10 +136,22 @@ jobs:
             cd gh-pages
             git init -b gh-pages
             git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
-            git config user.name  'github-actions[bot]'
-            git config user.email 'github-actions[bot]@users.noreply.github.com'
             cd ..
             echo "gh-pages branch not found; initialized empty repo (first run)"
+          fi
+          # checkout 失败时 actions/checkout 会留下 HEAD→master 的空 git 仓库
+          # （git init 默认分支提示可见），此时 commit 会落在 master 导致
+          # push 报 "src refspec gh-pages does not match any"。
+          # 自愈：把 HEAD 改指 gh-pages（空仓库直接改符号引用，有提交则建分支）。
+          if [ "$(git -C gh-pages symbolic-ref --short HEAD 2>/dev/null)" != "gh-pages" ]; then
+            cd gh-pages
+            if git rev-parse --verify HEAD >/dev/null 2>&1; then
+              git checkout -b gh-pages 2>/dev/null || git branch -M gh-pages
+            else
+              git symbolic-ref HEAD refs/heads/gh-pages
+            fi
+            cd ..
+            echo "gh-pages HEAD redirected to gh-pages branch"
           fi
 
       - name: 更新 benchmark 数据
