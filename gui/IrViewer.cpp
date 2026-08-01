@@ -176,11 +176,7 @@ void IrViewer::setIR(const IRFunction* ir) {
             return;
         }
 
-        // PERF: 大 IR 保护
-        size_t totalInstrs = 0;
-        for (const auto& block : ir->blocks) {
-            totalInstrs += block.instructions.size();
-        }
+        // PERF: 大 IR 保护（行数限制在下方按 rowToSourceLine_ 累计判定）
         static constexpr size_t MAX_IR_ROWS = 10000;
 
         QString html;
