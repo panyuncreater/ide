@@ -449,14 +449,12 @@ void PerformanceRacePanel::renderAnalysis(const BackendPerfResult& interp, const
         QStringLiteral("<html><body style='font-family:\"Consolas\",\"Microsoft YaHei\",monospace;padding:4px;'>"
                        "<h3 style='margin:0 0 8px 0;color:#2C3E50;'>性能分析报告</h3>");
 
-    // 统计成功后端
-    int successCount = 0;
+    // 统计成功后端（fastest/slowest 由此循环得出，无需单独计数）
     const BackendPerfResult* fastest = nullptr;
     const BackendPerfResult* slowest = nullptr;
     for (int i = 0; i < 3; ++i) {
         if (!backends[i]->success)
             continue;
-        ++successCount;
         if (!fastest || backends[i]->avgMs < fastest->avgMs)
             fastest = backends[i];
         if (!slowest || backends[i]->avgMs > slowest->avgMs)
