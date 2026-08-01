@@ -97,7 +97,7 @@ try {
 | `ast/` | AST 节点定义与 Visitor 接口 |
 | `interpreter/` | 树遍历解释器、Environment、Value、内置方法 |
 | `compiler/` | 字节码编译器、IR 中间表示层（含 SSA 基础设施：CFG/支配树/GVN/LICM/函数内联）、VM、BytecodeChunk |
-| `debug/` | DebugController（断点/单步/条件求值/变量快照） |
+| `debug/` | DebugController（断点/单步/条件求值/变量快照）、ExecutionTraceRecorder（反向调试轨迹录制） |
 | `formatter/` | 代码格式化器（Visitor 模式） |
 | `gui/` | Qt6 GUI 组件（编辑器/AST 视图/42 个教学面板，懒加载工厂 + `PanelCatalog` 元数据目录双注册模式，详见 [开发指南](docs/development.md#新增教学面板指南)） |
 | `app/` | IdeController（Facade）、WorkerManager、VmStepper、DebugCoordinator、PipelineRunner、Ide 主窗口 |

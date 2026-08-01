@@ -57,13 +57,13 @@ MiniLang IDE 的教学面板采用**懒加载工厂 + 元数据目录**双注册
 
 ### 3. 注册面板元数据到 PanelCatalog
 
-编辑 `gui/PanelCatalog.cpp`，在对应分类（入门导览 / 编译管线 / 后端对比 / 调试与运行时 等）下添加 `PanelEntry`：
+编辑 `gui/PanelCatalog.cpp`，在对应分类（入门导览 / 编译前端 / 执行引擎 / 内存与优化 / 调试与观测 / 深入实战）下添加 `PanelEntry`，末位参数为难度分级（1=入门 / 2=进阶 / 3=高级，缺省 1），需按分类内难度非递减顺序插入（有 `PanelLevelsSortedWithinCategory` 测试断言）：
 
 ```cpp
-PanelEntry{"xxx-panel", "我的面板", "🔧"},
+PanelEntry{"xxx-panel", "我的面板", "🔧", 2},
 ```
 
-`PanelCatalog` 是面板导航的**单一数据源**——`TeachingTreePanel` 构建树形导航、`Ide::onActivityRequested` 路由活动 id 均从此查询。无需在 `Ide` 类中维护并行的 id→显示名映射。
+`PanelCatalog` 是面板导航的**单一数据源**——`TeachingTreePanel` 构建树形导航（含难度徽标与分类 tooltip）、`Ide::onActivityRequested` 路由活动 id、帮助弹窗的「难度/分类」提示行均从此查询。无需在 `Ide` 类中维护并行的 id→显示名映射。
 
 ### 4. 注册懒加载工厂到 Ide
 
@@ -80,14 +80,36 @@ registrar(QStringLiteral("xxx-panel"), mlTr("我的面板"), [this]() {
 
 `registrar` 是 `registerLazyTeachingPanels` 内部的 lambda，负责将工厂函数注册到 `teachingPanelFactories_` 成员 map，并在首次访问时调用 `wrapTeachingPanel` 包装面板（添加 `TeachingPanelHeader` 标题栏 + Fluent 滚动条）后加入 `centerStack_`。
 
+> ⚠️ **样例代码必须可运行**：面板内置的教学样例（`XxxLibrary` 中的 `sampleCode` / `exampleCode`，以及引导中提示用户粘贴运行的代码）会被用户「加载样例 → 运行」，必须是合法可解析的 MiniLang。注意 `print` 是语句关键字且强制要求括号（见 `parser/Parser.cpp::printStmt`）——必须写 `print(x);`，无括号的 `print x;` 会 parse 失败。新增样例后建议用 CLI `minilang coverage xxx.mini` 实测解析+执行无错。
+
+### 5. （推荐）注册「这是什么？」帮助文案
+
+编辑 `gui/TeachingPanelHeader.cpp` 的 `helpDocs()` 静态 `QHash`，为新面板添加 `panelId → {purpose, recommendedOrder, relatedConcepts}` 条目：
+
+```cpp
+{QStringLiteral("xxx-panel"),
+ {mlTr("面板用途（1-2 句）"), mlTr("1. 推荐使用顺序"), mlTr("关联概念 / 术语")}},
+```
+
+未登记时，`TeachingPanelHeader` 的「这是什么？」按钮会弹出「暂无此面板的帮助文档」兜底提示。应保证 `helpDocs()` 对 `PanelCatalog` 全部面板 100% 覆盖。
+
+### 6. （可选）提供新手引导 GuidedTour
+
+若面板需要逐控件高亮引导，在面板类实现 `GuidedTour* createGuidedTour(QWidget* host)`，并在 `app/ide.cpp::onPanelGuidedTourRequested` 的 if-else 路由中补对应分支。**两处必须同步**：`createGuidedTour` 实现 / `onPanelGuidedTourRequested` 路由——否则专属引导不会生效（会退化为通用兜底引导）。首访自动引导默认对全部面板生效（`guidedTour/shown_<panelId>` QSettings 键去重），纯浏览型面板可加入同文件 `kNoAutoTourPanels` 排除集合。
+
+> 💡 新面板未提供专属 GuidedTour 属正常情况：`onPanelGuidedTourRequested` 会自动走 `createGenericPanelTour` 通用兜底引导——从 `TeachingPanelHeader::helpDocFor()` 的帮助文案派生 3 步气泡（面板用途/推荐顺序/关联概念），因此**步骤 5 的帮助文案是引导兜底的前提**，务必登记。
+
 ### 面板注册机制架构
 
 | 组件 | 文件 | 职责 |
 |------|------|------|
-| `PanelCatalog` | `gui/PanelCatalog.cpp/.h` | 面板元数据单一数据源（id / label / emoji / category），供导航树与路由查询 |
+| `PanelCatalog` | `gui/PanelCatalog.cpp/.h` | 面板元数据单一数据源（id / label / emoji / level 难度分级 / category description），供导航树与路由查询；6 大分类按学习曲线递进排序 |
 | `teachingPanelFactories_` | `app/ide.h` | `QMap<QString, std::function<void()>>` 懒加载工厂注册表，首次访问时构造面板 |
 | `registerLazyTeachingPanels` | `app/ide.cpp` | 工厂注册入口，按波次拆分到 4 个 `register*Panels` helper |
 | `wrapTeachingPanel` | `app/ide.cpp` | 面板包装器：添加 `TeachingPanelHeader` 标题栏 + Fluent 滚动条 + 卡片样式 |
+| `helpDocs()` | `gui/TeachingPanelHeader.cpp` | 「这是什么？」帮助文案表（panelId → 用途/顺序/关联概念），应对全部面板覆盖 |
+| `onPanelGuidedTourRequested` | `app/ide.cpp` | 新手引导路由：panelId → 对应面板 `createGuidedTour`；含 `closing_` 防护与 `tour==nullptr` 兜底 |
+| `kAutoTourPanels` | `app/ide.cpp` | 首次访问自动弹出引导的面板集合（`guidedTour/shown_<id>` QSettings 去重） |
 | `onActivityRequested` | `app/ide.cpp` | 活动 id 路由：`PanelCatalog::canonicalPanelId` 解析别名 → `showTeachingPanel` |
 
 ### 已弃用的 PanelRegistry
@@ -97,6 +119,7 @@ registrar(QStringLiteral("xxx-panel"), mlTr("我的面板"), [this]() {
 
 ## 最近变更摘要
 
+- **教学板块面向初学者的系统性体验优化 UX-R（2026-07-31）**：PanelCatalog 4 分类 → 6 分类（原「执行引擎」23 项平铺拆为执行引擎/内存与优化/调试与观测，按学习曲线递进）+ PanelEntry 难度分级（导航树徽标/帮助弹窗提示行）；新手引导覆盖 12/42 → 42/42（`Ide::createGenericPanelTour` 从 `TeachingPanelHeader::helpDocFor` 单一文案源派生 3 步兜底引导）；首访自动引导改排除式集合；8 条薄帮助文案补加粗核心概念讲解；TeachingTreePanel/TeachingPanelHeader 20+ 处硬编码颜色迁移 TeachingTheme；VmStackSandboxPanel/JitVisualizerPanel/BytecodeTracePanel 三个手写子页切换面板统一迁移 `TeachingSubPageBar`（采用组件 3 → 6 个），移除手写互斥信号与硬编码 QSS。测试同步：HasSixCategories + 3 项新断言，watch-expressions/execution-timeline 归属断言迁移，BytecodeTracePanel E2E 按钮文案随 ①② 前缀更新。详见 CHANGELOG.md 2026-07-31 条目。
 - **七特性 MVP + 拓展二期（2026-07-29 ~ 2026-07-31）**：运算符重载（`__add` 等 dunder 分派，四后端一致）、const fun 编译期求值（`common/ConstFunEval.h` 沙箱折叠）、宏模板（`ast/MacroExpander` parse 期展开）、trait/mixin（parse 期方法合入，四后端零改动）、async/await（std/async 调度器）、`?` 错误传播 + std/result、插件系统 + 沙箱模式 + HostFunctionRegistry、C API 宿主函数注册。内建标准库扩至 6 个模块（新增 std/result、std/bigint、std/async）。CI 5 项流水线失败修复 + 弃用 actions 升级。minilang_tests 达 3996 用例/501 套件，全量 ctest 4076/4076 全绿。详见 CHANGELOG.md 2026-07-29/30/31 条目。
 
 - **ARCH-10 架构缺陷修复（2026-07-26）**：修复三项架构缺陷，使 GUI 面板对引擎层的依赖完全通过公共服务接口收敛。**(1) P1 GUI 层与引擎层解耦**：新增 `common/MemoryInspectionAPI.h/.cpp`（NaNBoxSnapshot/HeapObjectSnapshot/GcStatsSnapshot 三个只读快照结构 + inspectValue/inspectHeap/getGcStats 等静态方法，GcMode/GcPhase 枚举迁移到此处作单一真相源），消除 MemoryModelPanel/GcVisualizerPanel 对 interpreter/NaNBox.h/RefCounted.h/GcManager.h 的直接依赖；新增 `common/BackendExecutionService.h/.cpp`（封装 Lexer→Parser→Compiler→Backend 完整流程，提供 execute/executeWithDetail 两个静态入口 + BackendExecResult/BackendExecDetail 只读结果），ProfileDashboardPanel/PerformanceRacePanel/BackendParallelPanel/BugHuntPanel/ExerciseGraderPanel/CoroutineVisualizerPanel/BackendComparePanel 等 7+ 面板迁移到此服务，消除对 compiler/VM.h/RegisterVM.h/IR.h/Interpreter.h/Lexer.h/Parser.h 的直接依赖。**(2) P2 Unity Build 修复**：根因是 `common/CrashHandler.cpp` 在 Unity batch 中 `#include <windows.h>`，windows.h 经 SDK 链路引入的宏与全局命名空间污染外溢到同 batch 后续 `#include "lexer/Token.h"`，导致 `Token::type` 字段报 C3646 未知重写说明符。修复：(a) CrashHandler.cpp 添加 WIN32_LEAN_AND_MEAN+NOMINMAX+NOGDI 三宏最小化 windows.h；(b) CMake 用 `SKIP_UNITY_BUILD_INCLUSION ON` 将 CrashHandler.cpp 从 Unity batch 排除独立编译；(c) minilang_frontend/minilang_backend AUTOMOC OFF（无 Q_OBJECT）；(d) BackendExecutionService.cpp 从 base 移至 backend 子库（分层正确）。**(3) P2 IdeController Facade 瘦身 + IVmBackend 工厂方法**：`app/IdeController.h` 新增 6 个子组件访问器（pipelineRunner/workerManager/debugCoordinator/vmStepper 返回协作类引用 + interpreter/debugController 返回 shared_ptr，const/非 const 双重载），新面板优先通过访问器获取子组件再调用语义化方法；观察者模式 `vmStateChangedListeners_` 保留为纯 C++ std::function 列表（非 Qt 信号，规避 moc 依赖使面板 .cpp 可编译进 minilang_tests 测试目标）；`common/BackendExecutionService` 新增 `createBackend(BackendType)` 工厂方法返回 `std::unique_ptr<IVmBackend>`（StackVM/RegisterVM 返回具体实例，Interpreter 返回 nullptr），教学面板通过此工厂多态操作 VM 无需 `new VM()` 直接依赖具体类。**验证结果**：构建 0 错误（/W4 + /WX，Unity Build ON + OFF 双模式均通过），全量 3478 测试通过（排除预先存在破损的 AstIRBuilder/BytecodeIRBackend/RegisterBytecodeBackend/RegisterBytecodeRegAlloc 系列 IR lowering 测试），Unity Build 现已可默认启用。详见 CHANGELOG.md 2026-07-26 ARCH-10 条目。

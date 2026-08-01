@@ -164,7 +164,7 @@ cmake --build out/build/debug --target minilang_tests
 | `audit_verify` | 审计结果验证 |
 | `super_init_test` | super.init() 调用语义 |
 | `super_notfound_test` | super 方法未找到错误处理 |
-| `test_main` | 通用测试入口 |
+| `test_harness_runner` | 通用测试入口（源文件 `test_main.cpp`） |
 
 test_harness 使用独立的 DebugController stub，不依赖 Qt Widgets，通过 `MINILANG_BUILD_TEST_HARNESS=ON` 启用构建。
 

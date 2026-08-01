@@ -184,7 +184,7 @@ for (var i = 0; i < 10; i = i + 1) {
 
 | 选项 | 默认 | 说明 |
 |------|------|------|
-| `MINILANG_UNITY_BUILD` | OFF | Unity Build 批量编译，首次构建加速 30-50% |
+| `MINILANG_UNITY_BUILD` | ON | Unity Build 批量编译（minilang_core 批量翻译单元），首次构建加速 30-50% |
 | `MINILANG_VM_PROFILING` | OFF | VM opcode 执行计数 profiling |
 | `MINILANG_BUILD_DOCS` | OFF | Doxygen API 文档生成 |
 | `MINILANG_ENABLE_I18N` | ON | Qt Linguist 国际化 i18n 工具链（默认编译 .ts → .qm 并部署到 exe 旁） |
@@ -233,7 +233,7 @@ ctest -R "VME2E\..*" --output-on-failure
 | 工具 | 用途 | 示例 |
 |------|------|------|
 | `minilang-fmt` | 代码格式化 | `minilang-fmt --check src.ml` |
-| `minilang-lint` | 静态分析 (8 项检查规则) | `minilang-lint src.ml --format json` |
+| `minilang-lint` | 静态分析 (9 项检查规则) | `minilang-lint src.ml --format json` |
 | `minilang-coverage` | 行级覆盖率 (text/LCOV) | `minilang-coverage --backend both src.ml` |
 | `minilang-doc` | API 文档生成 (Markdown/HTML/JSON) | `minilang-doc src.ml --format html` |
 | `minilang-fuzz` | 三后端差分模糊测试 | `minilang-fuzz --mode mutate --seed 42` |

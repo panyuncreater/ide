@@ -71,11 +71,11 @@ JIT 后端实现 V8 风格的三层编译模型：
 
 JIT 生成的本地代码无法直接持有 C++ 对象引用（asmjit::Label 是编译期概念，运行时不存在）。所有 JIT 代码与 C++ 运行时的交互通过 `JitContext` 结构体的固定偏移字段（"邮箱"）间接传递：
 
-- JIT 代码通过 `r12` 寄存器持有 `JitContext*`，以硬编码 offset 访问字段
+- JIT 代码通过 `r12` 寄存器持有 `JitContext*`，字段偏移经 `jit_offset` 命名常量访问（每字段配套 `static_assert(offsetof(...))` 编译期校验，杜绝硬编码偏移漂移）
 - C++ 辅助函数（`extern "C"`）通过参数接收 `JitContext*`，读写邮箱字段返回结果给 JIT 代码
 - 新增字段必须**末尾追加**（offset 递增），不可插入中间位置（会破坏已有 offset 引用）
 
-当前 `JitContext` 含 29 个字段（offset 0-224），覆盖输出回调、错误状态、全局变量、帧栈、类信息、方法入口邮箱、热点/类型反馈/OSR/deopt 等运行时机制。
+当前 `JitContext` 含 34 个字段（offset 0-264），覆盖输出回调、错误状态、全局变量、帧栈、类信息、方法入口邮箱、热点/类型反馈/OSR/deopt、inline cache（R160）、名称变量表（R162）、Safepoint GC 请求标志、enum 注册表与同步对象方法内联邮箱等运行时机制。
 
 ### 寄存器分配（Windows x64 ABI）
 
@@ -91,7 +91,7 @@ JIT 生成的本地代码无法直接持有 C++ 对象引用（asmjit::Label 是
 
 - **教学价值**：补全"解释执行 → 本地执行"的对比维度，展示类型反馈/热点检测/OSR/分层编译/反优化等现代 JIT 核心技术
 - **性能**：JIT 相比 StackVM 在数值密集型基准上达 40-100x 加速（消除 dispatch loop 开销）
-- **维护成本**：JIT.cpp ~5000 行，是项目最复杂的单一模块；每个 OpCode 需手写机器码 emit
+- **维护成本**：JIT 子系统是项目最复杂的模块，已拆分为多个编译单元（`JIT.cpp` / `JITCodeGen.cpp` / `JITCodeGenHelpers.cpp` / `JITRuntime.cpp` / `JITTiering.cpp` / `JITClosure.cpp`）；每个 OpCode 需手写机器码 emit
 - **一致性约束扩展**：四后端一致性（Interpreter / StackVM / RegisterVM / JIT），`EXPECT_FIVE_BACKENDS` 宏条件编译
 - **平台限制**：当前生产级支持仅 x86-64（asmjit 的 ARM 后端未接入）；Windows x64 ABI 与 System V ABI 分支处理
 - **ARM64 PoC**：`MINILANG_USE_JIT_A64` 选项提供实验性 ARM64 PoC（`JITA64CodeGen.cpp`，370 行），仅覆盖基本算术 + 控制流 + 局部/全局变量子集（对齐 x86-64 R138-R140），无函数调用/类/闭包/异常/GC 集成，无单元测试覆盖。默认 OFF，不建议生产使用，仅供后续 ARM64 教学平台移植参考
@@ -119,6 +119,11 @@ JIT 生成的本地代码无法直接持有 C++ 对象引用（asmjit::Label 是
 | R157 | Lazy compilation + OSR（简化版） |
 | R158 | 真正 OSR 栈帧迁移 + 分层编译 + 反优化 |
 | R159 | 即时反优化 + Tier 0→1 自动升级 |
+| R160 | 属性访问内联缓存（OP_MEMBER_GET per-call-site inline cache） |
+| R161 | rbx ABI 修复 + UTF-8 字符串索引 + OP_CALL 快路径/FLOAT SSE2 优化 + 闭包-字段交互一致性 |
+| R162 | 异常处理（try/catch/throw + finally）+ 名称变量表 |
+| R165-R166 | 覆盖缺口测试系列（浮点边界/递归深度/异常边角）+ GC 集成（Safepoint 轮询替代回调抑制） |
+| 2026-07-29~31 | 运算符重载 dunder 适配 + enum variant 校验 + 并发原语同步方法邮箱 + Linux SysV ABI 修复（运行时回调参数寄存器） |
 
 ## 参考
 

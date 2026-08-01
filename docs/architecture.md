@@ -68,7 +68,7 @@ MiniLang 维护四个执行后端并存策略：
 
 ### JIT 后端
 
-JIT 后端将 `BytecodeChunk` 编译为 x86-64 本地机器码直接在 CPU 上执行，消除 dispatch loop 开销。实现 V8 风格的分层编译（Tier 0 Interpreter → Tier 1 Baseline → Tier 2 Specialized），含热点检测、类型反馈、INT/FLOAT 特化重编译、lazy compilation、OSR 栈帧迁移、反优化等现代 JIT 核心机制。JIT 代码通过 `JitContext` 邮箱模式与 C++ 运行时交互（`r12` 寄存器持有上下文指针，硬编码 offset 访问字段）。
+JIT 后端将 `BytecodeChunk` 编译为 x86-64 本地机器码直接在 CPU 上执行，消除 dispatch loop 开销。实现 V8 风格的分层编译（Tier 0 Interpreter → Tier 1 Baseline → Tier 2 Specialized），含热点检测、类型反馈、INT/FLOAT 特化重编译、lazy compilation、OSR 栈帧迁移、反优化等现代 JIT 核心机制。JIT 代码通过 `JitContext` 邮箱模式与 C++ 运行时交互（`r12` 寄存器持有上下文指针，字段偏移经 `jit_offset` 命名常量 + `static_assert(offsetof)` 编译期校验）。
 
 详见 [ADR-002: 三后端策略](adr/ADR-002-triple-backend.md)
 详见 [ADR-003: IR 中间层](adr/ADR-003-ir-layer.md)

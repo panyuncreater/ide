@@ -2,6 +2,81 @@
 
 本文件记录 MiniLang IDE 的开发演进历史，包括性能优化、正确性修复与工程基础设施改进。所有条目均通过全量单元测试验证。历史版本归档至 [docs/changelog/archive/](docs/changelog/archive/)。
 
+## 2026-07-31 · 教学板块面向初学者的系统性体验优化（UX-R）
+
+### 背景
+
+针对编译原理初学者的学习需求，对教学板块做六维体验优化：导航结构、新手引导覆盖、内容层次化、UI 一致性、帮助文档、学习路径衔接。
+
+### 面板目录与导航结构重组
+
+- **4 分类 → 6 分类**（[gui/PanelCatalog.cpp](file:///gui/PanelCatalog.cpp)）：原「执行引擎」23 项平铺拆分为「执行引擎（8）/ 内存与优化（8）/ 调试与观测（7）」三类，按编译原理学习曲线递进排序（入门导览 → 编译前端 → 执行引擎 → 内存与优化 → 调试与观测 → 深入实战）；42 个面板 id 不变，别名映射/懒加载工厂零改动。
+- **难度分级**：`PanelEntry` 新增 `level` 字段（1=入门 / 2=进阶 / 3=高级），分类内按难度非递减排序；`PanelCategory` 新增 `description` 学习目标一句话。新增 `PanelCatalog::levelName()` / `categoryTitleOf()` 查询 API。
+- **导航树徽标**（[gui/TeachingTreePanel.cpp](file:///gui/TeachingTreePanel.cpp)）：进阶/高级面板叶子加「·进阶 / ·高级」后缀徽标，tooltip 展示难度；分类节点 tooltip 展示学习目标；横幅副标题提示学习顺序。
+
+### 新手引导覆盖 12/42 → 42/42
+
+- **通用兜底引导**（[app/ide.cpp](file:///app/ide.cpp) `createGenericPanelTour`）：无专属 `createGuidedTour` 的 30 个面板不再弹「暂无引导」——从 `TeachingPanelHeader::helpDocFor()`（新公开 API，单一文案源）派生 3 步 GuidedTour（面板用途 → 推荐顺序 → 关联概念），锚定标题栏/学习路径按钮/「这是什么？」按钮。生命周期与专属引导一致（`activePanelTours_` + finished → deleteLater），无新增 UAF 风险。
+- **首访自动引导**：`kAutoTourPanels` 12 面板白名单改为排除式集合（仅排除入门导览 5 个纯浏览面板），其余 37 面板首访自动引导。
+
+### 帮助文档层次化与主题化
+
+- **弹窗难度提示行**（[gui/TeachingPanelHeader.cpp](file:///gui/TeachingPanelHeader.cpp)）：帮助弹窗标题下新增「🎯 难度：X · 分类：Y」（从 PanelCatalog 派生，与导航树一致）。
+- **8 条薄文案层次化补强**：syntax-explorer（产生式）/ bytecode-trace（IP）/ call-stack（栈帧）/ variable-inspector（作用域链查找规则）/ breakpoint-condition（沙箱求值）/ exception-flow（栈展开）/ closure-inspector（闭包=函数+upvalue）/ profile-dashboard（先测量再优化），每条补一段加粗核心概念讲解，帮助初学者从「面板功能」上升到「编译原理概念」。
+- **主题化**：TeachingPanelHeader 帮助弹窗 HTML/QSS 与 TeachingTreePanel 横幅/搜索框/树样式共 20+ 处硬编码颜色迁移 `TeachingTheme` 语义色（P3-18 迁移推进）。
+
+### 子页切换组件统一（TeachingSubPageBar）
+
+- **3 个手写子页切换面板迁移**：VmStackSandboxPanel（页按钮 + 硬编码 pageBtn QSS）、JitVisualizerPanel（6 子页按钮）、BytecodeTracePanel（2 子页按钮）统一改用 `TeachingSubPageBar` 组件（互斥选中态 / 主题色高亮 / 滑入动画 / ①② 前缀文案内置），删除手写互斥切换信号与硬编码 QSS；采用组件的面板从 3 → 6 个（与 GcVisualizer / ModuleSystem / LintExplorer 对齐）。
+- **BytecodeTracePanel 引导同步**：`createGuidedTour` 锚点从 `pageTraceBtn_`/`pageLibraryBtn_` 改为 `subPageBar_->buttonAt(0/1)`；PanelAnimator 直接调用随组件内置移除。
+- **测试同步**：[tests/TestTeachingPanelsE2E.cpp](file:///tests/TestTeachingPanelsE2E.cpp) 按钮文案断言更新为带 ①② 前缀（`findButtonByText` 精确匹配）；[tests/CMakeLists.txt](file:///tests/CMakeLists.txt) 测试目标补入 TeachingSubPageBar.cpp 源文件（仅依赖 Qt Widgets，无 IdeController 依赖，可安全加入）。
+
+### 测试同步
+
+- [tests/TestTeachingTreePanel.cpp](file:///tests/TestTeachingTreePanel.cpp)：`HasFourCategories` → `HasSixCategories`；新增 `PanelLevelsAreValid` / `CategoryTitleOfResolvesAllPanels` / `PanelLevelsSortedWithinCategory` 3 项数据完整性断言。
+- [tests/TestWatchPanel.cpp](file:///tests/TestWatchPanel.cpp) / [tests/TestExecutionTraceRecorder.cpp](file:///tests/TestExecutionTraceRecorder.cpp)：watch-expressions / execution-timeline 分类归属断言随拆分迁移到「调试与观测」。
+
+### 验证结果
+
+- Windows MSVC Debug：`minilang_ide` + `minilang_tests` 构建零错误（W4 + /WX）。
+- `ctest -R "TeachingTree|WatchPanel|ExecutionTimeline|TeachingPanels|LearningPath|ExecutionTrace|BytecodeTrace|VmStack|JitVisual"` 教学相关全部通过；子页组件迁移后 `TeachingPanelsE2E` 102/102 全绿。
+
+## 2026-07-31 · JIT 修复（6 处运行时回调的 SysV ABI 违规，Linux 下 SIGSEGV）
+
+- **根因**：`jitTriggerRecompile` / `jitTriggerOsrMigration` / `jitTriggerOsrRecompile` / `jitDeoptimize`（INT/FLOAT 特化）/ `jitReportStackOverflow` 六处调用点硬编码 Win64 参数寄存器 rcx/rdx，Linux SysV ABI 应为 rdi/rsi，导致 ctx 指针传入垃圾值，TestJIT OSR/Deopt 16 项测试 SIGSEGV。
+- **修复**：[compiler/JITCodeGen.cpp](file:///compiler/JITCodeGen.cpp) / [compiler/JITCodeGenHelpers.cpp](file:///compiler/JITCodeGenHelpers.cpp) 按平台 `#ifdef` 选择参数寄存器（与 `emitCallMailbox` 等既有调用点模式一致）。
+- **验证**：Linux GCC（Docker）4075/4075 全绿 + Windows MSVC 4076/4076 全绿。
+
+## 2026-07-31 · 教学面板体验优化 + OpCode/场景库内容扩充
+
+### 背景
+
+系统性排查教学面板（Teaching Panels）基础设施后修复导航/引导/帮助/UAF 缺口，并按内容丰富度需求扩充三大教学库。
+
+### 教学面板体验修复
+
+- **reverse-timeline 懒加载工厂补全（P1）**：[gui/PanelCatalog.cpp](file:///gui/PanelCatalog.cpp) 已登记「反向调试时间轴」且 [gui/ReverseDebugTimelinePanel.cpp](file:///gui/ReverseDebugTimelinePanel.cpp) 实现完整，但工厂从未注册、源文件未入 CMake——教学树点击静默回退编辑器（用户感知「面板打不开」）。补 [cmake/minilang_core.cmake](file:///cmake/minilang_core.cmake) 源列表 + [app/ide.cpp](file:///app/ide.cpp) `registerDebugInspectorPanels` 工厂注册，接线 `rollbackRequested` → 按快照后端分派 `Interpreter::restoreFromSnapshot` / `VmStepper::restoreFromSnapshot` + `refreshReverseTimelineEntries` 从 `traceRecorder` 重建时间轴。
+- **closing_ UAF 防护（P0）**：`ensureTeachingPanelCreated` / `showTeachingPanel` / `showQuickPanelJumpDialog` 补 `closing_` 检查，避免关闭流程中 `maybeSave` 模态事件循环派发挂起回调时懒构造「孤儿」面板/对话框（与 ROUND-89 GuidedTour 孤儿对象同根因）。
+- **新手引导覆盖对齐（P2）**：`kAutoTourPanels` 从 5 个扩展到全部 12 个实现 `createGuidedTour` 的面板（补第七波协程/GC/静态分析/模糊测试/模块系统 + watch-expressions/watchpoint）；`onPanelGuidedTourRequested` 补 `watchpoint` 路由分支（`WatchpointPanel::createGuidedTour` 已实现但未接线，误弹「暂无引导」）。
+- **帮助文案 42/42 全覆盖（P2）**：[gui/TeachingPanelHeader.cpp](file:///gui/TeachingPanelHeader.cpp) `helpDocs()` 补 `watchpoint`、`reverse-timeline` 两条条目。
+- **标题栏主题色（P2）**：`TeachingPanelHeader` 硬编码 15+ 处颜色迁移到 `TeachingTheme` 语义色（主题色变更自动跟随 QFluentKit）。
+
+### 教学库内容扩充
+
+- **OpCode 文档 46 → 75**（[gui/BytecodeTracePanel.cpp](file:///gui/BytecodeTracePanel.cpp)）：新增栈操作/调用变体/元组/枚举/finally 续跳/类型检查/协程异步/类补全/特化算术/写回族共 29 条，与 [compiler/Bytecode.h](file:///compiler/Bytecode.h) 枚举注释语义对齐。
+- **变量类型示例 17 → 23**（[gui/VariableInspectorPanel.cpp](file:///gui/VariableInspectorPanel.cpp)）：新增 tuple / enum variant / coroutine / BoxedInt 装箱 / COW 共享数组 / 继承实例。
+- **闭包场景 12 → 16**（[gui/ClosureInspectorPanel.cpp](file:///gui/ClosureInspectorPanel.cpp)）：新增 getter/setter 共享 upvalue 对 / 记忆化 / 函数组合 / once 一次性门闩。
+
+### 样例正确性修复（P1）
+
+ClosureInspector 全部 16 个样例 + VariableInspector 引导样例长期使用无括号 `print counter();`。经 [parser/Parser.cpp](file:///parser/Parser.cpp) `printStmt()` 证实 `print` 强制要求 `(`，此类样例「加载样例 → 运行」必然 parse 失败。全部修正为 `print(...)`（含多参数 `print(x, pi, s, arr, f)`）。
+
+### 验证结果
+
+- Windows MSVC Debug：`minilang_ide` + `minilang_tests` 构建零错误（W4+/WX）。
+- `ctest -R TeachingPanels` 96/96 通过；数据完整性下限断言同步更新（DocsCount≥46 / ExamplesCount≥17 / ScenariosCount≥12，实际 75/23/16）。
+- 新增/修正样例经 CLI `coverage` 实测 100% 覆盖、解析+执行零错误，输出值与教学注释一致。
+
 ## 2026-07-31 · CI 修复（Linux GCC -Werror 全量补全 + Ubuntu lrelease + asmjit SYSTEM）
 
 ### 背景
