@@ -422,7 +422,7 @@ jobs:
 
       - name: 上传覆盖率到 Codecov（趋势追踪）
         if: always()
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: out/build/debug/coverage.xml
           fail_ci_if_error: false
@@ -522,7 +522,7 @@ jobs:
 
       - name: 上传覆盖率到 Codecov
         if: always()
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: coverage.xml
           fail_ci_if_error: false
