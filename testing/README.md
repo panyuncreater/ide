@@ -229,12 +229,16 @@ python testing/generator.py --seed 42 --statements 40 --max-depth 4 --no-arrays
 ```
 
 特性开关：`--statements`、`--globals`、`--max-depth`、`--max-loop-iters`、
-`--no-loops`、`--no-functions`、`--no-arrays`。
+`--no-loops`、`--no-functions`、`--no-arrays`、`--no-dicts`。
 
 **无运行时错误不变量**（保证可复现且不被已知 bug 淹没）：所有整型值恒被规范到
 `[0, MOD)`；除法/取模除数恒为正小常量（不除零）；乘法仅「变量×小常量」（不溢出提升
 为 float）；`and/or` 仅作用于布尔比较；仅顶层声明 `fun`（规避发现 1）；只用内建
-`len()/sum()` 而非 `.remove()/.contains()`（规避发现 2）。
+`len()/sum()` 而非 `.remove()/.contains()`（规避发现 2）；**字典**（dict）值恒为
+规范化 int、键为确定字符串集合，索引/values 索引仅用存活键（生成器跟踪 set/remove
+后的键集合），get 恒带默认值，has/contains 存在性由生成器确定——且 remove 仅生成在
+顶层直接语句（无条件执行恰一次）、新键仅生成在必然执行上下文（顶层/循环体），
+保证运行时键集合与生成期静态集合一致，绝不触发键缺失/空 values 索引。
 
 ### 10.2 差分测试 `diff_test.py`
 

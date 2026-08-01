@@ -13,9 +13,12 @@ MiniLang 程序，程序末尾输出一个全局状态校验和（print），作
   - 逻辑 and/or/not 只作用于比较结果（布尔），规避「返回操作数原值」的语义。
   - 只在顶层声明 fun（不在块/循环内），规避已知的块内命名函数差异（发现 1）。
   - 只用内建函数 len()/sum()（不用 .remove()/.contains() 方法），规避方法覆盖差异（发现 2）。
+  - 字典（dict）不变量：字面量值恒为规范化 int，键为确定字符串键集合；索引读/values 索引
+    仅用存活键（生成器跟踪 set/remove 后的键存活集合）；get 恒带默认值；has/contains 的键
+    存在性由生成器确定。故 dict 操作绝不触发键缺失/类型错误。
 
 可复现：同一 seed 必生成逐字节相同的程序（仅用 random.Random(seed)）。
-可配置：程序规模、嵌套深度、特性开关（数组/函数/循环）。
+可配置：程序规模、嵌套深度、特性开关（数组/字典/函数/循环）。
 
 无第三方依赖，兼容 Python 3.8+。可被 diff_test.py 作为库导入（generate/Config）。
 """
@@ -40,6 +43,7 @@ class Config:
     enable_loops: bool = True     # if/while/for
     enable_functions: bool = True # 顶层函数定义与调用
     enable_arrays: bool = True    # 数组字面量 + 索引 + len/sum
+    enable_dicts: bool = True     # 字典字面量 + 索引 + has/len/values/get
     max_loop_iters: int = 12      # 循环最大迭代次数（确定性上界）
 
 
@@ -53,9 +57,12 @@ class _Gen:
         self.indent = 0
         self.vars = []            # 当前可见的整型变量名
         self.arrays = []          # 当前可见的数组变量名
+        self.dicts = []           # 当前可见的字典变量名
+        self.dict_keys = {}       # 字典名 → 存活键集合（set/remove 后跟踪）
         self.funcs = []           # 已定义顶层函数 (name, arity)
         self._tmp = 0
         self._loopvar = 0
+        self._in_if = 0           # if 块嵌套计数（if 块内不新增键/不移除键）
 
     # ---- 输出辅助 ----
     def emit(self, s):
@@ -101,6 +108,9 @@ class _Gen:
             name, arity = self.rng.choice(self.funcs)
             args = ", ".join(self.atom() for _ in range(arity))
             return f"{name}({args})"
+        # 字典读取（存在键索引 / len / values 索引 / get 带默认值）作为整型来源
+        if self.cfg.enable_dicts and self.dicts and self.rng.random() < 0.15:
+            return self.dict_int()
         if depth >= 2 or self.rng.random() < 0.45:
             return self.atom()
         op = self.rng.choice(["+", "-", "*", "/", "%"])
@@ -110,14 +120,43 @@ class _Gen:
             return f"({self.atom()} {op} {self.nonzero_const()})"
         return f"({self.atom()} {op} {self.atom()})"
 
+    def dict_int(self):
+        """一个恒安全的 int 表达式：存在键索引读 / len / values 索引 / get 带默认值。
+
+        不变量：dict 字面量值恒为 [0,MOD) 的 int，键集合由生成器跟踪；
+        values() 恒非空（remove 保留至少 1 键）；get 恒带 int 默认值。
+        """
+        d = self.rng.choice(self.dicts)
+        keys = sorted(self.dict_keys[d])
+        if not keys:
+            return f"len({d})"
+        k = self.rng.choice(keys)
+        choice = self.rng.random()
+        if choice < 0.4:
+            return f"{d}[{k!r}]"            # 存在键索引读
+        if choice < 0.6:
+            return f"len({d})"
+        if choice < 0.8:
+            return f"({d}.values()[{self.small_const()} % len({d}.values())])"
+        return f"{d}.get({k!r}, {self.small_const()})"  # 带默认值恒安全
+
     def normalized(self, expr):
         """把任意整型表达式规范化回 [0, MOD)。"""
         return f"(({expr}) % {MOD} + {MOD}) % {MOD}"
 
     def bool_expr(self, depth=0):
-        """布尔表达式：比较结果之上叠加 and/or/not（操作数恒为布尔）。"""
+        """布尔表达式：比较/字典 has 之上叠加 and/or/not（操作数恒为布尔）。"""
         cmp = self.rng.choice(["<", ">", "<=", ">=", "==", "!="])
         base = f"{self.atom()} {cmp} {self.atom()}"
+        # 字典 has/contains：存在性由生成器确定（存活键 → true；absent 键 → false）
+        if self.cfg.enable_dicts and self.dicts and self.rng.random() < 0.25:
+            d = self.rng.choice(self.dicts)
+            if self.rng.random() < 0.7 and self.dict_keys[d]:
+                k = self.rng.choice(sorted(self.dict_keys[d]))
+            else:
+                k = self._absent_key(d)
+            meth = self.rng.choice(["has", "contains"])
+            base = f"{d}.{meth}({k!r})"
         if depth < self.cfg.max_depth and self.rng.random() < 0.35:
             conn = self.rng.choice(["and", "or"])
             rhs_cmp = self.rng.choice(["<", ">", "<=", ">=", "==", "!="])
@@ -126,6 +165,14 @@ class _Gen:
         if self.rng.random() < 0.15:
             base = f"not ({base})"
         return base
+
+    def _absent_key(self, d):
+        """生成一个确定不在 d 中的键名（试探随机键名直至不碰撞）。"""
+        for _ in range(8):
+            k = f"absent{self.rng.randint(0, 1 << 30)}"
+            if k not in self.dict_keys[d]:
+                return k
+        return "zz_absent_key"
 
     # ---- 校验和折叠 ----
     def mix(self, expr):
@@ -140,12 +187,16 @@ class _Gen:
     def stmt_if(self, depth):
         self.emit(f"if ({self.bool_expr(depth)}) {{")
         self.indent += 1
+        self._in_if += 1
         self.block_body(depth + 1)
+        self._in_if -= 1
         self.indent -= 1
         if self.rng.random() < 0.5:
             self.emit("} else {")
             self.indent += 1
+            self._in_if += 1
             self.block_body(depth + 1)
+            self._in_if -= 1
             self.indent -= 1
         self.emit("}")
 
@@ -176,6 +227,46 @@ class _Gen:
         self.indent -= 1
         self.emit("}")
 
+    # ---- 字典语句（set 新增键 / 索引写 / remove 移除键，均跟踪存活集合）----
+    # 执行上下文约束（保证运行时键集合 == 生成器跟踪集合）：
+    #   - remove 仅顶层直接语句（depth==0，无条件执行恰一次）——if/循环体内条件
+    #     或重复执行会导致重复 remove / 键数跌破静态集合（values() 空索引越界）。
+    #   - set 新增键仅顶层或循环体（必然执行至少一次）；if 块内仅允许覆盖存活键
+    #     （if 可能不执行，新增键将悬空）。
+    def stmt_dict_set(self):
+        d = self.rng.choice(self.dicts)
+        keys = sorted(self.dict_keys[d])
+        # 50% 覆盖存活键（任意上下文安全），50% 新增键（仅必然执行上下文）
+        if keys and self.rng.random() < 0.5:
+            k = self.rng.choice(keys)
+        else:
+            if self._in_if > 0:
+                return  # if 块内不新增键（可能不执行 → 后续索引悬空）
+            k = f"k{len(keys)}"
+            tries = 0
+            while k in self.dict_keys[d] and tries < 8:
+                tries += 1
+                k = f"k{len(keys) + tries}"
+            if k in self.dict_keys[d]:
+                return  # 理论不可达：碰撞规避失败则放弃
+        self.emit(f"{d}[{k!r}] = {self.normalized(self.int_expr())};")
+        self.dict_keys[d].add(k)
+        self.mix(f"{d}[{k!r}]")
+
+    def stmt_dict_remove(self, depth):
+        # 仅顶层直接语句（无条件执行恰一次）；循环/if 块内禁止
+        if depth != 0:
+            return
+        d = self.rng.choice(self.dicts)
+        keys = sorted(self.dict_keys[d])
+        # 不变量：永远保留至少 1 键（values() 恒非空）
+        if len(keys) <= 1:
+            return
+        k = self.rng.choice(keys)
+        self.emit(f"{d}.remove({k!r});")
+        self.dict_keys[d].discard(k)
+        self.mix(f"len({d})")
+
     def block_body(self, depth):
         """块体：1-3 条语句。"""
         k = self.rng.randint(1, 3)
@@ -186,6 +277,8 @@ class _Gen:
         choices = ["assign", "assign", "mix"]
         if self.cfg.enable_loops and depth < self.cfg.max_depth:
             choices += ["if", "while", "for"]
+        if self.cfg.enable_dicts and self.dicts:
+            choices += ["dict_set", "dict_remove"]
         kind = self.rng.choice(choices)
         if kind == "assign":
             self.stmt_assign()
@@ -197,6 +290,10 @@ class _Gen:
             self.stmt_while(depth)
         elif kind == "for":
             self.stmt_for(depth)
+        elif kind == "dict_set":
+            self.stmt_dict_set()
+        elif kind == "dict_remove":
+            self.stmt_dict_remove(depth)
 
     # ---- 顶层函数定义（纯整型、无副作用、必返回 [0,MOD)）----
     def gen_function(self):
@@ -219,6 +316,16 @@ class _Gen:
         self.funcs.append((name, arity))
 
     # ---- 顶层生成 ----
+    def gen_dict(self):
+        """生成一个全局字典：{'k0': <int>, 'k1': <int>, ...}（值规范化，键集合确定）。"""
+        name = f"d{len(self.dicts)}"
+        n = self.rng.randint(1, 3)
+        keys = [f"k{i}" for i in range(n)]
+        entries = ", ".join(f"{k!r}: {self.rng.randint(0, MOD - 1)}" for k in keys)
+        self.emit(f"var {name} = {{{entries}}};")
+        self.dicts.append(name)
+        self.dict_keys[name] = set(keys)
+
     def generate(self):
         cfg = self.cfg
         self.emit(f"// auto-generated by generator.py  seed={cfg.seed}")
@@ -244,6 +351,11 @@ class _Gen:
                 elems = ", ".join(str(self.rng.randint(0, MOD - 1)) for _ in range(n))
                 self.emit(f"var {a} = [{elems}];")
                 self.arrays.append(a)
+
+        # 字典（值恒为规范化 int，键集合确定 → 索引/has/values 安全）
+        if cfg.enable_dicts:
+            for _ in range(self.rng.randint(1, 2)):
+                self.gen_dict()
 
         # 主体语句
         for _ in range(cfg.num_statements):
@@ -275,6 +387,7 @@ def build_parser():
     p.add_argument("--no-loops", action="store_true", help="禁用 if/while/for")
     p.add_argument("--no-functions", action="store_true", help="禁用顶层函数")
     p.add_argument("--no-arrays", action="store_true", help="禁用数组")
+    p.add_argument("--no-dicts", action="store_true", help="禁用字典")
     p.add_argument("--out", default=None, help="输出文件（默认 stdout）")
     return p
 
@@ -289,6 +402,7 @@ def config_from_args(args):
         enable_loops=not args.no_loops,
         enable_functions=not args.no_functions,
         enable_arrays=not args.no_arrays,
+        enable_dicts=not args.no_dicts,
     )
 
 
