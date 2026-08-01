@@ -57,9 +57,10 @@ protected:
 TEST(LearningPathDataAudit, HasAtLeast18Activities) {
     const auto& acts = LearningPathData::activities();
     // P1-F2/F fix: 22 原始活动 + 6 个浏览型面板轻量 visited-* 活动（glossary/pipeline/
-    // memory-model/bytecode-trace/exception-flow/closure-inspector）= 28
-    EXPECT_EQ(acts.size(), 28u)
-        << "学习路径活动数应为 28（22 原始 + 6 visited-*）";
+    // memory-model/bytecode-trace/exception-flow/closure-inspector）= 28；
+    // 学习路径集成：新增 execution-timeline（阶段3）+ exercise-grader（阶段4）= 30
+    EXPECT_EQ(acts.size(), 30u)
+        << "学习路径活动数应为 30（24 原始 + 6 visited-*）";
 }
 
 TEST(LearningPathDataAudit, ActivityIdsAreUnique) {

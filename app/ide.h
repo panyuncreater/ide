@@ -74,6 +74,7 @@
 #include "gui/ProfileDashboardPanel.h"
 #include "gui/RegisterAllocatorPanel.h"
 #include "gui/ReplPanel.h"
+#include "gui/ReverseDebugTimelinePanel.h" // 反向调试时间轴（AUDIT-P1: 补工厂注册）
 #include "gui/StepExplainerPanel.h"
 #include "gui/SyntaxExplorerPanel.h"
 #include "gui/SyntaxHighlighter.h"
@@ -349,6 +350,8 @@ private:
     WatchpointPanel* watchpointPanel_ = nullptr;
     // R114：可回放执行时间轴（三后端统一执行轨迹录制 + QSlider 随机访问回放）
     ExecutionTimelinePanel* executionTimelinePanel_ = nullptr;
+    // 拓展二期：反向调试时间轴（点击历史步回滚 Interpreter/VM 状态）
+    ReverseDebugTimelinePanel* reverseTimelinePanel_ = nullptr;
     // 第三档 P2-3a：异常流可视化（教学场景库 + 传播图解）
     ExceptionFlowPanel* exceptionFlowPanel_ = nullptr;
     // 第三档 P2-3b：闭包检查器（教学场景库 + upvalue 生命周期）
@@ -378,6 +381,12 @@ private:
     QMap<QString, std::function<void()>> teachingPanelFactories_;
     /// 确保教学面板已构造（若未构造则调用工厂），返回是否为首次构造
     void ensureTeachingPanelCreated(const QString& panelId);
+    /// UX-R fix: 通用兜底引导——从 TeachingPanelHeader::helpDocFor 的帮助文案派生
+    /// 3 步 GuidedTour（面板用途/推荐顺序/关联概念），覆盖无专属 createGuidedTour
+    /// 的面板，保证 42 个教学面板「新手引导」按钮全部可用；失败返回 nullptr
+    GuidedTour* createGenericPanelTour(const QString& panelId);
+    /// 反向调试时间轴：从 traceRecorder 全量快照重建时间轴条目（进入面板/回滚后调用）
+    void refreshReverseTimelineEntries();
     /// 当前 centerStack_ 是否处于「代码编辑器」模式（用于切换时显隐 bottomDock_/rightDock_）
     bool centerInEditorMode_ = true;
     // BUG-R14-2 fix: 进入教学面板模式前记录 bottomDock_/rightDock_ 的可见状态，
@@ -811,7 +820,7 @@ private:
     // ---- 新手引导：3 分钟 Hello World guided tour ----
     void startGuidedTour();
     GuidedTour* guidedTour_ = nullptr;
-    // ROUND-67 P1 fix: 跟踪面板特定 GuidedTour（5 个教学面板首次访问自动触发）。
+    // ROUND-67 P1 fix: 跟踪面板特定 GuidedTour（12 个教学面板首次访问自动触发）。
     // 这些 tour 是 Ide 子对象但不存储在 guidedTour_ 中，closeEvent 需显式停止并清理，
     // 否则 tour 的 QTimer::singleShot(0, tour, ...) 在 maybeSave 模态对话框期间派发，
     // 访问可能已被 reparent/清理的 targetWidget → UAF。

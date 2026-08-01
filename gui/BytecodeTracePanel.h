@@ -19,7 +19,6 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QPushButton>
-#include <QStackedWidget>
 #include <QTableWidget>
 #include <QTextBrowser>
 #include <QWidget>
@@ -27,6 +26,8 @@
 #include <deque>
 #include <string>
 #include <vector>
+
+#include "gui/TeachingSubPageBar.h" // UX-R fix: 统一子页切换组件（互斥+主题色+动画）
 
 class IdeController;
 class GuidedTour;
@@ -92,10 +93,8 @@ private:
 
     IdeController* controller_ = nullptr;
 
-    // 子页切换
-    QPushButton* pageTraceBtn_ = nullptr;
-    QPushButton* pageLibraryBtn_ = nullptr;
-    QStackedWidget* stack_ = nullptr;
+    // 子页切换（UX-R fix: 统一 TeachingSubPageBar，替代手写 pageTraceBtn_/pageLibraryBtn_ + stack_）
+    TeachingSubPageBar* subPageBar_ = nullptr;
 
     // 子页 1：执行轨迹
     QLabel* liveStatusLabel_ = nullptr;

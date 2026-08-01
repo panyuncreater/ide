@@ -15,7 +15,8 @@
 // 两个子页：
 //   1. 实时变量树：消费 controller_->getDebugVariableSnapshot() / getVmGlobals()
 //      + 按作用域分组（global / local / upvalue）+ 选中变量详情
-//   2. 教学场景库：8 种变量类型示例（int/float/bool/null/string/array/dict/instance/closure）
+//   2. 教学场景库：23 个变量类型示例（int/float/bool/null/string/array/dict/instance/closure/
+//      tuple/enum/coroutine + 边界/装箱/COW/继承场景，需求 8 扩充）
 //
 // 本面板仅消费 IdeController 已有 API + 自带 VariableInspectorLibrary 静态场景库，
 // 不修改引擎层。

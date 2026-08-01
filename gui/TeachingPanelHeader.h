@@ -37,6 +37,23 @@ public:
     /// 设置是否显示「跳转学习路径」按钮（默认显示）
     void setShowLearningPathButton(bool show);
 
+    // UX-R fix: 对外公开帮助文案查询，供 Ide 的通用兜底引导（createGenericPanelTour）
+    // 复用同一份文案数据源，避免帮助文档与引导内容两头维护。
+    struct HelpDocView {
+        QString purpose;          // 面板用途（Markdown 子集）
+        QString recommendedOrder; // 推荐使用顺序（有序列表文本）
+        QString relatedConcepts;  // 关联概念
+    };
+
+    /// 按 panelId 查询帮助文案；未收录返回 false（out 不变）
+    static bool helpDocFor(const QString& panelId, HelpDocView* out);
+
+    /// 「这是什么？」按钮（通用引导的锚点 widget，可能为 nullptr）
+    QWidget* helpButton() const;
+
+    /// 「学习路径」按钮（通用引导的锚点 widget，可能为 nullptr）
+    QWidget* learningPathButton() const;
+
 signals:
     /// 用户点击「跳转学习路径」按钮
     void learningPathRequested();

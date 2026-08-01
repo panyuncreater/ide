@@ -31,12 +31,13 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QPushButton>
-#include <QStackedWidget>
 #include <QTableWidget>
 #include <QTextBrowser>
 #include <QWidget>
 #include <string>
 #include <vector>
+
+#include "gui/TeachingSubPageBar.h" // UX-R fix: 统一子页切换组件（互斥+主题色+动画）
 
 class IdeController;
 
@@ -122,14 +123,8 @@ signals:
 private:
     IdeController* controller_ = nullptr;
 
-    // 子页切换按钮
-    QPushButton* pageOverviewBtn_ = nullptr;
-    QPushButton* pageTypeFeedbackBtn_ = nullptr;
-    QPushButton* pageHotspotBtn_ = nullptr;
-    QPushButton* pageOpCodeBtn_ = nullptr;
-    QPushButton* pageTierBtn_ = nullptr; // R160: 子页 5
-    QPushButton* pageAsmBtn_ = nullptr;  // 拓展二期: 子页 6（字节码↔汇编对照）
-    QStackedWidget* stack_ = nullptr;
+    // UX-R fix: 子页切换统一用 TeachingSubPageBar（替代手写 page*Btn_ + stack_）
+    TeachingSubPageBar* subPageBar_ = nullptr;
     QLabel* jitAvailLabel_ = nullptr; // JIT 启用状态提示
 
     // 子页 1：编译原理概览

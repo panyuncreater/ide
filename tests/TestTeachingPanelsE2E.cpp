@@ -550,7 +550,8 @@ TEST_F(BytecodeTracePanelE2E, Construct_HasTwoSubpages) {
 }
 
 TEST_F(BytecodeTracePanelE2E, ClickLibraryButton_SwitchesToIndex1) {
-    auto* btn = findButtonByText(panel_, "OpCode 教学库");
+    // UX-R fix: 子页切换已统一到 TeachingSubPageBar，按钮文案带 ①② 前缀
+    auto* btn = findButtonByText(panel_, "② OpCode 教学库");
     ASSERT_NE(btn, nullptr);
     btn->click();
     auto* stack = findStack(panel_);
@@ -558,8 +559,8 @@ TEST_F(BytecodeTracePanelE2E, ClickLibraryButton_SwitchesToIndex1) {
 }
 
 TEST_F(BytecodeTracePanelE2E, ClickTraceButton_SwitchesToIndex0) {
-    findButtonByText(panel_, "OpCode 教学库")->click();
-    auto* btn = findButtonByText(panel_, "执行轨迹");
+    findButtonByText(panel_, "② OpCode 教学库")->click();
+    auto* btn = findButtonByText(panel_, "① 执行轨迹");
     ASSERT_NE(btn, nullptr);
     btn->click();
     auto* stack = findStack(panel_);
@@ -567,7 +568,7 @@ TEST_F(BytecodeTracePanelE2E, ClickTraceButton_SwitchesToIndex0) {
 }
 
 TEST_F(BytecodeTracePanelE2E, LibraryListPopulated_MatchesLibrary) {
-    findButtonByText(panel_, "OpCode 教学库")->click();
+    findButtonByText(panel_, "② OpCode 教学库")->click();
     auto* list = findListInCurrentPage(panel_);
     ASSERT_NE(list, nullptr);
     EXPECT_EQ((size_t)list->count(), BytecodeTraceLibrary::opCodeDocs().size());
@@ -900,8 +901,8 @@ TEST_F(MemoryModelPanelE2E, C1_EachSubpageHasContent) {
 // --- C1 样本 6：BytecodeTracePanel 子页切换后 list 内容保持 ---
 
 TEST_F(BytecodeTracePanelE2E, C1_LibraryListCountStableAfterToggle) {
-    auto* libraryBtn = findButtonByText(panel_, "OpCode 教学库");
-    auto* traceBtn = findButtonByText(panel_, "执行轨迹");
+    auto* libraryBtn = findButtonByText(panel_, "② OpCode 教学库");
+    auto* traceBtn = findButtonByText(panel_, "① 执行轨迹");
     ASSERT_NE(libraryBtn, nullptr);
     ASSERT_NE(traceBtn, nullptr);
     libraryBtn->click();

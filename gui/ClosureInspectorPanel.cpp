@@ -42,9 +42,9 @@ const std::vector<ClosureScenario>& ClosureInspectorLibrary::scenarios() {
          "📦 最基础的闭包形式。内部函数捕获外层变量 x，"
          "即使外层函数返回后，闭包仍可访问 x。"
          "捕获的变量称为 upvalue（上层作用域的值）。",
-         "fun makeCounter() {\n    var x = 0;\n    fun increment() {\n        x = x + 1;\n        return x;\n    }\n   "
-         " return increment;\n}\n\nvar counter = makeCounter();\nprint counter();  // 1\nprint counter();  // 2\nprint "
-         "counter();  // 3",
+         "fun makeCounter() {\n    var x = 0;\n    fun increment() {\n        x = x + 1;\n        return x;\n    }\n"
+         "    return increment;\n}\n\nvar counter = makeCounter();\nprint(counter());  // 1\nprint(counter());  // 2\n"
+         "print(counter());  // 3",
          {"x"},
          "🔗 by-reference (upvalue)",
          "💡 increment 闭包捕获外层变量 x。makeCounter 返回后，"
@@ -57,8 +57,8 @@ const std::vector<ClosureScenario>& ClosureInspectorLibrary::scenarios() {
          "实现私有状态（外部无法直接访问 count，只能通过闭包操作）。"
          "这是闭包实现封装的核心模式。",
          "fun makeCounter() {\n    var count = 0;\n    fun next() {\n        count = count + 1;\n        return "
-         "count;\n    }\n    return next;\n}\n\nvar c1 = makeCounter();\nvar c2 = makeCounter();\nprint c1();  // "
-         "1\nprint c1();  // 2\nprint c2();  // 1（独立计数器）",
+         "count;\n    }\n    return next;\n}\n\nvar c1 = makeCounter();\nvar c2 = makeCounter();\nprint(c1());  // "
+         "1\nprint(c1());  // 2\nprint(c2());  // 1（独立计数器）",
          {"count"},
          "🔗 by-reference (upvalue)",
          "💡 c1 和 c2 是两个独立的计数器，各自捕获自己的 count。"
@@ -71,7 +71,7 @@ const std::vector<ClosureScenario>& ClosureInspectorLibrary::scenarios() {
          "在闭包对象中按索引存储。MiniLang 的 OP_CLOSURE 指令"
          "编码了 upvalue 数量与每个 upvalue 的位置（栈槽或上层 upvalue）。",
          "fun makeAdder(base, delta) {\n    fun add() {\n        base = base + delta;\n        return base;\n    }\n   "
-         " return add;\n}\n\nvar adder = makeAdder(10, 5);\nprint adder();  // 15\nprint adder();  // 20",
+         " return add;\n}\n\nvar adder = makeAdder(10, 5);\nprint(adder());  // 15\nprint(adder());  // 20",
          {"base", "delta"},
          "🔗 by-reference (upvalue)",
          "💡 add 闭包捕获两个 upvalue：base 和 delta。"
@@ -85,7 +85,7 @@ const std::vector<ClosureScenario>& ClosureInspectorLibrary::scenarios() {
          "（而非直接指向栈槽），形成 upvalue 链。",
          "fun outer() {\n    var a = 1;\n    fun middle() {\n        var b = 2;\n        fun inner() {\n            "
          "return a + b;\n        }\n        return inner;\n    }\n    return middle;\n}\n\nvar mid = outer();\nvar inn "
-         "= mid();\nprint inn();  // 3",
+         "= mid();\nprint(inn());  // 3",
          {"a", "b"},
          "🔗 by-reference (upvalue chain)",
          "💡 inner 闭包捕获两个 upvalue：a 来自 outer，b 来自 middle。"
@@ -99,8 +99,8 @@ const std::vector<ClosureScenario>& ClosureInspectorLibrary::scenarios() {
          "返回的闭包携带捕获的 upvalue，即使定义作用域已销毁。"
          "这是闭包\"逃逸\"的最常见形式——闭包超出定义作用域存活。",
          "fun makeMultiplier(factor) {\n    fun closure(x) {\n        return x * factor;\n    }\n    return "
-         "closure;\n}\n\nvar double = makeMultiplier(2);\nvar triple = makeMultiplier(3);\nprint double(5);   // "
-         "10\nprint triple(5);   // 15",
+         "closure;\n}\n\nvar double = makeMultiplier(2);\nvar triple = makeMultiplier(3);\nprint(double(5));   // "
+         "10\nprint(triple(5));   // 15",
          {"factor"},
          "🔗 by-reference (upvalue, escaped)",
          "💡 makeMultiplier 返回一个匿名闭包，捕获 factor。"
@@ -114,7 +114,7 @@ const std::vector<ClosureScenario>& ClosureInspectorLibrary::scenarios() {
          "（MiniLang 中 var 声明的变量在同一作用域内共享），"
          "因此所有闭包引用的 upvalue 指向同一地址。",
          "var fns = [];\nvar i = 0;\nwhile (i < 3) {\n    fun getter() { return i; }\n    fns.push(getter);\n    i = i "
-         "+ 1;\n}\nprint fns[0]();  // 3（不是 0！）\nprint fns[1]();  // 3\nprint fns[2]();  // 3",
+         "+ 1;\n}\nprint(fns[0]());  // 3（不是 0！）\nprint(fns[1]());  // 3\nprint(fns[2]());  // 3",
          {"i"},
          "🔗 by-reference (shared upvalue)",
          "⚠️ 所有闭包共享同一个 i 变量。循环结束后 i = 3，"
@@ -128,8 +128,8 @@ const std::vector<ClosureScenario>& ClosureInspectorLibrary::scenarios() {
          "在循环中使用 IIFE 可为每次迭代创建独立作用域，"
          "使闭包捕获不同的变量值。",
          "var fns = [];\nvar i = 0;\nwhile (i < 3) {\n    fun makeCaptured(captured) {\n        fun getter() { return "
-         "captured; }\n        return getter;\n    }\n    fns.push(makeCaptured(i));\n    i = i + 1;\n}\nprint "
-         "fns[0]();  // 0\nprint fns[1]();  // 1\nprint fns[2]();  // 2",
+         "captured; }\n        return getter;\n    }\n    fns.push(makeCaptured(i));\n    i = i + 1;\n}\nprint("
+         "fns[0]());  // 0\nprint(fns[1]());  // 1\nprint(fns[2]());  // 2",
          {"captured"},
          "🔗 by-reference (upvalue, per-iteration)",
          "💡 IIFE 每次调用创建新栈帧，参数 captured 绑定当前 i 的值。"
@@ -143,7 +143,7 @@ const std::vector<ClosureScenario>& ClosureInspectorLibrary::scenarios() {
          "MiniLang 的 GC 会在闭包不可达时释放 upvalue。",
          "fun makeAccumulator() {\n    var total = 0;\n    fun add(x) {\n        total = total + x;\n        return "
          "total;\n    }\n    return add;\n}\n\nvar acc = makeAccumulator();\n// makeAccumulator 已返回，total "
-         "仍存活\nprint acc(10);  // 10\nprint acc(20);  // 30\nprint acc(5);   // 35",
+         "仍存活\nprint(acc(10));  // 10\nprint(acc(20));  // 30\nprint(acc(5));   // 35",
          {"total"},
          "🔗 by-reference (upvalue, heap-escaped)",
          "💡 makeAccumulator 返回后，total 的栈帧弹出，total 堆化。"
@@ -159,8 +159,8 @@ const std::vector<ClosureScenario>& ClosureInspectorLibrary::scenarios() {
          "调用时通过 OP_CALL 指令执行参数位置的闭包。"
          "本例中 add5 闭包捕获了外层变量 n 作为 upvalue，再作为参数传递给 apply。",
          "fun apply(fn, x) {\n    return fn(x);\n}\n\nfun makeAdder(n) {\n    fun add(x) {\n        "
-         "return x + n;\n    }\n    return add;\n}\n\nvar add5 = makeAdder(5);\nprint apply(add5, "
-         "3);  // 8",
+         "return x + n;\n    }\n    return add;\n}\n\nvar add5 = makeAdder(5);\nprint(apply(add5, "
+         "3));  // 8",
          {"n"},
          "🔗 by-reference (upvalue，闭包作为参数传递)",
          "💡 闭包是一等值，可作为参数传递。"
@@ -175,7 +175,7 @@ const std::vector<ClosureScenario>& ClosureInspectorLibrary::scenarios() {
          "MiniLang 中函数名在 fun 声明完成后即绑定到当前作用域，"
          "因此闭包体内的自引用会在调用时通过作用域链查找。",
          "fun makeFactorial() {\n    fun fact(n) {\n        if (n <= 1) return 1;\n        return n * "
-         "fact(n - 1);\n    }\n    return fact;\n}\n\nvar f = makeFactorial();\nprint f(5);  // 120",
+         "fact(n - 1);\n    }\n    return fact;\n}\n\nvar f = makeFactorial();\nprint(f(5));  // 120",
          {"fact"},
          "🔗 by-reference (upvalue self-ref)",
          "💡 递归闭包通过环境链自引用。"
@@ -190,7 +190,7 @@ const std::vector<ClosureScenario>& ClosureInspectorLibrary::scenarios() {
          "将栈变量迁移到堆。这使每个闭包捕获独立的变量副本。",
          "fun makeCallbacks() {\n    var callbacks = [];\n    for (var i = 0; i < 3; i = i + 1) {\n        "
          "var x = i * 10;\n        callbacks.push(fun() { return x; });\n    }\n    return callbacks;\n}\n\nvar "
-         "cbs = makeCallbacks();\nprint cbs[0]();  // 0\nprint cbs[1]();  // 10\nprint cbs[2]();  // 20",
+         "cbs = makeCallbacks();\nprint(cbs[0]());  // 0\nprint(cbs[1]());  // 10\nprint(cbs[2]());  // 20",
          {"x"},
          "🔗 by-reference (upvalue, per-iteration)",
          "💡 每次循环迭代创建新的块作用域，var x 是该作用域的局部变量。"
@@ -205,7 +205,7 @@ const std::vector<ClosureScenario>& ClosureInspectorLibrary::scenarios() {
          "前向引用（isOdd 在 isEven 之后定义）通过作用域链在调用时解析。",
          "fun makeMutual() {\n    fun isEven(n) {\n        if (n == 0) return true;\n        return isOdd(n "
          "- 1);\n    }\n    fun isOdd(n) {\n        if (n == 0) return false;\n        return isEven(n - "
-         "1);\n    }\n    return isEven;\n}\n\nvar check = makeMutual();\nprint check(4);  // true",
+         "1);\n    }\n    return isEven;\n}\n\nvar check = makeMutual();\nprint(check(4));  // true",
          {"isEven", "isOdd"},
          "🔗 by-reference (upvalue mutual)",
          "💡 互递归闭包通过共享环境互相引用。"
@@ -213,6 +213,66 @@ const std::vector<ClosureScenario>& ClosureInspectorLibrary::scenarios() {
          "VM 在 isEven 调用 isOdd 时通过作用域链查找（此时 isOdd 已绑定）。"
          "两个闭包都捕获对方作为 upvalue，形成双向引用。"
          "这展示了闭包前向引用与作用域链延迟解析的机制。"},
+        // ---- 需求 8 扩充：共享状态对/记忆化/函数组合/一次性门闩 ----
+        {"closure-shared-pair",
+         "👯 闭包对（getter/setter 共享同一 upvalue）",
+         "👯 同一作用域内定义的多个闭包捕获同一个变量时，"
+         "它们共享同一个 upvalue（指向同一堆地址）。"
+         "一个闭包的写入对另一个闭包立即可见——这是实现"
+         "getter/setter 封装模式的基础。",
+         "fun makeBox() {\n    var value = 0;\n    fun get() { return value; }\n    fun set(v) { value = v; "
+         "}\n    return (get, set);\n}\n\nvar (get, set) = makeBox();\nset(42);\nprint(get());  // 42（set 的写入对 "
+         "get 可见）",
+         {"value"},
+         "🔗 by-reference (shared upvalue, getter/setter)",
+         "💡 get 与 set 两个闭包捕获同一个 value，OP_CLOSURE 为两者生成的 upvalue "
+         "条目指向同一栈槽；makeBox 返回时 value 堆化一次，两个 upvalue 指向同一堆地址。"
+         "set(42) 通过 upvalue 写堆，get() 读同一地址立即看到新值。"
+         "这展示了共享 upvalue 实现封装私有状态的双接口模式。"},
+        {"closure-memoize",
+         "🧠 记忆化闭包（捕获字典缓存）",
+         "🧠 闭包捕获一个字典作为缓存，重复调用相同参数时直接返回缓存结果。"
+         "缓存状态对外不可见（私有），但在多次调用间持久——"
+         "这是函数式编程中经典的记忆化（memoization）模式。",
+         "fun makeMemoSquare() {\n    var cache = {};\n    fun square(n) {\n        var key = \"\" + n;\n        "
+         "if (cache.has(key)) {\n            print(\"cache hit!\");\n            return cache[key];\n        }\n        "
+         "cache[key] = n * n;\n        return cache[key];\n    }\n    return square;\n}\n\nvar sq = "
+         "makeMemoSquare();\nprint(sq(9));  // 81（计算）\nprint(sq(9));  // cache hit! 81（缓存）",
+         {"cache"},
+         "🔗 by-reference (upvalue, 持久缓存)",
+         "💡 cache 字典作为 upvalue 被 square 捕获，makeMemoSquare 返回后堆化。"
+         "每次调用 sq() 读写同一个堆上字典；注意 COW 语义下 cache[key] = v 的写回"
+         "经 OP_WRITEBACK_*_UPVALUE 指令写回 upvalue，否则变异只发生在副本上。"
+         "这展示了闭包 + 容器 upvalue 的写回机制与私有缓存模式。"},
+        {"closure-compose",
+         "🔗 函数组合（闭包捕获闭包）",
+         "🔗 compose(f, g) 返回新闭包，捕获的 upvalue 本身就是两个闭包。"
+         "闭包值与普通值一样可被捕获——upvalue 指向的堆槽里存的是 "
+         "ClosureData 指针。这是函数式管道（pipeline）的基础。",
+         "fun compose(f, g) {\n    fun composed(x) {\n        return f(g(x));\n    }\n    return "
+         "composed;\n}\n\nfun double(x) { return x * 2; }\nfun inc(x) { return x + 1; }\n\nvar doubleThenInc = "
+         "compose(inc, double);\nprint(doubleThenInc(5));  // 11（先 ×2 再 +1）",
+         {"f", "g"},
+         "🔗 by-reference (upvalue 持有闭包值)",
+         "💡 composed 捕获 f、g 两个 upvalue，它们的值是 ClosureData*（闭包也是一等值）。"
+         "调用 composed(5) 时，VM 先通过 upvalue 取 g 执行 OP_CALL_EXPR，再取 f 调用。"
+         "upvalue 堆槽里存闭包指针使引用计数链延长：composed 活着就拖着 f、g 不被 GC。"
+         "这展示了闭包捕获闭包的组合模式与对象存活链。"},
+        {"closure-once",
+         "🚪 一次性门闩（once 模式）",
+         "🚪 闭包捕获布尔标志实现「只执行一次」语义：首次调用执行并置位，"
+         "后续调用直接返回缓存结果。初始化防重入、惰性单例都是这个模式。",
+         "fun makeOnce() {\n    var called = false;\n    var result = null;\n    fun once() {\n        if "
+         "(!called) {\n            called = true;\n            result = \"initialized\";\n            print("
+         "\"init!\");\n        }\n        return result;\n    }\n    return once;\n}\n\nvar init = "
+         "makeOnce();\nprint(init());  // init! initialized\nprint(init());  // initialized（不再 init）",
+         {"called", "result"},
+         "🔗 by-reference (upvalue 状态机)",
+         "💡 called 与 result 两个 upvalue 构成闭包内部状态机。"
+         "首次调用通过 OP_SET_UPVALUE 置 called=true 并写 result；"
+         "后续调用走 OP_GET_UPVALUE 读到 true 直接返回。"
+         "外部无法重置 called（私有性），保证初始化逻辑恰好执行一次。"
+         "这展示了多 upvalue 协作实现状态机的闭包封装能力。"},
     };
     return kScenarios;
 }

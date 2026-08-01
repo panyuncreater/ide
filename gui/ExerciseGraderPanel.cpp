@@ -15,6 +15,7 @@
 
 #include "common/BackendExecutionService.h" // ARCH-10: 后端执行服务中间层
 
+#include <QApplication>
 #include <QComboBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -27,7 +28,9 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <cctype>
 #include <sstream>
+#include <utility>
 
 // ============================================================
 // 预设题库（4 个题目）
@@ -125,6 +128,164 @@ const std::vector<Exercise>& ExerciseGraderLibrary::exercises() {
 // ARCH-10: 原 formatDiagnosticErrors 函数已随 runInterpreter/runStackVM_IR/
 // runRegVM_IR 重构移除——错误信息现在由 BackendExecutionService 直接通过
 // BackendExecResult.errorMsg 提供，无需面板自行格式化 DiagnosticBag。
+
+namespace {
+
+/// 判断 src[pos..] 是否以关键字 kw 开头且其前后为单词边界（非标识符字符）。
+bool matchKeywordAt(const std::string& src, size_t pos, const std::string& kw) {
+    if (pos + kw.size() > src.size())
+        return false;
+    if (src.compare(pos, kw.size(), kw) != 0)
+        return false;
+    if (pos > 0) {
+        char pc = src[pos - 1];
+        if (std::isalnum(static_cast<unsigned char>(pc)) || pc == '_')
+            return false;
+    }
+    size_t after = pos + kw.size();
+    if (after < src.size()) {
+        char nc = src[after];
+        if (std::isalnum(static_cast<unsigned char>(nc)) || nc == '_')
+            return false;
+    }
+    return true;
+}
+
+/// 把源码按顶层结构切成「函数定义」与「其余顶层语句（调用）」两部分。
+///   - 顶层 `fun 名(...) {...}`（含可选结尾 ;）归入 first（defs）
+///   - 其余顶层语句（如 print(...);）归入 second（rest / 调用）
+/// 花括号与字符串内容均被跳过，不误计嵌套深度。
+/// 用途：学生代码提供函数实现，测试用例参考代码提供调用；把两者组合后运行，
+/// 才能真正以学生实现判分（原实现直接跑参考代码 tc.code，与学生代码无关，恒满分）。
+std::pair<std::string, std::string> splitDefsAndRest(const std::string& src) {
+    std::string defs;
+    std::string rest;
+    size_t i = 0;
+    const size_t n = src.size();
+    while (i < n) {
+        char c = src[i];
+        if (std::isspace(static_cast<unsigned char>(c))) {
+            ++i;
+            continue;
+        }
+        if (matchKeywordAt(src, i, "fun")) {
+            const size_t start = i;
+            size_t j = i;
+            bool inStr = false;
+            char strCh = 0;
+            // 推进到函数体起始 '{'
+            while (j < n) {
+                char cj = src[j];
+                if (inStr) {
+                    if (cj == '\\') {
+                        j += 2;
+                        continue;
+                    }
+                    if (cj == strCh)
+                        inStr = false;
+                    ++j;
+                    continue;
+                }
+                if (cj == '"' || cj == '\'') {
+                    inStr = true;
+                    strCh = cj;
+                    ++j;
+                    continue;
+                }
+                if (cj == '{')
+                    break;
+                ++j;
+            }
+            if (j >= n) { // 无函数体（异常）：剩余全归 rest
+                rest.append(src, start, n - start);
+                i = n;
+                break;
+            }
+            // 从 '{' 做花括号匹配
+            int depth = 0;
+            inStr = false;
+            strCh = 0;
+            while (j < n) {
+                char cj = src[j];
+                if (inStr) {
+                    if (cj == '\\') {
+                        j += 2;
+                        continue;
+                    }
+                    if (cj == strCh)
+                        inStr = false;
+                    ++j;
+                    continue;
+                }
+                if (cj == '"' || cj == '\'') {
+                    inStr = true;
+                    strCh = cj;
+                    ++j;
+                    continue;
+                }
+                if (cj == '{') {
+                    ++depth;
+                } else if (cj == '}') {
+                    --depth;
+                    if (depth == 0) {
+                        ++j;
+                        break;
+                    }
+                }
+                ++j;
+            }
+            // 吞掉紧随的可选 ';' 与前导空白
+            while (j < n && std::isspace(static_cast<unsigned char>(src[j])))
+                ++j;
+            if (j < n && src[j] == ';')
+                ++j;
+            defs.append(src, start, j - start);
+            defs.push_back('\n');
+            i = j;
+        } else {
+            // 顶层语句：推进到 depth 0 的分号（尊重字符串与括号）
+            const size_t start = i;
+            int depth = 0;
+            bool inStr = false;
+            char strCh = 0;
+            size_t j = i;
+            while (j < n) {
+                char cj = src[j];
+                if (inStr) {
+                    if (cj == '\\') {
+                        j += 2;
+                        continue;
+                    }
+                    if (cj == strCh)
+                        inStr = false;
+                    ++j;
+                    continue;
+                }
+                if (cj == '"' || cj == '\'') {
+                    inStr = true;
+                    strCh = cj;
+                    ++j;
+                    continue;
+                }
+                if (cj == '{' || cj == '[' || cj == '(') {
+                    ++depth;
+                } else if (cj == '}' || cj == ']' || cj == ')') {
+                    --depth;
+                } else if (cj == ';' && depth == 0) {
+                    ++j;
+                    break;
+                }
+                ++j;
+            }
+            rest.append(src, start, j - start);
+            rest.push_back('\n');
+            i = j;
+        }
+    }
+    return {defs, rest};
+}
+
+} // namespace
 
 // ============================================================
 // ExerciseGraderPanel 实现
@@ -291,13 +452,37 @@ void ExerciseGraderPanel::onSubmitGrade() {
     const auto& ex = exs[idx];
     int total = static_cast<int>(ex.testCases.size());
 
+    // 防重入：串行执行多用例 + 三后端期间 processEvents 不排除信号/定时器，
+    // 快速双击「提交评分」会触发重复评分与结果错乱。
+    if (grading_)
+        return;
+    grading_ = true;
+    // UX：评分期间禁用按钮 + 文案提示，避免误认为无响应
+    const QString submitOrigText = submitBtn_ ? submitBtn_->text() : QString();
+    if (submitBtn_) {
+        submitBtn_->setEnabled(false);
+        submitBtn_->setText(tr("评分中\xE2\x80\xA6"));
+    }
+    QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+
+    // 评分准确性修复：以学生代码判分——提取学生的函数定义，与每个测试用例的
+    // 调用组合后运行。原实现直接运行参考代码 tc.code（内嵌参考解），与学生代码无
+    // 关，导致测试项恒为满分（无论学生写什么）。
+    const std::string studentCode = codeEdit_->toPlainText().toStdString();
+    const std::string studentDefs = splitDefsAndRest(studentCode).first;
+
     // 1. 运行测试用例（Interpreter 后端校验输出）
     int passed = 0;
     QStringList passDetails;
     QStringList failDetails;
     for (int i = 0; i < total; ++i) {
         const auto& tc = ex.testCases[i];
-        ExecResult result = runTestCase(tc.code);
+        // 提取参考用例的调用部分，与学生的函数定义组合
+        const std::string invocation = splitDefsAndRest(tc.code).second;
+        std::string program = studentDefs;
+        program += "\n";
+        program += invocation;
+        ExecResult result = runTestCase(program);
         QString actual = result.output.trimmed();
         QString expected = QString::fromUtf8(tc.expectedOutput.c_str()).trimmed();
         bool pass = result.success && (actual == expected);
@@ -342,10 +527,11 @@ void ExerciseGraderPanel::onSubmitGrade() {
         }
         testTable_->setItem(i, 3, actualItem);
         testTable_->setItem(i, 4, statusItem);
+        // UX：多用例串行执行期间让出事件循环，保持界面响应
+        QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
     }
 
     // 2. 三后端执行详情（学生代码）
-    std::string studentCode = codeEdit_->toPlainText().toStdString();
     ExecResult interpR = runInterpreter(studentCode);
     ExecResult stackR = runStackVM_IR(studentCode);
     ExecResult regR = runRegVM_IR(studentCode);
@@ -387,10 +573,21 @@ void ExerciseGraderPanel::onSubmitGrade() {
                      hasCompileError ? interpR.errorMsg.toStdString() : QString::fromUtf8("无编译错误").toStdString()});
 
     // 运行时错误（满分 10）
+    // 评分准确性修复：编译未通过时运行时无从检测，不应白送 10 分。
     bool hasRuntimeError = interpR.runtimeError;
-    items.push_back(
-        {"运行时错误", hasRuntimeError ? 0 : 10, 10,
-         hasRuntimeError ? interpR.errorMsg.toStdString() : QString::fromUtf8("无运行时错误").toStdString()});
+    int runtimeScore;
+    std::string runtimeNote;
+    if (hasCompileError) {
+        runtimeScore = 0;
+        runtimeNote = QString::fromUtf8("编译未通过，运行时未检测").toStdString();
+    } else if (hasRuntimeError) {
+        runtimeScore = 0;
+        runtimeNote = interpR.errorMsg.toStdString();
+    } else {
+        runtimeScore = 10;
+        runtimeNote = QString::fromUtf8("无运行时错误").toStdString();
+    }
+    items.push_back({"运行时错误", runtimeScore, 10, runtimeNote});
 
     // 4. 反馈报告
     int totalScore = 0;
@@ -433,6 +630,13 @@ void ExerciseGraderPanel::onSubmitGrade() {
     feedback += QStringLiteral("</ul>");
 
     renderGradeReport(items, feedback);
+
+    // 恢复按钮与重入守卫
+    if (submitBtn_) {
+        submitBtn_->setText(submitOrigText);
+        submitBtn_->setEnabled(true);
+    }
+    grading_ = false;
 }
 
 /// 加载样例代码到主编辑器：emit loadSampleRequested 信号。

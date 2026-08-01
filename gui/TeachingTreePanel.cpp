@@ -4,7 +4,8 @@
 
 #include "gui/TeachingTreePanel.h"
 #include "gui/I18n.h"
-#include "gui/PanelCatalog.h" // P2-1 fix: 抽取统一面板目录
+#include "gui/PanelCatalog.h"   // P2-1 fix: 抽取统一面板目录
+#include "gui/TeachingTheme.h" // UX-R fix: 硬编码颜色迁移到语义色
 
 #include <QFrame>
 #include <QHBoxLayout>
@@ -41,19 +42,21 @@ TeachingTreePanel::TeachingTreePanel(QWidget* parent) : QWidget(parent) {
     const QString kHatEmoji = QString::fromUtf8("\xF0\x9F\x8E\x93"); // 🎓
     bannerTitle_ = new QLabel(kHatEmoji + QString::fromUtf8("  学习中心"), headerBanner_);
     bannerTitle_->setObjectName("teachingBannerTitle");
-    bannerSubtitle_ = new QLabel(QString::fromUtf8("点击下方任意主题开始学习"), headerBanner_);
+    bannerSubtitle_ = new QLabel(QString::fromUtf8("按推荐顺序从上往下学 · 「进阶/高级」可稍后再看"), headerBanner_);
     bannerSubtitle_->setObjectName("teachingBannerSubtitle");
     bannerLayout->addWidget(bannerTitle_);
     bannerLayout->addWidget(bannerSubtitle_);
     // 统一样式：类型选择器 QWidget#teachingBanner 强化匹配，后代 QLabel 显式
     // background:transparent + color:white，防止被祖先 palette 覆盖成白底白字。
+    // UX-R fix: 渐变/文字色从硬编码（#268BD2/#1E6FA3/white）迁移到 TeachingTheme 语义色。
+    const QColor onPrimary = TeachingTheme::onPrimary();
     headerBanner_->setStyleSheet(QStringLiteral("QWidget#teachingBanner {"
                                                 "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
-                                                "    stop:0 #268BD2, stop:1 #1E6FA3);"
+                                                "    stop:0 %1, stop:1 %2);"
                                                 "}"
                                                 "QWidget#teachingBanner QLabel {"
                                                 "  background: transparent;"
-                                                "  color: white;"
+                                                "  color: %3;"
                                                 "  border: none;"
                                                 "}"
                                                 "QLabel#teachingBannerTitle {"
@@ -62,8 +65,13 @@ TeachingTreePanel::TeachingTreePanel(QWidget* parent) : QWidget(parent) {
                                                 "}"
                                                 "QLabel#teachingBannerSubtitle {"
                                                 "  font-size: 11px;"
-                                                "  color: rgba(255,255,255,220);"
-                                                "}"));
+                                                "  color: rgba(%4,%5,%6,220);"
+                                                "}")
+                                     .arg(TeachingTheme::primary().name(), TeachingTheme::primaryPressed().name(),
+                                          onPrimary.name())
+                                     .arg(onPrimary.red())
+                                     .arg(onPrimary.green())
+                                     .arg(onPrimary.blue()));
     layout->addWidget(headerBanner_);
 
     // B3: 搜索框
@@ -71,17 +79,20 @@ TeachingTreePanel::TeachingTreePanel(QWidget* parent) : QWidget(parent) {
     searchEdit_->setObjectName("teachingSearchEdit");
     searchEdit_->setPlaceholderText(QString::fromUtf8("搜索面板..."));
     searchEdit_->setClearButtonEnabled(true);
+    // UX-R fix: 硬编码颜色迁移到 TeachingTheme 语义色
     searchEdit_->setStyleSheet(QStringLiteral("#teachingSearchEdit {"
-                                              "  background: #FFFFFF;"
+                                              "  background: %1;"
                                               "  border: none;"
-                                              "  border-bottom: 1px solid #E0E0E0;"
+                                              "  border-bottom: 1px solid %2;"
                                               "  padding: 6px 10px;"
                                               "  font-size: 12px;"
-                                              "  color: #1E1E1E;"
+                                              "  color: %3;"
                                               "}"
                                               "#teachingSearchEdit:focus {"
-                                              "  border-bottom: 2px solid #268BD2;"
-                                              "}"));
+                                              "  border-bottom: 2px solid %4;"
+                                              "}")
+                                   .arg(TeachingTheme::surface().name(), TeachingTheme::border().name(),
+                                        TeachingTheme::textPrimary().name(), TeachingTheme::primary().name()));
     connect(searchEdit_, &QLineEdit::textChanged, this, &TeachingTreePanel::onSearchChanged);
     layout->addWidget(searchEdit_);
 
@@ -100,8 +111,9 @@ TeachingTreePanel::TeachingTreePanel(QWidget* parent) : QWidget(parent) {
     tree_->header()->setStretchLastSection(true);
 
     // B2: 树样式美化 —— 中性浅色背景 + hover/选中态主题色
+    // UX-R fix: 硬编码颜色迁移到 TeachingTheme 语义色
     tree_->setStyleSheet(QStringLiteral("QTreeWidget#teachingTree {"
-                                        "  background: #FFFFFF;"
+                                        "  background: %1;"
                                         "  border: none;"
                                         "  outline: none;"
                                         "}"
@@ -110,15 +122,17 @@ TeachingTreePanel::TeachingTreePanel(QWidget* parent) : QWidget(parent) {
                                         "  border-radius: 4px;"
                                         "}"
                                         "QTreeWidget#teachingTree::item:hover {"
-                                        "  background: rgba(38, 139, 210, 0.08);"
+                                        "  background: %2;"
                                         "}"
                                         "QTreeWidget#teachingTree::item:selected {"
-                                        "  background: #268BD2;"
-                                        "  color: white;"
+                                        "  background: %3;"
+                                        "  color: %4;"
                                         "}"
                                         "QTreeWidget#teachingTree::branch:has-siblings:!adjoins-item {"
                                         "  background: transparent;"
-                                        "}"));
+                                        "}")
+                             .arg(TeachingTheme::surface().name(), TeachingTheme::primaryHoverBg().name(),
+                                  TeachingTheme::primary().name(), TeachingTheme::onPrimary().name()));
 
     buildTree();
 
@@ -162,7 +176,8 @@ void TeachingTreePanel::buildTree() {
     sepLine->setFrameShape(QFrame::HLine);
     sepLine->setFrameShadow(QFrame::Plain);
     sepLine->setFixedHeight(1);
-    sepLine->setStyleSheet(QStringLiteral("QFrame { background: #E0E0E0; border: none; max-height: 1px; }"));
+    sepLine->setStyleSheet(QStringLiteral("QFrame { background: %1; border: none; max-height: 1px; }")
+                               .arg(TeachingTheme::border().name()));
     tree_->setItemWidget(sep, 0, sepLine);
 
     // 收藏分类（动态，初始为空，loadFavoritesAndRecent 后填充）
@@ -183,7 +198,7 @@ void TeachingTreePanel::buildTree() {
     recentCatItem_->setData(0, Qt::UserRole, QStringLiteral("category"));
     recentCatItem_->setHidden(true);
 
-    // 4 大分类
+    // 6 大分类（UX-R fix: 按学习曲线递进排序，分类 tooltip 展示学习目标）
     for (const auto& cat : categories) {
         auto* catItem = new QTreeWidgetItem(tree_);
         QString catText = QString::fromUtf8(cat.emoji) + " " + mlTr(cat.title);
@@ -193,6 +208,8 @@ void TeachingTreePanel::buildTree() {
         catItem->setFont(0, catFont);
         // 分类节点不存 panelId，标记为 category
         catItem->setData(0, Qt::UserRole, QStringLiteral("category"));
+        // UX-R fix: 分类 tooltip = 学习目标一句话，初学者悬停即知这一类学什么
+        catItem->setToolTip(0, mlTr(cat.description));
         // 分类文字颜色稍浅
         QColor catColor = palette().color(QPalette::Text);
         // 取 85% 不透明度让分类标题略灰
@@ -202,11 +219,16 @@ void TeachingTreePanel::buildTree() {
         for (const auto& leaf : cat.leaves) {
             auto* leafItem = new QTreeWidgetItem(catItem);
             QString leafText = QString::fromUtf8(leaf.emoji) + " " + mlTr(leaf.label);
+            // UX-R fix: 难度徽标 —— 进阶/高级面板加后缀提示，入门面板保持简洁；
+            // 初学者一眼就能看出哪些面板可以稍后再看，避免误入高级主题受挫
+            if (leaf.level >= 2) {
+                leafText += QStringLiteral(" ·") + mlTr(PanelCatalog::levelName(leaf.level));
+            }
             leafItem->setText(0, leafText);
             leafItem->setData(0, Qt::UserRole, QString::fromUtf8(leaf.id));
-            // B5: 叶子节点 tooltip —— PanelCatalog 无 description 字段，
-            // 用简单的「点击进入 <label>」提示，悬停即可预览入口行为
-            leafItem->setToolTip(0, QString::fromUtf8("点击进入 ") + mlTr(leaf.label));
+            // B5/UX-R fix: 叶子节点 tooltip —— 难度分级 + 入口行为提示
+            leafItem->setToolTip(0, mlTr("难度：") + mlTr(PanelCatalog::levelName(leaf.level)) +
+                                        QStringLiteral("\n") + QString::fromUtf8("点击进入 ") + mlTr(leaf.label));
             idToItem_[QString::fromUtf8(leaf.id)] = leafItem;
         }
         // 默认全部折叠，下面单独展开前两个分类

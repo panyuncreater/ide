@@ -31,7 +31,6 @@
 #include "debug/ExecutionTraceRecorder.h"
 
 class IdeController;
-class TeachingPanelHeader;
 class QTimer;
 
 class ExecutionTimelinePanel : public QWidget {
@@ -49,9 +48,11 @@ public:
 
 signals:
     /// 用户点击「返回编辑器」按钮
+    /// 标题重复修复后：面板不再自建标题栏，该 signal 保留以兼容 ide.cpp 既有 connect；
+    /// 返回编辑器实际由外壳 TeachingPanelHeader 统一处理。
     void returnToEditorRequested();
 
-    /// 用户点击「新手引导」按钮
+    /// 用户点击「新手引导」按钮（同上，由外壳标题栏统一处理）
     void guidedTourRequested(const QString& panelId);
 
     /// 录制状态切换（用于 IdeController 联动 VmStepper/Interpreter 的 recorder）
@@ -74,7 +75,6 @@ private slots:
 
 private:
     IdeController* controller_ = nullptr;
-    TeachingPanelHeader* header_ = nullptr;
     TraceBackend backend_ = TraceBackend::StackVM;
 
     // 工具栏
@@ -111,6 +111,10 @@ private:
     void updateStepLabel();
     void updateSliderRange();
     void navigateToStep(int idx);
+    /// UX：根据当前数据 / 位置同步导航按钮与清空按钮的可用性
+    void updateControlsEnabled();
+    /// UX：未录制 / 已清空时在详情区展示引导文案
+    void showEmptyHint();
 
     /// 后端类型显示名
     static QString backendName(TraceBackend b);

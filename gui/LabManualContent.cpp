@@ -134,7 +134,12 @@ const std::vector<LabChapter>& LabManualContent::chapters() {
             "1. 为什么注释要单独存储到 `lexer.comments()` 而不是直接丢弃？想想 Formatter 的需求。\n"
             "2. 如果把 `var` 改成 `Var`（大写），词法分析会把它识别成什么 token？为什么？\n"
             "3. `1.5e10` 这个字面量会被切成几个 token？试着预测并验证（提示：最长匹配）。\n"
-            "4. 输入 `\"未闭合字符串` 会发生什么？这个错误如何传播给 Parser？",
+            "4. 输入 `\"未闭合字符串` 会发生什么？这个错误如何传播给 Parser？\n\n"
+            "## 🔗 相关面板与下一步\n"
+            "- 🧩 [Token 拼图](panel:token-puzzle)：把本章知识变成闯关游戏，边玩边巩固\n"
+            "- 🔗 [编译管线可视化](panel:pipeline)：在完整管线里看 Token 阶段的位置\n"
+            "- 📚 [术语表](panel:glossary)：查 Token / lexeme / 最长匹配的标准释义\n\n"
+            "🧭 **下一步**：进入「实验 2：递归下降解析」，看线性的 Token 串怎么长成一棵有层次的 AST。",
             "var x = 42; // 行内注释\nprint(x);",
             // P1-1 fix (F6): lab-01 章节练习（2 道：1 选择题 + 1 预期输出题）
             {LabExercise{LabExerciseType::CHOICE,
@@ -253,7 +258,12 @@ const std::vector<LabChapter>& LabManualContent::chapters() {
             "1. 为什么 `1 - 2 - 3` 的结果是 -4 而不是 2？想想左结合和右结合的区别。\n"
             "2. `var x = 1, 2, 3;` 会触发什么错误？synchronize 会跳到哪里继续解析？\n"
             "3. 如果把优先级链里 `equality` 和 `comparison` 互换位置，`1 < 2 == true` 的 AST 会变成什么样？\n"
-            "4. `MAX_PARSE_DEPTH` 设为多少合适？太小会怎样，太大会怎样？",
+            "4. `MAX_PARSE_DEPTH` 设为多少合适？太小会怎样，太大会怎样？\n\n"
+            "## 🔗 相关面板与下一步\n"
+            "- 🌳 [AST 构建器](panel:ast-toy)：亲手拖节点搭树，把优先级和结合性玩出直觉\n"
+            "- 📖 [语法浏览器](panel:syntax-explorer)：碰到不认识的语法产生式随时查\n"
+            "- 🔗 [编译管线可视化](panel:pipeline)：对照看 AST 阶段的输入输出\n\n"
+            "🧭 **下一步**：进入「实验 3：语义分析 + 树遍历解释器」，让这棵树真正跑起来。",
             "var x = 1 + 2 * 3;\nprint(x);",
             // P1-1 fix (F6): lab-02 章节练习（1 道选择题）
             {LabExercise{LabExerciseType::CHOICE,
@@ -370,7 +380,12 @@ const std::vector<LabChapter>& LabManualContent::chapters() {
                    "1. 解释器执行 `fib(10)` 时调用栈最深处有多少层？为什么会触发 `MAX_RECURSION_DEPTH` 防护？\n"
                    "2. Environment 的 `boundInstance_` 缓存为什么能加速方法调用？不缓存会怎样？\n"
                    "3. REPL 是怎么判断「用户还没输入完，需要继续读下一行」的？列举至少 3 种续行场景。\n"
-                   "4. `print(y)` 中 `y` 未定义，为什么语法分析通过了，却在执行时报错？这说明了语义分析的什么特点？",
+                   "4. `print(y)` 中 `y` 未定义，为什么语法分析通过了，却在执行时报错？这说明了语义分析的什么特点？\n\n"
+                   "## 🔗 相关面板与下一步\n"
+                   "- 🔍 [变量检查器](panel:variable-inspector)：看作用域链和变量生命周期怎么画出来\n"
+                   "- 📚 [调用栈检查器](panel:call-stack)：盯着 fib 递归时栈帧怎么长怎么消\n"
+                   "- 🛑 [条件断点](panel:breakpoint-condition)：把本章用到的 `n == 5` 条件断点弄懂\n\n"
+                   "🧭 **下一步**：进入「实验 4：栈式字节码 VM」，换一种思路——先翻译成指令再执行。",
                    "fun fib(n) {\n    if (n < 2) return n;\n    return fib(n - 1) + fib(n - 2);\n}\nfor (var i = 0; i "
                    "< 10; i = i + 1) {\n    print(fib(i));\n}",
                    // P1-1 fix (F6): lab-03 exercises (2: 1 CHOICE + 1 EXPECTED_OUTPUT)
@@ -495,7 +510,12 @@ const std::vector<LabChapter>& LabManualContent::chapters() {
             "1. 为什么操作数栈固定为 1024 而不是动态扩容？想想 DoS 防护。\n"
             "2. `OP_ADD` 既要处理 int 又要处理 float/string，编译期怎么知道生成哪种？\n"
             "3. 表达式语句 `1 + 2;` 的返回值如果不 POP 会怎样？栈会泄漏多少？\n"
-            "4. 字节码的 `lines` 数组有什么用？为什么调试器需要它？",
+            "4. 字节码的 `lines` 数组有什么用？为什么调试器需要它？\n\n"
+            "## 🔗 相关面板与下一步\n"
+            "- 🎮 [VM 沙盒](panel:vm-sandbox)：自己动手 push/pop，把栈平衡玩出肌肉记忆\n"
+            "- 📡 [字节码追踪](panel:bytecode-trace)：逐指令回放真实代码的栈变化\n"
+            "- 📝 [执行步骤讲解](panel:step-explainer)：每条指令「为什么这么做」的大白话版\n\n"
+            "🧭 **下一步**：进入「实验 5：寄存器式 VM 与 IR」，看同一份代码的另一套指令集表达。",
             "var x = 1 + 2;\nprint(x);",
             // P1-1 fix (F6): lab-04 exercises (2: 2 CHOICE)
             {LabExercise{LabExerciseType::CHOICE,
@@ -633,7 +653,12 @@ const std::vector<LabChapter>& LabManualContent::chapters() {
             "1. 寄存器 VM 用 32 个虚拟寄存器，超了怎么办？真实 CPU 也只有 16-32 个寄存器。\n"
             "2. SSA 形式为什么让常量折叠和 DCE 更容易实现？换成名-值形式会怎样？\n"
             "3. `var x = 1 + 2; var y = x * 3;` 启用常量折叠后 IR 还剩几条指令？\n"
-            "4. 复制传播如何消除 `v0 = LOAD_CONST 1; v1 = v0` 中的 `v1`？",
+            "4. 复制传播如何消除 `v0 = LOAD_CONST 1; v1 = v0` 中的 `v1`？\n\n"
+            "## 🔗 相关面板与下一步\n"
+            "- ✨ [IR 优化回放](panel:ir-transform)：把 5 种优化 pass 一步步回放，每步都讲为什么\n"
+            "- 🎯 [寄存器分配可视化](panel:register-allocator)：看图着色算法怎么把变量塞进寄存器\n"
+            "- ⚖️ [三后端对比](panel:backend-compare)：对比栈式与寄存器式两套指令集的实际产出\n\n"
+            "🧭 **下一步**：进入「实验 6：三后端一致性」，验证三条执行路径结果必须完全一致。",
             "var x = 1 + 2;\nvar y = x * 3;\nprint(y);",
             // P1-1 fix (F6): lab-05 exercises (2: 1 CHOICE + 1 EXPECTED_OUTPUT)
             {LabExercise{LabExerciseType::CHOICE,
@@ -738,7 +763,12 @@ const std::vector<LabChapter>& LabManualContent::chapters() {
                    "1. 为什么 `7 / 2` 是 3 而不是 3.5？MiniLang 怎么区分整数除法和浮点除法？\n"
                    "2. `0 or \"default\"` 为什么返回 `\"default\"` 而不是 `true`？这种语义有什么用？\n"
                    "3. 修改 StackVM 后如何确保 RegisterVM 也一致？手动检查还是跑差分测试？\n"
-                   "4. ConsistencyDiff 有 190 个用例，设计差分测试时应该覆盖哪些边界？",
+                   "4. ConsistencyDiff 有 190 个用例，设计差分测试时应该覆盖哪些边界？\n\n"
+                   "## 🔗 相关面板与下一步\n"
+                   "- ⚖️ [三后端对比](panel:backend-compare)：本章的主战场，三列输出摆在一起逐行比\n"
+                   "- 🔀 [三后端并行可视化](panel:backend-parallel)：看三条路径同时推进的分叉与汇合\n"
+                   "- 🏁 [三后端性能竞赛](panel:performance-race)：语义一致之后，再比谁快\n\n"
+                   "🧭 **下一步**：进入「实验 7：内存模型」，掀开值在内存里怎么放、怎么共享、怎么回收的盖头。",
                    "print(7 / 2);\nprint(7.0 / 2);\nprint(0 or \"default\");\nprint(5 and 0);",
                    // P1-1 fix (F6): lab-06 exercises (2: 1 CHOICE + 1 EXPECTED_OUTPUT)
                    {LabExercise{LabExerciseType::CHOICE,
@@ -853,7 +883,12 @@ const std::vector<LabChapter>& LabManualContent::chapters() {
             "1. NaN-boxing 为什么用 NaN 的 payload 而不是普通 union？想想 double 与指针的区分。\n"
             "2. COW 在 `var b = a; b[0] = 99;` 时复制了整个数组，如果数组很大性能如何？\n"
             "3. 嵌套数组 `[[1,2],[3,4]]` 的 COW 是深拷贝还是浅拷贝？内层数组会共享吗？\n"
-            "4. 引用计数能处理循环引用吗？GC 的 mark-sweep 为什么能兜底？",
+            "4. 引用计数能处理循环引用吗？GC 的 mark-sweep 为什么能兜底？\n\n"
+            "## 🔗 相关面板与下一步\n"
+            "- 🧠 [内存模型](panel:memory-model)：NaN-boxing / COW / mark-sweep 全部做成实时动画\n"
+            "- 🗑️ [GC 垃圾回收可视化](panel:gc-visualizer)：亲手触发一次 GC，看 mark 和 sweep 阶段\n"
+            "- 🔒 [闭包检查器](panel:closure-inspector)：看堆里对象的寿命和 upvalue 的一生\n\n"
+            "🧭 **下一步**：进入「实验 8：Bug 狩猎」，把前七章的知识变成排错直觉。",
             "var a = [1, 2, 3];\nvar b = a;\nb.push(4);\nprint(a.len());\nprint(b.len());",
             // P1-1 fix (F6): lab-07 exercises (2: 1 CHOICE + 1 EXPECTED_OUTPUT)
             {LabExercise{LabExerciseType::CHOICE,
@@ -970,7 +1005,12 @@ const std::vector<LabChapter>& LabManualContent::chapters() {
             "1. 为什么「push 在检查之前」是反模式？画出一个会泄漏的具体场景。\n"
             "2. RAII guard 的构造顺序为什么必须在状态修改前？如果后构造会怎样？\n"
             "3. BUG-CP-1 中 `int(0)` 与 `float(0.0)` 共享常量索引会导致什么后果？\n"
-            "4. 修改某后端时，如何用三后端对称性审计发现遗漏？列举检查清单。",
+            "4. 修改某后端时，如何用三后端对称性审计发现遗漏？列举检查清单。\n\n"
+            "## 🔗 相关面板与下一步\n"
+            "- 🐛 [Bug 狩猎](panel:bug-hunt)：三档分级挑战，把本章方法论变成实战训练\n"
+            "- 🎲 [模糊测试游乐场](panel:fuzz-playground)：让机器帮你拿随机输入撞 Bug\n"
+            "- 📝 [交互式练习评分](panel:exercise-grader)：写代码当场判对错，即时反馈\n\n"
+            "🧭 **下一步**：八个实验全部通关后，去学习路径的「自由项目」给 MiniLang 设计一个新特性——你已经有这个实力了。",
             "var a = 7 / 2;\nvar b = 7.0 / 2;\nprint(a);\nprint(b);",
             // P1-1 fix (F6): lab-08 exercises (2: 1 CHOICE + 1 EXPECTED_OUTPUT)
             {LabExercise{LabExerciseType::CHOICE,

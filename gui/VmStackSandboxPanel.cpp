@@ -47,29 +47,13 @@ VmStackSandboxPanel::VmStackSandboxPanel(QWidget* parent) : QWidget(parent) {
     mainLayout->setContentsMargins(4, 4, 4, 4);
     mainLayout->setSpacing(4);
 
-    // ---- 子页切换按钮栏 ----
-    auto* pageBar = new QHBoxLayout();
-    pageBar->setContentsMargins(0, 0, 0, 0);
-    pageBar->setSpacing(4);
-    pageSandboxBtn_ = new QPushButton(mlTr("栈沙盒"), this);
-    pageTraceBtn_ = new QPushButton(mlTr("真实字节码追踪"), this);
-    pageSandboxBtn_->setCheckable(true);
-    pageTraceBtn_->setCheckable(true);
-    pageSandboxBtn_->setChecked(true);
-    pageSandboxBtn_->setObjectName("pageBtn");
-    pageTraceBtn_->setObjectName("pageBtn");
-    pageBar->addWidget(pageSandboxBtn_);
-    pageBar->addWidget(pageTraceBtn_);
-    pageBar->addStretch();
-    mainLayout->addLayout(pageBar);
+    // ---- 子页切换（UX-R fix: 统一 TeachingSubPageBar 组件，替代手写 pageBtn + pageStack_）----
+    // 互斥选中态 / 主题色高亮 / 滑入动画由组件内置，按钮栏与堆栈分别加入布局。
+    subPageBar_ = new TeachingSubPageBar(this);
+    mainLayout->addLayout(subPageBar_->buttonBar());
 
-    // ---- 子页 QSS（R74: 回退中性白/浅灰）----
+    // ---- 子页 QSS（R74: 回退中性白/浅灰；pageBtn 样式已随 TeachingSubPageBar 迁移移除）----
     setStyleSheet(QString::fromUtf8(
-        "QPushButton#pageBtn { padding: 6px 14px; border: 1px solid #E0E0E0; "
-        "border-radius: 4px; background: #F5F5F5; }"
-        "QPushButton#pageBtn:hover { border-color: #268BD2; background: #E5F3FB; }"
-        "QPushButton#pageBtn:checked { background: #268BD2; color: white; "
-        "border-color: #1E6FA3; font-weight: bold; }"
         "QComboBox#levelCombo { background: #FFFFFF; border: 1px solid #E0E0E0; "
         "border-radius: 4px; padding: 4px 8px; }"
         "QComboBox#levelCombo:hover { border-color: #268BD2; }"
@@ -92,9 +76,8 @@ VmStackSandboxPanel::VmStackSandboxPanel(QWidget* parent) : QWidget(parent) {
         "QTableWidget#registerTable QHeaderView::section { background: #F5F5F5; "
         "padding: 4px; border: 1px solid #E0E0E0; }"));
 
-    // ---- QStackedWidget ----
-    pageStack_ = new QStackedWidget(this);
-    mainLayout->addWidget(pageStack_, 1);
+    // ---- 子页堆栈（由 TeachingSubPageBar 持有，addPage 自动加入）----
+    mainLayout->addWidget(subPageBar_->stack(), 1);
 
     // ============================================================
     // 页 1：栈沙盒
@@ -240,26 +223,18 @@ VmStackSandboxPanel::VmStackSandboxPanel(QWidget* parent) : QWidget(parent) {
     sandboxOpHintLabel_->setText(mlTr("💡 点击左侧指令按钮执行，下方会显示对应的真实 OpCode。"));
     sandboxLayout->addWidget(sandboxOpHintLabel_);
 
-    pageStack_->addWidget(sandboxPage);
+    // ---- 页 1 / 页 2 注册到统一子页切换组件 ----
+    // UX-R fix: addPage 同时创建按钮与入栈（首个自动选中），替代手写页切换信号。
+    subPageBar_->addPage(mlTr("① 栈沙盒"), sandboxPage);
 
     // ============================================================
     // 页 2：真实字节码追踪
     // ============================================================
     tracePage_ = new QWidget(this);
     buildTracePage(tracePage_);
-    pageStack_->addWidget(tracePage_);
+    subPageBar_->addPage(mlTr("② 真实字节码追踪"), tracePage_);
 
-    // ---- 页切换信号 ----
-    connect(pageSandboxBtn_, &QPushButton::clicked, this, [this]() {
-        pageStack_->setCurrentIndex(0);
-        pageSandboxBtn_->setChecked(true);
-        pageTraceBtn_->setChecked(false);
-    });
-    connect(pageTraceBtn_, &QPushButton::clicked, this, [this]() {
-        pageStack_->setCurrentIndex(1);
-        pageSandboxBtn_->setChecked(false);
-        pageTraceBtn_->setChecked(true);
-    });
+    // ---- 页切换（UX-R fix: 已由 TeachingSubPageBar 内置，删除手写互斥切换）----
 
     // ---- 沙盒页信号连接 ----
     connect(levelCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
@@ -296,7 +271,7 @@ void VmStackSandboxPanel::setController(IdeController* controller) {
     if (controller_) {
         // 注册 VM 状态变更监听，VM 单步执行后自动刷新追踪视图
         controller_->addVmStateChangedListener(this, [this]() {
-            if (pageStack_ && pageStack_->currentIndex() == 1) {
+            if (subPageBar_ && subPageBar_->currentIndex() == 1) {
                 refreshTraceViews();
             }
         });
@@ -1037,9 +1012,7 @@ void VmStackSandboxPanel::refreshLevelChips() {
 
 /// 切换到字节码跟踪子页。
 void VmStackSandboxPanel::switchToTracePage() {
-    pageStack_->setCurrentIndex(1);
-    pageSandboxBtn_->setChecked(false);
-    pageTraceBtn_->setChecked(true);
+    subPageBar_->setCurrentIndex(1);
 }
 
 /// 从当前关卡提取/编译出字节码，供跟踪页单步执行。

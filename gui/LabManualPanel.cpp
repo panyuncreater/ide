@@ -87,6 +87,12 @@ LabManualPanel::LabManualPanel(QWidget* parent) : QWidget(parent) {
     auto* splitter = new QSplitter(Qt::Horizontal, this);
     contentBrowser_ = new QTextBrowser(this);
     contentBrowser_->setOpenExternalLinks(false);
+    // P0 fix（常见错误速查空白）：QTextBrowser 默认 openLinks=true，点击 `buggy:tag` /
+    // `panel:xxx` 自定义协议链接时会尝试把它当作文档源导航——非法源导致文档被清空、
+    // 教学内容区变空白。关闭自动导航后仅发射 anchorClicked，由 onAnchorClicked 自行
+    // 处理协议跳转（#anchor 目录跳转也已在其中手动 scrollToAnchor）。与 IRTransformPanel /
+    // MemoryModelPanel / PipelineViewer 的既有约定一致。
+    contentBrowser_->setOpenLinks(false);
 
     // 左侧：contentBrowser_（全高，阅读区）
     auto* middleColumn = new QWidget(this);

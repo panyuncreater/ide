@@ -1,7 +1,7 @@
 // ============================================================
 // LearningPathData.cpp — 学习路径活动静态数据实现（功能 6）
 // ------------------------------------------------------------
-// 5 阶段共 28 个学习活动（阶段0:11 / 阶段1:4 / 阶段2:4 / 阶段3:4 / 阶段4:5），
+// 5 阶段共 30 个学习活动（阶方0:11 / 阶段1:4 / 阶段2:4 / 阶段3:5 / 阶段4:6），
 // 覆盖 welcome 导览 / lab-01~08 / 4 个游戏化
 // 面板 / 4 个挑战 / 4 个实战训练 / 自由项目。
 //
@@ -61,7 +61,7 @@ const std::vector<LearningActivity>& LearningPathData::activities() {
         LearningActivity{
             "vm-sandbox",
             "💻 VM 栈沙盒",
-            "📍 自己动手 push/pop，模拟一台栈式虚拟机。试过几次就明白：每条指令其实都只在拨弄栈顶那几个数。",
+            "📍 自己动手 push/pop，模拟一台栈式虚拟机。试过几次就明白：每条指令其实都只在拨弄栈顶那几个数——这正是字节码执行的全部秘密。",
             0,
             {},
             15,
@@ -141,7 +141,7 @@ const std::vector<LearningActivity>& LearningPathData::activities() {
                          "lab"},
         LearningActivity{"syntax-explorer",
                          "📜 语法探索器",
-                         "📍 10 条核心语法产生式，每条配 EBNF、人话翻译和可运行的样例代码。想查语法就来这。",
+                         "📍 10 条核心语法产生式，每条配 EBNF、人话翻译和可运行的样例代码。想查语法就来这——相当于一本会动的语法说明书。",
                          1,
                          {"lab-01"},
                          20,
@@ -186,7 +186,8 @@ const std::vector<LearningActivity>& LearningPathData::activities() {
                          "lab"},
         LearningActivity{"backend-compare",
                          "⚖️ 三后端对比面板",
-                         "📍 同一份源码，依次扔给 Interpreter、StackVM、RegisterVM 跑一遍，输出和耗时摆在一起比。",
+                         "📍 同一份源码，依次扔给 Interpreter、StackVM、RegisterVM 跑一遍，输出和耗时摆在一起比。"
+                         "输出必须逐字一致——这就是编译器正确性的「金标准」。",
                          2,
                          {"lab-04"},
                          15,
@@ -214,7 +215,8 @@ const std::vector<LearningActivity>& LearningPathData::activities() {
                          "lab"},
         LearningActivity{"ir-transform",
                          "⚙️ IR 变换过程面板",
-                         "📍 AST 降成 IR，再走 3 个优化 pass（常量折叠 / DCE / 复制传播），而且能一步步回放给你看。",
+                         "📍 AST 降成 IR，再逐个回放 5 种优化 pass（常量折叠 / DCE / 复制传播 / CSE / "
+                         "循环展开），每步都讲「为什么这么改」——看完就懂编译器怎么给代码瘦身。",
                          3,
                          {"lab-05"},
                          30,
@@ -228,6 +230,15 @@ const std::vector<LearningActivity>& LearningPathData::activities() {
                          20,
                          ActivityType::SANDBOX,
                          "chart"},
+        LearningActivity{"execution-timeline",
+                         "\xF0\x9F\x8E\x9E\xEF\xB8\x8F 可回放执行时间轴",
+                         "\xF0\x9F\x93\x8D 录一段执行轨迹，然后像倒带一样拖着看：任意一步的栈、局部 / 全局变量、"
+                         "调用栈快照全都留着。三后端统一，调试从此能倒着走。",
+                         3,
+                         {"lab-05"},
+                         20,
+                         ActivityType::SANDBOX,
+                         "timeline"},
 
         // ==================== 阶段四：实战训练 ====================
         LearningActivity{"lab-08",
@@ -264,6 +275,15 @@ const std::vector<LearningActivity>& LearningPathData::activities() {
                          90,
                          ActivityType::CHALLENGE,
                          "bug"},
+        LearningActivity{"exercise-grader",
+                         "\xF0\x9F\x93\x9D 交互式练习评分",
+                         "\xF0\x9F\x93\x8D 挑一道题写代码，当场跑测试用例判对错、查代码风格、给评分和改进建议。"
+                         "把学到的东西拿来练手，即时见分晓。",
+                         4,
+                         {"lab-08"},
+                         30,
+                         ActivityType::CHALLENGE,
+                         "grade"},
         LearningActivity{"freeform-project",
                          "🎯 自由项目：实现一个新特性",
                          "📍 自由发挥：给 MiniLang 设计一个新特性，比如 switch 语句、字符串模板、模式匹配——随你折腾。",

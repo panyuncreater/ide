@@ -8,7 +8,7 @@
 //
 // 依赖：Qt6::Widgets (QScrollArea/QPainter)、ExecutionTraceRecorder、
 //       Interpreter（restoreFromSnapshot）。
-// 注册：PanelCatalog "执行引擎" 分类，id="reverse-timeline"
+// 注册：PanelCatalog "调试与观测" 分类，id="reverse-timeline"
 // ============================================================
 
 #include <QWidget>

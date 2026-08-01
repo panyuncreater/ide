@@ -101,6 +101,9 @@ private slots:
 private:
     IdeController* controller_ = nullptr;
 
+    // 重入守卫：评分期间（processEvents 不排除信号/定时器）防止重复评分。
+    bool grading_ = false;
+
     // 顶部：题目选择 + 描述 + 代码编辑
     QComboBox* exerciseCombo_ = nullptr;
     QTextBrowser* descBrowser_ = nullptr;

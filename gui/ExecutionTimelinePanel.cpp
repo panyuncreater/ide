@@ -4,7 +4,6 @@
 
 #include "gui/ExecutionTimelinePanel.h"
 
-#include "gui/TeachingPanelHeader.h"
 #include "gui/TeachingTheme.h"
 
 #include <QApplication>
@@ -22,12 +21,11 @@ ExecutionTimelinePanel::ExecutionTimelinePanel(QWidget* parent) : QWidget(parent
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
 
-    // 顶部统一标题栏
-    header_ = new TeachingPanelHeader("execution_timeline", tr("可回放执行时间轴"), this);
-    connect(header_, &TeachingPanelHeader::returnToEditorRequested, this,
-            &ExecutionTimelinePanel::returnToEditorRequested);
-    connect(header_, &TeachingPanelHeader::guidedTourRequested, this, &ExecutionTimelinePanel::guidedTourRequested);
-    root->addWidget(header_);
+    // 标题重复修复：面板不再自建 TeachingPanelHeader——Ide::wrapTeachingPanel 已在
+    // 教学面板外壳顶部统一插入标题栏（含帮助 / 新手引导 / 返回编辑器按钮），面板内
+    // 再建一个会导致「可回放执行时间轴」标题重复显示两行。返回编辑器 / 引导按钮由
+    // 外壳标题栏统一处理（wrapTeachingPanel 已 connect），面板保留同名 signal 以兼容
+    // 既有 connect 但不再需要自行发射。
 
     // 工具栏
     auto* toolbarHost = new QWidget(this);
@@ -47,6 +45,8 @@ ExecutionTimelinePanel::ExecutionTimelinePanel(QWidget* parent) : QWidget(parent
 
     updateStepLabel();
     updateSliderRange();
+    updateControlsEnabled();
+    showEmptyHint();
 }
 
 void ExecutionTimelinePanel::buildToolbar(QWidget* host) {
@@ -195,12 +195,23 @@ void ExecutionTimelinePanel::onRecordingToggled(bool checked) {
         lastSeenSize_ = 0;
         currentStepIdx_ = -1;
         stepList_->clear();
-        detailView_->clear();
+        // UX：录制中给出即时反馈，而非空白详情区
+        detailView_->setHtml(tr("<div style='color:#859900; padding:16px;'>"
+                                "<h3>\xE2\x8F\xBA 正在录制…</h3>"
+                                "<p>请在主编辑器运行代码，执行轨迹会实时出现在左侧列表。</p>"
+                                "<p>再次点击「录制」停止，即可开始回放。</p></div>"));
+        if (recordBtn_)
+            recordBtn_->setText(tr("\xE2\x8F\xBA 录制中"));
     } else {
         traceRecorder().endSession();
         refreshTimer_->stop();
+        if (recordBtn_)
+            recordBtn_->setText(tr("录制"));
         refreshStepList(); // 最终刷新
+        if (traceRecorder().size() == 0)
+            showEmptyHint();
     }
+    updateControlsEnabled();
     // 通知 IdeController 联动 VmStepper / Interpreter 的 recorder 启停
     // backend_ 由 IdeController 在 setBackendType() 时同步，captureVmStep/captureInterpreterStep
     // 接收 backend 参数写入每步快照（recorder 本身不持有全局 backend 字段）
@@ -215,6 +226,8 @@ void ExecutionTimelinePanel::onClearClicked() {
     detailView_->clear();
     updateStepLabel();
     updateSliderRange();
+    updateControlsEnabled();
+    showEmptyHint();
 }
 
 void ExecutionTimelinePanel::onFirstStep() {
@@ -282,6 +295,7 @@ void ExecutionTimelinePanel::refreshStepList() {
     lastSeenSize_ = total;
     updateStepLabel();
     updateSliderRange();
+    updateControlsEnabled();
 
     // 若用户未选中任何步骤，自动选中最后一步（跟踪最新状态）
     if (currentStepIdx_ < 0 && total > 0) {
@@ -317,6 +331,38 @@ void ExecutionTimelinePanel::updateSliderRange() {
     slider_->setEnabled(true);
 }
 
+// 将导航按钮 / 清空按钮的可用性与当前数据 / 位置同步，避免空数据时可点
+// 、已在首尾时方向键无意义。UX 优化的一部分。
+void ExecutionTimelinePanel::updateControlsEnabled() {
+    const size_t total = traceRecorder().size();
+    const bool hasData = total > 0;
+    const bool recording = recordBtn_ && recordBtn_->isChecked();
+    const int last = static_cast<int>(total) - 1;
+    if (clearBtn_)
+        clearBtn_->setEnabled(hasData && !recording);
+    // 首 / 上一步：当前不在第 0 步且有数据时可用
+    if (firstBtn_)
+        firstBtn_->setEnabled(hasData && currentStepIdx_ != 0);
+    if (prevBtn_)
+        prevBtn_->setEnabled(hasData && currentStepIdx_ != 0);
+    // 下一 / 末步：当前不在末步且有数据时可用
+    if (nextBtn_)
+        nextBtn_->setEnabled(hasData && currentStepIdx_ != last);
+    if (lastBtn_)
+        lastBtn_->setEnabled(hasData && currentStepIdx_ != last);
+}
+
+// 空状态提示：未录制 / 已清空时在详情区展示引导文案，避免空白困惑。
+void ExecutionTimelinePanel::showEmptyHint() {
+    if (!detailView_)
+        return;
+    detailView_->setHtml(tr("<div style='color:#8C8C8C; padding:16px;'>"
+                            "<h3>可回放执行时间轴</h3>"
+                            "<p>点击左上角「录制」按钮开始记录执行轨迹，然后在主编辑器运行代码。</p>"
+                            "<p>录制结束后，可通过滑块 / 步进按钮 / 点击列表项，随机访问任意一步的栈、"
+                            "局部变量、全局变量与调用栈快照。</p></div>"));
+}
+
 void ExecutionTimelinePanel::navigateToStep(int idx) {
     size_t total = traceRecorder().size();
     if (total == 0) {
@@ -347,6 +393,7 @@ void ExecutionTimelinePanel::navigateToStep(int idx) {
 
     showStepDetail(static_cast<size_t>(idx));
     updateStepLabel();
+    updateControlsEnabled();
 }
 
 // ============================================================

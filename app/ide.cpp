@@ -131,6 +131,7 @@
 #include "gui/WelcomeWizard.h"
 // 功能 1b：3 分钟 Hello World 引导（GuidedTour）
 #include "gui/GuidedTour.h"
+#include "gui/MarkdownRenderer.h" // UX-R fix: 通用兜底引导的帮助文案 Markdown 渲染
 
 // ============================================================
 // ide.cpp — MiniLang IDE 主窗口实现
@@ -1602,6 +1603,12 @@ void Ide::ensureEditorVisible() {
 
 /// 懒加载指定教学面板（首次访问时构建并缓存）。
 void Ide::ensureTeachingPanelCreated(const QString& panelId) {
+    // AUDIT-UAF fix: 关闭流程中禁止懒构造新面板。maybeSave 模态对话框事件循环
+    // 可能派发挂起的面板切换回调（启动恢复 lastPanelId 的 singleShot、教学树
+    // 残留点击事件），在关闭期间构造"孤儿"面板并 addWidget 到正在清理的
+    // centerStack_ → UAF（与 ROUND-89 GuidedTour 孤儿对象同根因）。
+    if (closing_)
+        return;
     // 懒加载：若面板已构造（在 panelToStackIndex_ 中）则直接返回
     if (panelToStackIndex_.contains(panelId))
         return;
@@ -1611,8 +1618,30 @@ void Ide::ensureTeachingPanelCreated(const QString& panelId) {
     }
 }
 
+/// 反向调试时间轴：从 traceRecorder 全量快照重建时间轴条目。
+/// stepIndex 使用快照在 recorder 中的向量索引（与 stepAt(idx) 对齐），
+/// 而非 TraceSnapshot::step 步号（容量淘汰后步号与索引会错位）。
+void Ide::refreshReverseTimelineEntries() {
+    if (!reverseTimelinePanel_)
+        return;
+    const auto snaps = traceRecorder().allSnapshots();
+    std::vector<ReverseDebugTimelinePanel::TimelineEntry> entries;
+    entries.reserve(snaps.size());
+    for (size_t i = 0; i < snaps.size(); ++i) {
+        ReverseDebugTimelinePanel::TimelineEntry e;
+        e.stepIndex = static_cast<int>(i);
+        e.line = snaps[i].line;
+        e.label = "L" + std::to_string(snaps[i].line) + ": " + snaps[i].opOrNodeName;
+        entries.push_back(std::move(e));
+    }
+    reverseTimelinePanel_->setEntries(entries);
+}
+
 /// 显示指定教学面板：经 centerStack_ 路由并以滑入动画呈现。
 void Ide::showTeachingPanel(const QString& panelId) {
+    // AUDIT-UAF fix: 关闭流程中禁止面板切换（防止懒构造孤儿面板 + 动画/QSettings 写入）
+    if (closing_)
+        return;
     int idx = prepareTeachingPanelTransition(panelId);
     if (idx < 0)
         return;
@@ -1711,6 +1740,9 @@ void Ide::applyTeachingPanelDockAndPageSwitch(const QString& panelId, int idx) {
         pipelineViewer_->reloadCurrentStep();
     } else if (panelId == QStringLiteral("learning-path") && learningPathPanel_) {
         learningPathPanel_->refresh();
+    } else if (panelId == QStringLiteral("reverse-timeline") && reverseTimelinePanel_) {
+        // 反向调试时间轴：每次进入面板从 traceRecorder 重建时间轴条目
+        refreshReverseTimelineEntries();
     }
 
     // 轻量过渡动画：新面板从右侧 24px 滑入，替代原 LearningPathPanel 内
@@ -1793,6 +1825,10 @@ void Ide::finalizeTeachingPanelShow(const QString& panelId, const QList<int>& sa
             {QStringLiteral("backend-compare"), QStringLiteral("backend-compare")},
             {QStringLiteral("ir-transform"), QStringLiteral("ir-transform")},
             {QStringLiteral("profile-dashboard"), QStringLiteral("profile-dashboard")},
+            // 学习路径集成：新增的工具 / 练习型面板无「通关」信号，进入浏览即视为已查阅；
+            // 否则阶段 3 / 4 的 stageProgress 无法达到 100%。
+            {QStringLiteral("execution-timeline"), QStringLiteral("execution-timeline")},
+            {QStringLiteral("exercise-grader"), QStringLiteral("exercise-grader")},
         };
         auto actIt = kBrowsePanelToActivity.constFind(panelId);
         if (actIt != kBrowsePanelToActivity.constEnd()) {
@@ -1800,13 +1836,17 @@ void Ide::finalizeTeachingPanelShow(const QString& panelId, const QList<int>& sa
         }
     }
 
-    // 首次访问 5 个目标面板时自动触发新手引导（QSettings 持久化「已显示」标记）。
-    // 仅对带 createGuidedTour 的面板生效；用户跳过或走完后不再自动弹出。
-    static const QSet<QString> kAutoTourPanels = {
-        QStringLiteral("bytecode-trace"),       QStringLiteral("call-stack"), QStringLiteral("variable-inspector"),
-        QStringLiteral("breakpoint-condition"), QStringLiteral("bug-hunt"),
+    // 首次访问时自动触发新手引导（QSettings 持久化「已显示」标记）。
+    // 用户跳过或走完后不再自动弹出。
+    // AUDIT-TOUR fix: 集合从 5 个扩展到全部 12 个实现 createGuidedTour 的面板。
+    // UX-R fix: 通用兜底引导（createGenericPanelTour）上线后，全部教学面板首访
+    // 均可引导；不再维护面板白名单，改为排除式集合（入门导览类纯浏览面板自身
+    // 就是引导形态，首访再叠加气泡引导反而打断阅读，故排除）。
+    static const QSet<QString> kNoAutoTourPanels = {
+        QStringLiteral("welcome"),      QStringLiteral("code-journey"), QStringLiteral("learning-path"),
+        QStringLiteral("course-system"), QStringLiteral("glossary"),
     };
-    if (kAutoTourPanels.contains(panelId)) {
+    if (!kNoAutoTourPanels.contains(panelId)) {
         QSettings s;
         const QString key = QStringLiteral("guidedTour/shown_%1").arg(panelId);
         if (!s.value(key, false).toBool()) {
@@ -1905,6 +1945,9 @@ void Ide::onTeachingPanelRequested(const QString& panelId) {
 /// 弹出含搜索框的面板列表对话框，按关键字过滤 PanelCatalog 全部面板，
 /// 选中后调用 showTeachingPanel 跳转。对话框非模态可关闭，支持键盘导航。
 void Ide::showQuickPanelJumpDialog() {
+    // AUDIT-UAF fix: 关闭流程中禁止创建对话框（快捷键事件可能在 maybeSave 期间派发）
+    if (closing_)
+        return;
     auto* dlg = new QDialog(this);
     dlg->setWindowTitle(mlTr("跳转到面板…"));
     dlg->setAttribute(Qt::WA_DeleteOnClose);
@@ -3952,6 +3995,43 @@ void Ide::registerDebugInspectorPanels(
         connect(executionTimelinePanel_, &ExecutionTimelinePanel::returnToEditorRequested, this, &Ide::showEditorArea);
         return executionTimelinePanel_;
     });
+    // 拓展二期：反向调试时间轴（点击历史步回滚 Interpreter/VM 状态）。
+    // AUDIT-P1 fix: 面板已在 PanelCatalog 登记且实现完整，但工厂从未注册，
+    // 教学树点击「反向调试时间轴」静默回退编辑器（用户感知"面板打不开"）。
+    // 数据流：进入面板时 refreshReverseTimelineEntries 从 traceRecorder 重建时间轴；
+    // 点击历史步 → rollbackRequested → 按快照后端分派 Interpreter/VmStepper 回滚。
+    registrar(QStringLiteral("reverse-timeline"), mlTr("反向调试时间轴"), [this]() {
+        reverseTimelinePanel_ = new ReverseDebugTimelinePanel(this);
+        connect(reverseTimelinePanel_, &ReverseDebugTimelinePanel::rollbackRequested, this, [this](int stepIndex) {
+            if (closing_ || !controller_ || stepIndex < 0)
+                return;
+            auto snap = traceRecorder().stepAt(static_cast<size_t>(stepIndex));
+            if (!snap)
+                return;
+            bool ok = false;
+            if (snap->backend == TraceBackend::Interpreter) {
+                // Interpreter 后端：interpreterState 持有完整环境链快照（L18）
+                auto interp = controller_->interpreter();
+                auto state = std::static_pointer_cast<Interpreter::StateSnapshot>(snap->interpreterState);
+                ok = interp && state && interp->restoreFromSnapshot(*state);
+            } else {
+                // StackVM / RegisterVM 后端：VmStepper 校验后端匹配后回滚
+                ok = controller_->vmStepper().restoreFromSnapshot(*snap);
+            }
+            if (ok) {
+                // 丢弃"未来"步（与 VmStepper::stepBack 语义一致），避免重新执行的
+                // 录制与旧轨迹混杂；随后重建时间轴反映截断后状态。
+                traceRecorder().truncateFrom(static_cast<size_t>(stepIndex) + 1);
+                refreshReverseTimelineEntries();
+                appendOutput(mlTr("已回滚到步 %1（行 %2），可继续单步执行").arg(stepIndex).arg(snap->line),
+                             OutputLevel::Success);
+            } else {
+                appendOutput(mlTr("回滚失败：需先在「可回放执行时间轴」以 FullState 模式录制，且当前执行引擎需与快照后端匹配"),
+                             OutputLevel::Warning);
+            }
+        });
+        return reverseTimelinePanel_;
+    });
     registrar(QStringLiteral("exception-flow"), mlTr("异常流可视化"), [this]() {
         exceptionFlowPanel_ = new ExceptionFlowPanel(this);
         connect(exceptionFlowPanel_, &ExceptionFlowPanel::loadSampleRequested, this, &Ide::loadCodeIntoMainEditor);
@@ -4562,13 +4642,12 @@ QString Ide::buildAdsQss(const FluentPalette& p) {
             background: transparent;
         }
 
-        /* ---- QToolTip (防止回退到 Windows 11 黑色 tooltip) ---- */
+        /* ---- QToolTip (防止回退到 Windows 11 黑色 tooltip；不设 border-radius 避免圆角黑角) ---- */
         QToolTip {
-            background: %1;
+            background-color: %1;
             color: %4;
             border: 1px solid %7;
-            border-radius: 4px;
-            padding: 4px 8px;
+            padding: 5px 9px;
             font-size: 12px;
         }
     )")
@@ -4778,17 +4857,28 @@ void Ide::applyEditorTabStyle(const FluentPalette& p) {
                 background: %6;
             }
             QTabBar::close-button {
+                image: url(:/icons/close_black.svg);
+                subcontrol-position: right;
                 background: transparent;
                 border: none;
+                width: 16px;
+                height: 16px;
                 padding: 2px;
+                margin-left: 4px;
+                border-radius: 4px;
             }
             QTabBar::close-button:hover {
+                image: url(:/icons/close_white.svg);
                 background: %7;
-                border-radius: 3px;
+            }
+            QTabBar::close-button:pressed {
+                image: url(:/icons/close_white.svg);
+                background: %8;
             }
         )")
                                             .arg(p.bgMain, p.bgPanel, p.fgSecondary, p.accentColor, p.fgPrimary,
-                                                 p.hoverBg, p.dark ? "#505050" : "#d0d0d0"));
+                                                 p.hoverBg, TeachingTheme::closeDanger().name(),
+                                                 TeachingTheme::closeDangerPressed().name()));
     }
 }
 
@@ -4901,19 +4991,23 @@ void Ide::applyGlobalPaletteFallback() {
     // R68 fix: 全局设置 QToolTip 样式（qApp 级别），确保所有 widget 的 tooltip
     // 都使用主题色而非 Windows 11 默认黑色。用静态变量确保只设置一次（避免
     // applyFluentStyle 多次调用导致 QSS 重复累积）。
+    // UX fix: 调试按钮（CleanToolButton）等使用原生 QToolTip，原样式带 border-radius
+    // 导致非半透明弹窗在 Windows 11 上圆角外渲染成黑色（表现为“黑色提示框”）。
+    // 改用 TeachingTheme::tooltip* 浅色不透明配色 + 去除 border-radius，保证内容清晰可见。
     static bool s_toolTipStyled = false;
     if (!s_toolTipStyled) {
         qApp->setStyleSheet(qApp->styleSheet() + QString(R"(
                 QToolTip {
-                    background: %1;
+                    background-color: %1;
                     color: %2;
                     border: 1px solid %3;
-                    border-radius: 4px;
-                    padding: 4px 8px;
+                    padding: 5px 9px;
                     font-size: 12px;
                 }
             )")
-                                                     .arg(bg.name(), fg.name(), TeachingTheme::ideBorder().name()));
+                                                     .arg(TeachingTheme::tooltipBg().name(),
+                                                          TeachingTheme::tooltipText().name(),
+                                                          TeachingTheme::tooltipBorder().name()));
         s_toolTipStyled = true;
     }
 }
@@ -7097,6 +7191,16 @@ void Ide::onPanelGuidedTourRequested(const QString& panelId) {
         tour = fuzzPlaygroundPanel_->createGuidedTour(this);
     } else if (panelId == QStringLiteral("module-system") && moduleSystemVisualizerPanel_) {
         tour = moduleSystemVisualizerPanel_->createGuidedTour(this);
+    } else if (panelId == QStringLiteral("watchpoint") && watchpointPanel_) {
+        // AUDIT-P2 fix: WatchpointPanel::createGuidedTour 已实现但路由缺分支，
+        // 点击「新手引导」误弹"暂无引导"兜底提示。
+        tour = watchpointPanel_->createGuidedTour(this);
+    }
+    // UX-R fix: 无专属引导的面板走通用兜底引导——从 helpDocs 帮助文案派生
+    // 3 步气泡（面板用途/推荐顺序/关联概念），覆盖率从 12/42 提升到 42/42，
+    // 「新手引导」按钮不再弹「暂无引导」打发用户。
+    if (!tour) {
+        tour = createGenericPanelTour(panelId);
     }
     if (tour) {
         // AUDIT-P0 fix: 连接 finished → deleteLater，避免 tour 对象永不释放。
@@ -7114,12 +7218,61 @@ void Ide::onPanelGuidedTourRequested(const QString& panelId) {
         });
         tour->start();
     } else {
-        // 兜底提示：该面板暂未提供新手引导（tour 为 nullptr），避免点击
-        // 「新手引导」按钮后静默无反应。引导用户改用「这是什么？」按钮查看
-        // 该面板的说明文档。
+        // 兜底提示：该面板既无专属引导也无帮助文案（理论上不可达：helpDocs 已
+        // 覆盖全部 42 个面板），保留提示避免点击后静默无反应。
         QMessageBox::information(this, mlTr("新手引导"),
                                  mlTr("该面板暂无新手引导，请点击「这是什么？」按钮查看说明文档。"));
     }
+}
+
+// ============================================================
+// createGenericPanelTour —— 通用兜底引导（UX-R fix）
+// ------------------------------------------------------------
+// 复用 TeachingPanelHeader 的 helpDocs 数据源派生 3 步引导，与帮助弹窗
+// 单一文案源，避免两头维护。锚点选择：
+//   步骤 1 面板用途 → 标题栏（TeachingPanelHeader）
+//   步骤 2 推荐顺序 → 学习路径按钮（提示后续去哪）
+//   步骤 3 关联概念 → 「这是什么？」按钮（指引深入入口）
+// 生命周期与专属引导一致：调用方统一纳入 activePanelTours_ + finished
+// → deleteLater，关闭流程由 closeEvent 阶段 2 清理，无新增 UAF 风险。
+// ============================================================
+
+/// 从帮助文案派生通用 3 步引导；面板未构造或无文案时返回 nullptr。
+GuidedTour* Ide::createGenericPanelTour(const QString& panelId) {
+    TeachingPanelHeader::HelpDocView doc;
+    if (!TeachingPanelHeader::helpDocFor(panelId, &doc))
+        return nullptr;
+    // 定位包装容器（wrapTeachingPanel 产物）与标题栏作为气泡锚点
+    const int stackIdx = panelToStackIndex_.value(panelId, -1);
+    if (stackIdx < 0 || !centerStack_)
+        return nullptr;
+    QWidget* container = centerStack_->widget(stackIdx);
+    if (!container)
+        return nullptr;
+    auto* header = container->findChild<TeachingPanelHeader*>();
+
+    // 面板显示名从 PanelCatalog 取（与导航树/标题栏一致）
+    QString title = panelId;
+    if (const PanelEntry* entry = PanelCatalog::findById(panelId.toStdString())) {
+        title = mlTr(entry->label);
+    }
+
+    auto* tour = new GuidedTour(this, this);
+    // 步骤 1：面板用途（Markdown → HTML，与帮助弹窗渲染一致）
+    tour->addStep(header ? static_cast<QWidget*>(header) : container,
+                  mlTr("「%1」是干什么的？").arg(title),
+                  MarkdownRenderer::markdownToHtmlFragment(doc.purpose));
+    // 步骤 2：推荐使用顺序（锚定学习路径按钮，提示下一站去哪）
+    QWidget* pathAnchor = header ? header->learningPathButton() : nullptr;
+    tour->addStep(pathAnchor ? pathAnchor : container, mlTr("推荐这样学"),
+                  MarkdownRenderer::markdownToHtmlFragment(doc.recommendedOrder));
+    // 步骤 3：关联概念 + 帮助入口（锚定「这是什么？」按钮）
+    QWidget* helpAnchor = header ? header->helpButton() : nullptr;
+    tour->addStep(helpAnchor ? helpAnchor : container, mlTr("想深入？"),
+                  mlTr("关联概念：%1<br/>随时点这里的「这是什么？」可再次查看完整说明。")
+                      .arg(MarkdownRenderer::markdownToHtmlFragment(doc.relatedConcepts)),
+                  mlTr("完成 ✓"));
+    return tour;
 }
 
 /// 右侧 Pivot 导航切换响应。

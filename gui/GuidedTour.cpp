@@ -105,33 +105,45 @@ void GuidedTour::start() {
         bottomRow->addWidget(stepIndicator_);
         bottomRow->addStretch(1);
 
-        // 上一步按钮：透明背景 + 边框（首步禁用）
+        // 上一步按钮：浅色带边框（首步禁用）；hover 浅蓝底 + 主题色文字/边框，pressed 加深
         prevBtn_ = new QPushButton(mlTr("← 上一步"), bubble_);
-        prevBtn_->setStyleSheet(QString("QPushButton { background: transparent; color: %1;"
-                                        "  border: 1px solid %2; border-radius: 4px;"
-                                        "  padding: 6px 12px; font-size: 12px; }"
-                                        "QPushButton:hover { background: %3; }"
-                                        "QPushButton:disabled { color: %4; border-color: %4; }")
-                                    .arg(TeachingTheme::textSecondary().name(), TeachingTheme::border().name(),
-                                         TeachingTheme::surfaceHover().name(), TeachingTheme::textHint().name()));
+        prevBtn_->setStyleSheet(QString("QPushButton { background: %1; color: %2;"
+                                        "  border: 1px solid %3; border-radius: 4px;"
+                                        "  padding: 7px 14px; font-size: 12px; font-weight: 500; }"
+                                        "QPushButton:hover { background: %4; color: %5; border-color: %5; }"
+                                        "QPushButton:pressed { background: %6; color: %5; border-color: %5; }"
+                                        "QPushButton:disabled { background: transparent; color: %7;"
+                                        "  border-color: %7; }")
+                                    .arg(TeachingTheme::surface().name(), TeachingTheme::textPrimary().name(),
+                                         TeachingTheme::border().name(), TeachingTheme::primaryHoverBg().name(),
+                                         TeachingTheme::primary().name(),
+                                         TeachingTheme::primaryHoverBg().darker(110).name(),
+                                         TeachingTheme::textHint().name()));
         bottomRow->addWidget(prevBtn_);
 
-        // 次按钮：透明背景 + 边框
+        // 次按钮：浅色带边框；hover 浅蓝底 + 主题色文字/边框，pressed 加深
         secondaryBtn_ = new QPushButton(bubble_);
-        secondaryBtn_->setStyleSheet(QString("QPushButton { background: transparent; color: %1;"
-                                             "  border: 1px solid %2; border-radius: 4px;"
-                                             "  padding: 6px 12px; font-size: 12px; }"
-                                             "QPushButton:hover { background: %3; }")
-                                         .arg(TeachingTheme::textSecondary().name(), TeachingTheme::border().name(),
-                                              TeachingTheme::surfaceHover().name()));
+        secondaryBtn_->setStyleSheet(QString("QPushButton { background: %1; color: %2;"
+                                             "  border: 1px solid %3; border-radius: 4px;"
+                                             "  padding: 7px 14px; font-size: 12px; font-weight: 500; }"
+                                             "QPushButton:hover { background: %4; color: %5; border-color: %5; }"
+                                             "QPushButton:pressed { background: %6; color: %5; border-color: %5; }")
+                                         .arg(TeachingTheme::surface().name(), TeachingTheme::textPrimary().name(),
+                                              TeachingTheme::border().name(), TeachingTheme::primaryHoverBg().name(),
+                                              TeachingTheme::primary().name(),
+                                              TeachingTheme::primaryHoverBg().darker(110).name()));
         bottomRow->addWidget(secondaryBtn_);
 
-        // 主按钮：主题色填充 + 白字
+        // 主按钮：主题色实心填充 + 白字加粗；hover/pressed 逐级加深，突出主操作
         primaryBtn_ = new QPushButton(bubble_);
-        primaryBtn_->setStyleSheet(QString("QPushButton { background: %1; color: white; border: none;"
-                                           "  border-radius: 4px; padding: 6px 16px; font-size: 12px; }"
-                                           "QPushButton:hover { background: %2; }")
-                                       .arg(TeachingTheme::primary().name(), TeachingTheme::primaryHover().name()));
+        primaryBtn_->setStyleSheet(QString("QPushButton { background: %1; color: %2; border: 1px solid %1;"
+                                           "  border-radius: 4px; padding: 7px 18px; font-size: 12px;"
+                                           "  font-weight: bold; }"
+                                           "QPushButton:hover { background: %3; border-color: %3; }"
+                                           "QPushButton:pressed { background: %4; border-color: %4; }")
+                                       .arg(TeachingTheme::primary().name(), TeachingTheme::onPrimary().name(),
+                                            TeachingTheme::primaryHover().name(),
+                                            TeachingTheme::primaryPressed().name()));
         bottomRow->addWidget(primaryBtn_);
 
         layout->addLayout(bottomRow);

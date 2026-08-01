@@ -3,7 +3,7 @@
 // ------------------------------------------------------------
 // 教学目标：通过亲手操作理解"栈式 VM 就是 push 和 pop"。
 //
-// 双子页结构（QStackedWidget 切换）：
+// 双子页结构（UX-R fix: 统一使用 TeachingSubPageBar 子页切换组件）：
 //   页 1「栈沙盒」：
 //     顶部：关卡选择 QComboBox + 目标显示 QLabel
 //     中部左：可用指令按钮区（QVBoxLayout + QPushButton 列表）
@@ -31,7 +31,6 @@
 #include <QList>
 #include <QListWidget>
 #include <QPushButton>
-#include <QStackedWidget>
 #include <QString>
 #include <QTableWidget>
 #include <QTextEdit>
@@ -40,6 +39,7 @@
 #include <vector>
 
 #include "gui/SandboxLevels.h"
+#include "gui/TeachingSubPageBar.h" // UX-R fix: 统一子页切换组件（互斥+主题色+动画）
 
 class IdeController;
 
@@ -82,10 +82,8 @@ private slots:
     void onTraceReset();
 
 private:
-    // ---- 页切换 ----
-    QPushButton* pageSandboxBtn_ = nullptr; ///< 「栈沙盒」子页按钮
-    QPushButton* pageTraceBtn_ = nullptr;   ///< 「真实字节码追踪」子页按钮
-    QStackedWidget* pageStack_ = nullptr;   ///< 子页堆叠容器
+    // ---- 页切换（UX-R fix: 统一子页切换组件，替代手写 pageBtn + pageStack_）----
+    TeachingSubPageBar* subPageBar_ = nullptr;
 
     // ---- 沙盒页 UI 控件 ----
     QComboBox* levelCombo_ = nullptr;

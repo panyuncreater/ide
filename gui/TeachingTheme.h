@@ -115,6 +115,41 @@ inline QColor hint() {
 }
 
 // ============================================================
+// Tooltip 配色（修复 Windows 11 黑色 tooltip）
+// ------------------------------------------------------------
+// 原生 QToolTip 在 Windows 11 上若未显式着色会回退为深色/黑色背景，
+// 导致悬浮提示（如调试按钮）文字不可见。以下三色供 QToolTip QSS 使用，
+// 保证浅色不透明背景 + 深色文字 + 清晰边框。
+// 注：QToolTip 为非半透明顶层弹窗，QSS 不应设置 border-radius，否则
+//     Windows 上圆角外区域会渲染成黑色（黑角）。
+// ============================================================
+
+/// Tooltip 背景色：近白浅灰（不刺眼且与内容高对比）
+inline QColor tooltipBg() {
+    return QColor(0xF9, 0xF9, 0xF9); // 与 QFluentKit tool_tip.qss 对齐
+}
+
+/// Tooltip 文字色：深灰（在浅背景上清晰可读）
+inline QColor tooltipText() {
+    return QColor(0x1e, 0x1e, 0x1e);
+}
+
+/// Tooltip 边框色：略深于普通边框，增强弹窗轮廓辨识度
+inline QColor tooltipBorder() {
+    return QColor(0xc8, 0xc8, 0xc8);
+}
+
+/// 关闭按钮危险态背景色：Windows 关闭红（与标题栏关闭按钮一致）
+inline QColor closeDanger() {
+    return QColor(0xE8, 0x11, 0x23);
+}
+
+/// 关闭按钮危险态按下背景色：更深的关闭红
+inline QColor closeDangerPressed() {
+    return QColor(0xC5, 0x0F, 0x1F);
+}
+
+// ============================================================
 // P3-18 fix: 排查发现的高频缺失语义色补全
 // ------------------------------------------------------------
 // 2026-07-23 全量排查 gui/ 目录发现 47 个文件、350+ 处硬编码颜色。

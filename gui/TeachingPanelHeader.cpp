@@ -4,11 +4,16 @@
 // 内置教学面板的帮助文案（panelId → {purpose, order, concepts}）
 // P2-C fix: 文案中的活动数 / 阶段数 / Bug 档位数从数据源派生，
 //           不再硬编码魔法数字，避免活动集变化时帮助文案静默说谎。
+// 文案支持 Markdown 子集（**粗体** / `行内代码` / 有序列表），
+// 由 MarkdownRenderer 统一渲染为 HTML，与其余教学面板保持一致。
 // ============================================================
 
 #include "gui/TeachingPanelHeader.h"
 #include "gui/I18n.h"
-#include "gui/LearningPathData.h" // P2-C fix: 派生活动数 / 阶段数
+#include "gui/LearningPathData.h"  // P2-C fix: 派生活动数 / 阶段数
+#include "gui/MarkdownRenderer.h" // 帮助文案 Markdown → HTML 统一渲染
+#include "gui/PanelCatalog.h"     // UX-R fix: 帮助弹窗展示难度分级/所属分类
+#include "gui/TeachingTheme.h"    // P3-18 fix: 硬编码颜色迁移到语义色
 
 #include <QDialog>
 #include <QHBoxLayout>
@@ -34,7 +39,8 @@ QString learningPathSummaryText() {
     const int stages = LearningPathData::stageCount();
     const int acts = static_cast<int>(LearningPathData::activities().size());
     return QStringLiteral("一张结构化的学习路线图，分 %1 个阶段、共 %2 个活动，一路帮你记着学到哪了。"
-                          "第一次用，建议从「阶段零：首次接触」起步，照推荐顺序慢慢刷就行。")
+                          "第一次用，建议从「阶段零：首次接触」起步，照推荐顺序慢慢刷就行。"
+                          "五个阶段对应一条完整的编译原理学习曲线：**先建立直觉，再动手实验，最后实战排错**。")
         .arg(stages)
         .arg(acts);
 }
@@ -44,8 +50,9 @@ const QHash<QString, HelpDoc>& helpDocs() {
     static const QHash<QString, HelpDoc> docs = {
         {QStringLiteral("code-journey"),
          {mlTr(
-              "一行 MiniLang 代码从出生到结果，要走过 6 个阶段：源码 → Token → AST → IR → 字节码 → "
-              "输出。这个面板就是把这趟旅程摊开给你看——每个阶段都带示例和跳转按钮，点一下就能去对应的专题面板动手玩。"),
+              "一行 MiniLang 代码从出生到结果，要走过 6 个阶段：`源码 → Token → AST → IR → 字节码 → "
+              "输出`。这个面板就是把这趟旅程摊开给你看——每个阶段都带示例和跳转按钮，点一下就能去对应的专题面板动手玩。"
+              "看完这张图，你脑子里就有了一张**心智地图**：之后的每个专题面板，都是这张图上某一站的放大镜。"),
           mlTr("1. 先在本面板把全流程溜一遍\n2. 看中哪个阶段，点底部按钮跳过去\n3. 在对应面板里真正动手试"),
           mlTr("词法分析 / 语法分析 / IR / 字节码 / 虚拟机")}},
         {QStringLiteral("learning-path"),
@@ -57,28 +64,32 @@ const QHash<QString, HelpDoc>& helpDocs() {
         {QStringLiteral("pipeline"),
          {mlTr("编译管线可视化：把源码变成运行结果的全过程拆成 6 "
                "个阶段，一步步演示给你看。每推进一步，都能看到这一步吃进去什么、吐出来什么（输入/"
-               "输出数据结构和中间产物）。"),
+               "输出数据结构和中间产物）。推进时留意数据形态的变化：`字符流 → Token 流 → AST → IR → 字节码 → "
+               "值`——**理解了数据形态怎么变，就理解了编译的本质**。"),
           mlTr("1. 先在本面板看一遍完整流程\n2. 手动逐步推进管线\n3. 卡在哪个阶段，就跳去那个专题面板深挖"),
           mlTr("Lexer / Parser / AST / IR / Bytecode / VM")}},
         {QStringLiteral("token-puzzle"),
          {mlTr("Token 拼图：拖着一个个 Token "
                "把源码拼回去，直观感受词法分析器是怎么把字符流切成「有类型的零件」的。关卡通关后自动解锁下一关——像闯关"
-               "，不像上课。"),
+               "，不像上课。**词法分析（Lexical Analysis）是编译的第一步**：它不关心含义，只负责断词——把 `var x = 1;` "
+               "切成关键字、标识符、运算符、字面量、分隔符五类零件。"),
           mlTr("1. 先看「编译管线可视化」搞懂 Token 是啥\n2. 在本面板把拼图关卡刷了\n3. 顺便去「语法浏览器」看看 Token "
                "类型全家福"),
           mlTr("Token / 词法分析 / lexeme / token 类型")}},
         {QStringLiteral("ast-toy"),
          {mlTr("AST "
                "构建器：拖节点搭出一棵抽象语法树，亲眼看看运算符优先级和结合性是怎么决定树长什么样的。树长歪了，结果就"
-               "歪了——这面板让你手动把树掰正。"),
+               "歪了——这面板让你手动把树掰正。记住一句话：**树的形状就是计算的顺序**——`1+2*3` 和 `(1+2)*3` "
+               "的差别，全在树根是 `+` 还是 `*`。"),
           mlTr(
               "1. 先把「Token 拼图」做了，理解词法\n2. 在本面板动手搭 AST\n3. 回头对照「编译管线可视化」里的 AST 阶段"),
           mlTr("AST / 优先级 / 结合性 / 语法树")}},
         {QStringLiteral("syntax-explorer"),
          {mlTr("语法浏览器：把 MiniLang 的所有语法结构和示例代码摊在一张表里。点一个语法节点，就能看到它对应的 AST "
-               "长相和典型用法——相当于一本会动的语法说明书。"),
+               "长相和典型用法——相当于一本会动的语法说明书。背后的概念叫**产生式（Production）**：每条语法规则都在说"
+               "「这个结构由哪些零件组成」，递归下降解析器就是照着产生式一条条写出来的函数。"),
           mlTr("1. 碰到不认识的语法，先来这翻翻\n2. 顺手去「AST 构建器」把对应语法试一遍"),
-          mlTr("语法规则 / 语法节点 / AST")}},
+          mlTr("语法规则 / 产生式 / 语法节点 / AST")}},
         {QStringLiteral("backend-compare"),
          {mlTr("三后端对比：同一份代码，让 Interpreter / StackVM / RegisterVM "
                "三条路径各跑一遍，把输出和耗时摆在一起比。哪一后端偷偷耍了花招，一眼就看出来——这正是 MiniLang "
@@ -89,40 +100,49 @@ const QHash<QString, HelpDoc>& helpDocs() {
         {QStringLiteral("vm-sandbox"),
          {mlTr("VM 栈沙盒：自己动手 push "
                "字节码、单步执行，看着操作数栈一会儿压进去、一会儿弹出来。栈式虚拟机就这么点事儿——把指令一条条喂进去，"
-               "看栈怎么变。"),
+               "看栈怎么变。核心心法：**表达式让栈净增 1，语句让栈净增 0**——栈平衡是字节码正确性的第一不变量，"
+               "违反它就是「栈泄漏」Bug。"),
           mlTr("1. 先看「编译管线可视化」的字节码阶段\n2. 在本面板手动摆弄栈\n3. "
                "配合「字节码追踪」看真实代码跑起来后的轨迹"),
           mlTr("栈式 VM / OpCode / 操作数栈 / push/pop")}},
         {QStringLiteral("memory-model"),
          {mlTr("内存模型可视化：把 NaN-boxing 编码、写时复制（COW）容器、GC 的 mark-sweep "
-               "全做成了实时动画。值到底在内存里怎么放、怎么共享、怎么回收，看动画比看文档直观十倍。"),
+               "全做成了实时动画。值到底在内存里怎么放、怎么共享、怎么回收，看动画比看文档直观十倍。"
+               "三个关键词各管一件事：**NaN-boxing** 管「一个值怎么用 8 字节装下」，**COW** 管「共享的容器什么时候才复制」，"
+               "**mark-sweep** 管「循环引用的垃圾怎么兜底回收」。"),
           mlTr("1. 先搞懂 Value 类型（看「变量检查器」）\n2. 在本面板盯着 GC 动画看\n3. "
                "配合「闭包检查器」看堆里对象的寿命"),
           mlTr("NaN-boxing / COW / GC / mark-sweep / RefCounted")}},
         {QStringLiteral("ir-transform"),
          {mlTr("IR 优化回放：把 const-fold / DCE / copy-prop / CSE / loop-unroll 这五种优化 pass "
-               "一步步演给你看，每步都解释「为什么这么改」。编译器不是魔法，是一步步把代码变瘦变快。"),
+               "一步步演给你看，每步都解释「为什么这么改」。编译器不是魔法，是一步步把代码变瘦变快。"
+               "IR（中间表示）之所以存在，是因为**优化只想写一次**：在 IR 上做完优化，再 lowering "
+               "到栈式或寄存器式后端，三个后端共享同一份优化成果。"),
           mlTr("1. 先看「编译管线可视化」的 IR 阶段\n2. 在本面板逐步推进优化\n3. "
                "配合「字节码追踪」看优化后的字节码长啥样"),
           mlTr("IR / 常量折叠 / 死代码消除 / 复制传播 / 公共子表达式 / 循环展开")}},
         {QStringLiteral("bytecode-trace"),
          {mlTr("字节码追踪：指令级执行回放，每条字节码跑完都记一下操作数栈、寄存器、IP "
-               "的状态。想搞清楚「这条指令到底改了什么」，就靠它来回溯。"),
+               "的状态。想搞清楚「这条指令到底改了什么」，就靠它来回溯。先记住一个概念：**IP（指令指针）**永远指向"
+               "下一条要执行的指令——顺序执行就是 IP+1，分支和循环就是把 IP 改成别的值，仅此而已。"),
           mlTr("1. 先在「VM 栈沙盒」搞懂基本指令\n2. 在本面板追踪真实代码\n3. 配合「调用栈检查器」看函数调用怎么发生"),
           mlTr("字节码 / 指令追踪 / 操作数栈 / IP")}},
         {QStringLiteral("call-stack"),
          {mlTr("调用栈检查器：把函数调用时的栈帧结构、参数怎么传、返回地址在哪，全画了出来。函数一层套一层时，谁调用了"
-               "谁、返回去哪儿，一目了然。"),
+               "谁、返回去哪儿，一目了然。核心概念是**栈帧（Stack Frame）**：每次调用函数就压入一帧（装着参数、"
+               "局部变量、返回地址），函数返回就弹出一帧——递归爆栈，爆的就是这个栈。"),
           mlTr("1. 先搞懂函数调用机制\n2. 在本面板看调用栈怎么长怎么消\n3. 配合「变量检查器」看局部变量"),
           mlTr("调用栈 / 栈帧 / 返回地址 / 参数传递")}},
         {QStringLiteral("variable-inspector"),
          {mlTr("变量检查器：把作用域链、闭包捕获、变量生命周期画出来。一个变量在哪个作用域看得见、活多久，这个面板替你"
-               "盯着。"),
+               "盯着。记住一条规则：**找变量永远从最内层作用域开始，一层层往外找**——这条链就是 Environment 链，"
+               "找到第一个同名变量就停，所以内层同名变量会「遮住」外层。"),
           mlTr("1. 先搞懂作用域规则\n2. 在本面板看变量怎么绑定\n3. 配合「闭包检查器」看捕获是怎么发生的"),
           mlTr("作用域 / 闭包捕获 / 变量生命周期 / Environment 链")}},
         {QStringLiteral("breakpoint-condition"),
          {mlTr("条件断点可视化：把断点条件的求值沙箱和命中次数摆出来。条件断点到底什么时候算、什么时候命中，不是玄学——"
-               "这个面板把它摊开给你看。"),
+               "这个面板把它摊开给你看。关键设计是**沙箱求值（Sandbox Evaluation）**：条件表达式在隔离环境里算，"
+               "算崩了、死循环了都不能影响主程序——调试器自己不能比被调的程序先挂。"),
           mlTr("1. 先搞懂基本断点怎么用\n2. 在本面板试条件表达式\n3. 去编辑器里设个真实的条件断点验证"),
           mlTr("条件断点 / 求值沙箱 / 命中计数")}},
         {QStringLiteral("bug-hunt"),
@@ -133,30 +153,40 @@ const QHash<QString, HelpDoc>& helpDocs() {
           mlTr("Bug 模式 / 三后端对比 / 变体挑战")}},
         {QStringLiteral("exception-flow"),
          {mlTr("异常流可视化：把 try/catch/finally "
-               "的传播路径和栈效应画出来。异常抛出后怎么沿着调用栈往上爬、最后在哪被抓住，看一眼就明白。"),
+               "的传播路径和栈效应画出来。异常抛出后怎么沿着调用栈往上爬、最后在哪被抓住，看一眼就明白。"
+               "这个过程的术语叫**栈展开（Stack Unwinding）**：异常从抛出点开始逐帧弹栈找 catch，"
+               "沿途每层的 finally 都会被执行——这保证了资源清理不会被异常跳过。"),
           mlTr("1. 先搞懂 try/catch 语法\n2. 在本面板看传播路径\n3. 配合「调用栈检查器」看 unwind 过程"),
           mlTr("try/catch/finally / 异常传播 / 栈 unwind")}},
         {QStringLiteral("closure-inspector"),
          {mlTr("闭包检查器：把 upvalue 的一生（capture / heap / access / close / "
-               "destroy）画出来。闭包到底是怎么抓住外面那个变量、又怎么一直抱着不放的，这个面板说清楚了。"),
+               "destroy）画出来。闭包到底是怎么抓住外面那个变量、又怎么一直抱着不放的，这个面板说清楚了。"
+               "一句话建立直觉：**闭包 = 函数 + 它记住的外层变量（upvalue）**——外层函数返回后局部变量本该消亡，"
+               "但被捕获的变量会「逃」到堆上继续活着，这就是 close upvalue 的意义。"),
           mlTr("1. 先搞懂闭包是什么\n2. 在本面板看 upvalue 的状态变化\n3. 配合「内存模型」看堆里的对象"),
           mlTr("闭包 / upvalue / 捕获 / 堆逃逸")}},
         {QStringLiteral("profile-dashboard"),
          {mlTr("性能仪表盘：把三后端的耗时摆一起比，再列个 opcode 执行次数 Top 10 "
-               "热点。你的代码慢在哪、该从哪优化，看这张图就有方向了。"),
+               "热点。你的代码慢在哪、该从哪优化，看这张图就有方向了。背后是性能分析的第一原则："
+               "**先测量，再优化**——热点通常集中在极少数代码上（二八律），凭感觉优化往往白忙。"),
           mlTr("1. 基础学完再进来\n2. 对比三后端谁快谁慢\n3. 盯着 opcode 热点找优化点"),
           mlTr("性能剖析 / opcode 计数 / 热点 / 三后端耗时")}},
         {QStringLiteral("lab-manual"),
          {mlTr("实验手册：一套从基础到进阶的结构化练习，每个实验都给了目标、步骤和验证标准。想系统学一遍，跟着它走就行"
-               "。"),
+               "。8 个实验正好对应编译原理的 8 个主题：**词法 → 语法 → 语义 → 目标代码 → 中间代码 → "
+               "三后端一致性 → 内存模型 → Bug 狩猎**，每章还带迷你实验和章节练习题，学完能自测。"),
           mlTr("1. 按「学习路径地图」推荐的顺序进\n2. 一个实验一个实验做过去\n3. 卡住了就去对应的教学面板查"),
           mlTr("实验 / 练习题 / 验证标准")}},
         {QStringLiteral("glossary"),
          {mlTr("术语表：把 MiniLang IDE 的核心术语（词法 / 语法 / IR / 字节码 / VM / "
-               "内存模型……）按类归在一起，每条都配简明释义和跳转按钮。碰到不认识的概念，随时来翻。"),
-          mlTr("1. 读面板遇到陌生词，打开本面板查\n2. 点术语条目跳去相关教学面板\n3. "
-               "配合「学习路径地图」把术语系统过一遍"),
-          mlTr("术语 / 释义 / 概念索引 / 跨面板跳转")}},
+               "内存模型……）按类归在一起，每条都配简明释义、详细讲解和跳转按钮。碰到不认识的概念，随时来翻。"
+               "几个高频术语先混个脸熟：**NaN-boxing**（用 8 字节 double 的 NaN 空闲位编码所有类型的值）、"
+               "**COW**（写时复制，共享容器写前才复制）、**upvalue**（闭包捕获的外层变量）、"
+               "**SSA**（静态单赋值，每个值只写一次，方便优化分析）、**lowering**（把 IR 降低成具体后端指令）。"
+               "支持搜索和分类筛选，术语条目还能一键跳到对应教学面板动手验证。"),
+          mlTr("1. 读面板遇到陌生词，打开本面板查\n2. 点术语条目跳去相关教学面板，边看释义边动手验证\n3. "
+               "配合「学习路径地图」把术语系统过一遍\n4. 学完一个阶段，回来用搜索框自测：能不能用自己的话讲清每个术语"),
+          mlTr("术语 / 释义 / 概念索引 / 跨面板跳转 / NaN-boxing / COW / upvalue / SSA")}},
         // ---- 入门导览（补齐缺失面板）----
         {QStringLiteral("welcome"),
          {mlTr("新手的第一站：用几张卡片介绍 MiniLang IDE 的核心功能和学习路径，让你快速知道「这工具能干"
@@ -238,6 +268,18 @@ const QHash<QString, HelpDoc>& helpDocs() {
          {mlTr("把整个执行过程录成时间轴，可以拖回去看任意时刻的状态——调试时不再只能往前走，可以倒带。"),
           mlTr("1. 先跑一遍代码录制时间轴\n2. 拖动时间指针回到任意时刻\n3. 配合「变量检查器」看历史状态"),
           mlTr("时间轴 / 回放 / 历史状态 / 调试")}},
+        // ---- 执行引擎（AUDIT-P2 fix: 补齐目录已登记但文案缺失的两个面板）----
+        {QStringLiteral("watchpoint"),
+         {mlTr("数据断点（Watchpoint）：盯住某个变量或字段，一旦它被修改就立刻暂停——不用猜「到底是谁"
+               "改了我的变量」，让调试器当场抓住那只手。"),
+          mlTr("1. 先搞懂普通断点怎么用\n2. 在本面板添加要监视的变量\n3. 运行代码，看哪行代码改了它"),
+          mlTr("数据断点 / Watchpoint / 变量监视 / 调试")}},
+        {QStringLiteral("reverse-timeline"),
+         {mlTr("反向调试时间轴：把执行历史摆成一排可点击的历史步，点哪步就回滚到哪步——调试不再是"
+               "单行道，走过头了可以倒回去重来。需先在「可回放执行时间轴」开启录制。"),
+          mlTr("1. 先在「可回放执行时间轴」开启录制并跑一遍代码\n2. 回本面板点击任意历史步回滚\n3. "
+               "回滚后继续单步，验证不同分支的行为"),
+          mlTr("反向调试 / 状态回滚 / 快照 / FullState 录制")}},
         {QStringLiteral("coroutine-visualizer"),
          {mlTr("把协程和生成器的挂起 / 恢复过程画出来，让你看清 yield 时到底保存了什么、resume 时怎么回"
                "到原处。"),
@@ -262,6 +304,34 @@ const QHash<QString, HelpDoc>& helpDocs() {
 }
 
 } // namespace
+
+// ============================================================
+// UX-R fix: 帮助文案对外查询 + 引导锚点按钮访问器
+// ------------------------------------------------------------
+// 通用兜底引导（Ide::createGenericPanelTour）复用 helpDocs 数据源，
+// 保证「每个有帮助文档的面板都有新手引导」的不变量。
+// ============================================================
+
+bool TeachingPanelHeader::helpDocFor(const QString& panelId, HelpDocView* out) {
+    const auto& docs = helpDocs();
+    auto it = docs.find(panelId);
+    if (it == docs.end())
+        return false;
+    if (out) {
+        out->purpose = it.value().purpose;
+        out->recommendedOrder = it.value().recommendedOrder;
+        out->relatedConcepts = it.value().relatedConcepts;
+    }
+    return true;
+}
+
+QWidget* TeachingPanelHeader::helpButton() const {
+    return helpBtn_;
+}
+
+QWidget* TeachingPanelHeader::learningPathButton() const {
+    return learningPathBtn_;
+}
 
 TeachingPanelHeader::TeachingPanelHeader(const QString& panelId, const QString& title, QWidget* parent)
     : QWidget(parent), panelId_(panelId), title_(title) {
@@ -310,52 +380,62 @@ TeachingPanelHeader::TeachingPanelHeader(const QString& panelId, const QString& 
     layout->addWidget(backBtn_);
 
     // header 样式：浅蓝→白色渐变背景 + 底部分隔线 + 标题加粗 + 按钮 hover 圆角淡蓝
+    // P3-18 fix: 颜色从硬编码迁移到 TeachingTheme 语义色（主题色变更自动跟随）
     setStyleSheet(QStringLiteral("#teachingPanelHeader {"
                                  "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
-                                 "    stop:0 #eaf3fc, stop:1 #ffffff);"
-                                 "  border-bottom: 1px solid #e5e5e5;"
+                                 "    stop:0 %1, stop:1 %2);"
+                                 "  border-bottom: 1px solid %3;"
                                  "}"
                                  "#teachingPanelTitle {"
                                  "  font-size: 14px;"
                                  "  font-weight: 600;"
-                                 "  color: #1e1e1e;"
+                                 "  color: %4;"
                                  "}"
                                  "#teachingHeaderBtn:hover {"
-                                 "  background: #eaf3fc;"
+                                 "  background: %1;"
                                  "  border-radius: 4px;"
                                  "}"
-                                 // 「新手引导」按钮用主题色 #268BD2 强调，提示新手可点击获取引导
+                                 // 「新手引导」按钮用主题色强调，提示新手可点击获取引导
                                  "#teachingTourBtn {"
-                                 "  background: #268BD2;"
-                                 "  color: white;"
-                                 "  border: 1px solid #1E6FA3;"
+                                 "  background: %5;"
+                                 "  color: %6;"
+                                 "  border: 1px solid %7;"
                                  "  border-radius: 4px;"
                                  "  padding: 2px 10px;"
                                  "  font-weight: 600;"
                                  "}"
                                  "#teachingTourBtn:hover {"
-                                 "  background: #1E6FA3;"
+                                 "  background: %7;"
                                  "}"
                                  "#teachingTourBtn:pressed {"
-                                 "  background: #1A6090;"
+                                 "  background: %8;"
                                  "}"
                                  // 「返回编辑器」按钮用浅色边框强调，方便用户从教学面板切回编辑器
                                  "#teachingBackBtn {"
-                                 "  background: #FFFFFF;"
-                                 "  color: #1E1E1E;"
-                                 "  border: 1px solid #E0E0E0;"
+                                 "  background: %2;"
+                                 "  color: %4;"
+                                 "  border: 1px solid %3;"
                                  "  border-radius: 4px;"
                                  "  padding: 2px 10px;"
                                  "  font-weight: 600;"
                                  "}"
                                  "#teachingBackBtn:hover {"
-                                 "  background: #F5F5F5;"
-                                 "  border-color: #268BD2;"
-                                 "  color: #268BD2;"
+                                 "  background: %9;"
+                                 "  border-color: %5;"
+                                 "  color: %5;"
                                  "}"
                                  "#teachingBackBtn:pressed {"
-                                 "  background: #F5F5F5;"
-                                 "}"));
+                                 "  background: %9;"
+                                 "}")
+                      .arg(TeachingTheme::primaryHoverBg().name(),   // %1 渐变起点/hover 淡蓝
+                           TeachingTheme::surface().name(),          // %2 渐变终点/返回钮背景
+                           TeachingTheme::border().name(),           // %3 分隔线/边框
+                           TeachingTheme::textPrimary().name(),      // %4 标题/正文色
+                           TeachingTheme::primary().name(),          // %5 主题色
+                           TeachingTheme::onPrimary().name(),        // %6 主色上前景
+                           TeachingTheme::primaryHover().name(),     // %7 主色 hover
+                           TeachingTheme::primaryPressed().name(),   // %8 主色 pressed
+                           TeachingTheme::surfaceHover().name()));   // %9 返回钮 hover 背景
 }
 
 void TeachingPanelHeader::setTitle(const QString& title) {
@@ -375,24 +455,28 @@ void TeachingPanelHeader::showHelpDialog() {
     const QString kTipEmoji = QString::fromUtf8("\xF0\x9F\x92\xA1");  // 💡
 
     // HTML 末尾的提示行：Esc 关闭 + 拖拽角落调整大小
+    // UX-R fix: 硬编码颜色迁移到 TeachingTheme 语义色
     const QString kTipLine =
-        QStringLiteral("<hr style='border: none; border-top: 1px dashed #E0E0E0; margin: 14px 0 8px 0;'/>"
-                       "<p style='margin: 0; font-size: 12px; color: #8C8C8C;'>%1 提示：按 Esc 关闭，"
+        QStringLiteral("<hr style='border: none; border-top: 1px dashed %1; margin: 14px 0 8px 0;'/>"
+                       "<p style='margin: 0; font-size: 12px; color: %2;'>%3 提示：按 Esc 关闭，"
                        "拖拽角落可调整窗口大小</p>")
-            .arg(kTipEmoji);
+            .arg(TeachingTheme::border().name(), TeachingTheme::textHint().name(), kTipEmoji);
 
-    // 中性白 QSS：背景 #FFFFFF，文字 #1E1E1E，padding 12px（R74: 回退 Solarized 米黄）
-    // 「知道了」按钮保持 PrimaryButton 自带 Fluent 主色 #268BD2 样式，不覆盖
+    // 中性白 QSS：背景 surface，文字 textPrimary，padding 12px（R74: 回退 Solarized 米黄）
+    // 「知道了」按钮保持 PrimaryButton 自带 Fluent 主色样式，不覆盖
+    // UX-R fix: 硬编码颜色迁移到 TeachingTheme 语义色
     const QString kDialogQss = QStringLiteral("QDialog#helpDialog {"
-                                              "  background: #FFFFFF;"
+                                              "  background: %1;"
                                               "}"
                                               "QTextBrowser#helpBrowser {"
-                                              "  background: #FFFFFF;"
-                                              "  color: #1E1E1E;"
-                                              "  border: 1px solid #E0E0E0;"
+                                              "  background: %1;"
+                                              "  color: %2;"
+                                              "  border: 1px solid %3;"
                                               "  border-radius: 6px;"
                                               "  padding: 12px;"
-                                              "}");
+                                              "}")
+                                   .arg(TeachingTheme::surface().name(), TeachingTheme::textPrimary().name(),
+                                        TeachingTheme::border().name());
 
     const auto& docs = helpDocs();
     auto it = docs.find(panelId_);
@@ -450,6 +534,18 @@ void TeachingPanelHeader::showHelpDialog() {
 
     const HelpDoc& doc = it.value();
 
+    // UX-R fix: 难度分级 + 所属分类提示行（从 PanelCatalog 派生，与导航树徽标一致），
+    // 初学者打开帮助即知该面板处于学习曲线的哪一段、是否适合现在学。
+    QString levelLine;
+    if (const PanelEntry* entry = PanelCatalog::findById(panelId_.toStdString())) {
+        const QString levelName = mlTr(PanelCatalog::levelName(entry->level));
+        const QString catTitle = QString::fromStdString(PanelCatalog::categoryTitleOf(panelId_.toStdString()));
+        levelLine = QStringLiteral("<p style='margin: 0 0 10px 0; font-size: 12px; color: %1;'>"
+                                   "🎯 难度：%2 · 分类：%3</p>")
+                        .arg(TeachingTheme::textHint().name(), levelName,
+                             catTitle.isEmpty() ? mlTr("教学面板") : mlTr(catTitle.toUtf8().constData()));
+    }
+
     helpDlg_ = new QDialog(this);
     QDialog* dlg = helpDlg_;
     dlg->setObjectName("helpDialog");
@@ -472,20 +568,28 @@ void TeachingPanelHeader::showHelpDialog() {
     browser->setObjectName("helpBrowser");
     browser->setOpenExternalLinks(false);
     browser->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    // 帮助文案通过 MarkdownRenderer 统一渲染（**粗体** / `代码` / 有序列表），
+    // 与其余教学面板的富文本阅读体验保持一致（替代旧的 toHtmlEscaped 纯文本）。
+    // UX-R fix: 标题色/次要色从硬编码（#268BD2/#5A5A5A）迁移到 TeachingTheme 语义色。
+    const QString kHeadColor = TeachingTheme::primary().name();
     browser->setHtml(QStringLiteral("<html><body style='font-family: \"Microsoft YaHei\",\"PingFang SC\",\"Noto Sans "
                                     "CJK SC\",\"Source Han Sans SC\",\"Segoe UI\",\"SF Pro Text\",\"Arial Unicode "
                                     "MS\",\"Arial\",sans-serif; font-size: 13px; line-height: 1.7;'>"
-                                    "<h3 style='color: #268BD2; margin-bottom: 4px;'>📋 面板用途</h3>"
-                                    "<p style='margin: 0 0 12px 0;'>%1</p>"
-                                    "<h3 style='color: #268BD2; margin-bottom: 4px;'>🔢 推荐使用顺序</h3>"
-                                    "<p style='margin: 0 0 12px 0; white-space: pre-wrap;'>%2</p>"
-                                    "<h3 style='color: #268BD2; margin-bottom: 4px;'>💡 关联概念</h3>"
-                                    "<p style='margin: 0; color: #5A5A5A;'>%3</p>"
-                                    "%4"
+                                    "%1"
+                                    "<h3 style='color: %2; margin-bottom: 4px;'>📋 面板用途</h3>"
+                                    "<div style='margin: 0 0 12px 0;'>%3</div>"
+                                    "<h3 style='color: %2; margin-bottom: 4px;'>🔢 推荐使用顺序</h3>"
+                                    "<div style='margin: 0 0 12px 0;'>%4</div>"
+                                    "<h3 style='color: %2; margin-bottom: 4px;'>💡 关联概念</h3>"
+                                    "<div style='margin: 0; color: %5;'>%6</div>"
+                                    "%7"
                                     "</body></html>")
-                         .arg(doc.purpose.toHtmlEscaped())
-                         .arg(doc.recommendedOrder.toHtmlEscaped())
-                         .arg(doc.relatedConcepts.toHtmlEscaped())
+                         .arg(levelLine)
+                         .arg(kHeadColor)
+                         .arg(MarkdownRenderer::markdownToHtmlFragment(doc.purpose))
+                         .arg(MarkdownRenderer::markdownToHtmlFragment(doc.recommendedOrder))
+                         .arg(TeachingTheme::textSecondary().name())
+                         .arg(MarkdownRenderer::markdownToHtmlFragment(doc.relatedConcepts))
                          .arg(kTipLine));
     layout->addWidget(browser, 1);
 

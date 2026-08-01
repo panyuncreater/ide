@@ -132,6 +132,89 @@ const std::vector<OpCodePerfDoc>& OpCodeProfileLibrary::docs() {
     return kDocs;
 }
 
+#ifndef MINILANG_HAVE_QTCHARTS
+// ============================================================
+// ProfileBarChart — QPainter 自绘柱状图子控件（R111 维度切换修复）
+// ------------------------------------------------------------
+// 原实现在 ProfileDashboardPanel::paintEvent 中直接向面板背景自绘柱状图，
+// 但面板可见区被右侧 QTabWidget 等不透明子控件完全遮挡，柱状图从不可见，
+// 导致「切换维度」看不到任何变化。改为独立子控件占据 timingTab 真实布局
+// 空间，setBars() 更新数据并 update() 重绘，维度切换即时可见。
+// 纯绘制控件，无 Q_OBJECT（不需要信号 / 槽）。
+// ============================================================
+class ProfileBarChart : public QWidget {
+public:
+    struct Bar {
+        QString name;  // 后端名
+        double value;  // 当前维度数值
+        QString label; // 柱顶数值标签
+        bool success;  // 失败后端以 0 高度显示
+    };
+    explicit ProfileBarChart(QWidget* parent = nullptr) : QWidget(parent) { setMinimumHeight(200); }
+    void setBars(std::vector<Bar> bars, const QString& axisTitle) {
+        bars_ = std::move(bars);
+        axisTitle_ = axisTitle;
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent* event) override {
+        (void)event;
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+
+        const int margin = 20;
+        // 顶部预留 12px 放维度标题
+        QRect chartRect(margin, margin + 12, width() - 2 * margin, height() - 2 * margin - 12);
+        if (chartRect.height() < 50 || chartRect.width() < 40)
+            return;
+        p.setPen(QColor(200, 200, 200));
+        p.drawRect(chartRect);
+
+        // 维度标题
+        p.setPen(QColor(80, 80, 80));
+        p.drawText(chartRect.left(), chartRect.top() - 5, axisTitle_);
+
+        if (bars_.empty())
+            return;
+        double maxVal = 0;
+        for (const auto& b : bars_) {
+            if (b.success && b.value > maxVal)
+                maxVal = b.value;
+        }
+        if (maxVal <= 0)
+            return;
+
+        static const QColor kColors[3] = {
+            QColor(102, 153, 204), // Interpreter 蓝
+            QColor(204, 153, 102), // StackVM 橙
+            QColor(153, 204, 102), // RegisterVM 绿
+        };
+        const int n = static_cast<int>(bars_.size());
+        int slot = chartRect.width() / (n * 2);
+        if (slot < 1)
+            slot = 1;
+        for (int i = 0; i < n; ++i) {
+            const auto& b = bars_[i];
+            double v = b.success ? b.value : 0.0;
+            int barHeight = static_cast<int>(v / maxVal * (chartRect.height() - 30));
+            QRect bar(chartRect.left() + slot / 2 + i * slot * 2, chartRect.bottom() - barHeight - 20, slot, barHeight);
+            p.setBrush(QBrush(kColors[i % 3]));
+            p.setPen(QColor(160, 160, 160));
+            p.drawRect(bar);
+            p.setPen(QColor(0, 0, 0));
+            p.drawText(bar.left(), chartRect.bottom() - 5, b.name);
+            if (b.success && !b.label.isEmpty())
+                p.drawText(bar.left(), bar.top() - 5, b.label);
+        }
+    }
+
+private:
+    std::vector<Bar> bars_;
+    QString axisTitle_;
+};
+#endif
+
 // ============================================================
 // ProfileDashboardPanel 实现
 // ============================================================
@@ -221,9 +304,10 @@ ProfileDashboardPanel::ProfileDashboardPanel(QWidget* parent) : QWidget(parent) 
     chartView_->setMinimumHeight(220);
     timingLayout->addWidget(chartView_, 1);
 #else
-    // QPainter 自绘柱状图模式（默认，零额外依赖）
-    // 通过 setMinimumHeight 给 paintEvent 留出空间
-    setMinimumHeight(360);
+    // R111 fix: 独立柱状图子控件（占据 timingTab 真实布局空间，替代原
+    // paintEvent 面板背景自绘——后者被 QTabWidget 遮挡不可见，维度切换看不到变化）
+    barChart_ = new ProfileBarChart(timingTab);
+    timingLayout->addWidget(barChart_, 1);
 #endif
 
     timingLayout->addWidget(new QLabel(QString::fromUtf8("性能分析：")), 0);
@@ -613,7 +697,7 @@ void ProfileDashboardPanel::runProfile(int scenarioIndex) {
 #ifdef MINILANG_HAVE_QTCHARTS
     renderChart(results); // C2: QtCharts 模式刷新柱状图
 #else
-    update(); // QPainter 模式触发 paintEvent 重绘柱状图
+    updateBarChart(); // R111 fix: 刷新独立柱状图子控件
 #endif
     runProfileBtn_->setEnabled(true);
     stopStatusAnimation();
@@ -791,80 +875,26 @@ void ProfileDashboardPanel::onMetricChanged(int index) {
 #ifdef MINILANG_HAVE_QTCHARTS
     renderChart(lastResults_);
 #else
-    update();
+    updateBarChart();
 #endif
 }
 
-/// 重写绘制事件，绘制自定义图表背景/网格。
-void ProfileDashboardPanel::paintEvent(QPaintEvent* event) {
-#ifdef MINILANG_HAVE_QTCHARTS
-    // C2: QtCharts 模式下柱状图由 QChartView 渲染，paintEvent 仅转发基类
-    QWidget::paintEvent(event);
-    return;
-#else
-    // W4 fix: 无 QtCharts 时 event 未使用，显式抑制 C4100（保留参数名供 QtCharts 分支使用）
-    (void)event;
-    if (lastResults_.empty())
+#ifndef MINILANG_HAVE_QTCHARTS
+// R111 fix: 用当前维度数据刷新独立柱状图子控件。
+// 替代原 ProfileDashboardPanel::paintEvent 向面板背景自绘（被 QTabWidget 遮挡不可见）。
+// 由 onMetricChanged / runProfile 调用，确保切换维度时图表数据即时更新。
+void ProfileDashboardPanel::updateBarChart() {
+    if (!barChart_)
         return;
-    QPainter p(this);
-    p.setRenderHint(QPainter::Antialiasing);
-
-    // 柱状图绘制区域（resultTable_ 下方）
-    // AUDIT-P2 fix: 原实现硬编码 QRect(220, 200, width()-240, 200)，x=220 假设
-    // scenarioList_ 宽度固定，y=200 假设布局高度固定，height=200 不随窗口缩放。
-    // splitter 拖动或窗口缩放时柱状图位置错位。改为基于 resultTable_ 实际几何
-    // + widget 边界动态计算，确保柱状图始终在 resultTable_ 下方且不超出 widget。
-    const int margin = 20;
-    const int tableBottom = resultTable_ ? resultTable_->geometry().bottom() : 0;
-    const int chartTop = tableBottom + margin;
-    const int chartHeight = height() - chartTop - margin;
-    QRect chartRect(margin, chartTop, width() - 2 * margin, chartHeight);
-    if (chartRect.height() < 50) {
-        // 空间不足时不绘制柱状图（避免负高度/重叠）
-        return;
-    }
-    p.setPen(QColor(200, 200, 200));
-    p.drawRect(chartRect);
-
-    // R111: 维度标题
-    p.setPen(QColor(80, 80, 80));
-    p.drawText(chartRect.left(), chartRect.top() - 5, metricAxisTitle(currentMetric_));
-
-    // R111: 找最大值用于归一化（根据 currentMetric_ 选择字段）
-    double maxVal = 0;
+    std::vector<ProfileBarChart::Bar> bars;
+    bars.reserve(lastResults_.size());
     for (const auto& r : lastResults_) {
-        if (r.success) {
-            double v = getMetricValue(r, currentMetric_);
-            if (v > maxVal)
-                maxVal = v;
-        }
+        bars.push_back({QString::fromUtf8(r.name.c_str()), r.success ? getMetricValue(r, currentMetric_) : 0.0,
+                        metricLabel(r, currentMetric_), r.success});
     }
-    if (maxVal <= 0)
-        return;
-
-    // 三柱
-    const QColor colors[3] = {
-        QColor(102, 153, 204), // Interpreter 蓝
-        QColor(204, 153, 102), // StackVM 橙
-        QColor(153, 204, 102), // RegisterVM 绿
-    };
-    int barWidth = chartRect.width() / 4;
-    for (int i = 0; i < (int)lastResults_.size(); ++i) {
-        const auto& r = lastResults_[i];
-        double v = r.success ? getMetricValue(r, currentMetric_) : 0.0;
-        int barHeight = (int)(v / maxVal * (chartRect.height() - 30));
-        QRect bar(chartRect.left() + barWidth / 2 + i * barWidth, chartRect.bottom() - barHeight - 20, barWidth,
-                  barHeight);
-        p.setBrush(QBrush(colors[i % 3]));
-        p.drawRect(bar);
-        p.setPen(QColor(0, 0, 0));
-        p.drawText(bar.left(), chartRect.bottom() - 5, QString::fromUtf8(r.name.c_str()));
-        if (r.success) {
-            p.drawText(bar.left(), bar.top() - 5, metricLabel(r, currentMetric_));
-        }
-    }
-#endif
+    barChart_->setBars(std::move(bars), metricAxisTitle(currentMetric_));
 }
+#endif
 
 #ifdef MINILANG_HAVE_QTCHARTS
 // C2: QtCharts 模式柱状图渲染 — 用 QBarSeries + QBarSet 替代 QPainter 自绘

@@ -41,6 +41,8 @@
 #pragma once
 
 #include <QString>
+#include <QStringList> // availableMiniLangLocales() 返回 QStringList(=QList<QString>)；
+                       // i18n 关闭分支也使用，故需无条件 include（仅 <QString> 时为不完全类型）。
 
 #ifdef MINILANG_ENABLE_I18N
 #include <QCoreApplication>

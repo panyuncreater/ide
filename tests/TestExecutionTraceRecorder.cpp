@@ -475,11 +475,12 @@ TEST(ExecutionTimelinePanelCatalogRegistration, ExecutionTimelinePanelRegistered
     }
 }
 
-TEST(ExecutionTimelinePanelCatalogRegistration, ExecutionTimelinePanelUnderExecutionEngineCategory) {
+TEST(ExecutionTimelinePanelCatalogRegistration, ExecutionTimelinePanelUnderDebugObserveCategory) {
+    // UX-R fix: 原"执行引擎"拆分后调试类面板迁入"调试与观测"分类
     const auto& cats = PanelCatalog::categories();
     bool found = false;
     for (const auto& cat : cats) {
-        if (std::string(cat.title) == "执行引擎") {
+        if (std::string(cat.title) == "调试与观测") {
             for (const auto& leaf : cat.leaves) {
                 if (std::string(leaf.id) == "execution-timeline") {
                     found = true;
@@ -488,7 +489,7 @@ TEST(ExecutionTimelinePanelCatalogRegistration, ExecutionTimelinePanelUnderExecu
             }
         }
     }
-    EXPECT_TRUE(found) << "execution-timeline 面板应归类在'执行引擎'分类下";
+    EXPECT_TRUE(found) << "execution-timeline 面板应归类在'调试与观测'分类下";
 }
 
 TEST(ExecutionTimelinePanelCatalogRegistration, CanonicalIdResolvesExecutionTimeline) {

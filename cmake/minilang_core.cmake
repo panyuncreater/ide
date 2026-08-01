@@ -273,6 +273,8 @@ set(MINILANG_GUI_SOURCES
     # R161: 数据断点面板（Watchpoint，监视变量 / 字段被修改时暂停）
     gui/WatchpointPanel.cpp
     gui/ExecutionTimelinePanel.cpp
+    # 拓展二期：反向调试时间轴（点击历史步回滚 Interpreter / VM 状态）
+    gui/ReverseDebugTimelinePanel.cpp
     gui/CrashReportDialog.cpp
     # 拓展二期·平台：代码片段分享链接编解码（纯 Qt6::Core，可被测试目标链接）
     gui/ShareCodec.cpp

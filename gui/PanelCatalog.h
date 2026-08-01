@@ -10,16 +10,23 @@
 // 已被 TeachingTreePanel 替代，仅作为编译单元保留。本次彻底移除。
 //
 // 数据结构：
-//   PanelEntry { id, label, emoji }   —— 单个教学面板元数据
-//   PanelCategory { title, emoji, leaves } —— 分类节点
+//   PanelEntry { id, label, emoji, level } —— 单个教学面板元数据（level 难度分级）
+//   PanelCategory { title, emoji, description, leaves } —— 分类节点
+//
+// UX-R fix: 分类按「编译原理学习曲线」重组为 6 大类（入门导览 → 编译前端 →
+// 执行引擎 → 内存与优化 → 调试与观测 → 深入实战），原「执行引擎」23 项平铺
+// 拆分为 3 类；每个面板标注难度分级（1=入门 / 2=进阶 / 3=高级），供导航树
+// 徽标与帮助弹窗展示，帮助初学者按难度循序渐进。
 //
 // API：
-//   PanelCatalog::categories() —— 返回 4 大分类 + 全部叶子节点（树形导航用）
+//   PanelCatalog::categories() —— 返回 6 大分类 + 全部叶子节点（树形导航用）
 //   PanelCatalog::findById(id) —— 按 id 查找 PanelEntry（nullptr = 未找到）
 //   PanelCatalog::canonicalPanelId(activityId) —— 处理别名（lab-* / bug-hunt-* /
 //                                  op-priority-challenge / welcome / freeform-project）
 //                                  返回空字符串表示无映射（需调用方特殊处理）
 //   PanelCatalog::allPanelIds() —— 返回所有叶子 id 列表（用于校验/枚举）
+//   PanelCatalog::levelName(level) —— 难度分级显示名（入门/进阶/高级）
+//   PanelCatalog::categoryTitleOf(id) —— 面板所属分类标题（未找到返回空串）
 // ============================================================
 
 #pragma once
@@ -34,12 +41,14 @@ struct PanelEntry {
     const char* label; // 显示名（如 "VM 沙盒"，const char* 字面量；由消费方 TeachingTreePanel 通过 mlTr(leaf.label)
                        // 包裹国际化）
     const char* emoji; // 前缀 emoji
+    int level = 1;     // UX-R fix: 难度分级（1=入门 / 2=进阶 / 3=高级），导航树徽标与帮助弹窗展示
 };
 
 /// 教学面板分类节点
 struct PanelCategory {
-    const char* title; // 分类标题（如 "入门导览"）
-    const char* emoji; // 分类前缀 emoji
+    const char* title;       // 分类标题（如 "入门导览"）
+    const char* emoji;       // 分类前缀 emoji
+    const char* description; // UX-R fix: 分类学习目标一句话说明（导航树 tooltip 展示）
     std::vector<PanelEntry> leaves;
 };
 
@@ -47,7 +56,7 @@ struct PanelCategory {
 /// 实现位于 gui/PanelCatalog.cpp（独立编译单元，仅依赖 STL + Qt6::Core 用于 mlTr）
 class PanelCatalog {
 public:
-    /// 返回 4 大分类 + 全部叶子节点（TeachingTreePanel 构建树用）
+    /// 返回 6 大分类 + 全部叶子节点（TeachingTreePanel 构建树用），按学习曲线递进排序
     static const std::vector<PanelCategory>& categories();
 
     /// 按 id 查找 PanelEntry（找不到返回 nullptr）
@@ -63,4 +72,10 @@ public:
 
     /// 返回所有叶子节点的 id 列表（用于校验）
     static std::vector<std::string> allPanelIds();
+
+    /// UX-R fix: 难度分级显示名（1="入门" / 2="进阶" / 3="高级"，越界返回 "入门"）
+    static const char* levelName(int level);
+
+    /// UX-R fix: 返回面板所属分类标题（未找到返回空字符串）
+    static std::string categoryTitleOf(const std::string& id);
 };

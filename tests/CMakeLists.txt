@@ -192,6 +192,8 @@ add_executable(minilang_tests
     ${MINILANG_ROOT_DIR}/gui/CallStackPanel.cpp
     ${MINILANG_ROOT_DIR}/gui/VariableInspectorPanel.cpp
     ${MINILANG_ROOT_DIR}/gui/BytecodeTracePanel.cpp
+    # UX-R fix: BytecodeTracePanel 等面板统一子页切换组件（仅依赖 Qt Widgets，无 IdeController 依赖）
+    ${MINILANG_ROOT_DIR}/gui/TeachingSubPageBar.cpp
     # 第二档 P1-2：BreakpointConditionLibrary
     ${MINILANG_ROOT_DIR}/gui/BreakpointConditionPanel.cpp
     # R117: WatchExpressionLibrary（独立编译单元，不依赖 IdeController.cpp）

@@ -13,18 +13,20 @@
 #include <set>
 #include <string>
 
-// 验证 PanelCatalog 恰好包含 4 个顶层分类（categories 数量）。
-TEST(TeachingTreePanelAudit, HasFourCategories) {
+// 验证 PanelCatalog 恰好包含 6 个顶层分类（UX-R fix: 原「执行引擎」23 项平铺
+// 拆分为执行引擎/内存与优化/调试与观测，4 分类 → 6 分类）。
+TEST(TeachingTreePanelAudit, HasSixCategories) {
     const auto& cats = PanelCatalog::categories();
-    EXPECT_EQ(cats.size(), 4u) << "PanelCatalog should have 4 categories";
+    EXPECT_EQ(cats.size(), 6u) << "PanelCatalog should have 6 categories";
 }
 
-// 验证每个分类的标题（title）与图标（emoji）均非空。
+// 验证每个分类的标题（title）、图标（emoji）与学习目标说明（description）均非空。
 TEST(TeachingTreePanelAudit, CategoryTitlesNonEmpty) {
     const auto& cats = PanelCatalog::categories();
     for (size_t i = 0; i < cats.size(); ++i) {
         EXPECT_NE(std::string(cats[i].title), "") << "Category " << i << " title empty";
         EXPECT_NE(std::string(cats[i].emoji), "") << "Category " << i << " emoji empty";
+        EXPECT_NE(std::string(cats[i].description), "") << "Category " << i << " description empty";
     }
 }
 
@@ -99,6 +101,38 @@ TEST(TeachingTreePanelAudit, FindByIdReturnsValidForAllIds) {
 TEST(TeachingTreePanelAudit, FindByIdReturnsNullForUnknown) {
     EXPECT_EQ(PanelCatalog::findById("nonexistent-panel-xyz"), nullptr);
     EXPECT_EQ(PanelCatalog::findById(""), nullptr);
+}
+
+// UX-R fix: 验证全部面板的难度分级在合法区间 [1, 3]，且 levelName 返回非空。
+TEST(TeachingTreePanelAudit, PanelLevelsAreValid) {
+    const auto& cats = PanelCatalog::categories();
+    for (const auto& cat : cats) {
+        for (const auto& leaf : cat.leaves) {
+            EXPECT_GE(leaf.level, 1) << leaf.id << ": level < 1";
+            EXPECT_LE(leaf.level, 3) << leaf.id << ": level > 3";
+            EXPECT_NE(std::string(PanelCatalog::levelName(leaf.level)), "") << leaf.id << ": levelName empty";
+        }
+    }
+}
+
+// UX-R fix: 验证 categoryTitleOf 对全部面板 id 返回非空分类标题，未知 id 返回空。
+TEST(TeachingTreePanelAudit, CategoryTitleOfResolvesAllPanels) {
+    for (const auto& id : PanelCatalog::allPanelIds()) {
+        EXPECT_NE(PanelCatalog::categoryTitleOf(id), "") << id << ": categoryTitleOf empty";
+    }
+    EXPECT_EQ(PanelCatalog::categoryTitleOf("nonexistent-panel-xyz"), "");
+}
+
+// UX-R fix: 验证每个分类内叶子按难度非递减排序（入门在前，循序渐进学习路径）。
+TEST(TeachingTreePanelAudit, PanelLevelsSortedWithinCategory) {
+    const auto& cats = PanelCatalog::categories();
+    for (const auto& cat : cats) {
+        int prevLevel = 1;
+        for (const auto& leaf : cat.leaves) {
+            EXPECT_GE(leaf.level, prevLevel) << cat.title << " 分类内 " << leaf.id << " 难度逆序";
+            prevLevel = leaf.level;
+        }
+    }
 }
 
 // P3-20 fix: 验证 watchpoint 面板已在 PanelCatalog 注册（曾因遗漏导致导航树不显示 + canonicalPanelId 返回空）。

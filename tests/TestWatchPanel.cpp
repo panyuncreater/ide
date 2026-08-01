@@ -112,12 +112,13 @@ TEST(WatchPanelCatalogRegistration, WatchExpressionsPanelRegistered) {
     }
 }
 
-TEST(WatchPanelCatalogRegistration, WatchExpressionsPanelUnderExecutionEngineCategory) {
-    // 验证 watch-expressions 面板归类在"执行引擎"分类下
+TEST(WatchPanelCatalogRegistration, WatchExpressionsPanelUnderDebugObserveCategory) {
+    // 验证 watch-expressions 面板归类在"调试与观测"分类下
+    // （UX-R fix: 原"执行引擎"拆分后调试类面板迁入"调试与观测"）
     const auto& cats = PanelCatalog::categories();
     bool found = false;
     for (const auto& cat : cats) {
-        if (std::string(cat.title) == "执行引擎") {
+        if (std::string(cat.title) == "调试与观测") {
             for (const auto& leaf : cat.leaves) {
                 if (std::string(leaf.id) == "watch-expressions") {
                     found = true;
@@ -126,7 +127,7 @@ TEST(WatchPanelCatalogRegistration, WatchExpressionsPanelUnderExecutionEngineCat
             }
         }
     }
-    EXPECT_TRUE(found) << "watch-expressions 面板应归类在'执行引擎'分类下";
+    EXPECT_TRUE(found) << "watch-expressions 面板应归类在'调试与观测'分类下";
 }
 
 TEST(WatchPanelCatalogRegistration, CanonicalIdResolvesWatchExpressions) {

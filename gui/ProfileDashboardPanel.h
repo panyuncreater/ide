@@ -49,6 +49,9 @@ class QChartView;
 class QChart;
 class QBarSeries;
 QT_END_NAMESPACE
+#else
+// R111 fix: QPainter 自绘柱状图子控件（.cpp 内定义），前向声明供成员指针使用
+class ProfileBarChart;
 #endif
 
 class IdeController;
@@ -140,6 +143,11 @@ private:
     QChartView* chartView_ = nullptr;
     QChart* chart_ = nullptr;
     QBarSeries* barSeries_ = nullptr;
+#else
+    // R111 fix: QPainter 模式下的独立柱状图子控件（占据 timingTab 真实布局空间，
+    // 替代原 paintEvent 向面板背景自绘——后者被 QTabWidget 等子控件遮挡不可见，
+    // 导致「切换维度」看不到任何变化）
+    ProfileBarChart* barChart_ = nullptr;
 #endif
 
     // R111: 柱状图维度枚举（耗时 / 指令数 / 内存）
@@ -191,9 +199,6 @@ private:
     /// R111: 维度切换辅助 — 当前维度的柱顶数值标签
     static QString metricLabel(const BackendTiming& r, MetricDimension metric);
 
-    /// 渲染柱状图（QPainter 自绘模式；QtCharts 模式下走 renderChart）
-    void paintEvent(QPaintEvent* event) override;
-
     /// P1-1: 渲染指令计数表格（StackVM / RegisterVM Top N 热点 opcode）
     void renderOpCodeProfile(const std::vector<OpCodeProfileEntry>& stackVmProfile,
                              const std::vector<OpCodeProfileEntry>& registerVmProfile);
@@ -201,6 +206,9 @@ private:
 #ifdef MINILANG_HAVE_QTCHARTS
     /// C2: QtCharts 模式下用 QChart + QBarSeries 渲染柱状图
     void renderChart(const std::vector<BackendTiming>& results);
+#else
+    /// R111 fix: 用当前维度数据刷新独立柱状图子控件（替代原 paintEvent 自绘）
+    void updateBarChart();
 #endif
 
     /// 当前的测量结果（用于 paintEvent 绘制）

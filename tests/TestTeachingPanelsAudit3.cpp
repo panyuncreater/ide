@@ -76,7 +76,8 @@ TEST(TeachingPanelsCallStack, ExpectedFramesNonEmpty) {
 TEST(TeachingPanelsVariableInspector, ExamplesCount) {
     const auto& items = VariableInspectorLibrary::examples();
     // ROUND-60: 扩充至 17 种类型示例（原 10 + 新增 7：float-inf/nan/empty-string/array/dict/nested/type-annotation）
-    EXPECT_GE(items.size(), 10u);
+    // 需求 8: 扩充至 23（新增 6：tuple/enum-variant/coroutine/boxed-int/cow-shared/instance-inherit）
+    EXPECT_GE(items.size(), 17u);
 }
 
 TEST(TeachingPanelsVariableInspector, ExampleIdsUnique) {
@@ -132,7 +133,8 @@ TEST(TeachingPanelsVariableInspector, NanboxBitsPresentForScalar) {
 TEST(TeachingPanelsBytecodeTrace, DocsCount) {
     const auto& items = BytecodeTraceLibrary::opCodeDocs();
     // ROUND-60: 扩充至 46 个 OpCode 教学条目（原 18 + 新增 28）
-    EXPECT_GE(items.size(), 18u);
+    // 需求 8: 扩充至 75（新增 29：元组/枚举/协程/finally 续跳/类型检查/尾调用/特化算术/写回族等）
+    EXPECT_GE(items.size(), 46u);
 }
 
 TEST(TeachingPanelsBytecodeTrace, OpCodeNamesUnique) {

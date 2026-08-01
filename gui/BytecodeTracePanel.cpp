@@ -6,7 +6,6 @@
 #include "app/IdeController.h"
 #include "gui/GuidedTour.h"
 #include "gui/MarkdownRenderer.h"
-#include "gui/PanelAnimator.h"
 #include "interpreter/Value.h"
 
 #include <QHBoxLayout>
@@ -23,9 +22,11 @@
 // BytecodeTraceLibrary — 静态 OpCode 教学库
 // ============================================================
 
-/// 返回 OpCode 教学库（静态单例）：46 条核心字节码（常量/算术/变量/控制/
+/// 返回 OpCode 教学库（静态单例）：75 条核心字节码（常量/算术/变量/控制/
 /// 调用/容器/闭包/类），每条含分类、操作数格式、栈效果、语义与样例代码，
 /// 供「OpCode 教学库」子页展示并支持加载样例到主编辑器。
+/// 需求 8 扩充：新增 29 条（元组/枚举/协程/finally 续跳/类型检查/尾调用/
+/// 特化算术/写回族等），与 compiler/Bytecode.h 枚举注释保持语义一致。
 const std::vector<OpCodeDocEntry>& BytecodeTraceLibrary::opCodeDocs() {
     static const std::vector<OpCodeDocEntry> kDocs = {
         OpCodeDocEntry{"OP_INT", "const", "nameIdx(2B)", "push 1", "📜 从常量池读取整数并压入栈顶。", "var x = 42;"},
@@ -129,6 +130,129 @@ const std::vector<OpCodeDocEntry>& BytecodeTraceLibrary::opCodeDocs() {
         // ---- Class ----
         OpCodeDocEntry{"OP_SUPER_CALL", "class", "nameIdx(2B) + argCount(1B)", "pop N+1 / push 1",
                        "📞 调用父类方法：从当前实例的父类链查找方法并调用（super 语义三后端统一）。", "super.foo();"},
+        // ---- 需求 8 扩充：栈操作 ----
+        OpCodeDocEntry{"OP_DUP", "control", "无", "push 1",
+                       "📤 复制栈顶值并压入（栈顶出现两份相同值）。用于需要保留原值的复合赋值等场景。",
+                       "arr[i] = arr[i] + 1;"},
+        OpCodeDocEntry{"OP_DUP_N", "control", "depth(1B)", "push 1",
+                       "📤 复制栈中第 depth 个值到栈顶（不弹出原值）。用于索引写回时保留索引值。",
+                       "m[k] = m[k] + 1;"},
+        OpCodeDocEntry{"OP_SWAP", "control", "无", "swap top 2",
+                       "🔀 交换栈顶两个值。match 表达式 case body 完成后将 [scrutinee, 结果] 变为 "
+                       "[结果, scrutinee]，随后 OP_POP 弹出 scrutinee 留下结果。",
+                       "var r = match (x) { case 1 => 100 case v => v };"},
+        // ---- 需求 8 扩充：调用变体 ----
+        OpCodeDocEntry{"OP_CALL_EXPR", "call", "argCount(1B)", "pop N+1 / push 1",
+                       "📞 表达式调用：闭包在参数下方（编译器先 push 闭包再 push 参数）。用于调用不经变量名的"
+                       "闭包表达式（数组元素/返回值/IIFE）。",
+                       "fns[0](1, 2);"},
+        OpCodeDocEntry{"OP_TAIL_CALL", "call", "nameIdx(2B) + argCount(1B)", "reuse frame / push 1",
+                       "📞 尾调用：return g(args) 且目标为普通函数时复用当前帧（TCO，跳过后随 OP_RETURN），"
+                       "不支持场景降级为 OP_CALL 语义。互递归不再爆栈。",
+                       "fun even(n) { if (n == 0) return true; return odd(n - 1); }"},
+        // ---- 需求 8 扩充：容器/元组/枚举 ----
+        OpCodeDocEntry{"OP_BUILD_TUPLE", "container", "count(1B)", "pop N / push 1",
+                       "📊 弹出栈顶 N 个元素构建不可变元组 TupleData 并压入（R98）。元组支持索引读与解构，"
+                       "但禁止元素赋值。",
+                       "var t = (1, \"a\", true);"},
+        OpCodeDocEntry{"OP_LEN", "container", "无", "pop 1 / push 1",
+                       "📊 弹出栈顶容器（array/dict/string/tuple），压入其长度（int）。用于 TUPLE 模式的"
+                       "元素数检查（R134）。",
+                       "var t = (10, 20); var (a, b) = t;"},
+        OpCodeDocEntry{"OP_BUILD_ENUM_VARIANT", "container", "enumIdx(2B) + variantIdx(2B) + argCount(1B)",
+                       "pop N / push 1",
+                       "📊 弹出 N 个字段参数构造 EnumVariantData(enumName, variantName, fields) 并压入（R99 "
+                       "ADT）。字段数与类型在编译期校验。",
+                       "enum Color { Red(int) } var c = Color.Red(255);"},
+        OpCodeDocEntry{"OP_ENUM_VARIANT_NAME", "container", "enumIdx(2B) + variantIdx(2B)", "pop 1 / push 1",
+                       "📊 弹出 scrutinee，检查是否为指定 enum/variant，压入 bool。match 分支的 variant "
+                       "模式匹配就靠它。",
+                       "var r = match (c) { case Color.Red(v) => v default => 0 };"},
+        OpCodeDocEntry{"OP_ENUM_VARIANT_FIELD", "container", "无", "pop 2 / push 1",
+                       "📊 弹出 index 与 scrutinee，压入 scrutinee.fields[index]。用于 match 分支中提取 "
+                       "variant 字段绑定到模式变量。",
+                       "var r = match (p) { case Pair.P(a, b) => a + b };"},
+        // ---- 需求 8 扩充：异常/finally 续跳 ----
+        OpCodeDocEntry{"OP_TRY_END", "control", "无", "pop handler",
+                       "🛡️ try 块正常结束，弹出 try 处理器（与 OP_TRY_BEGIN 配对）。此后抛出的异常不再被"
+                       "该 catch 捕获。",
+                       "try { safe(); } catch (e) { print(e); }"},
+        OpCodeDocEntry{"OP_PUSH_JUMP_TARGET", "control", "target(2B)", "push target(pendingJumpStack)",
+                       "🛡️ break/continue 在 try-finally 内时，先把真实跳转目标压入 pendingJumpStack_，"
+                       "再跳到 finally 入口——实现「先执行 finally 再跳转」（三后端一致）。",
+                       "while (x) { try { break; } finally { cleanup(); } }"},
+        OpCodeDocEntry{"OP_FINALLY_END", "control", "无", "pop target / jump",
+                       "🛡️ finally 块末尾：从 pendingJumpStack_ 弹出目标并跳转；栈空则顺序继续执行。"
+                       "与 OP_PUSH_JUMP_TARGET 配对完成 break/continue 续跳。",
+                       "try { work(); } finally { cleanup(); }"},
+        // ---- 需求 8 扩充：类型检查 ----
+        OpCodeDocEntry{"OP_TYPE_CHECK", "var", "typeIdx(2B)", "peek (no pop)",
+                       "⚖️ peek 栈顶值，检查是否兼容常量池中的类型注解字符串，不匹配则 runtimeError。"
+                       "不弹栈。类型注解强制三后端统一。",
+                       "var x: int = 42;"},
+        OpCodeDocEntry{"OP_TYPE_TEST", "control", "typeIdx(2B)", "pop 1 / push 1",
+                       "⚖️ 软类型测试：弹出栈顶值做 typeMatch 检查（含实例继承链），压入 bool。与 OP_TYPE_CHECK "
+                       "区别：不抛错，用于 TUPLE 模式 scrutinee 非元组时 fall through 到下一分支（R134）。",
+                       "var r = match (x) { case (a, b) => a + b default => -1 };"},
+        // ---- 需求 8 扩充：协程/异步 ----
+        OpCodeDocEntry{"OP_YIELD", "control", "无", "pop 1 (或 push 回)",
+                       "🔄 弹出 yield 值并递增 yield 计数器：命中重放目标则抛 YieldSignal 被 .next() 捕获；"
+                       "未命中则 push 回栈继续执行。VM 与 Interpreter 同用重放模式，四后端语义一致（R164）。",
+                       "fun* gen() { yield 1; yield 2; }"},
+        OpCodeDocEntry{"OP_AWAIT", "control", "无", "pop 1 / push 1",
+                       "🔄 弹出栈顶值 v：非协程则恒等 push v；协程则循环驱动 next() 直到 done，push 最终值"
+                       "（同步 drain 模型，与 Interpreter 对齐）。仅 async fun 体内合法。",
+                       "async fun main() { var r = await compute(); }"},
+        // ---- 需求 8 扩充：类补全 ----
+        OpCodeDocEntry{"OP_INIT_FIELD", "class", "fieldNameIdx(2B)", "pop 1",
+                       "📦 从栈顶弹出值写入实例字段（类体字段默认值初始化）。继承时父类字段默认值也经"
+                       "此指令初始化，避免字段丢失。",
+                       "class P { var x = 0; }"},
+        OpCodeDocEntry{"OP_DEFINE_CLASS", "class", "nameIdx(2B)", "pop 1",
+                       "📦 从栈顶弹出模板实例，提取 ClassInfo（字段表/方法表/父类链）并注册到 VM。"
+                       "后续 OP_CLASS_NEW 构造时查此注册表。",
+                       "class Point { var x = 0; var y = 0; }"},
+        OpCodeDocEntry{"OP_SUPER_MEMBER_GET", "class", "nameIdx(2B)", "pop 1 / push 1",
+                       "📦 从父类开始查找成员（跳过子类同名覆盖）并压入。与 OP_MEMBER_GET 区别在查找"
+                       "起点（super 语义）。",
+                       "var m = super.name;"},
+        // ---- 需求 8 扩充：类型特化算术（PERF）----
+        OpCodeDocEntry{"OP_ADD_INT_SPEC", "arith", "无", "pop 2 / push 1",
+                       "⚡ int + int 特化加法：编译期静态确定两操作数均为 int 时生成，跳过运行时类型"
+                       "检查，消除热循环分支预测开销。",
+                       "var i = 0; while (i < 1000) { i = i + 1; }"},
+        OpCodeDocEntry{"OP_SUB_INT_SPEC", "arith", "无", "pop 2 / push 1",
+                       "⚡ int - int 特化减法（无类型检查）。与 OP_ADD_INT_SPEC 同族，编译期类型推断"
+                       "驱动的热路径优化。",
+                       "var n = m - 1;"},
+        OpCodeDocEntry{"OP_MUL_INT_SPEC", "arith", "无", "pop 2 / push 1",
+                       "⚡ int * int 特化乘法（无类型检查）。",
+                       "var sq = x * x;"},
+        OpCodeDocEntry{"OP_LT_INT_SPEC", "arith", "无", "pop 2 / push 1",
+                       "⚡ int < int 特化比较（最常见的循环条件），压入 bool。配合 OP_JUMP_IF_FALSE "
+                       "构成热循环骨架。",
+                       "while (i < n) { ... }"},
+        // ---- 需求 8 扩充：变量/写回族 ----
+        OpCodeDocEntry{"OP_DELETE_GLOBAL", "var", "slot(2B)", "no effect",
+                       "📍 删除全局槽位（块作用域退出时清理块内 var）。避免块内变量泄漏到块外可见。",
+                       "{ var tmp = 1; } // 块退出后 tmp 不可见"},
+        OpCodeDocEntry{"OP_INDEX_SET_LOCAL", "container", "slot(1B)", "pop 2",
+                       "🔑 弹出值与索引，直接修改 stack_[bp+slot] 指向的容器（免去 push 容器 + 写回的"
+                       "三步舞）。OP_INDEX_SET 的局部变量直写优化变体。",
+                       "fun f() { var a = [1, 2]; a[0] = 9; }"},
+        OpCodeDocEntry{"OP_MEMBER_SET_VAR", "container", "nameIdx(2B) + fieldNameIdx(2B)", "pop 1",
+                       "🔑 弹出值，直接修改 globals_[varName].fields[field]（全局变量成员直写优化，"
+                       "避免 COW 容器副本写丢失）。",
+                       "p.x = 10;"},
+        OpCodeDocEntry{"OP_LOAD_MUTATED", "container", "无", "push 1",
+                       "🔑 压入 lastMutatedReceiver_（变异方法调用后的接收者副本，不清除），供嵌套左值"
+                       "写回链使用。COW 容器变异后的写回机制核心。",
+                       "obj.list.push(1);"},
+        OpCodeDocEntry{"OP_WRITEBACK_MEMBER_VAR", "container", "varIdx(2B) + fieldIdx(2B)", "no effect",
+                       "🔑 将 lastMutatedReceiver_ 写回全局变量的指定字段。嵌套访问 a.b.push(x) 变异后，"
+                       "把变异后的 b 写回 a.b（COW 副本才能对外可见，写回族共 6 条覆盖 var/local/upvalue × "
+                       "member/index）。",
+                       "obj.items.push(42);"},
     };
     return kDocs;
 }
@@ -137,7 +261,7 @@ const std::vector<OpCodeDocEntry>& BytecodeTraceLibrary::opCodeDocs() {
 // BytecodeTracePanel 实现
 // ============================================================
 
-/// 构造面板：组装顶部子页切换（执行轨迹 / OpCode 教学库）与 QStackedWidget，
+/// 构造面板：组装顶部子页切换（执行轨迹 / OpCode 教学库）与 QStackedWidget 子页堆栈，
 /// 构建两个子页，配置 2s 自动捕获定时器（安全网，即时刷新由监听器触发），
 /// 并填充教学库列表。
 BytecodeTracePanel::BytecodeTracePanel(QWidget* parent) : QWidget(parent) {
@@ -145,36 +269,18 @@ BytecodeTracePanel::BytecodeTracePanel(QWidget* parent) : QWidget(parent) {
     outer->setContentsMargins(4, 4, 4, 4);
     outer->setSpacing(4);
 
-    auto* pageBar = new QHBoxLayout;
-    pageTraceBtn_ = new QPushButton(tr("执行轨迹"));
-    pageLibraryBtn_ = new QPushButton(tr("OpCode 教学库"));
-    pageTraceBtn_->setCheckable(true);
-    pageLibraryBtn_->setCheckable(true);
-    pageTraceBtn_->setChecked(true);
-    pageBar->addWidget(pageTraceBtn_);
-    pageBar->addWidget(pageLibraryBtn_);
-    pageBar->addStretch();
-    outer->addLayout(pageBar);
+    // 子页切换（UX-R fix: 统一 TeachingSubPageBar 组件；互斥选中态/主题色高亮/
+    // 滑入动画由组件内置，addPage 同时创建按钮并入栈，首个自动选中）
+    subPageBar_ = new TeachingSubPageBar(this);
+    outer->addLayout(subPageBar_->buttonBar());
 
-    stack_ = new QStackedWidget;
     auto* tracePage = new QWidget;
     auto* libraryPage = new QWidget;
     buildTracePage(tracePage);
     buildLibraryPage(libraryPage);
-    stack_->addWidget(tracePage);
-    stack_->addWidget(libraryPage);
-    outer->addWidget(stack_, 1);
-
-    connect(pageTraceBtn_, &QPushButton::clicked, [this]() {
-        stack_->setCurrentIndex(0);
-        pageLibraryBtn_->setChecked(false);
-        PanelAnimator::slideInWidget(stack_->currentWidget());
-    });
-    connect(pageLibraryBtn_, &QPushButton::clicked, [this]() {
-        stack_->setCurrentIndex(1);
-        pageTraceBtn_->setChecked(false);
-        PanelAnimator::slideInWidget(stack_->currentWidget());
-    });
+    subPageBar_->addPage(tr("① 执行轨迹"), tracePage);
+    subPageBar_->addPage(tr("② OpCode 教学库"), libraryPage);
+    outer->addWidget(subPageBar_->stack(), 1);
 
     // OPT-1: 自动捕获改为 vmStateChanged 监听器即时触发（见 setController）。
     // QTimer 降级为 2000ms 安全网，覆盖监听器未触达的边角场景。
@@ -559,13 +665,16 @@ void BytecodeTracePanel::onLoadDocCode() {
 /// 构建 5 步新手引导：高亮执行轨迹页、自动捕获、轨迹表、OpCode 教学库与加载样例按钮。
 GuidedTour* BytecodeTracePanel::createGuidedTour(QWidget* host) {
     auto* tour = new GuidedTour(host, host);
-    tour->addStep(pageTraceBtn_, QString::fromUtf8("执行轨迹"),
+    // UX-R fix: 子页按钮改从 TeachingSubPageBar 取（组件按钮为统一主题色样式）
+    QWidget* traceBtn = subPageBar_ ? static_cast<QWidget*>(subPageBar_->buttonAt(0)) : this;
+    tour->addStep(traceBtn, QString::fromUtf8("执行轨迹"),
                   QString::fromUtf8("这里显示每条字节码指令执行后的栈状态快照。"));
     tour->addStep(autoCaptureCheck_, QString::fromUtf8("自动捕获"),
                   QString::fromUtf8("勾选后，VM 暂停时会自动捕获一条轨迹，无需手动点击。"));
     tour->addStep(traceTable_, QString::fromUtf8("轨迹表"),
                   QString::fromUtf8("每行一条指令记录，包含 IP / OpCode / 栈快照。点击某行可定位到对应源码行。"));
-    tour->addStep(pageLibraryBtn_, QString::fromUtf8("OpCode 教学库"),
+    QWidget* libraryBtn = subPageBar_ ? static_cast<QWidget*>(subPageBar_->buttonAt(1)) : this;
+    tour->addStep(libraryBtn, QString::fromUtf8("OpCode 教学库"),
                   QString::fromUtf8("切换到 OpCode 参考库，查看每条指令的语义说明与样例代码。"));
     tour->addStep(loadCodeBtn_, QString::fromUtf8("加载样例"),
                   QString::fromUtf8("点击可将当前 OpCode 的示例代码加载到主编辑器，方便直接运行观察。"));

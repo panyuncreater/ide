@@ -238,66 +238,44 @@ JitVisualizerPanel::JitVisualizerPanel(QWidget* parent) : QWidget(parent) {
     jitAvailLabel_->setWordWrap(true);
     root->addWidget(jitAvailLabel_);
 
-    // 子页切换按钮栏
-    auto* btnBar = new QHBoxLayout();
-    pageOverviewBtn_ = new QPushButton(mlTr("① 编译原理概览"), this);
-    pageTypeFeedbackBtn_ = new QPushButton(mlTr("② 类型反馈与特化"), this);
-    pageHotspotBtn_ = new QPushButton(mlTr("③ 热点检测"), this);
-    pageOpCodeBtn_ = new QPushButton(mlTr("④ OpCode 覆盖"), this);
-    pageTierBtn_ = new QPushButton(mlTr("⑤ 分层编译与 OSR"), this);
-    pageAsmBtn_ = new QPushButton(mlTr("⑥ 字节码↔汇编对照"), this);
-    btnBar->addWidget(pageOverviewBtn_);
-    btnBar->addWidget(pageTypeFeedbackBtn_);
-    btnBar->addWidget(pageHotspotBtn_);
-    btnBar->addWidget(pageOpCodeBtn_);
-    btnBar->addWidget(pageTierBtn_);
-    btnBar->addWidget(pageAsmBtn_);
-    btnBar->addStretch();
-    root->addLayout(btnBar);
+    // 子页切换（UX-R fix: 统一 TeachingSubPageBar 组件，替代手写 page*Btn_ + stack_；
+    // 互斥选中态 / 主题色高亮 / 滑入动画由组件内置，addPage 同时创建按钮并入栈）
+    subPageBar_ = new TeachingSubPageBar(this);
+    root->addLayout(subPageBar_->buttonBar());
+    root->addWidget(subPageBar_->stack(), 1);
 
-    stack_ = new QStackedWidget(this);
-    root->addWidget(stack_, 1);
-
-    // 构建五个子页
+    // 构建六个子页
     {
         auto* host = new QWidget();
         buildOverviewPage(host);
-        stack_->addWidget(host);
+        subPageBar_->addPage(mlTr("① 编译原理概览"), host);
     }
     {
         auto* host = new QWidget();
         buildTypeFeedbackPage(host);
-        stack_->addWidget(host);
+        subPageBar_->addPage(mlTr("② 类型反馈与特化"), host);
     }
     {
         auto* host = new QWidget();
         buildHotspotPage(host);
-        stack_->addWidget(host);
+        subPageBar_->addPage(mlTr("③ 热点检测"), host);
     }
     {
         auto* host = new QWidget();
         buildOpCodePage(host);
-        stack_->addWidget(host);
+        subPageBar_->addPage(mlTr("④ OpCode 覆盖"), host);
     }
     {
         auto* host = new QWidget();
         buildTierMetricsPage(host);
-        stack_->addWidget(host);
+        subPageBar_->addPage(mlTr("⑤ 分层编译与 OSR"), host);
     }
     // 拓展二期：子页 6（字节码↔汇编对照）
     {
         auto* host = new QWidget();
         buildAsmComparePage(host);
-        stack_->addWidget(host);
+        subPageBar_->addPage(mlTr("⑥ 字节码↔汇编对照"), host);
     }
-
-    // 按钮切换
-    connect(pageOverviewBtn_, &QPushButton::clicked, this, [this]() { stack_->setCurrentIndex(0); });
-    connect(pageTypeFeedbackBtn_, &QPushButton::clicked, this, [this]() { stack_->setCurrentIndex(1); });
-    connect(pageHotspotBtn_, &QPushButton::clicked, this, [this]() { stack_->setCurrentIndex(2); });
-    connect(pageOpCodeBtn_, &QPushButton::clicked, this, [this]() { stack_->setCurrentIndex(3); });
-    connect(pageTierBtn_, &QPushButton::clicked, this, [this]() { stack_->setCurrentIndex(4); });
-    connect(pageAsmBtn_, &QPushButton::clicked, this, [this]() { stack_->setCurrentIndex(5); });
 
     // 初始数据
     populateOverview();
@@ -305,10 +283,6 @@ JitVisualizerPanel::JitVisualizerPanel(QWidget* parent) : QWidget(parent) {
     populateTfScenarios();
     populateHotScenarios();
     populateTierScenarios();
-
-    // 默认显示子页 1
-    stack_->setCurrentIndex(0);
-    pageOverviewBtn_->setChecked(true);
 }
 
 void JitVisualizerPanel::buildOverviewPage(QWidget* host) {

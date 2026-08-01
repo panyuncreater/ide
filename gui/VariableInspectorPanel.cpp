@@ -103,6 +103,51 @@ const std::vector<VariableTypeExample>& VariableInspectorLibrary::examples() {
                             "⚠️ 类型注解强制：`var x: int = \"hi\"` 中注解 int 与字面量 string 不匹配。"
                             "编译期生成 OP_TYPE_CHECK 指令，运行时若实际类型与注解不符则抛出 TypeError。"
                             "三后端（Interpreter / StackVM / RegisterVM）需统一此检查行为与错误消息文本。"},
+        // ---- 需求 8 扩充：新语言特性类型（元组/枚举/协程）+ 装箱/COW/继承场景 ----
+        VariableTypeExample{"type-tuple", "tuple", "📦 tuple 类型（R98）", "var t = (1, \"a\", true);",
+                            "(1, a, true)", "（堆指针，tag bits=0x7FFB）",
+                            "TupleData* (RefCounted) { refCount: 1; elements: Value[3] (immutable); }",
+                            "📦 不可变容器：元素在构造（OP_BUILD_TUPLE）后禁止赋值，t[0] = 9 报错。"
+                            "支持索引读 t[0] 与解构 var (a, b, c) = t。不可变性使共享无需 COW 检查——"
+                            "多个引用永远看到相同内容。"},
+        VariableTypeExample{"type-enum-variant", "enum", "📦 enum variant 类型（R99 ADT）",
+                            "enum Color { Red(int) }\nvar c = Color.Red(255);", "Color.Red(255)",
+                            "（堆指针，tag bits=0x7FFB）",
+                            "EnumVariantData* (RefCounted) { refCount: 1; enumName: 'Color'; variantName: 'Red'; "
+                            "fields: [255]; }",
+                            "📦 代数数据类型：variant 携带字段（构造时 OP_BUILD_ENUM_VARIANT 校验字段数与类型）。"
+                            "配合 match 模式匹配提取字段：match (c) { Color.Red(v) => v }。"
+                            "无 default 且未穷举命中时抛异常，三后端统一。"},
+        VariableTypeExample{"type-coroutine", "coroutine", "🔄 coroutine 类型（R164）",
+                            "fun* gen() { yield 1; yield 2; }\nvar g = gen();", "<coroutine gen>",
+                            "（堆指针，tag bits=0x7FFB）",
+                            "CoroutineData* (RefCounted) { refCount: 1; targetYieldId: 0; done: false; }",
+                            "🔄 生成器协程：调用 fun* 不执行函数体，而是返回协程对象。每次 g.next() 以重放"
+                            "模式重新执行函数体到目标 yield 点（OP_YIELD 计数器命中即抛 YieldSignal）。"
+                            "await 协程 = 循环 next() 到 done。四后端重放语义一致。"},
+        VariableTypeExample{"type-boxed-int", "int", "⚠️ 装箱大整数（BoxedInt）",
+                            "var huge = 100000000000000000;", "100000000000000000",
+                            "（堆指针，tag bits=0x7FFB）",
+                            "BoxedIntData* (RefCounted) { refCount: 1; value: int64 = 100000000000000000; }",
+                            "⚠️ 超出 int48 内联范围（|v| ≥ 2^47）的整数自动装箱为 BoxedIntData*：同一个 int "
+                            "类型在 NaN-box 里有两种物理表示（内联标量 vs 堆指针）。算术运算对两种表示"
+                            "透明，但装箱带来堆分配与引用计数开销——热循环中应避免超大整数。"},
+        VariableTypeExample{"type-cow-shared", "array", "📊 COW 共享数组（refCount=2）",
+                            "var a = [1, 2, 3];\nvar b = a;", "[1, 2, 3]",
+                            "（两个 Value 持同一堆指针，tag bits=0x7FFB）",
+                            "ArrayData* (RefCounted) { refCount: 2; elements: Value[3]; }  // a、b 共享",
+                            "📊 写时复制实拍：`var b = a` 仅拷贝指针并 refCount++（O(1)）。当 b.push(4) 时"
+                            "检查 refCount==2 非独占 → 深拷贝后再写（detach），a 不受影响且 refCount 回落为 1。"
+                            "这是「值语义外观 + 引用共享实现」的核心机制，三后端统一。"},
+        VariableTypeExample{"type-instance-inherit", "instance", "📦 继承实例（字段扁平化）",
+                            "class Shape { var color = \"red\"; }\nclass Circle : Shape { var r = 1; }\n"
+                            "var c = Circle();",
+                            "<instance of Circle>", "（堆指针，tag bits=0x7FFB）",
+                            "InstanceData* (RefCounted) { refCount: 1; className: 'Circle'; fields: {color:'red', "
+                            "r:1}; }",
+                            "📦 继承字段扁平化：ClassInfo::flattenedFieldOrder 将父类链全部字段按声明顺序展平，"
+                            "父类字段默认值经 OP_INIT_FIELD 初始化（历史 Bug 高发点：继承时字段默认值丢失）。"
+                            "方法查找沿父类链回退，并由 methodCache_ / 内联缓存加速。"},
     };
     return kExamples;
 }
@@ -663,7 +708,7 @@ GuidedTour* VariableInspectorPanel::createGuidedTour(QWidget* host) {
                           "    return a + b;\n"
                           "}\n"
                           "var f = add;          // closure\n"
-                          "print x, pi, s, arr, f;\n"
+                          "print(x, pi, s, arr, f);\n"
                           "</pre>"
                           "<p>调试时展开变量树节点，可看到 int/float 标量内联、string/array 堆指针的差异。</p>"));
     tour->addStep(pageLibraryBtn_, QString::fromUtf8("类型教学库"),
