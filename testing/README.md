@@ -229,7 +229,8 @@ python testing/generator.py --seed 42 --statements 40 --max-depth 4 --no-arrays
 ```
 
 特性开关：`--statements`、`--globals`、`--max-depth`、`--max-loop-iters`、
-`--no-loops`、`--no-functions`、`--no-arrays`、`--no-dicts`、`--no-strings`、`--no-closures`。
+`--no-loops`、`--no-functions`、`--no-arrays`、`--no-dicts`、`--no-strings`、
+`--no-closures`、`--no-classes`。
 
 **无运行时错误不变量**（保证可复现且不被已知 bug 淹没）：所有整型值恒被规范到
 `[0, MOD)`；除法/取模除数恒为正小常量（不除零）；乘法仅「变量×小常量」（不溢出提升
@@ -245,7 +246,10 @@ substr 参数恒界内，indexOf/contains/startsWith/endsWith 参数恒为字面
 indexOf 返回 -1、布尔为 false）。**闭包**（closure）为顶层 fun outer 内嵌 fun inner
 （函数体顶层，非块内，规避发现 1）：inner 强制捕获 outer 首个参数（upvalue 生命周期
 差分点）+ 自身参数 + 常量，返回规范化 int；outer 返回 inner 函数值，以 `cv=outer(..)`
-后 `cv(q)` 调用折入校验和。
+后 `cv(q)` 调用折入校验和。**类/继承**（class）为基类+子类对：字段默认值（字面量/
+非字面量表达式交替，覆盖 IR 默认值降级修复路径）、init 覆盖、super.init 传递、方法
+重写（多态）与继承回退链；方法体仅引用 this.字段/参数/常量（字段由 init/默认值全
+覆盖），实例化参数与 init arity 严格匹配。
 
 ### 10.2 差分测试 `diff_test.py`
 
@@ -453,6 +457,42 @@ ctest --test-dir build_debug -R "pipeline.regression" --output-on-failure
 > 结论：静态分析擅长找模式，本次命中均为误报/设计；**真正的语义 bug 依赖差分测试**
 > （阶段二/五已实测发现块内命名函数分歧、RegisterVM 容量限制，且 RegisterVM `ip` 悬垂引用
 > 已由 ASan container-overflow 检出并修复）。新报告生成后可复用本小节方法逐条复核。
+
+---
+
+## 13.2 发现 4 — JIT 方法帧字段槽未同步（P1，已修复）
+
+类特性面（阶段二扩展）首个命中：字段默认值 + init 覆盖同名字段时，JIT 输出默认值
+而非 init 写入值（interp/stackvm/stackvm-ir/regvm 均正确）。
+
+最小复现（`testing/regression/jit_field_default_init_override.mini`，10 行）：
+
+```
+var cs = 0;
+class K0 {
+    var f0 = 1 + 2;
+    fun init(p0) { this.f0 = p0; }
+    fun m0() { return this.f0; }
+}
+var o0 = K0(5);
+cs = (cs * 31 + o0.m0()) % 1000003;
+print(cs);
+```
+
+| 后端 | 修复前 | 修复后 |
+|------|--------|--------|
+| interp / stackvm / stackvm-ir / regvm | 5 | 5 |
+| jit | **3**（读到字段默认值） | 5 |
+
+**根因**：JIT 方法帧内 `this.f0 = X`（OP_MEMBER_SET_LOCAL slot 0）经
+`jitMemberSetLocal` 直接修改实例 `fields()`，但**不同步方法帧字段槽**；
+`jitMethodReturn` 返回时用未同步的陈旧字段槽（默认值拷贝）覆盖回写 `fields()`，
+init 的字段赋值被冲掉。无 `var` 字段声明时（无字段槽）不触发——故此前样例从未命中。
+
+**修复**（`compiler/JITRuntime.cpp`）：`jitMemberSetLocal` 在接收者是当前方法帧
+this（slot 0 + methodBp == frameBase）时，按 `methodFieldOrder` 同步更新方法帧字段槽。
+修复后全特性批量差分 100 种子全部 agree，用例登记为 `pipeline.regression.jit_field_default_init_override`
+（status=fixed，防复发守卫）。
 
 ---
 

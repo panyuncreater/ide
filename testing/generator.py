@@ -24,9 +24,13 @@ MiniLang 程序，程序末尾输出一个全局状态校验和（print），作
     inner 捕获 outer 首个参数（upvalue）+ 自身参数 q + 常量，返回规范化 int；
     outer 返回 inner（函数值），顶层 var cv = outer(...) 后以 cv(q) 调用折入校验和。
     生成时全局容器（数组/字典/字符串）尚未声明，函数体绝不引用全局。
+  - 类/继承（class）不变量：基类声明字段默认值（字面量/小表达式交替），init 覆盖同名字段；
+    子类 extends 基类 + super.init 传递 + 自占字段；方法体仅引用 this.字段/参数/常量
+    （字段由 init/默认值全覆盖，无未初始化读取）；基类方法被子类继承（回退链）、
+    m0 被子类重写（多态）；实例化参数与 init arity 严格匹配；方法调用参数为 atom。
 
 可复现：同一 seed 必生成逐字节相同的程序（仅用 random.Random(seed)）。
-可配置：程序规模、嵌套深度、特性开关（数组/字典/字符串/闭包/函数/循环）。
+可配置：程序规模、嵌套深度、特性开关（数组/字典/字符串/闭包/类/函数/循环）。
 
 无第三方依赖，兼容 Python 3.8+。可被 diff_test.py 作为库导入（generate/Config）。
 """
@@ -54,6 +58,7 @@ class Config:
     enable_dicts: bool = True     # 字典字面量 + 索引 + has/len/values/get
     enable_strings: bool = True   # 字符串字面量 + upper/lower/substr/拼接/indexOf/contains
     enable_closures: bool = True  # 闭包工厂（内嵌 fun 捕获外层参数）
+    enable_classes: bool = True   # 类/继承（字段默认值 + init + super.init + 方法重写/回退）
     max_loop_iters: int = 12      # 循环最大迭代次数（确定性上界）
 
 
@@ -72,6 +77,10 @@ class _Gen:
         self.strings = []         # 当前可见的字符串变量名
         self.str_mirror = {}      # 字符串名 → 静态内容镜像（Python str，恒等于运行时内容）
         self.closures = []        # 已生成闭包工厂名（函数值变量）
+        self.classes = []         # 已生成类对索引（每对 = 基类 K<idx> + 子类 K<idx>S）
+        self.class_methods = {}   # 类名 → 可调用方法表 [(name, arity)]（含继承）
+        self.instances = []       # 已生成实例变量名
+        self.instance_cls = {}    # 实例名 → 类名（方法表查找）
         self.funcs = []           # 已定义顶层函数 (name, arity)
         self._tmp = 0
         self._loopvar = 0
@@ -127,6 +136,12 @@ class _Gen:
         # 字符串派生 int（len / indexOf 字面量，镜像静态计算）
         if self.cfg.enable_strings and self.strings and self.rng.random() < 0.12:
             return self.string_int()
+        # 实例方法调用作为整型来源（方法表含继承，arity 严格匹配）
+        if self.cfg.enable_classes and self.instances and self.rng.random() < 0.12:
+            o = self.rng.choice(self.instances)
+            m, marity = self.rng.choice(self.class_methods[self.instance_cls[o]])
+            margs = ", ".join(self.atom() for _ in range(marity))
+            return f"{o}.{m}({margs})"
         if depth >= 2 or self.rng.random() < 0.45:
             return self.atom()
         op = self.rng.choice(["+", "-", "*", "/", "%"])
@@ -463,6 +478,64 @@ class _Gen:
         self.funcs.append((cv, 1))  # 闭包值可被后续 int_expr 作为函数调用
         self.mix(f"{cv}({self.atom()})")
 
+    # ---- 类/继承（字段默认值 + init 覆盖 + super.init + 方法重写/回退链）----
+    def gen_class(self):
+        """生成基类+子类+双实例化+方法调用链（纯 int 世界）。
+
+        类结构（每对）：
+          K<idx>  基类：var f<idx>0 = 默认值; init(p0){this.f0=p0}; m<idx>0() 读 f0; m<idx>1(p1) 减 p1
+          K<idx>S 子类：var f<idx>1 = 默认值; init(p0,p1){super.init(p0); this.f1=p1};
+                         m<idx>0() 重写（f0+f1）; m<idx>2() 读 f1（m<idx>1 继承自基类）
+        字段默认值交替字面量/非字面量小表达式（覆盖 BUG-INH-IR-1 修复路径）。
+        方法体仅引用 this.字段/参数/常量；实例化参数与 init arity 严格匹配。
+        """
+        idx = len(self.classes)
+        base, sub = f"K{idx}", f"K{idx}S"
+        f0, f1 = f"f{idx}0", f"f{idx}1"
+
+        def field_default():
+            # 字面量 / 非字面量小表达式交替（非字面量覆盖 IR 默认值降级修复路径）
+            if self.rng.random() < 0.5:
+                return str(self.rng.randint(0, 99))
+            return f"{self.small_const()} + {self.small_const()}"
+
+        # ---- 基类 ----
+        self.emit(f"class {base} {{")
+        self.indent += 1
+        self.emit(f"var {f0} = {field_default()};")
+        self.emit(f"fun init(p0) {{ this.{f0} = p0; }}")
+        self.emit(f"fun m{idx}0() {{ return this.{f0}; }}")
+        self.emit(f"fun m{idx}1(p1) {{ return (this.{f0} - p1); }}")
+        self.indent -= 1
+        self.emit("}")
+        # ---- 子类 ----
+        self.emit(f"class {sub} extends {base} {{")
+        self.indent += 1
+        self.emit(f"var {f1} = {field_default()};")
+        self.emit(f"fun init(p0, p1) {{ super.init(p0); this.{f1} = p1; }}")
+        self.emit(f"fun m{idx}0() {{ return (this.{f0} + this.{f1}); }}")
+        self.emit(f"fun m{idx}2() {{ return this.{f1}; }}")
+        self.indent -= 1
+        self.emit("}")
+        self.classes.append(idx)
+        self.class_methods[base] = [(f"m{idx}0", 0), (f"m{idx}1", 1)]
+        self.class_methods[sub] = [(f"m{idx}0", 0), (f"m{idx}1", 1), (f"m{idx}2", 0)]
+        # 实例化 + 方法调用折入校验和（基类 1 参 / 子类 2 参）
+        self.gen_instance(base, 1)
+        self.gen_instance(sub, 2)
+
+    def gen_instance(self, cls, arity):
+        """var o = K(args); 调用 1-2 个方法折入校验和。"""
+        o = f"o{len(self.instances)}"
+        args = ", ".join(self.atom() for _ in range(arity))
+        self.emit(f"var {o} = {cls}({args});")
+        self.instances.append(o)
+        self.instance_cls[o] = cls
+        for _ in range(self.rng.randint(1, 2)):
+            m, marity = self.rng.choice(self.class_methods[cls])
+            margs = ", ".join(self.atom() for _ in range(marity))
+            self.mix(f"{o}.{m}({margs})")
+
     # ---- 顶层生成 ----
     def gen_dict(self):
         """生成一个全局字典：{'k0': <int>, 'k1': <int>, ...}（值规范化，键集合确定）。"""
@@ -487,6 +560,9 @@ class _Gen:
         if cfg.enable_closures:
             for _ in range(self.rng.randint(1, 2)):
                 self.gen_closure()
+        if cfg.enable_classes:
+            for _ in range(self.rng.randint(1, 2)):
+                self.gen_class()
 
         # 全局整型变量
         for _ in range(cfg.num_globals):
@@ -546,6 +622,7 @@ def build_parser():
     p.add_argument("--no-dicts", action="store_true", help="禁用字典")
     p.add_argument("--no-strings", action="store_true", help="禁用字符串")
     p.add_argument("--no-closures", action="store_true", help="禁用闭包工厂")
+    p.add_argument("--no-classes", action="store_true", help="禁用类/继承")
     p.add_argument("--out", default=None, help="输出文件（默认 stdout）")
     return p
 
@@ -563,6 +640,7 @@ def config_from_args(args):
         enable_dicts=not args.no_dicts,
         enable_strings=not args.no_strings,
         enable_closures=not args.no_closures,
+        enable_classes=not args.no_classes,
     )
 
 
