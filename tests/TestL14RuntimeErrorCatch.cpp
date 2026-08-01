@@ -135,6 +135,7 @@ std::string runJIT(const std::string& src) {
     }
     return out;
 #else
+    (void)src;
     return {};
 #endif
 }
