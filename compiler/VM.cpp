@@ -1245,8 +1245,11 @@ VMResult VM::dispatchDictBuiltin(const Value& obj, BuiltinMethod method, const s
     Value mutableObj = std::move(stack_.back());
     stack_.pop_back();
 
-    if (method == BuiltinMethod::DICT_REMOVE) {
-        // 注：ARR_REMOVE 已在 dispatchArrayBuiltin 中处理，此处仅处理 DICT_REMOVE
+    if (method == BuiltinMethod::DICT_REMOVE || method == BuiltinMethod::ARR_REMOVE) {
+        // BUG-DICT-REMOVE fix: classifyBuiltinMethod 将 "remove" 统一归类为 ARR_REMOVE
+        // （从不产生 DICT_REMOVE），故 dict 接收者的 remove 之前落入 else 报
+        // “字典没有方法 remove”（interp 经 BuiltinMethods::handleDictMethod 按名分派可用，
+        // 三后端不一致）。数组 receiver 的 ARR_REMOVE 已在 dispatchArrayBuiltin 处理，不会到达此处。
         if (args.size() != 1)
             return runtimeError("remove 期望 1 个参数(键)", DiagCodes::kArityMismatch);
         // L4 fix: 字典键支持 string/int/bool/float

@@ -490,7 +490,7 @@ private:
     std::string formatParamError(bool isMethodCall, const std::string& funName, uint8_t argCount,
                                  const RegBytecodeChunk& calleeChunk) const;
 
-    VMResult executeReturnImpl(size_t& ip, Value result);
+    VMResult executeReturnImpl(Value result);
     /// R98 W2: 高阶函数闭包同步调用。手动构造 RegCallFrame + 内部指令循环，
     /// 执行闭包体直到帧弹出。返回值通过 returnReg=dstReg 写入调用者寄存器，
     /// 循环结束后从 reg(dstReg) 读取到 result。

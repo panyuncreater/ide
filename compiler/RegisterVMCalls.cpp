@@ -380,17 +380,20 @@ VMResult RegisterVM::executeCalls(RegOp op, size_t& ip) {
     case RegOp::REG_RETURN: {
         uint8_t src = chunk.code[ip + 1];
         Value result = reg(src);
-        // BUG-REGVM-2 fix: executeReturnImpl 成功返回时帧已弹出、ip 已更新到调用者，
-        // 需调用 stepCallback_ 反映调用者帧状态，否则调试器单步丢失步进事件。
-        VMResult r = executeReturnImpl(ip, std::move(result));
-        if (r == VMResult::VM_OK)
-            notifyStep(ip, op);
+        // BUG-REGVM-2 fix: executeReturnImpl 成功返回时帧已弹出，调用者帧的 ip 已被
+        // 更新为 returnIp。ASAN-CONTAINER-OVERFLOW fix: 原代码此处用 executeReturnImpl 的
+        // ip 引用参数（绑定被调函数帧的 ip）调 notifyStep——该帧已弹出，引用悬垂，
+        // 读写均属 UB（ASan 报 container-overflow，RegisterVMCalls.cpp:1044）。
+        // 改读 currentFrame().ip（调用者帧，由 executeReturnImpl 内部同步）。
+        VMResult r = executeReturnImpl(std::move(result));
+        if (r == VMResult::VM_OK && !frames_.empty())
+            notifyStep(currentFrame().ip, op);
         return r;
     }
     case RegOp::REG_RETURN_NULL: {
-        VMResult r = executeReturnImpl(ip, Value::nullValue());
-        if (r == VMResult::VM_OK)
-            notifyStep(ip, op);
+        VMResult r = executeReturnImpl(Value::nullValue());
+        if (r == VMResult::VM_OK && !frames_.empty())
+            notifyStep(currentFrame().ip, op);
         return r;
     }
     case RegOp::REG_CALL:
@@ -896,7 +899,7 @@ VMResult RegisterVM::invokeClosureSync(const Value& closure, const Value* args, 
     return VMResult::VM_OK;
 }
 
-VMResult RegisterVM::executeReturnImpl(size_t& ip, Value result) {
+VMResult RegisterVM::executeReturnImpl(Value result) {
     if (frames_.empty()) {
         return runtimeError("空帧返回");
     }
@@ -1038,10 +1041,12 @@ VMResult RegisterVM::executeReturnImpl(size_t& ip, Value result) {
     // 恢复调用者 ip
     if (!frames_.empty()) {
         currentFrame().ip = returnIp;
-        // W4 fix / P2 debug fix: 同步更新调用方传入的 ip 局部变量，使 stepCallback_
-        // 在 REG_RETURN 后收到调用者的 ip（原实现仅更新 currentFrame().ip，
-        // 导致 executeCalls 的 stepCallback_({ip, ...}) 读到 OP_RETURN 处的陈旧 ip）。
-        ip = returnIp;
+        // ASAN-CONTAINER-OVERFLOW fix: 原 W4 fix / P2 debug fix 在此同步“调用方传入的
+        // ip 局部变量”（ip = returnIp）——但该 ip 是 executeOneInstruction 对
+        // frames_.back().ip 的引用，帧已在本函数 947 行 pop，写它是写入已弹出 vector
+        // 元素的死区（ASan container-overflow，且为 UB）。真正的状态更新是上面的
+        // currentFrame().ip = returnIp；stepCallback_ 需要调用者 ip 时，由调用方
+        // executeCalls 在返回后读取 currentFrame().ip（此时已是调用者帧）。
     }
 
     return VMResult::VM_OK;
@@ -1448,7 +1453,10 @@ bool RegisterVM::callDictBuiltinMethod(Value& obj, BuiltinMethod method, const s
         runtimeError(r.error().message);
         return true;
     }
-    case BuiltinMethod::DICT_HAS: {
+    case BuiltinMethod::DICT_HAS:
+    case BuiltinMethod::ARR_CONTAINS: {
+        // BUG-DICT-CONTAINS fix: classifyBuiltinMethod 将 "contains" 归类为 ARR_CONTAINS，
+        // dict 接收者复用 has 语义（对齐 VM.cpp 的 DICT_HAS||ARR_CONTAINS 与 interp）。
         auto r = executeSharedDictHas(obj, methodName, args.data(), args.size());
         if (r.is_ok()) {
             result = r.value();
@@ -1466,7 +1474,11 @@ bool RegisterVM::callDictBuiltinMethod(Value& obj, BuiltinMethod method, const s
         runtimeError(r.error().message);
         return true;
     }
-    case BuiltinMethod::DICT_REMOVE: {
+    case BuiltinMethod::DICT_REMOVE:
+    case BuiltinMethod::ARR_REMOVE: {
+        // BUG-DICT-REMOVE fix: classifyBuiltinMethod 将 "remove" 归类为 ARR_REMOVE（从不产生
+        // DICT_REMOVE），dict 接收者删除键（对齐 VM.cpp 与 interp）。数组的 ARR_REMOVE
+        // 已在 callArrayBuiltinMethod 处理，不会到达 dict 分派。
         if (args.size() != 1) {
             runtimeError("remove 期望 1 个参数(键)", DiagCodes::kArityMismatch);
             return true;
