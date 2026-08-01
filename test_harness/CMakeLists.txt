@@ -87,7 +87,9 @@ target_include_directories(debug_test BEFORE PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 set_target_properties(debug_test PROPERTIES AUTOMOC OFF)
 # GNU ld 默认对桩/真实实现的同名符号报 multiple definition（MSVC 则 .obj 优先）；
 # --allow-multiple-definition 保留“命令行目标文件（桩）优先于库”语义，与 MSVC 行为对齐。
-if(NOT MSVC)
+# 注：Apple ld64 天然“命令行 .o 优先于库成员”（库成员仅在符号未解析时拉取），
+# 且不认识 --allow-multiple-definition（报 unknown option），故 macOS 必须排除。
+if(NOT MSVC AND NOT APPLE)
     target_link_options(debug_test PRIVATE -Wl,--allow-multiple-definition)
 endif()
 target_link_libraries(debug_test PRIVATE
