@@ -109,8 +109,8 @@ std::string runRegVM(const std::string& src) {
     } while (0)
 #endif
 
-std::string runJIT(const std::string& src) {
 #ifdef MINILANG_USE_JIT
+std::string runJIT(const std::string& src) {
     Lexer lx;
     auto tk = lx.scan(src);
     Parser p;
@@ -134,11 +134,8 @@ std::string runJIT(const std::string& src) {
         return out + err;
     }
     return out;
-#else
-    (void)src;
-    return {};
-#endif
 }
+#endif // MINILANG_USE_JIT
 
 } // namespace
 
