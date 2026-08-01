@@ -99,8 +99,8 @@ jobs:
             --input perf-raw-output.txt \
             --output perf-benchmark-action.json
           echo "=== Converted benchmark-action entries ==="
-          head -n 5 perf-benchmark-action.json
-          echo "Total entries: $(wc -l < perf-benchmark-action.json)"
+          head -n 8 perf-benchmark-action.json
+          python -c "import json; print('Total entries:', len(json.load(open('perf-benchmark-action.json'))))"
 
       - name: 上传测量结果 artifact
         uses: actions/upload-artifact@v5

@@ -8,7 +8,7 @@
 #   以便在 gh-pages 上自动生成性能趋势图。
 #
 # benchmark-action 期望的输入格式（CustomBenchmark）：
-#   每行一个 JSON 对象，字段：
+#   JSON 数组，每个元素字段：
 #     - name:  基准名（如 "Interpreter::fibonacci"）
 #     - unit:  单位（如 "ms"）
 #     - value: 测量值（数值）
@@ -23,10 +23,14 @@
 #     ]
 #   }
 #
-# 输出示例（每行一个 JSON 对象）：
-#   {"name":"Interpreter::fibonacci","unit":"ms","value":123.45,"extra":{"category":"recursion","output":"46368"}}
-#   ...
+# 输出示例（JSON 数组）：
+#   [
+#     {"name":"Interpreter::fibonacci","unit":"ms","value":123.45,"extra":{...}},
+#     ...
+#   ]
 #
+# 注：benchmark-action 要求 JSON 数组（JSONL 会报 "must be JSON file
+# containing an array of entries"），2026-08-01 CI 实测确认。
 # 用法：
 #   python scripts/perf_to_benchmark_action.py \
 #       --input perf-results.json \
@@ -125,7 +129,7 @@ def main() -> int:
     parser.add_argument(
         "--output", "-o",
         required=True,
-        help="输出 JSON 文件路径（每行一个对象，benchmark-action 兼容）",
+        help="输出 JSON 文件路径（JSON 数组，benchmark-action 兼容）",
     )
     args = parser.parse_args()
 
@@ -140,11 +144,10 @@ def main() -> int:
     payload = extract_perf_json(content)
     entries = convert_to_benchmark_action(payload)
 
-    # 写入输出（每行一个 JSON 对象，benchmark-action 期望的格式）
+    # 写入输出（JSON 数组，benchmark-action 期望的格式）
     with open(args.output, "w", encoding="utf-8") as f:
-        for entry in entries:
-            f.write(json.dumps(entry, ensure_ascii=False))
-            f.write("\n")
+        json.dump(entries, f, ensure_ascii=False, indent=2)
+        f.write("\n")
 
     print(f"[OK] 已转换 {len(entries)} 项基准结果 → {args.output}", file=sys.stderr)
     return 0
