@@ -83,7 +83,7 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -299,7 +299,7 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -328,7 +328,7 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -441,7 +441,7 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -539,7 +539,7 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -587,7 +587,7 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: 安装 cppcheck
         run: sudo apt-get update && sudo apt-get install -y cppcheck
@@ -641,7 +641,7 @@ jobs:
     continue-on-error: true
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: 安装 clang-format
         # 通过 pip 安装固定版本，确保 CI 与本地开发环境格式化输出一致。
@@ -671,7 +671,7 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -693,7 +693,7 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: 检查翻译完整性
         run: |
@@ -723,7 +723,7 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -822,7 +822,7 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -894,7 +894,7 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -962,7 +962,7 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: 安装 Doxygen 与 Graphviz
         # graphviz 提供 dot 命令用于生成类图/调用图
@@ -1013,7 +1013,7 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
