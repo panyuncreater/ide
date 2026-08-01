@@ -37,8 +37,12 @@ class TempDir {
 public:
     explicit TempDir(const std::string& prefix = "minilang_test_") {
         auto tmp = fs::temp_directory_path();
-        // 生成唯一目录名
-        std::string name = prefix + std::to_string(std::hash<std::thread::id>{}(std::this_thread::get_id())) + "_" +
+        // 生成唯一目录名：时间戳保证跨进程唯一（ctest -j 并行时多个进程的
+        // hash<thread::id> 对主线程返回相同值，仅用 thread id + counter 会
+        // 跨进程撞名 → 目录被另一进程 remove_all 导致写入失败，macOS CI 实测）。
+        auto stamp = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+        std::string name = prefix + std::to_string(stamp) + "_" +
+                           std::to_string(std::hash<std::thread::id>{}(std::this_thread::get_id())) + "_" +
                            std::to_string(counter_++);
         path_ = tmp / name;
         fs::create_directories(path_);
