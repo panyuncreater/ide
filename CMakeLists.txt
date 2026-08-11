@@ -5,7 +5,7 @@
 # ============================================================
 
 cmake_minimum_required(VERSION 3.25)
-project(MiniLangIDE VERSION 1.0 LANGUAGES CXX)
+project(MiniLangIDE VERSION 1.3 LANGUAGES CXX)
 
 # ============================================================
 # CMake 模块路径
