@@ -1457,6 +1457,66 @@ TEST(ConsistencyDiff, H2_FieldShadowingByLocal) {
     EXPECT_EQ(ri, rr) << "Interpreter vs RegVM — 字段遮蔽 this.x 一致";
 }
 
+// ============================================================
+// D9 fix: inlinePass 内联含 DEFINE_CLASS 的函数时，类元数据操作数
+// （字段默认值常量索引 IMM_UINT / 父类名索引 IMM_UINT）未重映射
+// ------------------------------------------------------------
+// 通用重映射只处理 CONSTANT/FUNC_NAME/GLOBAL_NAME/FIELD_NAME kind，IMM_UINT
+// 被原样复制。含字面量字段默认值的类声明函数（无 STORE_LOCAL，可内联）被
+// 内联后，DEFINE_CLASS 的字段默认值索引指向 callee 常量池 → RegisterVM 编译
+// 报"DEFINE_CLASS 字段默认值常量索引越界"（P1，RegisterVM 拒绝合法程序）。
+// ============================================================
+
+// 场景 1: 函数内声明类 + 字段默认值 + 方法（内联后字段默认值/方法表正确）
+TEST(ConsistencyDiff, D9_InlineClassFieldDefaultMethodUse) {
+    std::string src = "fun use() {"
+                      "  class Local {"
+                      "    var x = 42;"
+                      "    fun get() { return this.x; }"
+                      "  }"
+                      "  var o = Local();"
+                      "  return o.get();"
+                      "}"
+                      "print(use());";
+    // 修复前 runRegVM_IR 编译失败（字段默认值常量索引越界），修复后三后端一致输出 42
+    EXPECT_EQ(runInterp(src), "42");
+    EXPECT_EQ(runStackVM_IR(src), "42");
+    EXPECT_EQ(runRegVM_IR(src), "42");
+}
+
+// 场景 2: 函数内继承类 + 字段默认值（覆盖父类名索引 IMM_UINT 重映射）
+TEST(ConsistencyDiff, D9_InlineInheritedClassFieldDefault) {
+    std::string src = "fun use() {"
+                      "  class Base {"
+                      "    var b = 10;"
+                      "  }"
+                      "  class Child : Base {"
+                      "    var c = 5;"
+                      "  }"
+                      "  var o = Child();"
+                      "  return o.b + o.c;"
+                      "}"
+                      "print(use());";
+    EXPECT_EQ(runInterp(src), "15");
+    EXPECT_EQ(runStackVM_IR(src), "15");
+    EXPECT_EQ(runRegVM_IR(src), "15");
+}
+
+// 场景 3: 函数内声明类并返回类对象（RegisterVM 应不再编译失败，
+// 与其余后端一致地拒绝运行时类对象调用，而非编译期拒绝）
+// 注：类对象经变量调用时三后端错误消息文本本就不同（Interpreter "未定义的函数" /
+// StackVM "表达式调用需要函数值" / RegisterVM "调用非闭包值"，既有 P2），
+// 此处仅断言 RegisterVM 不再编译期拒绝。
+TEST(ConsistencyDiff, D9_InlineFunctionLocalClassReturn) {
+    std::string src = "fun make() { class Local { var x = 42; } return Local; }"
+                      "var L = make(); var o = L(); print(o.x);";
+    // 修复前 runRegVM_IR 返回编译错误（DEFINE_CLASS 字段默认值常量索引越界）
+    std::string rr = runRegVM_IR(src);
+    EXPECT_NE(rr.find("<compile:"), 0u) << "RegisterVM 不应编译失败: " << rr;
+    // 修复后 RegisterVM 与其余后端同为运行时错误（类对象不可调用）
+    EXPECT_NE(rr.find("<runtime:"), std::string::npos) << "RegisterVM 应报运行时错误: " << rr;
+}
+
 // H3: 多局部变量 — 测试 RegisterVM 寄存器分配
 // AUDIT-H3 fix: RegVM 硬性 32 寄存器上限，IR vreg 分配不含寄存器复用
 // （vreg N → register N 线性映射，见 RegisterBytecodeBackend.h:43）。
@@ -2140,8 +2200,8 @@ TEST(ConsistencyDiff, AuditUpvalue_R2_MultiClosureSharedCounterAfterClose) {
                       "  return [inc, get];\n" // 返回两个闭包（关闭 count）
                       "}\n"
                       "var cs = makeCounter();\n"
-                      "cs[0]();\n"        // inc
-                      "cs[0]();\n"        // inc
+                      "cs[0]();\n"         // inc
+                      "cs[0]();\n"         // inc
                       "print(cs[1]());\n"; // get
     auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
     EXPECT_EQ(ri, "0") << "关闭后经数组索引调用为快照语义（count 关闭为初值）";

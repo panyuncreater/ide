@@ -17,15 +17,15 @@
 
 #include <gtest/gtest.h>
 
-#include "lexer/Lexer.h"
-#include "parser/Parser.h"
-#include "compiler/Compiler.h"
 #include "compiler/Bytecode.h"
-#include "compiler/VM.h"
+#include "compiler/Compiler.h"
 #include "compiler/RegisterVM.h"
-#include "interpreter/Value.h"
+#include "compiler/VM.h"
 #include "interpreter/Interpreter.h"
 #include "interpreter/RuntimeExceptions.h"
+#include "interpreter/Value.h"
+#include "lexer/Lexer.h"
+#include "parser/Parser.h"
 
 #include <string>
 
@@ -34,18 +34,24 @@
 // ============================================================
 
 static std::string runStackVM_IR(const std::string& src) {
-    Lexer lx; auto tk = lx.scan(src);
-    Parser p; auto ast = p.parse(tk);
-    if (!ast) return "<parse-fail>";
-    Compiler c; c.setUseIR(true);
+    Lexer lx;
+    auto tk = lx.scan(src);
+    Parser p;
+    auto ast = p.parse(tk);
+    if (!ast)
+        return "<parse-fail>";
+    Compiler c;
+    c.setUseIR(true);
     auto cr = c.compile(*ast);
-    if (c.getDiagnostics().hasErrors()) return "<compile:" + c.getLastError() + ">";
+    if (c.getDiagnostics().hasErrors())
+        return "<compile:" + c.getLastError() + ">";
     VM vm;
     std::string out;
     vm.setOutputCallback([&](const std::string& s) { out += s; });
     vm.execute(cr);
     if (vm.hasError()) {
-        if (out.empty()) return "<runtime:" + vm.getLastError() + ">";
+        if (out.empty())
+            return "<runtime:" + vm.getLastError() + ">";
         return out + "<runtime:" + vm.getLastError() + ">";
     }
     return out;
@@ -55,52 +61,67 @@ static std::string runStackVM_IR(const std::string& src) {
 // （设为 null），与 IR 路径一致；Interpreter 则从作用域移除（→ undefined）。
 // catch 变量清理测试需对比 IR 路径与 StackVM 路径。
 static std::string runStackVM(const std::string& src) {
-    Lexer lx; auto tk = lx.scan(src);
-    Parser p; auto ast = p.parse(tk);
-    if (!ast) return "<parse-fail>";
+    Lexer lx;
+    auto tk = lx.scan(src);
+    Parser p;
+    auto ast = p.parse(tk);
+    if (!ast)
+        return "<parse-fail>";
     Compiler c;
     auto cr = c.compile(*ast);
-    if (c.getDiagnostics().hasErrors()) return "<compile:" + c.getLastError() + ">";
+    if (c.getDiagnostics().hasErrors())
+        return "<compile:" + c.getLastError() + ">";
     VM vm;
     std::string out;
     vm.setOutputCallback([&](const std::string& s) { out += s; });
     vm.execute(cr);
     if (vm.hasError()) {
-        if (out.empty()) return "<runtime:" + vm.getLastError() + ">";
+        if (out.empty())
+            return "<runtime:" + vm.getLastError() + ">";
         return out + "<runtime:" + vm.getLastError() + ">";
     }
     return out;
 }
 
 static std::string runRegVM(const std::string& src) {
-    Lexer lx; auto tk = lx.scan(src);
-    Parser p; auto ast = p.parse(tk);
-    if (!ast) return "<parse-fail>";
-    Compiler c; c.setUseRegisterVM(true);
+    Lexer lx;
+    auto tk = lx.scan(src);
+    Parser p;
+    auto ast = p.parse(tk);
+    if (!ast)
+        return "<parse-fail>";
+    Compiler c;
+    c.setUseRegisterVM(true);
     c.compile(*ast);
-    if (c.getDiagnostics().hasErrors()) return "<compile:" + c.getLastError() + ">";
+    if (c.getDiagnostics().hasErrors())
+        return "<compile:" + c.getLastError() + ">";
     RegisterVM vm;
     std::string out;
     vm.setOutputCallback([&](const std::string& s) { out += s; });
     vm.execute(c.getLastRegisterResult());
     if (vm.hasError()) {
-        if (out.empty()) return "<runtime:" + vm.getLastError() + ">";
+        if (out.empty())
+            return "<runtime:" + vm.getLastError() + ">";
         return out + "<runtime:" + vm.getLastError() + ">";
     }
     return out;
 }
 
 static std::string runInterpreter(const std::string& src) {
-    Lexer lx; auto tk = lx.scan(src);
-    Parser p; auto ast = p.parse(tk);
-    if (!ast) return "<parse-fail>";
+    Lexer lx;
+    auto tk = lx.scan(src);
+    Parser p;
+    auto ast = p.parse(tk);
+    if (!ast)
+        return "<parse-fail>";
     Interpreter interp;
     std::string out;
     interp.setOutputCallback([&](const std::string& s) { out += s; });
     try {
         interp.execute(*ast);
     } catch (const RuntimeError& e) {
-        if (out.empty()) return "<runtime:" + std::string(e.what()) + ">";
+        if (out.empty())
+            return "<runtime:" + std::string(e.what()) + ">";
         return out + "<runtime:" + std::string(e.what()) + ">";
     } catch (const std::exception& e) {
         return "<runtime:" + std::string(e.what()) + ">";
@@ -144,7 +165,7 @@ TEST(IRAuditPOP, WhileSingleStmtBodyExprStmt) {
     auto irResult = runStackVM_IR(src);
     auto interpResult = runInterpreter(src);
     EXPECT_EQ(irResult, interpResult);
-    EXPECT_EQ(irResult, "3");  // print 不输出换行
+    EXPECT_EQ(irResult, "3"); // print 不输出换行
 }
 
 TEST(IRAuditPOP, ForSingleStmtBodyExprStmt) {
@@ -157,7 +178,7 @@ TEST(IRAuditPOP, ForSingleStmtBodyExprStmt) {
     auto irResult = runStackVM_IR(src);
     auto interpResult = runInterpreter(src);
     EXPECT_EQ(irResult, interpResult);
-    EXPECT_EQ(irResult, "10");  // 0+1+2+3+4 = 10, print 不输出换行
+    EXPECT_EQ(irResult, "10"); // 0+1+2+3+4 = 10, print 不输出换行
 }
 
 TEST(IRAuditPOP, IfElseSingleStmtBody) {
@@ -170,7 +191,7 @@ TEST(IRAuditPOP, IfElseSingleStmtBody) {
     auto irResult = runStackVM_IR(src);
     auto interpResult = runInterpreter(src);
     EXPECT_EQ(irResult, interpResult);
-    EXPECT_EQ(irResult, "bigend");  // print 不输出换行
+    EXPECT_EQ(irResult, "bigend"); // print 不输出换行
 }
 
 // ============================================================
@@ -205,7 +226,7 @@ TEST(IRAuditSCOPE, NestedForLoopVarScope) {
     auto irResult = runStackVM_IR(src);
     auto interpResult = runInterpreter(src);
     EXPECT_EQ(irResult, interpResult);
-    EXPECT_EQ(irResult, "00011011");  // print 不输出换行
+    EXPECT_EQ(irResult, "00011011"); // print 不输出换行
 }
 
 // ============================================================
@@ -295,7 +316,7 @@ TEST(IRAuditSLOTNAME, NestedIndexAssignGlobalVar) {
     auto irResult = runStackVM_IR(src);
     auto interpResult = runInterpreter(src);
     EXPECT_EQ(irResult, interpResult);
-    EXPECT_EQ(irResult, "992");  // print 不输出换行
+    EXPECT_EQ(irResult, "992"); // print 不输出换行
 }
 
 TEST(IRAuditSLOTNAME, NestedMemberAssignGlobalVar) {
@@ -311,7 +332,7 @@ TEST(IRAuditSLOTNAME, NestedMemberAssignGlobalVar) {
     auto irResult = runStackVM_IR(src);
     auto interpResult = runInterpreter(src);
     EXPECT_EQ(irResult, interpResult);
-    EXPECT_EQ(irResult, "1020");  // print 不输出换行
+    EXPECT_EQ(irResult, "1020"); // print 不输出换行
 }
 
 // ============================================================
@@ -333,7 +354,7 @@ TEST(IRAuditDCE2, RegVMWithOptimization) {
     auto regResult = runRegVM(src);
     auto interpResult = runInterpreter(src);
     EXPECT_EQ(regResult, interpResult);
-    EXPECT_EQ(regResult, "3");  // print 不输出换行
+    EXPECT_EQ(regResult, "3"); // print 不输出换行
 }
 
 TEST(IRAuditDCE2, RegVMUnusedLocalVar) {
@@ -349,7 +370,7 @@ TEST(IRAuditDCE2, RegVMUnusedLocalVar) {
     auto regResult = runRegVM(src);
     auto interpResult = runInterpreter(src);
     EXPECT_EQ(regResult, interpResult);
-    EXPECT_EQ(regResult, "10");  // print 不输出换行
+    EXPECT_EQ(regResult, "10"); // print 不输出换行
 }
 
 // ============================================================
@@ -411,7 +432,7 @@ TEST(IRAuditOPT1, SubFunctionConstantFolding) {
     auto interpResult = runInterpreter(src);
     EXPECT_EQ(irResult, interpResult);
     EXPECT_EQ(regResult, interpResult);
-    EXPECT_EQ(irResult, "6");  // print 不输出换行
+    EXPECT_EQ(irResult, "6"); // print 不输出换行
 }
 
 TEST(IRAuditOPT1, MultipleSubFunctionsOptimized) {
@@ -427,7 +448,7 @@ TEST(IRAuditOPT1, MultipleSubFunctionsOptimized) {
     auto interpResult = runInterpreter(src);
     EXPECT_EQ(irResult, interpResult);
     EXPECT_EQ(regResult, interpResult);
-    EXPECT_EQ(irResult, "15");  // 6 + 9 = 15, print 不输出换行
+    EXPECT_EQ(irResult, "15"); // 6 + 9 = 15, print 不输出换行
 }
 
 // ============================================================
@@ -500,7 +521,7 @@ TEST(IRAuditTRY1, CatchVarInFunction) {
     auto interpResult = runInterpreter(src);
     EXPECT_EQ(irResult, stackResult);
     EXPECT_EQ(irResult, interpResult);
-    EXPECT_EQ(irResult, "err");  // print 不输出换行
+    EXPECT_EQ(irResult, "err"); // print 不输出换行
 }
 
 // ============================================================
@@ -573,19 +594,21 @@ TEST(IRAuditFV1, ClassMethodCompilesWithOuterVarRef) {
         var result = outer();
         print(result);
     )";
-    Lexer lx; auto tk = lx.scan(src);
-    Parser p; auto ast = p.parse(tk);
+    Lexer lx;
+    auto tk = lx.scan(src);
+    Parser p;
+    auto ast = p.parse(tk);
     ASSERT_NE(ast, nullptr);
     // IR 路径编译应成功（不报编译错误）
-    Compiler c; c.setUseIR(true);
+    Compiler c;
+    c.setUseIR(true);
     c.compile(*ast);
-    EXPECT_FALSE(c.getDiagnostics().hasErrors())
-        << "IR 路径编译应成功: " << c.getLastError();
+    EXPECT_FALSE(c.getDiagnostics().hasErrors()) << "IR 路径编译应成功: " << c.getLastError();
     // 寄存器式后端编译也应成功
-    Compiler c2; c2.setUseRegisterVM(true);
+    Compiler c2;
+    c2.setUseRegisterVM(true);
     c2.compile(*ast);
-    EXPECT_FALSE(c2.getDiagnostics().hasErrors())
-        << "寄存器式后端编译应成功: " << c2.getLastError();
+    EXPECT_FALSE(c2.getDiagnostics().hasErrors()) << "寄存器式后端编译应成功: " << c2.getLastError();
 }
 
 // ============================================================
@@ -653,7 +676,7 @@ TEST(IRAuditVARDECL1, ClassTypeAnnotationInFunction) {
     auto irResult = runStackVM_IR(src);
     auto interpResult = runInterpreter(src);
     EXPECT_EQ(irResult, interpResult);
-    EXPECT_EQ(irResult, "12");  // print 不输出换行
+    EXPECT_EQ(irResult, "12"); // print 不输出换行
 }
 
 // ============================================================
@@ -868,4 +891,56 @@ TEST(IRAuditP2, ComprehensiveP2Fixes) {
     EXPECT_EQ(irResult, interpResult);
     EXPECT_EQ(regResult, interpResult);
     EXPECT_NE(irResult.find("err:negative"), std::string::npos);
+}
+
+// ============================================================
+// D12 (BUG-IBACKEND-2): IR 路径 lowering 填充真实 column（原恒 0）
+// 验证 StackVM(IR) 与 RegisterVM(IR) 两条 lowering 路径的 columns 表
+// 不再全为 0——调试器列级定位数据（columns 与 lines 等长且含非零列）。
+// ============================================================
+
+TEST(IRAuditColumn, StackVMIRColumnsPopulated) {
+    // 源码第二/三行语句不在行首（缩进 4 空格），其 AST 节点 column > 0
+    std::string src = "var x = 1;\n    var y = 2;\n    print(x + y);\n";
+    Lexer lx;
+    auto tk = lx.scan(src);
+    Parser p;
+    auto ast = p.parse(tk);
+    ASSERT_NE(ast, nullptr);
+    Compiler c;
+    c.setUseIR(true);
+    auto cr = c.compile(*ast);
+    ASSERT_FALSE(c.getDiagnostics().hasErrors());
+    ASSERT_EQ(cr.mainChunk.columns.size(), cr.mainChunk.lines.size());
+    bool anyNonZero = false;
+    for (int col : cr.mainChunk.columns) {
+        if (col > 0) {
+            anyNonZero = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(anyNonZero) << "StackVM(IR) lowering 后 columns 应含非零列（D12/BUG-IBACKEND-2）";
+}
+
+TEST(IRAuditColumn, RegisterVMIRColumnsPopulated) {
+    std::string src = "var x = 1;\n    var y = 2;\n    print(x + y);\n";
+    Lexer lx;
+    auto tk = lx.scan(src);
+    Parser p;
+    auto ast = p.parse(tk);
+    ASSERT_NE(ast, nullptr);
+    Compiler c;
+    c.setUseRegisterVM(true);
+    c.compile(*ast);
+    ASSERT_FALSE(c.getDiagnostics().hasErrors());
+    const auto& reg = c.getLastRegisterResult();
+    ASSERT_EQ(reg.mainChunk.columns.size(), reg.mainChunk.lines.size());
+    bool anyNonZero = false;
+    for (int col : reg.mainChunk.columns) {
+        if (col > 0) {
+            anyNonZero = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(anyNonZero) << "RegisterVM(IR) lowering 后 columns 应含非零列（D12/BUG-IBACKEND-2）";
 }

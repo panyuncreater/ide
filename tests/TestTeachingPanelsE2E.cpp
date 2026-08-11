@@ -305,7 +305,8 @@ TEST_F(MemoryModelPanelE2E, Construct_InitialSubpageIsNanBox) {
 }
 
 TEST_F(MemoryModelPanelE2E, ClickNanBoxButton_SwitchesToIndex0) {
-    auto* btn = findButtonByText(panel_, "NaN-boxing 编码");
+    // UX-R2 fix: TeachingSubPageBar 按钮文本带 ① 前缀
+    auto* btn = findButtonByText(panel_, "① NaN-boxing 编码");
     ASSERT_NE(btn, nullptr);
     btn->click();
     auto* stack = findStack(panel_);
@@ -313,7 +314,8 @@ TEST_F(MemoryModelPanelE2E, ClickNanBoxButton_SwitchesToIndex0) {
 }
 
 TEST_F(MemoryModelPanelE2E, ClickRefCountButton_SwitchesToIndex1) {
-    auto* btn = findButtonByText(panel_, "引用计数 & COW");
+    // UX-R2 fix: TeachingSubPageBar 按钮文本带 ② 前缀
+    auto* btn = findButtonByText(panel_, "② 引用计数 & COW");
     ASSERT_NE(btn, nullptr);
     btn->click();
     auto* stack = findStack(panel_);
@@ -321,7 +323,8 @@ TEST_F(MemoryModelPanelE2E, ClickRefCountButton_SwitchesToIndex1) {
 }
 
 TEST_F(MemoryModelPanelE2E, ClickGcButton_SwitchesToIndex2) {
-    auto* btn = findButtonByText(panel_, "GcManager mark-sweep");
+    // UX-R2 fix: TeachingSubPageBar 按钮文本带 ③ 前缀
+    auto* btn = findButtonByText(panel_, "③ GcManager mark-sweep");
     ASSERT_NE(btn, nullptr);
     btn->click();
     auto* stack = findStack(panel_);
@@ -881,9 +884,12 @@ TEST_F(MemoryModelPanelE2E, C1_EachSubpageHasContent) {
         auto* browser = host->findChild<QTextBrowser*>();
         auto* table = host->findChild<QTableWidget*>();
         bool hasContent = false;
-        if (list && list->count() > 0) hasContent = true;
-        if (browser && !browser->toPlainText().isEmpty()) hasContent = true;
-        if (table && table->rowCount() > 0) hasContent = true;
+        if (list && list->count() > 0)
+            hasContent = true;
+        if (browser && !browser->toPlainText().isEmpty())
+            hasContent = true;
+        if (table && table->rowCount() > 0)
+            hasContent = true;
         // 兜底：检查是否有非空文本 QLabel（如 regVmHintLabel_）
         if (!hasContent) {
             auto labels = host->findChildren<QLabel*>();
@@ -917,4 +923,3 @@ TEST_F(BytecodeTracePanelE2E, C1_LibraryListCountStableAfterToggle) {
     ASSERT_NE(listAfter, nullptr);
     EXPECT_EQ(listAfter->count(), initialCount);
 }
-

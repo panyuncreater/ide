@@ -39,6 +39,7 @@
 #include "parser/Parser.h"
 
 #ifdef MINILANG_USE_JIT
+#include "common/RuntimeLimits.h" // R166: RuntimeConfig 循环迭代上限
 #include "compiler/JIT.h"
 #include "interpreter/GcManager.h" // P2-9: CallbackSuppressor 测试
 #endif
@@ -5255,6 +5256,37 @@ TEST(TestJIT, R160RecursionDepthLimitUnifiedMessage) {
     EXPECT_NE(vmOut.find("递归深度超过限制 (256)"), std::string::npos) << "StackVM 递归深度错误消息，实际: " << vmOut;
 }
 
+// ============================================================
+// R166: 循环迭代限制 — 无限循环不再永久挂死
+// ============================================================
+// 修复前 JIT 无限循环无任何上限（已知 P1 差异，见 R160 上方注记）：Interpreter
+// 由 MAX_LOOP_ITERATIONS 拦截（"循环迭代次数超过上限"），StackVM/RegisterVM 由
+// 指令预算拦截（"指令执行数超过上限"），JIT 永久挂死。R166 在 OP_LOOP 回边
+// 注入 per-chunk 迭代计数，超限报错消息与 Interpreter 一致。
+TEST(TestJIT, R166LoopIterationLimitUnifiedMessage) {
+    // 调小上限加速测试（默认 1000 万次迭代在 Interpreter 需 ~0.3s）
+    auto& cfg = RuntimeLimits::RuntimeConfig::instance();
+    const int64_t oldLimit = cfg.maxLoopIterations();
+    cfg.setMaxLoopIterations(1000);
+
+    std::string src = "var i = 0; while (i < 2000) { i = i + 1; } print(i);";
+    // JIT: 第 1001 次迭代（i=1000）时应报迭代上限错误而非挂死
+    std::string jitOut = runJIT(src);
+    EXPECT_NE(jitOut.find("循环迭代次数超过上限 1000"), std::string::npos)
+        << "JIT 循环超限应报\"循环迭代次数超过上限\"，实际: " << jitOut;
+    // Interpreter: 相同消息（语义对齐基准）
+    std::string interpOut = minilang_test::runInterpreter(src);
+    EXPECT_NE(interpOut.find("循环迭代次数超过上限 1000"), std::string::npos)
+        << "Interpreter 循环超限消息，实际: " << interpOut;
+
+    // 上限内循环不受影响（500 次迭代 < 1000）
+    std::string ok = "var j = 0; while (j < 500) { j = j + 1; } print(j);";
+    EXPECT_EQ(runJIT(ok), "500");
+    EXPECT_EQ(minilang_test::runInterpreter(ok), "500");
+
+    cfg.setMaxLoopIterations(oldLimit); // 恢复，避免污染后续测试
+}
+
 // R160: inline cache for OP_MEMBER_GET 测试
 // 验证：(1) cache 未命中时正确填充 (2) 后续访问命中 cache (3) 语义结果正确
 TEST(TestJIT, R160InlineCacheForMemberGet) {
@@ -5929,8 +5961,7 @@ TEST(TestJIT, R165RecursionDepthAtLimit256Fails) {
     std::string jitOut = runJIT(src);
     std::string vmOut = minilang_test::runStackVM(src);
     // 错误前缀不同（<jit-runtime: vs <runtime:），但核心消息应一致
-    EXPECT_NE(jitOut.find("递归深度超过限制 (256)"), std::string::npos)
-        << "JIT 256 层递归应触发限制，实际: " << jitOut;
+    EXPECT_NE(jitOut.find("递归深度超过限制 (256)"), std::string::npos) << "JIT 256 层递归应触发限制，实际: " << jitOut;
     EXPECT_NE(vmOut.find("递归深度超过限制 (256)"), std::string::npos)
         << "StackVM 256 层递归应触发限制，实际: " << vmOut;
 }
