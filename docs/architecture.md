@@ -60,7 +60,7 @@ MiniLang 维护四个执行后端并存策略：
 | 后端 | 类 | 特点 |
 |------|------|------|
 | Interpreter | `Interpreter` | 树遍历，基准实现，最易调试 |
-| StackVM | `VM` | 栈式字节码，89 条 OpCode，1024×8B 定长操作数栈 + 栈顶指针 |
+| StackVM | `VM` | 栈式字节码，89 条有效 OpCode（枚举 90 个成员，OP_CONSTANT 已废弃保留），1024×8B 定长操作数栈 + 栈顶指针 |
 | RegisterVM | `RegisterVM` | 寄存器式字节码，68 条 RegOp，32 虚拟寄存器 R0-R31 |
 | JIT | `JITBackend` | 基于 asmjit 的本地机器码后端（x86-64），可选启用（`MINILANG_USE_JIT`，x86-64 默认 ON）；另有实验性 ARM64 PoC（`MINILANG_USE_JIT_A64`，仅基本算术+控制流） |
 

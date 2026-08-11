@@ -11,6 +11,8 @@
 | [测试指南](testing.md) | 多后端一致性验证方法论、测试分类与编写指南 |
 | [设计决策 (ADR)](adr/) | 架构决策记录，详见下方索引 |
 | [贡献指南](../CONTRIBUTING.md) | 环境搭建、编码规范、PR 流程 |
+| [记忆管理](../AGENTS.md#7-记忆归档) | memory 压缩归档规则与 `scripts/compress_memory.ps1` 脚本 |
+| [规格约定 (specs)](specs/) | 内存管理 / 多后端一致性 / 测试编写强制约定 |
 
 ## 设计决策记录 (ADR)
 
@@ -41,6 +43,35 @@
 | 异常安全 | UI 槽 try/catch、unique_ptr 防 bad_alloc 泄漏 |
 | 内存安全 | 运行时越界检查、NaN-box 类型前置校验、value-initialize |
 | 生命周期 | 无裸指针、shared_ptr 共享所有权、QThread unique_ptr 管理 |
+
+## 质量门禁工具
+
+性能、覆盖率与 VM profiling 工具链的用法约定（工具脚本位于 `scripts/`）。
+
+### 性能基准回归（minilang_perf_test + perf_baseline.py）
+
+- 构建：`MINILANG_BUILD_PERF_TESTS=ON`（默认）构建 `minilang_perf_test` 目标（5 category 9 项基准，`tests/TestPerformanceRegression.cpp`）
+- 基线文件：仓库根 `perf-baseline.json`（v3 schema，含 `tolerance` / `category_tolerance` 差异化容忍度）
+- 对比：`python scripts/perf_baseline.py check --baseline perf-baseline.json --binary out/build/debug/tests/minilang_perf_test`（默认容忍倍数 2.0x）
+- 刷新基线：`python scripts/perf_baseline.py update --baseline perf-baseline.json --binary <perf_test>`（保留旧基线 tolerance 字段，禁止用旧 schema 覆盖）
+- CI 联动：`scripts/perf_to_benchmark_action.py` 将基线转化为 benchmark action
+
+### 覆盖率阈值（coverage_threshold.py）
+
+- 输入：Cobertura XML 报告（`linux-gcc-coverage` preset 产出）
+- 检查：`python scripts/coverage_threshold.py --report <cobertura.xml> --line-threshold <0-100> --branch-threshold <0-100>`
+
+### VM opcode profiling（vm_profile_report.py）
+
+- 前置：`MINILANG_VM_PROFILING=ON` 构建（独立 build 目录 `out/build/vm-profile`）
+- 报告：`python scripts/vm_profile_report.py --top 20`（默认样本 `samples/mini`；`--skip-build` 复用已有产物）
+
+### 全量验证入口（verify_all.ps1）
+
+- AGENTS.md §6 强制验证规则的脚本化执行：构建全部目标 + ctest 全量（`-j 8`）
+- 用法：`powershell -ExecutionPolicy Bypass -File scripts/verify_all.ps1`（可选 `-Filter <ctest 正则>`）
+- 依赖：本机 VS 2022 DevShell（`D:\vs`），详见脚本头注释
+
 
 
 ## 新增教学面板指南
