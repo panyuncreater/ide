@@ -817,8 +817,10 @@ IRBasicBlock& AstIRBuilder::newBlock() {
     return *currentBlock_;
 }
 
-void AstIRBuilder::emitIR(IROp op, std::vector<IROperand> operands, int line) {
-    currentBlock_->instructions.emplace_back(op, std::move(operands), line);
+void AstIRBuilder::emitIR(IROp op, std::vector<IROperand> operands, int line, int column) {
+    // D12 fix: column 默认 -1 时沿用 currentColumn_（visitNode 入口记录最近节点列）
+    int col = (column >= 0) ? column : currentColumn_;
+    currentBlock_->instructions.emplace_back(op, std::move(operands), line, col);
 }
 
 IROperand AstIRBuilder::emitConst(const Value& v, int line) {
@@ -1187,6 +1189,8 @@ void AstIRBuilder::visitStatement(ASTNode* node) {
 IROperand AstIRBuilder::visitNode(ASTNode* node) {
     if (!node)
         return IROperand::vreg(0); // 空节点返回空 vreg
+    // D12 fix: 记录当前节点列，供 emitIR 默认填充 column（BUG-IBACKEND-2）
+    currentColumn_ = node->column;
     switch (node->nodeType) {
     // 表达式（返回 vreg）
     case NodeType::NODE_BINARY_OP:
@@ -1935,6 +1939,8 @@ void AstIRBuilder::emitFunctionPrologue(FunDecl& node, FunctionEmitCtx& ctx) {
         localSlotNames_[0] = "this";
         ir_->arity += 1;
         ir_->requiredArity += 1;
+        // D6 fix: 显式标记方法（栈式后端据此还原 arity，不依赖函数名含 '.' 推断）
+        ir_->isMethod = true;
         // L7 fix: 不将字段注册为 LOCAL slot。改为在 resolveVar 中将方法体内裸字段访问
         //   解析为 MEMBER（this.field → MEMBER_GET/MEMBER_SET on this slot 0）。
         //   原因：StackVM 方法帧布局为 [this | field0..N | args | locals]（caller 推字段槽），

@@ -1392,7 +1392,25 @@ bool inlinePass(IRModule& module) {
                             // 复制指令，重映射 vreg + 常量池/名称池 + 参数 dest 替换
                             std::vector<IROperand> newOps;
                             newOps.reserve(cInstr.operands.size());
-                            for (const auto& op : cInstr.operands) {
+
+                            // D9 fix: DEFINE_CLASS 类元数据操作数重映射（IMM_UINT kind 承载的池索引）。
+                            // 通用重映射只处理 CONSTANT/FUNC_NAME/GLOBAL_NAME/FIELD_NAME kind，而
+                            // DEFINE_CLASS 的字段默认值常量索引（[3+i*3+1]）与父类名索引（[1]）是 IMM_UINT
+                            // kind，原样复制会指向 callee 自己的池 → 内联后索引越界/错位
+                            // （复现：`fun make(){ class L { var x=42; } return L; }` 内联后
+                            // RegisterBytecodeBackend 报"DEFINE_CLASS 字段默认值常量索引越界"）。
+                            // 操作数布局：[0]className(FUNC_NAME) [1]parentName(IMM_UINT/UINT32_MAX)
+                            //   [2]fieldCount [3+i*3]fieldName(FIELD_NAME)
+                            //   [3+i*3+1]defaultConstIdx(IMM_UINT/UINT32_MAX)
+                            //   [3+i*3+2]exprLocalSlot(IMM_UINT/UINT32_MAX，含非字面量默认值的函数
+                            //   因 STORE_LOCAL 已被 isInlineable 拒绝内联，此处防御性保留)
+                            //   [3+3F]methodCount [方法对...]
+                            const uint32_t d9FieldCount =
+                                (cInstr.op == IROp::DEFINE_CLASS && cInstr.operands.size() >= 3)
+                                    ? cInstr.operands[2].index
+                                    : 0;
+                            for (size_t oi = 0; oi < cInstr.operands.size(); ++oi) {
+                                const auto& op = cInstr.operands[oi];
                                 if (op.kind == IROperandKind::VIRTUAL) {
                                     newOps.push_back(IROperand::vreg(resolveVReg(remapVReg(op.index))));
                                 } else if (op.kind == IROperandKind::CONSTANT) {
@@ -1401,6 +1419,16 @@ bool inlinePass(IRModule& module) {
                                            op.kind == IROperandKind::GLOBAL_NAME ||
                                            op.kind == IROperandKind::FIELD_NAME) {
                                     newOps.push_back(IROperand{op.kind, remapName(op.index)});
+                                } else if (op.kind == IROperandKind::IMM_UINT && cInstr.op == IROp::DEFINE_CLASS) {
+                                    // DEFINE_CLASS 的 IMM_UINT 池索引特判（D9 fix）
+                                    if (oi == 1 && op.index != UINT32_MAX) {
+                                        newOps.push_back(IROperand::imm(remapName(op.index))); // 父类名
+                                    } else if (oi >= 3 && oi < 3 + d9FieldCount * 3 && (oi - 3) % 3 == 1 &&
+                                               op.index != UINT32_MAX) {
+                                        newOps.push_back(IROperand::imm(remapConst(op.index))); // 字段默认值
+                                    } else {
+                                        newOps.push_back(op);
+                                    }
                                 } else {
                                     newOps.push_back(op);
                                 }

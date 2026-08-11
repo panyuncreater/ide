@@ -29,10 +29,11 @@ bool BytecodeIRBackend::lower(const IRFunction& ir) {
     chunk_->name = ir.name;
     // 栈式 VM 约定：方法的 arity/requiredArity 不含 this（this 作为 slot 0 单独推送）。
     // 但 IR 在 visitFunDecl 中为 RegVM 约定对方法 arity/requiredArity += 1（含 this）。
-    // 此处还原为栈式 VM 约定：方法名含 '.'（ClassName.method）即视为方法，减去 this。
+    // 此处还原为栈式 VM 约定：用 IRFunction::isMethod 显式标志（D6 fix，不再从函数名
+    // 含 '.' 推断——嵌套类/模块函数名同样可能含 '.'），减去 this。
     // 否则栈 VM 的 executeCall/executeClassNew 会因 argCount < requiredArity 触发
     // "构造函数 init 期望 1-1 个参数，但传入了 0 个" 错误（回归：NestedMemberAccessPush）。
-    const bool isMethod = ir.name.find('.') != std::string::npos;
+    const bool isMethod = ir.isMethod;
     chunk_->arity = isMethod ? (ir.arity > 0 ? ir.arity - 1 : 0) : ir.arity;
     chunk_->requiredArity = isMethod ? (ir.requiredArity > 0 ? ir.requiredArity - 1 : 0) : ir.requiredArity;
     chunk_->localCount = ir.localCount;
@@ -63,10 +64,10 @@ bool BytecodeIRBackend::lower(const IRFunction& ir) {
                 return false;
             }
             // 填充行号表（每条 IR 指令对应若干字节，统一用 instr.line）
-            // BUG-IBACKEND-2: 同步填充 columns（IRInstruction 暂无 column 字段，默认 0）
+            // D12 fix: BUG-IBACKEND-2 修复——columns 填充 instr.column（原恒 0）
             while (chunk_->lines.size() < chunk_->code.size()) {
                 chunk_->lines.push_back(instr.line);
-                chunk_->columns.push_back(0);
+                chunk_->columns.push_back(instr.column);
             }
             ++instrIndex;
         }

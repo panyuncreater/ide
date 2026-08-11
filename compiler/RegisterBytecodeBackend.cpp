@@ -419,14 +419,21 @@ bool RegisterBytecodeBackend::lower(const IRFunction& ir) {
     for (const auto& block : ir.blocks) {
         for (const auto& instr : block.instructions) {
             irToBytecodeOffset_.push_back({instrIndex, chunk_->code.size()});
+            // D12 fix2: writeOp/writeShort/writeByte 内部以 column=0 补齐 lines/columns
+            // （主循环的 while 补齐是死代码），故 lower 后用 instr.column 修正本指令
+            // 写入的字节区间，使 RegisterVM 调试信息携带列号（BUG-IBACKEND-2）。
+            const size_t codeStart = chunk_->code.size();
             if (!lowerInstruction(instr, ir) || hasError_) {
                 return false; // lowering 失败或 vreg 溢出：不生成损坏的字节码
             }
-            // 填充行号表
-            // BUG-IBACKEND-2: 同步填充 columns（IRInstruction 暂无 column 字段，默认 0）
+            for (size_t i = codeStart; i < chunk_->code.size(); ++i) {
+                chunk_->columns[i] = instr.column;
+            }
+            // 填充行号表（writeOp 已同步补齐，此处为防御性兜底）
+            // D12 fix: BUG-IBACKEND-2 修复——columns 填充 instr.column（原恒 0）
             while (static_cast<int>(chunk_->lines.size()) < static_cast<int>(chunk_->code.size())) {
                 chunk_->lines.push_back(instr.line);
-                chunk_->columns.push_back(0);
+                chunk_->columns.push_back(instr.column);
             }
             // P0-REGALLOC fix: 释放最后使用点 == instrIndex 的 vreg 的寄存器
             releaseDeadVRegs(instrIndex);
@@ -842,7 +849,7 @@ bool RegisterBytecodeBackend::lowerUpvalueOps(const IRInstruction& instr, const 
         chunk_->code.push_back(static_cast<uint8_t>(instr.operands[1].index));
         while (static_cast<int>(chunk_->lines.size()) < static_cast<int>(chunk_->code.size())) {
             chunk_->lines.push_back(line);
-            chunk_->columns.push_back(0); // BUG-IBACKEND-2
+            chunk_->columns.push_back(instr.column); // D12 fix: BUG-IBACKEND-2（原恒 0）
         }
         break;
     }
@@ -861,7 +868,7 @@ bool RegisterBytecodeBackend::lowerUpvalueOps(const IRInstruction& instr, const 
         chunk_->code.push_back(static_cast<uint8_t>(instr.operands[0].index));
         while (static_cast<int>(chunk_->lines.size()) < static_cast<int>(chunk_->code.size())) {
             chunk_->lines.push_back(line);
-            chunk_->columns.push_back(0); // BUG-IBACKEND-2
+            chunk_->columns.push_back(instr.column); // D12 fix: BUG-IBACKEND-2（原恒 0）
         }
         break;
     }
@@ -880,7 +887,7 @@ bool RegisterBytecodeBackend::lowerUpvalueOps(const IRInstruction& instr, const 
         chunk_->code.push_back(static_cast<uint8_t>(instr.operands[0].index));
         while (static_cast<int>(chunk_->lines.size()) < static_cast<int>(chunk_->code.size())) {
             chunk_->lines.push_back(line);
-            chunk_->columns.push_back(0); // BUG-IBACKEND-2
+            chunk_->columns.push_back(instr.column); // D12 fix: BUG-IBACKEND-2（原恒 0）
         }
         break;
     }

@@ -296,9 +296,11 @@ enum class IROp : uint8_t {
 struct IRInstruction {
     IROp op;
     std::vector<IROperand> operands;
-    int line = 0; // 源码行号（用于调试）
+    int line = 0;   // 源码行号（用于调试）
+    int column = 0; // D12 fix: 源码列号（BUG-IBACKEND-2，此前恒 0）
 
-    IRInstruction(IROp o, std::vector<IROperand> ops, int ln = 0) : op(o), operands(std::move(ops)), line(ln) {}
+    IRInstruction(IROp o, std::vector<IROperand> ops, int ln = 0, int col = 0)
+        : op(o), operands(std::move(ops)), line(ln), column(col) {}
 };
 
 // ============================================================
@@ -352,6 +354,10 @@ struct IRFunction {
     // 后端 lowering 时复制到 BytecodeChunk::isGenerator / RegBytecodeChunk::isGenerator。
     // VM/RegisterVM 在 CALL 时检测此标志：若为 true，创建协程值而非直接调用。
     bool isGenerator = false;
+    // D6 fix: 显式标记此函数是否为类方法（避免从函数名含 '.' 推断）。
+    // 栈式后端 lower 时据此将 arity/requiredArity 还原为不含 this 的约定；
+    // 不再依赖 "ClassName.method" 命名推断——嵌套类/模块函数名同样可能含 '.'。
+    bool isMethod = false;
     // R164 协程/生成器：yield 总数（从 FunDecl.yieldCount 复制）。
     // 静态 yield 数或 kDynamicYieldCount（INT_MAX，表示存在循环内 yield）。
     int yieldCount = 0;
@@ -601,6 +607,10 @@ private:
     const FunDecl* currentFunctionDecl_ = nullptr; // TCO: 当前函数 FunDecl 指针（非拥有，AST 生命周期内有效）
     uint32_t currentFunctionEntryLabel_ = 0;       // TCO: 当前函数体入口 basic block label（JUMP 目标）
     bool currentFunctionIsMethod_ = false;         // TCO: 当前函数是否为类方法（方法 slot 0 是 this 不能被覆盖）
+    // D12 fix: 最近一次 visitNode 的 AST 节点列（emitIR 默认填充 column 用）。
+    // visitNode 入口设置；子节点访问会覆盖，父节点指令使用最近子节点的列——
+    // 仍比恒 0 精确（调试器列级定位辅助）。
+    int currentColumn_ = 0;
     uint32_t nextLocalSlot_ = 0;
     // BUG-IDE-12 fix: 局部变量 slot→name 映射（索引即 slot），跨作用域累积（不随块退出清除）。
     // 函数最终化时复制到 ir_->localSlotNames，供 RegisterVM 条件断点求值反查变量名。
@@ -848,7 +858,8 @@ private:
     // ---- 辅助方法 ----
     IRBasicBlock& newBlock();
     // 注意：方法名用 emitIR 而非 emit，避免与 Qt 的 emit 宏（Q_EMIT）冲突
-    void emitIR(IROp op, std::vector<IROperand> operands = {}, int line = 0);
+    // D12 fix: column 默认 -1 表示沿用 currentColumn_（最近访问的 AST 节点列）
+    void emitIR(IROp op, std::vector<IROperand> operands = {}, int line = 0, int column = -1);
     IROperand emitConst(const Value& v, int line = 0);
     IROperand emitLoadVar(const std::string& name, int line = 0);
     void emitStoreVar(const std::string& name, IROperand val, int line = 0);
