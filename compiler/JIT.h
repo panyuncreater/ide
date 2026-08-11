@@ -293,6 +293,10 @@ struct JitContext {
     // rwlock/thread 接收者时经 handleSyncObjectMethod 内联完成调用（结果已压栈），
     // 置 1 通知 emitMethodCall 生成的代码跳过 jmp methodEntryPtr 直达 returnLabel。
     int64_t syncMethodHandled = 0; // offset 264: 同步对象方法内联处理标志
+    // R166 fix: 循环迭代限制（无限循环防护）——per-chunk 循环回边计数数组指针。
+    // JIT 代码在 OP_LOOP 回边递增并与此上限比较，超限调用 jitLoopLimitExceeded 报错。
+    uint64_t* loopIterationsPtr = nullptr; // offset 272: per-chunk 循环回边计数数组指针
+    int64_t maxLoopIterations = 0;         // offset 280: 迭代上限（execute() 时从 RuntimeConfig 读取）
 };
 
 // ============================================================
@@ -330,6 +334,8 @@ constexpr int globalsPtr = 240;        // R162: 名称变量表指针
 constexpr int gcNeededFlag = 248;      // Safepoint GC 请求标志指针
 constexpr int enumRegistryPtr = 256;   // enum 元信息注册表指针
 constexpr int syncMethodHandled = 264; // 同步对象方法内联处理标志（邮箱）
+constexpr int loopIterationsPtr = 272; // R166 fix: per-chunk 循环迭代计数数组指针
+constexpr int maxLoopIterations = 280; // R166 fix: 循环迭代上限
 } // namespace jit_offset
 static_assert(offsetof(JitContext, hasError) == jit_offset::hasError, "hasError offset");
 static_assert(offsetof(JitContext, globalSlots) == jit_offset::globalSlots, "globalSlots offset");
@@ -360,6 +366,8 @@ static_assert(offsetof(JitContext, globalsPtr) == jit_offset::globalsPtr, "globa
 static_assert(offsetof(JitContext, gcNeededFlag) == jit_offset::gcNeededFlag, "gcNeededFlag offset");
 static_assert(offsetof(JitContext, enumRegistryPtr) == jit_offset::enumRegistryPtr, "enumRegistryPtr offset");
 static_assert(offsetof(JitContext, syncMethodHandled) == jit_offset::syncMethodHandled, "syncMethodHandled offset");
+static_assert(offsetof(JitContext, loopIterationsPtr) == jit_offset::loopIterationsPtr, "loopIterationsPtr offset");
+static_assert(offsetof(JitContext, maxLoopIterations) == jit_offset::maxLoopIterations, "maxLoopIterations offset");
 
 // Prologue 栈布局常量
 // 48 = 5 个 callee-saved 寄存器 (r12/r13/r14/r15/rbx) × 8B + 8B 对齐填充
@@ -1020,6 +1028,10 @@ public:
 
     /// R157: per-chunk OSR 已触发标志数组（0=未触发，1=已触发，避免重复触发）
     std::vector<uint64_t> osrRecompiledFlags_;
+
+    /// R166 fix: per-chunk 循环迭代计数数组（无限循环防护）
+    /// 索引与 chunkCallCounts_ 对齐，OP_LOOP 回边时递增，超限报错对齐 Interpreter。
+    std::vector<uint64_t> loopIterations_;
 
     /// R157: 测试用自定义 OSR 阈值覆盖（name→threshold）
     std::unordered_map<std::string, uint64_t> customOsrThresholds_;

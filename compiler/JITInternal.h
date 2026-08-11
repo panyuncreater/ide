@@ -204,6 +204,10 @@ int64_t jitDeoptimize(JitContext* ctx, int64_t chunkIdx);
 
 // --- Safepoint GC (JIT.cpp) ---
 void jitSafepointGc(JitContext* ctx);
+
+// --- 循环迭代限制 (JIT.cpp) ---
+// OP_LOOP 回边超限时调用：设置错误消息 + hasError（对齐 Interpreter MAX_LOOP_ITERATIONS）
+void jitLoopLimitExceeded(JitContext* ctx, int64_t limit);
 } // extern "C"
 
 #endif // MINILANG_USE_JIT

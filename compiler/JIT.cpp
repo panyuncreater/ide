@@ -97,6 +97,21 @@ void JITBackend::compileError(const std::string& msg) {
 }
 
 // ============================================================
+// 循环迭代限制 — OP_LOOP 回边超限报错（R166 fix）
+// ============================================================
+// 对齐 Interpreter visitWhileStmt/visitForStmt 的 MAX_LOOP_ITERATIONS 防护
+// （消息 "循环迭代次数超过上限 {N}，疑似无限循环"）。修复前 JIT 无限循环
+// 无任何上限，教学场景写死循环会永久挂死 IDE（已知 P1 差异，TestJIT R160 注记）。
+extern "C" void jitLoopLimitExceeded(JitContext* ctx, int64_t limit) {
+    if (!ctx || !ctx->hasError || *ctx->hasError)
+        return; // 已有错误不覆盖（优先保留先发生的错误）
+    if (ctx->errorBuffer) {
+        *ctx->errorBuffer = ErrorFormat::formatStd("循环迭代次数超过上限 {}，疑似无限循环", limit);
+    }
+    *ctx->hasError = true;
+}
+
+// ============================================================
 // Safepoint GC — JIT 代码在 OP_LOOP 回边处调用
 // ============================================================
 // 收集 JIT 操作数栈和全局槽位中的存活容器对象作为 GC roots，
@@ -327,6 +342,8 @@ JitResult JITBackend::execute(const CompileResult& result) {
     // 避免内存峰值无限增长。回调仅设置标志（O(1)原子操作），实际 GC 在 safepoint 处执行。
     gcNeededFlag_.store(0, std::memory_order_relaxed);
     jitContext_.gcNeededFlag = &gcNeededFlag_;
+    // R166 fix: 循环迭代上限（与 VM dynMaxInstr 语义一致：execute 前配置，执行期间固定）
+    jitContext_.maxLoopIterations = RuntimeLimits::RuntimeConfig::instance().maxLoopIterations();
     // 设置 GC 触发回调为设置标志（而非直接调用 collectCycle）
     {
         // 保存原回调，替换为设置标志的轻量回调

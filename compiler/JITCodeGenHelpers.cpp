@@ -1439,6 +1439,43 @@ void JITBackend::emitLoop(x86::Assembler& a, Label epilogue, Label jumpTarget, s
         a.bind(skipGc);
     }
 
+    // R166 fix: 循环迭代上限检查——对齐 Interpreter visitWhileStmt/visitForStmt 的
+    // MAX_LOOP_ITERATIONS 防护（"循环迭代次数超过上限"），防止 JIT 无限循环永久挂死。
+    // 计数条件与 Interpreter 一致：第 (limit+1) 次迭代时报错（count > limit 触发）。
+    {
+        Label skipLimit = a.new_label();
+
+        // 1. 递增 loopIterations_[chunkIdx]
+        a.mov(x86::rcx, x86::qword_ptr(x86::r12, jit_offset::loopIterationsPtr));
+        a.inc(x86::qword_ptr(x86::rcx, static_cast<int32_t>(chunkIdx * 8)));
+
+        // 2. 读取计数并与上限比较
+        a.mov(x86::rcx, x86::qword_ptr(x86::r12, jit_offset::loopIterationsPtr));
+        a.mov(x86::rax, x86::qword_ptr(x86::rcx, static_cast<int32_t>(chunkIdx * 8)));
+        a.cmp(x86::rax, x86::qword_ptr(x86::r12, jit_offset::maxLoopIterations));
+        a.jbe(skipLimit); // 未超限（count <= limit），正常回边
+
+        // 3. 超限：同步栈顶并调用 jitLoopLimitExceeded(ctx, limit) 设置错误后跳 epilogue
+        a.mov(x86::qword_ptr(x86::r12, jit_offset::stackTop), x86::r15);
+#ifdef _WIN32
+        a.mov(x86::rcx, x86::r12);                                                // arg1 = ctx
+        a.mov(x86::rdx, x86::qword_ptr(x86::r12, jit_offset::maxLoopIterations)); // arg2 = limit
+        a.sub(x86::rsp, 32);
+        a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitLoopLimitExceeded));
+        a.call(x86::rax);
+        a.add(x86::rsp, 32);
+#else
+        a.mov(x86::rdi, x86::r12);                                                // arg1 = ctx
+        a.mov(x86::rsi, x86::qword_ptr(x86::r12, jit_offset::maxLoopIterations)); // arg2 = limit
+        a.sub(x86::rsp, 16);
+        a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitLoopLimitExceeded));
+        a.call(x86::rax);
+        a.add(x86::rsp, 16);
+#endif
+        a.jmp(epilogue); // 错误：统一走 epilogue 返回（execute() 检测 hasError_ → RuntimeError）
+        a.bind(skipLimit);
+    }
+
     if (chunkIdx < osrLoopThresholds_.size() && osrLoopThresholds_[chunkIdx] > 0) {
         Label skipOsr = a.new_label();
 

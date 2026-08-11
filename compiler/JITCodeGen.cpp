@@ -247,6 +247,11 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
     jitContext_.osrLoopThresholdsPtr = osrLoopThresholds_.data();
     jitContext_.osrRecompiledFlagsPtr = osrRecompiledFlags_.data();
 
+    // R166 fix: 初始化 per-chunk 循环迭代计数数组（无限循环防护）
+    // 索引与 chunkCallCounts_ 对齐，OP_LOOP 回边时递增，超限报错对齐 Interpreter。
+    loopIterations_.assign(allChunks.size(), 0);
+    jitContext_.loopIterationsPtr = loopIterations_.data();
+
     // ---- 循环编译每个 chunk ----
     for (size_t chunkIdx = 0; chunkIdx < allChunks.size(); ++chunkIdx) {
         const BytecodeChunk& chunk = *allChunks[chunkIdx];
