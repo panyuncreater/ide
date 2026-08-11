@@ -2,9 +2,11 @@
 #include "Theme.h"             // QFluentKit（onThemeModeChanged 信号）
 #include "gui/GuiTextUtils.h"  // Dedup-4A: monospaceFont()
 #include "gui/TeachingTheme.h" // 主题色板（替代硬编码颜色）
+#include <QCursor>             // BUG-DBG-G5 fix: QToolTip 定位
 #include <QHeaderView>
 #include <QListWidgetItem> // BUG-DBG-G3 fix: 超长调用栈提示项
 #include <QSplitter>
+#include <QToolTip> // BUG-DBG-G5 fix: 解析失败提示
 #include <QTreeWidgetItem>
 #include <tuple>
 #include <vector>
@@ -46,6 +48,8 @@ QTreeWidgetItem* DebugPanel::createScopeGroup(const QString& title, int count) {
 
 /// 将变量快照按作用域（全局/局部/闭包）分组填入变量树。
 void DebugPanel::populateVariableTree(const std::vector<std::tuple<QString, QString, QString>>& rows) {
+    // BUG-DBG-G5 fix: 程序化更新期间抑制 itemChanged 写回（避免误触发编辑回调）
+    updatingVariables_ = true;
     variableTree_->clear();
 
     // Round 7: 按作用域分三组
@@ -71,7 +75,11 @@ void DebugPanel::populateVariableTree(const std::vector<std::tuple<QString, QStr
         auto* item = new QTreeWidgetItem(globalGroup);
         item->setText(0, name);
         item->setText(1, value);
+        item->setToolTip(0, name); // BUG-DBG-G5 fix: 名称列恢复用
         item->setToolTip(1, value);
+        // BUG-DBG-G5 fix: 仅值列可编辑（名称列只读）
+        item->setFlags(item->flags() | Qt::ItemIsEditable);
+        item->setData(0, Qt::UserRole, QStringLiteral("var")); // 标记为变量节点（非分组）
     }
 
     auto* localGroup = createScopeGroup(QStringLiteral("当前函数局部作用域"), static_cast<int>(localVars.size()));
@@ -79,7 +87,10 @@ void DebugPanel::populateVariableTree(const std::vector<std::tuple<QString, QStr
         auto* item = new QTreeWidgetItem(localGroup);
         item->setText(0, name);
         item->setText(1, value);
+        item->setToolTip(0, name);
         item->setToolTip(1, value);
+        item->setFlags(item->flags() | Qt::ItemIsEditable);
+        item->setData(0, Qt::UserRole, QStringLiteral("var"));
     }
 
     auto* closureGroup = createScopeGroup(QStringLiteral("闭包作用域"), static_cast<int>(closureVars.size()));
@@ -87,11 +98,60 @@ void DebugPanel::populateVariableTree(const std::vector<std::tuple<QString, QStr
         auto* item = new QTreeWidgetItem(closureGroup);
         item->setText(0, name);
         item->setText(1, value);
+        item->setToolTip(0, name);
         item->setToolTip(1, value);
+        item->setFlags(item->flags() | Qt::ItemIsEditable);
+        item->setData(0, Qt::UserRole, QStringLiteral("var"));
     }
 
     // 展开所有分组
     variableTree_->expandAll();
+    updatingVariables_ = false;
+}
+
+/// BUG-DBG-G5 fix: 注册变量编辑回调（主窗口接线到 IdeController::setDebugVariableValue）
+void DebugPanel::setVariableEditCallback(std::function<bool(const QString&, const QString&)> cb) {
+    variableEditCallback_ = std::move(cb);
+}
+
+/// BUG-DBG-G5 fix: 变量值列编辑完成 → 解析新值 → 回调写回调试后端。
+/// 仅处理变量叶子节点（标记 UserRole="var"）的值列（column 1），
+/// 分组标题列 0 与程序化刷新（updatingVariables_）不触发写回。
+void DebugPanel::onVariableItemChanged(QTreeWidgetItem* item, int column) {
+    if (!item || updatingVariables_)
+        return;
+    if (item->data(0, Qt::UserRole).toString() != QStringLiteral("var"))
+        return; // 分组节点不可编辑
+    if (column == 0) {
+        // 名称列只读：恢复原名（toolTip(0) 由 populate 保存），不触发写回
+        const QString orig = item->toolTip(0);
+        if (item->text(0) != orig)
+            item->setText(0, orig);
+        return;
+    }
+    if (column != 1)
+        return;
+    const QString name = item->text(0);
+    const QString newText = item->text(1);
+    const QString oldText = item->toolTip(1); // populate 时 toolTip 保存原值
+    if (newText == oldText)
+        return; // 未实际修改
+
+    bool ok = false;
+    if (variableEditCallback_) {
+        ok = variableEditCallback_(name, newText);
+    }
+    if (!ok) {
+        // 解析失败/不可写：恢复原值并提示
+        item->setText(1, oldText);
+        QToolTip::showText(
+            QCursor::pos(),
+            QStringLiteral("写入变量 %1 失败（支持 int / float / true / false / null / \"字符串\"，且需调试暂停）")
+                .arg(name));
+        return;
+    }
+    // 写入成功：同步 toolTip，供后续未修改检测与失败恢复
+    item->setToolTip(1, newText);
 }
 
 /// 构造调试面板：搭建变量树/调用栈布局并连接主题切换。
@@ -120,11 +180,10 @@ DebugPanel::DebugPanel(QWidget* parent) : QWidget(parent) {
     variableTree_->setAlternatingRowColors(false);
     variableTree_->setColumnWidth(0, 120);
     variableTree_->setColumnWidth(1, 150);
-    // BUG-DBG-G5 (P2, 功能缺失/已知限制): 变量值列当前为只读展示，不支持就地编辑。
-    // 完整实现需双向绑定机制：itemChanged 信号 → 写回 Interpreter/VM 当前作用域变量、
-    // 类型校验、COW 容器写回、跨后端（Interpreter/StackVM/RegisterVM）一致性处理。
-    // 工程量大且调试场景下修改变量易引发状态不一致，作为功能增强暂不实现。
-    // TODO: 未来可通过 DebugController::setVariable(name, value) 接口实现。
+    // BUG-DBG-G5 fix: 启用双击编辑（仅值列可编辑，见 populateVariableTree 的 flags）
+    variableTree_->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
+    variableTree_->setItemDelegateForColumn(0, nullptr); // 列 0（名称）默认不可编辑
+    connect(variableTree_, &QTreeWidget::itemChanged, this, &DebugPanel::onVariableItemChanged);
     varLayout->addWidget(variableTree_);
 
     splitter->addWidget(varWidget);

@@ -3269,6 +3269,14 @@ void Ide::createContentWidgets() {
         if (codeEditor_)
             codeEditor_->gotoLine(line);
     });
+    // BUG-DBG-G5 fix: 变量值双击编辑 → 解析新值（int/float/bool/null/字符串）→ 写回调试后端。
+    // 仅调试暂停窗口内生效（IdeController::setDebugVariableValue 自动分派 Interpreter/VM 路径）。
+    debugPanel_->setVariableEditCallback([this](const QString& name, const QString& valueText) {
+        Value val;
+        if (!parseDebugValueText(valueText.toStdString(), val))
+            return false;
+        return controller_->setDebugVariableValue(name.toStdString(), val);
+    });
 
     // Output text edit
     // R15-3: VSCode 风格输出面板——等宽字体 + 白色背景（R74: 回退中性白）

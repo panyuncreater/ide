@@ -6,6 +6,7 @@
 #include <QTreeWidget>
 #include <QVBoxLayout>
 #include <QWidget>
+#include <functional>
 #include <tuple>
 #include <vector>
 
@@ -27,6 +28,11 @@ public:
     /// 更新调用栈显示
     void updateCallStack(const std::vector<CallStackEntry>& stack);
 
+    /// BUG-DBG-G5 fix: 设置变量编辑回调（双击值列时调用）。
+    /// 回调签名: bool(name, valueText) — 返回 true 表示写入成功（保留新值），
+    /// false 表示解析失败/不可写（恢复原值）。由主窗口接线到 IdeController。
+    void setVariableEditCallback(std::function<bool(const QString&, const QString&)> cb);
+
     /// 清空所有
     void clearAll();
 
@@ -37,6 +43,9 @@ signals:
 private slots:
     /// 调用栈帧被选中时，显示该帧的局部变量
     void onStackFrameSelected(int index);
+
+    /// BUG-DBG-G5 fix: 变量值列编辑完成（双击 → 写回调试后端）
+    void onVariableItemChanged(QTreeWidgetItem* item, int column);
 
 private:
     /// 按作用域分组填充变量树
@@ -55,4 +64,8 @@ private:
     QLabel* stackLabel_ = nullptr;             // 调用栈区标题（保存以便主题刷新）
     QListWidget* callStackList_ = nullptr;     // 调用栈列表
     std::vector<CallStackEntry> currentStack_; // 当前调用栈数据（含局部变量）
+    // BUG-DBG-G5 fix: 变量编辑回调（主窗口接线到 IdeController::setDebugVariableValue）
+    std::function<bool(const QString&, const QString&)> variableEditCallback_;
+    // BUG-DBG-G5 fix: populateVariableTree 程序化更新期间抑制 itemChanged 写回
+    bool updatingVariables_ = false;
 };
