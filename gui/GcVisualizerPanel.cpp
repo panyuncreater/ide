@@ -28,6 +28,7 @@
 #include "gui/GuiTextUtils.h"
 #include "gui/I18n.h"
 #include "gui/TeachingSubPageBar.h"
+#include "gui/TeachingTheme.h" // UX-R2 fix: 警告标签样式迁移到语义色
 #include "interpreter/Value.h" // Value 用于构造模拟场景的数组（语言运行时值类型，不可避免）
 
 // ============================================================
@@ -397,9 +398,12 @@ void GcVisualizerPanel::buildSimulatorPage(QWidget* host) {
     vSplitter->setStretchFactor(1, 3);
     layout->addWidget(vSplitter, 1);
 
-    // 底部：单例警告
+    // 底部：单例警告（UX-R2 fix: 迁移到 TeachingTheme 警告卡片色系，替代硬编码 #b8860b）
     warningLabel_ = new QLabel(mlTr("⚠️ 模拟会影响全局 GcManager 单例状态，每次模拟前后自动 reset"));
-    warningLabel_->setStyleSheet("color:#b8860b; font-style:italic; padding:2px;");
+    warningLabel_->setStyleSheet(QStringLiteral("QLabel { background-color: %1; color: %2; padding: 6px 10px; "
+                                                "border: 1px solid %3; border-radius: 4px; font-style: italic; }")
+                                     .arg(TeachingTheme::warningBg().name(), TeachingTheme::warningText().name(),
+                                          TeachingTheme::warningBorder().name()));
     layout->addWidget(warningLabel_);
 }
 

@@ -30,6 +30,7 @@
 #include <vector>
 
 class IdeController;
+class TeachingSubPageBar;
 struct Value; // R113 B 项：currentHeapValues_ / renderHeapObjectDetail 使用 Value 副本
 
 // ---- 教学场景库数据结构 ----
@@ -132,13 +133,9 @@ private:
 
     IdeController* controller_ = nullptr;
 
-    // 子页切换按钮（5 个子页）
-    QPushButton* pageNanBoxBtn_ = nullptr;
-    QPushButton* pageRefCountBtn_ = nullptr;
-    QPushButton* pageGcBtn_ = nullptr;
-    QPushButton* pageAnimBtn_ = nullptr;  // P4-4: 第 4 子页"实时动画"
-    QPushButton* pageRegVmBtn_ = nullptr; // R113 A 项: 第 5 子页"RegisterVM 寄存器帧"
-    QStackedWidget* stack_ = nullptr;
+    // UX-R2 fix: 子页切换统一为 TeachingSubPageBar 组件（替代手写 5 按钮互斥逻辑）
+    TeachingSubPageBar* subPageBar_ = nullptr;
+    QStackedWidget* stack_ = nullptr; // 由 TeachingSubPageBar 持有，此处保留指针便于访问
 
     // 子页 1：NaN-boxing
     QListWidget* nanBoxList_ = nullptr;

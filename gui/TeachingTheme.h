@@ -193,6 +193,83 @@ inline QColor codeBlockBg() {
     return QColor(0xF5, 0xF5, 0xF5); // 浅灰（代码块背景，与 surfaceHover 同值但语义独立）
 }
 
+// ============================================================
+// UX-R2 fix: 语义卡片色系（warning / info / success / error）
+// ------------------------------------------------------------
+// 教学面板中大量状态标签/提示卡片使用硬编码背景+边框+文字三色组合，
+// 以下函数提供统一的语义卡片配色，消除硬编码并保证视觉一致性。
+// ============================================================
+
+/// 警告卡片背景色：米黄
+inline QColor warningBg() {
+    return QColor(0xFF, 0xFA, 0xEC); // 替代散布的 #FFFAEC / #FFF8E0
+}
+
+/// 警告卡片边框色：金棕
+inline QColor warningBorder() {
+    return QColor(0xE0, 0xC0, 0x70); // 替代散布的 #E0C070
+}
+
+/// 警告卡片文字色：深棕
+inline QColor warningText() {
+    return QColor(0x5A, 0x45, 0x00); // 替代散布的 #5A4500
+}
+
+/// 信息卡片背景色：浅蓝
+inline QColor infoBg() {
+    return QColor(0xEE, 0xF6, 0xFF); // 替代散布的 #EEF6FF
+}
+
+/// 信息卡片边框色：中蓝
+inline QColor infoBorder() {
+    return QColor(0x88, 0xB0, 0xE0); // 替代散布的 #88B0E0
+}
+
+/// 信息卡片文字色：深蓝
+inline QColor infoText() {
+    return QColor(0x1A, 0x3A, 0x6A); // 替代散布的 #1A3A6A
+}
+
+/// 成功卡片背景色：浅绿
+inline QColor successBg() {
+    return QColor(0xF0, 0xF9, 0xEB); // 浅绿背景
+}
+
+/// 成功卡片边框色：中绿
+inline QColor successBorder() {
+    return QColor(0xA3, 0xD9, 0xA5); // 中绿边框
+}
+
+/// 成功卡片文字色：深绿
+inline QColor successText() {
+    return QColor(0x2D, 0x6A, 0x2F); // 深绿文字
+}
+
+/// 错误卡片背景色：浅红
+inline QColor errorBg() {
+    return QColor(0xFD, 0xED, 0xED); // 浅红背景
+}
+
+/// 错误卡片边框色：中红
+inline QColor errorBorder() {
+    return QColor(0xE0, 0x88, 0x88); // 中红边框
+}
+
+/// 错误卡片文字色：深红
+inline QColor errorText() {
+    return QColor(0x8B, 0x1A, 0x1A); // 深红文字
+}
+
+/// 状态标签背景色：浅灰（用于 VM 状态/OpCode 等中性状态标签）
+inline QColor statusBg() {
+    return QColor(0xF5, 0xF5, 0xF5); // 替代散布的 #F5F5F5 状态标签背景
+}
+
+/// 状态标签边框色：中灰
+inline QColor statusBorder() {
+    return QColor(0xCC, 0xCC, 0xCC); // 替代散布的 #CCC 状态标签边框
+}
+
 /// 学习路径 5 阶段配色（阶段 0-4，失败/未开始用 5）
 /// 用于 LearningPathPanel / WelcomeWizard Step 4 / CodeJourneyInfoPanel 5 阶段图
 inline QColor learningStageColor(int stage) {

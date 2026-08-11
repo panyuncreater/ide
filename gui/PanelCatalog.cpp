@@ -59,7 +59,7 @@ const std::vector<PanelCategory>& PanelCatalog::categories() {
          "值怎么存、垃圾怎么回收、代码怎么变快：内存模型与 IR 优化",
          {
              {"memory-model", "内存模型", "🧠", 2},
-             {"memory-layout", "内存布局可视化", "🧠", 2},
+             {"memory-layout", "内存布局可视化", "📐", 2}, // UX-R2 fix: emoji 去重（原与 memory-model 同为 🧠）
              {"gc-visualizer", "GC 垃圾回收可视化", "🗑️", 2},
              {"ir-transform", "IR 优化回放", "✨", 2},
              {"inline-cache", "内联缓存可视化", "💡", 3},

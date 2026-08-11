@@ -34,6 +34,7 @@
 #include <vector>
 
 class IdeController;
+class TeachingSubPageBar;
 
 // ---- 静态教学数据结构 ----
 
@@ -108,10 +109,9 @@ private slots:
 private:
     IdeController* controller_ = nullptr;
 
-    // 子页切换
-    QPushButton* pageTheoryBtn_ = nullptr;
-    QPushButton* pageSimulatorBtn_ = nullptr;
-    QStackedWidget* stack_ = nullptr;
+    // UX-R2 fix: 子页切换统一为 TeachingSubPageBar 组件（替代手写 2 按钮互斥逻辑）
+    TeachingSubPageBar* subPageBar_ = nullptr;
+    QStackedWidget* stack_ = nullptr; // 由 TeachingSubPageBar 持有
 
     // 子页 1：内存布局原理
     QTextBrowser* theoryBrowser_ = nullptr;

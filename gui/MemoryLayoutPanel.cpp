@@ -9,6 +9,9 @@
 
 #include "gui/MemoryLayoutPanel.h"
 
+#include "gui/TeachingSubPageBar.h" // UX-R2 fix: 统一子页切换组件
+#include "gui/TeachingTheme.h"      // UX-R2 fix: 硬编码颜色迁移到语义色
+
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QSplitter>
@@ -54,7 +57,8 @@ QString formatBitPatternHtml(const std::string& bitPatternHex, bool isPointer) {
         QString label = (i == 7)   ? QStringLiteral("byte 7 (MSB)")
                         : (i == 0) ? QStringLiteral("byte 0 (LSB)")
                                    : QStringLiteral("byte %1").arg(i);
-        html += QStringLiteral("<th style='background:#f0f0f0;'>%1</th>").arg(label);
+        html +=
+            QStringLiteral("<th style='background:%1;'>%2</th>").arg(TeachingTheme::surfaceHover().name()).arg(label);
     }
     html += QStringLiteral("</tr>");
 
@@ -196,26 +200,18 @@ MemoryLayoutPanel::MemoryLayoutPanel(QWidget* parent) : QWidget(parent) {
     outer->setContentsMargins(4, 4, 4, 4);
     outer->setSpacing(4);
 
-    // 顶部：子页切换按钮
-    auto* pageBar = new QHBoxLayout;
-    pageTheoryBtn_ = new QPushButton(tr("① 内存布局原理"));
-    pageSimulatorBtn_ = new QPushButton(tr("② 交互式内存布局模拟器"));
-    pageTheoryBtn_->setCheckable(true);
-    pageSimulatorBtn_->setCheckable(true);
-    pageTheoryBtn_->setChecked(true);
-    pageBar->addWidget(pageTheoryBtn_);
-    pageBar->addWidget(pageSimulatorBtn_);
-    pageBar->addStretch();
-    outer->addLayout(pageBar);
+    // UX-R2 fix: 子页切换统一为 TeachingSubPageBar 组件（替代手写 2 按钮互斥逻辑）
+    subPageBar_ = new TeachingSubPageBar(this);
+    outer->addLayout(subPageBar_->buttonBar());
 
-    // 子页堆栈
-    stack_ = new QStackedWidget;
+    // 子页堆栈（由 TeachingSubPageBar 持有）
+    stack_ = subPageBar_->stack();
     auto* theoryPage = new QWidget;
     auto* simulatorPage = new QWidget;
     buildTheoryPage(theoryPage);
     buildSimulatorPage(simulatorPage);
-    stack_->addWidget(theoryPage);
-    stack_->addWidget(simulatorPage);
+    subPageBar_->addPage(tr("① 内存布局原理"), theoryPage);
+    subPageBar_->addPage(tr("② 交互式内存布局模拟器"), simulatorPage);
     outer->addWidget(stack_, 1);
 
     // 底部：加载样例按钮
@@ -226,18 +222,6 @@ MemoryLayoutPanel::MemoryLayoutPanel(QWidget* parent) : QWidget(parent) {
     outer->addLayout(bottomBar);
 
     // 信号连接
-    connect(pageTheoryBtn_, &QPushButton::toggled, this, [this](bool checked) {
-        if (checked) {
-            stack_->setCurrentIndex(0);
-            pageSimulatorBtn_->setChecked(false);
-        }
-    });
-    connect(pageSimulatorBtn_, &QPushButton::toggled, this, [this](bool checked) {
-        if (checked) {
-            stack_->setCurrentIndex(1);
-            pageTheoryBtn_->setChecked(false);
-        }
-    });
     connect(loadSampleBtn, &QPushButton::clicked, this, &MemoryLayoutPanel::onLoadSample);
 
     // 初始数据填充
@@ -293,56 +277,58 @@ void MemoryLayoutPanel::buildTheoryPage(QWidget* host) {
 
 void MemoryLayoutPanel::populateTheory() {
     // 理论概览 HTML
-    QString html = QStringLiteral(
-        "<h2>MiniLang 内存布局原理</h2>"
-        "<p>MiniLang 的 <b>Value</b> 类型采用 <b>NaN-boxing</b> 技术，将所有类型的值统一编码为 8 字节。"
-        "堆类型（数组 / 字典 / 闭包 / 字符串）通过侵入式 <b>RefCounted</b> 基类管理生命周期，"
-        "数组与字典使用 <b>Copy-On-Write (COW)</b> 优化，闭包通过 <b>upvalue</b> 捕获外层变量。</p>"
+    QString html =
+        QStringLiteral(
+            "<h2>MiniLang 内存布局原理</h2>"
+            "<p>MiniLang 的 <b>Value</b> 类型采用 <b>NaN-boxing</b> 技术，将所有类型的值统一编码为 8 字节。"
+            "堆类型（数组 / 字典 / 闭包 / 字符串）通过侵入式 <b>RefCounted</b> 基类管理生命周期，"
+            "数组与字典使用 <b>Copy-On-Write (COW)</b> 优化，闭包通过 <b>upvalue</b> 捕获外层变量。</p>"
 
-        "<h3>一、NaN-boxing（8 字节统一编码）</h3>"
-        "<p>NaN-boxing 利用 IEEE 754 double 的 NaN（Not-a-Number）空间编码非浮点类型：</p>"
-        "<ul>"
-        "<li><b>double</b>：原样存储（全 64 位 IEEE 754）。若为 NaN，整个 64 位替换为 "
-        "NAN_BOXED_FLOAT_MARKER（0x7FFC...）</li>"
-        "<li><b>bool</b>：tag=0x7FF9，最低位 0/1 表示 false/true</li>"
-        "<li><b>null</b>：tag=0x7FFA，无 payload</li>"
-        "<li><b>pointer</b>：tag=0x7FFB，低 48 位为堆对象指针（array / dict / closure / string 均用此 tag）</li>"
-        "</ul>"
-        "<p>高 16 位为类型标签（tag），低 48 位为数据载荷（payload）。"
-        "由于 IEEE 754 的 quiet NaN 高 16 位为 0x7FF8~0x7FFF，"
-        "可安全复用此空间编码非浮点类型，实现 8 字节统一存储。</p>"
+            "<h3>一、NaN-boxing（8 字节统一编码）</h3>"
+            "<p>NaN-boxing 利用 IEEE 754 double 的 NaN（Not-a-Number）空间编码非浮点类型：</p>"
+            "<ul>"
+            "<li><b>double</b>：原样存储（全 64 位 IEEE 754）。若为 NaN，整个 64 位替换为 "
+            "NAN_BOXED_FLOAT_MARKER（0x7FFC...）</li>"
+            "<li><b>bool</b>：tag=0x7FF9，最低位 0/1 表示 false/true</li>"
+            "<li><b>null</b>：tag=0x7FFA，无 payload</li>"
+            "<li><b>pointer</b>：tag=0x7FFB，低 48 位为堆对象指针（array / dict / closure / string 均用此 tag）</li>"
+            "</ul>"
+            "<p>高 16 位为类型标签（tag），低 48 位为数据载荷（payload）。"
+            "由于 IEEE 754 的 quiet NaN 高 16 位为 0x7FF8~0x7FFF，"
+            "可安全复用此空间编码非浮点类型，实现 8 字节统一存储。</p>"
 
-        "<h3>二、Copy-On-Write (COW)</h3>"
-        "<p>数组（ArrayObject）和字典（DictObject）使用 COW 策略：</p>"
-        "<ul>"
-        "<li><b>共享</b>：赋值时浅拷贝指针，refcount 加 1，不复制底层数据</li>"
-        "<li><b>写前 detach</b>：修改前检查 refcount，若 >1 则复制底层数据（detach），"
-        "使修改方独占副本</li>"
-        "<li><b>释放</b>：refcount 减至 0 时触发析构，释放堆内存</li>"
-        "</ul>"
-        "<p>COW 避免了不必要的深拷贝，同时保证语义正确性。"
-        "MiniLang 的 COW 基于 RefCounted 引用计数，而非 GC。</p>"
+            "<h3>二、Copy-On-Write (COW)</h3>"
+            "<p>数组（ArrayObject）和字典（DictObject）使用 COW 策略：</p>"
+            "<ul>"
+            "<li><b>共享</b>：赋值时浅拷贝指针，refcount 加 1，不复制底层数据</li>"
+            "<li><b>写前 detach</b>：修改前检查 refcount，若 >1 则复制底层数据（detach），"
+            "使修改方独占副本</li>"
+            "<li><b>释放</b>：refcount 减至 0 时触发析构，释放堆内存</li>"
+            "</ul>"
+            "<p>COW 避免了不必要的深拷贝，同时保证语义正确性。"
+            "MiniLang 的 COW 基于 RefCounted 引用计数，而非 GC。</p>"
 
-        "<h3>三、upvalue 捕获链</h3>"
-        "<p>闭包（ClosureObject）通过 upvalue 捕获外层作用域的变量：</p>"
-        "<ul>"
-        "<li><b>open upvalue</b>：指向栈槽（栈地址 + 偏移），栈未弹出。"
-        "闭包通过 upvalue 间接读取栈上的变量。</li>"
-        "<li><b>closed upvalue</b>：值已拷贝到 upvalue 对象，栈已弹出。"
-        "upvalue 将值独立保存在堆上，闭包仍可访问。</li>"
-        "</ul>"
-        "<p>当变量离开作用域（栈弹出）时，open upvalue 转为 closed upvalue，"
-        "确保闭包持有的引用仍然有效。多个闭包可共享同一 upvalue。</p>"
+            "<h3>三、upvalue 捕获链</h3>"
+            "<p>闭包（ClosureObject）通过 upvalue 捕获外层作用域的变量：</p>"
+            "<ul>"
+            "<li><b>open upvalue</b>：指向栈槽（栈地址 + 偏移），栈未弹出。"
+            "闭包通过 upvalue 间接读取栈上的变量。</li>"
+            "<li><b>closed upvalue</b>：值已拷贝到 upvalue 对象，栈已弹出。"
+            "upvalue 将值独立保存在堆上，闭包仍可访问。</li>"
+            "</ul>"
+            "<p>当变量离开作用域（栈弹出）时，open upvalue 转为 closed upvalue，"
+            "确保闭包持有的引用仍然有效。多个闭包可共享同一 upvalue。</p>"
 
-        "<h3>教学价值</h3>"
-        "<p>本面板可视化 MiniLang 内存模型的核心概念，帮助理解：</p>"
-        "<ul>"
-        "<li>NaN-boxing 如何在 8 字节内统一编码所有类型</li>"
-        "<li>COW 如何在语义正确性与性能之间取得平衡</li>"
-        "<li>upvalue 如何实现闭包对外层变量的捕获与生命周期管理</li>"
-        "</ul>"
-        "<p style='color:#666;font-size:small;'>"
-        "提示：切换到「② 交互式内存布局模拟器」子页，选择预设场景或输入自定义值体验。</p>");
+            "<h3>教学价值</h3>"
+            "<p>本面板可视化 MiniLang 内存模型的核心概念，帮助理解：</p>"
+            "<ul>"
+            "<li>NaN-boxing 如何在 8 字节内统一编码所有类型</li>"
+            "<li>COW 如何在语义正确性与性能之间取得平衡</li>"
+            "<li>upvalue 如何实现闭包对外层变量的捕获与生命周期管理</li>"
+            "</ul>"
+            "<p style='color:%1;font-size:small;'>"
+            "提示：切换到「② 交互式内存布局模拟器」子页，选择预设场景或输入自定义值体验。</p>")
+            .arg(TeachingTheme::textHint().name());
     theoryBrowser_->setHtml(html);
 
     // NaN-boxing 类型位模式表
@@ -418,7 +404,8 @@ void MemoryLayoutPanel::buildSimulatorPage(QWidget* host) {
     // 下方：内存布局可视化
     layoutBrowser_ = new QTextBrowser;
     layoutBrowser_->setHtml(
-        tr("<p style='color:#666;'>选择预设场景或输入自定义值，点击「分析内存布局」查看 8 字节位模式可视化</p>"));
+        tr("<p style='color:%1;'>选择预设场景或输入自定义值，点击「分析内存布局」查看 8 字节位模式可视化</p>")
+            .arg(TeachingTheme::textHint().name()));
     vSplitter->addWidget(layoutBrowser_);
 
     // 设置分割比例
@@ -586,10 +573,11 @@ void MemoryLayoutPanel::renderAnalysis(const std::vector<MemorySimField>& fields
     }
 
     QString html = formatBitPatternHtml(bitPattern, isPointer);
-    html += QStringLiteral("<hr><p style='color:#666;font-size:small;'>"
+    html += QStringLiteral("<hr><p style='color:%1;font-size:small;'>"
                            "说明：byte 7 为最高位字节（MSB），byte 0 为最低位字节（LSB）。"
                            "NaN-boxing 利用 IEEE 754 quiet NaN 的高 16 位空间（0x7FF8~0x7FFF）编码非浮点类型。"
-                           "</p>");
+                           "</p>")
+                .arg(TeachingTheme::textHint().name());
     layoutBrowser_->setHtml(html);
 }
 

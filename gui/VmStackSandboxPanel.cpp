@@ -52,29 +52,40 @@ VmStackSandboxPanel::VmStackSandboxPanel(QWidget* parent) : QWidget(parent) {
     subPageBar_ = new TeachingSubPageBar(this);
     mainLayout->addLayout(subPageBar_->buttonBar());
 
-    // ---- 子页 QSS（R74: 回退中性白/浅灰；pageBtn 样式已随 TeachingSubPageBar 迁移移除）----
-    setStyleSheet(QString::fromUtf8(
-        "QComboBox#levelCombo { background: #FFFFFF; border: 1px solid #E0E0E0; "
-        "border-radius: 4px; padding: 4px 8px; }"
-        "QComboBox#levelCombo:hover { border-color: #268BD2; }"
-        "QPushButton#levelChip { background: #F5F5F5; border: 1px solid #E0E0E0; "
-        "border-radius: 4px; font-size: 11px; }"
-        "QPushButton#levelChip:hover { border-color: #268BD2; background: #E5F3FB; }"
-        "QPushButton#levelChip[current='true'] { background: #268BD2; color: white; "
-        "border-color: #1E6FA3; font-weight: bold; }"
-        "QPushButton#levelChip[locked='true'] { background: #EDEDED; color: #6E6E6E; "
-        "border-color: #CCC; }"
-        // 追踪页 QSS
-        "QListWidget#bytecodeList { font-family: \"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains "
-        "Mono\",\"Source Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace; "
-        "border: 1px solid #E0E0E0; }"
-        "QListWidget#bytecodeList::item { padding: 2px 4px; border-bottom: 1px solid #F5F5F5; }"
-        "QListWidget#bytecodeList::item:selected { background: #268BD2; color: white; }"
-        "QTableWidget#registerTable { gridline-color: #E0E0E0; "
-        "font-family: \"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code "
-        "Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace; }"
-        "QTableWidget#registerTable QHeaderView::section { background: #F5F5F5; "
-        "padding: 4px; border: 1px solid #E0E0E0; }"));
+    // ---- 子页 QSS（UX-R2 fix: 硬编码颜色迁移到 TeachingTheme 语义色）----
+    setStyleSheet(
+        QStringLiteral(
+            "QComboBox#levelCombo { background: %1; border: 1px solid %2; "
+            "border-radius: 4px; padding: 4px 8px; }"
+            "QComboBox#levelCombo:hover { border-color: %3; }"
+            "QPushButton#levelChip { background: %4; border: 1px solid %2; "
+            "border-radius: 4px; font-size: 11px; }"
+            "QPushButton#levelChip:hover { border-color: %3; background: %5; }"
+            "QPushButton#levelChip[current='true'] { background: %3; color: %6; "
+            "border-color: %7; font-weight: bold; }"
+            "QPushButton#levelChip[locked='true'] { background: %8; color: %9; "
+            "border-color: %10; }"
+            // 追踪页 QSS
+            "QListWidget#bytecodeList { font-family: \"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains "
+            "Mono\",\"Source Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace; "
+            "border: 1px solid %2; }"
+            "QListWidget#bytecodeList::item { padding: 2px 4px; border-bottom: 1px solid %4; }"
+            "QListWidget#bytecodeList::item:selected { background: %3; color: %6; }"
+            "QTableWidget#registerTable { gridline-color: %2; "
+            "font-family: \"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code "
+            "Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace; }"
+            "QTableWidget#registerTable QHeaderView::section { background: %4; "
+            "padding: 4px; border: 1px solid %2; }")
+            .arg(TeachingTheme::surface().name(),        // %1 白底
+                 TeachingTheme::border().name(),         // %2 边框
+                 TeachingTheme::primary().name(),        // %3 主题色
+                 TeachingTheme::surfaceHover().name(),   // %4 浅灰背景
+                 TeachingTheme::primaryHoverBg().name(), // %5 hover 浅蓝
+                 TeachingTheme::onPrimary().name(),      // %6 白色文字
+                 TeachingTheme::primaryPressed().name(), // %7 pressed 主题色
+                 TeachingTheme::lockedBg().name(),       // %8 锁定背景
+                 TeachingTheme::textMuted().name(),      // %9 锁定文字
+                 TeachingTheme::statusBorder().name())); // %10 锁定边框
 
     // ---- 子页堆栈（由 TeachingSubPageBar 持有，addPage 自动加入）----
     mainLayout->addWidget(subPageBar_->stack(), 1);

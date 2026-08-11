@@ -7,6 +7,8 @@
 #include "common/MemoryInspectionAPI.h" // ARCH-10: NaNBox/GcManager/RefCounted 只读检视（替代直接依赖 interpreter/ 内部头文件）
 #include "gui/MarkdownRenderer.h"
 #include "gui/PanelAnimator.h"
+#include "gui/TeachingSubPageBar.h" // UX-R2 fix: 统一子页切换组件
+#include "gui/TeachingTheme.h"      // UX-R2 fix: 硬编码颜色迁移到语义色
 #include "interpreter/Value.h"
 #include "interpreter/ValueData.h" // R113 B 项：VMUpvalue 完整定义（isClosed/stackSlot/owningFrameIdx）
 
@@ -76,35 +78,20 @@ std::string ptrToHex(const void* p) {
 // MemoryModelPanel 实现
 // ============================================================
 
-/// 构造面板：组装顶部 4 个子页按钮（NaN-boxing / 引用计数&COW /
-/// GcManager / 实时动画）与 QStackedWidget，构建各子页、配置动画刷新定时器
+/// 构造面板：组装 TeachingSubPageBar 子页切换组件（NaN-boxing / 引用计数&COW /
+/// GcManager / 实时动画 / RegisterVM 寄存器帧），构建各子页、配置动画刷新定时器
 /// （2s 安全网），并默认显示第一个子页。
 MemoryModelPanel::MemoryModelPanel(QWidget* parent) : QWidget(parent) {
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(4, 4, 4, 4);
     mainLayout->setSpacing(4);
 
-    // 顶部页签按钮（5 个子页）
-    auto* pageBar = new QHBoxLayout;
-    pageNanBoxBtn_ = new QPushButton(QString::fromUtf8("NaN-boxing 编码"), this);
-    pageRefCountBtn_ = new QPushButton(QString::fromUtf8("引用计数 & COW"), this);
-    pageGcBtn_ = new QPushButton(QString::fromUtf8("GcManager mark-sweep"), this);
-    pageAnimBtn_ = new QPushButton(QString::fromUtf8("实时动画"), this);
-    pageRegVmBtn_ = new QPushButton(QString::fromUtf8("RegisterVM 寄存器帧"), this);
-    pageNanBoxBtn_->setCheckable(true);
-    pageRefCountBtn_->setCheckable(true);
-    pageGcBtn_->setCheckable(true);
-    pageAnimBtn_->setCheckable(true);
-    pageRegVmBtn_->setCheckable(true);
-    pageBar->addWidget(pageNanBoxBtn_);
-    pageBar->addWidget(pageRefCountBtn_);
-    pageBar->addWidget(pageGcBtn_);
-    pageBar->addWidget(pageAnimBtn_);
-    pageBar->addWidget(pageRegVmBtn_);
-    pageBar->addStretch();
-    mainLayout->addLayout(pageBar);
+    // UX-R2 fix: 子页切换统一为 TeachingSubPageBar 组件（替代手写 5 按钮互斥逻辑）
+    // 互斥选中态 / 主题色高亮 / 滑入动画由组件内置
+    subPageBar_ = new TeachingSubPageBar(this);
+    mainLayout->addLayout(subPageBar_->buttonBar());
 
-    stack_ = new QStackedWidget(this);
+    stack_ = subPageBar_->stack();
     mainLayout->addWidget(stack_, 1);
 
     auto* pageNanBox = new QWidget(this);
@@ -117,11 +104,11 @@ MemoryModelPanel::MemoryModelPanel(QWidget* parent) : QWidget(parent) {
     buildGcPage(pageGc);
     buildAnimPage(pageAnim);
     buildRegVmPage(pageRegVm);
-    stack_->addWidget(pageNanBox);
-    stack_->addWidget(pageRefCount);
-    stack_->addWidget(pageGc);
-    stack_->addWidget(pageAnim);
-    stack_->addWidget(pageRegVm);
+    subPageBar_->addPage(QString::fromUtf8("① NaN-boxing 编码"), pageNanBox);
+    subPageBar_->addPage(QString::fromUtf8("② 引用计数 & COW"), pageRefCount);
+    subPageBar_->addPage(QString::fromUtf8("③ GcManager mark-sweep"), pageGc);
+    subPageBar_->addPage(QString::fromUtf8("④ 实时动画"), pageAnim);
+    subPageBar_->addPage(QString::fromUtf8("⑤ RegisterVM 寄存器帧"), pageRegVm);
 
     // OPT-1: 第 4 子页自动刷新定时器降频 500ms→2000ms，状态变更由 vmStateChanged
     // 监听器即时触发 refreshAnimState（见 setController）。QTimer 作为安全网。
@@ -134,57 +121,15 @@ MemoryModelPanel::MemoryModelPanel(QWidget* parent) : QWidget(parent) {
         refreshRegVmState();
     });
 
-    // 默认显示第一个页面
-    pageNanBoxBtn_->setChecked(true);
-    stack_->setCurrentIndex(0);
-
-    connect(pageNanBoxBtn_, &QPushButton::clicked, this, [this]() {
-        stack_->setCurrentIndex(0);
-        pageNanBoxBtn_->setChecked(true);
-        pageRefCountBtn_->setChecked(false);
-        pageGcBtn_->setChecked(false);
-        pageAnimBtn_->setChecked(false);
-        pageRegVmBtn_->setChecked(false);
-        PanelAnimator::slideInWidget(stack_->currentWidget());
-    });
-    connect(pageRefCountBtn_, &QPushButton::clicked, this, [this]() {
-        stack_->setCurrentIndex(1);
-        pageNanBoxBtn_->setChecked(false);
-        pageRefCountBtn_->setChecked(true);
-        pageGcBtn_->setChecked(false);
-        pageAnimBtn_->setChecked(false);
-        pageRegVmBtn_->setChecked(false);
-        PanelAnimator::slideInWidget(stack_->currentWidget());
-    });
-    connect(pageGcBtn_, &QPushButton::clicked, this, [this]() {
-        stack_->setCurrentIndex(2);
-        pageNanBoxBtn_->setChecked(false);
-        pageRefCountBtn_->setChecked(false);
-        pageGcBtn_->setChecked(true);
-        pageAnimBtn_->setChecked(false);
-        pageRegVmBtn_->setChecked(false);
-        refreshGcStats();
-        PanelAnimator::slideInWidget(stack_->currentWidget());
-    });
-    connect(pageAnimBtn_, &QPushButton::clicked, this, [this]() {
-        stack_->setCurrentIndex(3);
-        pageNanBoxBtn_->setChecked(false);
-        pageRefCountBtn_->setChecked(false);
-        pageGcBtn_->setChecked(false);
-        pageAnimBtn_->setChecked(true);
-        pageRegVmBtn_->setChecked(false);
-        refreshAnimState();
-        PanelAnimator::slideInWidget(stack_->currentWidget());
-    });
-    connect(pageRegVmBtn_, &QPushButton::clicked, this, [this]() {
-        stack_->setCurrentIndex(4);
-        pageNanBoxBtn_->setChecked(false);
-        pageRefCountBtn_->setChecked(false);
-        pageGcBtn_->setChecked(false);
-        pageAnimBtn_->setChecked(false);
-        pageRegVmBtn_->setChecked(true);
-        refreshRegVmState();
-        PanelAnimator::slideInWidget(stack_->currentWidget());
+    // 子页切换时触发对应刷新（GC 统计 / 动画状态 / RegisterVM 状态）
+    connect(subPageBar_, &TeachingSubPageBar::currentChanged, this, [this](int idx) {
+        if (idx == 2) {
+            refreshGcStats();
+        } else if (idx == 3) {
+            refreshAnimState();
+        } else if (idx == 4) {
+            refreshRegVmState();
+        }
     });
 
     populateNanBoxList();
@@ -674,12 +619,13 @@ void MemoryModelPanel::buildAnimPage(QWidget* host) {
     animStackDepthLabel_ = new QLabel(QString::fromUtf8("栈深度：—"), host);
     animFrameCountLabel_ = new QLabel(QString::fromUtf8("栈帧数：—"), host);
     animGcTrackedLabel_ = new QLabel(QString::fromUtf8("GC tracked：—"), host);
-    // 统一样式：浅灰底 + 边框，便于视觉区分
-    const char* labelStyle = "QLabel { background-color: #F5F5F5; padding: 4px 8px; "
-                             "border: 1px solid #CCC; border-radius: 3px; }";
+    // UX-R2 fix: 统一样式迁移到 TeachingTheme 语义色（替代硬编码 #F5F5F5/#CCC）
+    const QString labelStyle = QStringLiteral("QLabel { background-color: %1; padding: 4px 8px; "
+                                              "border: 1px solid %2; border-radius: 3px; }")
+                                   .arg(TeachingTheme::statusBg().name(), TeachingTheme::statusBorder().name());
     for (auto* l :
          {animStatusLabel_, animOpCodeLabel_, animStackDepthLabel_, animFrameCountLabel_, animGcTrackedLabel_}) {
-        l->setStyleSheet(QString::fromUtf8(labelStyle));
+        l->setStyleSheet(labelStyle);
         l->setAlignment(Qt::AlignCenter);
     }
     statusbar->addWidget(animStatusLabel_);
@@ -691,9 +637,12 @@ void MemoryModelPanel::buildAnimPage(QWidget* host) {
 
     // R113 C 项：GC 进度统计栏——单行展示当前阶段 + 上次 GC 结果 + 累计次数
     animGcStatsLabel_ = new QLabel(QString::fromUtf8("GC 阶段：— | 上次标记 —, 回收 — | 累计 — 次"), host);
+    // UX-R2 fix: GC 统计栏样式迁移到 TeachingTheme 警告卡片色系（替代硬编码 #FFFAEC/#E0C070/#5A4500）
     animGcStatsLabel_->setStyleSheet(
-        QString::fromUtf8("QLabel { background-color: #FFFAEC; padding: 4px 8px; border: 1px solid #E0C070; "
-                          "border-radius: 3px; color: #5A4500; }"));
+        QStringLiteral("QLabel { background-color: %1; padding: 4px 8px; border: 1px solid %2; "
+                       "border-radius: 3px; color: %3; }")
+            .arg(TeachingTheme::warningBg().name(), TeachingTheme::warningBorder().name(),
+                 TeachingTheme::warningText().name()));
     layout->addWidget(animGcStatsLabel_);
 
     // ---- 中间堆对象表 + 详情浏览器：QSplitter 垂直分栏 ----
@@ -1180,15 +1129,19 @@ void MemoryModelPanel::buildRegVmPage(QWidget* host) {
 
     // ---- 顶部：VM 模式 + 当前帧信息 ----
     regVmModeLabel_ = new QLabel(QString::fromUtf8("VM 模式：—"), host);
+    // UX-R2 fix: VM 模式标签样式迁移到 TeachingTheme 状态色系（替代硬编码 #F5F5F5/#CCC）
     regVmModeLabel_->setStyleSheet(
-        QString::fromUtf8("QLabel { background-color: #F5F5F5; padding: 6px 10px; border: 1px solid #CCC; "
-                          "border-radius: 3px; font-weight: bold; }"));
+        QStringLiteral("QLabel { background-color: %1; padding: 6px 10px; border: 1px solid %2; "
+                       "border-radius: 3px; font-weight: bold; }")
+            .arg(TeachingTheme::statusBg().name(), TeachingTheme::statusBorder().name()));
     layout->addWidget(regVmModeLabel_);
 
     regVmFrameInfoLabel_ = new QLabel(QString::fromUtf8("当前帧：— | ip — | 帧索引 — | 激活寄存器 —"), host);
+    // UX-R2 fix: 帧信息标签样式迁移到 TeachingTheme 信息卡片色系（替代硬编码 #EEF6FF/#88B0E0/#1A3A6A）
     regVmFrameInfoLabel_->setStyleSheet(
-        QString::fromUtf8("QLabel { background-color: #EEF6FF; padding: 6px 10px; border: 1px solid #88B0E0; "
-                          "border-radius: 3px; color: #1A3A6A; }"));
+        QStringLiteral("QLabel { background-color: %1; padding: 6px 10px; border: 1px solid %2; "
+                       "border-radius: 3px; color: %3; }")
+            .arg(TeachingTheme::infoBg().name(), TeachingTheme::infoBorder().name(), TeachingTheme::infoText().name()));
     layout->addWidget(regVmFrameInfoLabel_);
 
     // ---- 中部 QSplitter：左调用栈 / 右寄存器表 ----
@@ -1237,9 +1190,11 @@ void MemoryModelPanel::buildRegVmPage(QWidget* host) {
                                      "切换到 RegisterVM 模式（顶部工具栏）后单步执行可观察寄存器值随指令变化。"),
                    host);
     regVmHintLabel_->setWordWrap(true);
-    regVmHintLabel_->setStyleSheet(
-        QString::fromUtf8("QLabel { background-color: #FFF8E0; padding: 8px; border: 1px solid #E0C070; "
-                          "border-radius: 3px; color: #5A4500; }"));
+    // UX-R2 fix: 教学提示标签样式迁移到 TeachingTheme 警告卡片色系（替代硬编码 #FFF8E0/#E0C070/#5A4500）
+    regVmHintLabel_->setStyleSheet(QStringLiteral("QLabel { background-color: %1; padding: 8px; border: 1px solid %2; "
+                                                  "border-radius: 3px; color: %3; }")
+                                       .arg(TeachingTheme::warningBg().name(), TeachingTheme::warningBorder().name(),
+                                            TeachingTheme::warningText().name()));
     layout->addWidget(regVmHintLabel_);
 
     // ---- 底部按钮 ----
