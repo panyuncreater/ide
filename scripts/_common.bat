@@ -1,18 +1,18 @@
 @echo off
 REM ============================================================
-REM MiniLang 构建脚本 — 公共头部（VS 检测 + MSVC 初始化 + Qt 检测）
+REM MiniLang build scripts - common header (VS detection + MSVC init + Qt detection)
 REM ------------------------------------------------------------
-REM 由 configure.bat / build.bat / run_tests.bat 通过
-REM call scripts\_common.bat 引入，消除三段重复的环境检测代码。
-REM 执行后 %VSINSTALL%、%QTDIR% 已设置，MSVC 环境已初始化，
-REM 当前目录已切换到项目根目录。
+REM Included by configure.bat / build.bat / run_tests.bat via
+REM call scripts\_common.bat to dedupe the environment detection code.
+REM After return, %VSINSTALL% and %QTDIR% are set, the MSVC environment is
+REM initialized, and the current directory is the project root.
 REM ============================================================
 
-REM --- 定位项目根目录（_common.bat 在 scripts/ 下，根目录是上一级）---
+REM --- Locate project root (_common.bat lives in scripts/, root is one level up) ---
 set "PROJECT_ROOT=%~dp0.."
 cd /d "%PROJECT_ROOT%"
 
-REM --- 通过 vswhere 定位 Visual Studio ---
+REM --- Locate Visual Studio via vswhere ---
 set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
 if not exist "%VSWHERE%" (
     echo [ERROR] vswhere.exe not found. Please install Visual Studio.
@@ -26,7 +26,7 @@ if not defined VSINSTALL (
 )
 echo [INFO] Visual Studio: %VSINSTALL%
 
-REM --- 初始化 MSVC 环境 ---
+REM --- Initialize MSVC environment ---
 call "%VSINSTALL%\VC\Auxiliary\Build\vcvars64.bat" >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] MSVC environment initialization failed.
@@ -34,10 +34,10 @@ if errorlevel 1 (
 )
 echo [INFO] MSVC environment ready.
 
-REM --- 检测 Qt6 路径（多策略：环境变量 → PATH → 常见安装目录）---
+REM --- Detect Qt6 path (strategies: env var -> PATH -> common install dirs) ---
 if defined QTDIR goto :qtdir_found
 
-REM 策略 1：尝试从 PATH 中查找 qmake 反推 QTDIR
+REM Strategy 1: infer QTDIR from qmake found on PATH
 for /f "delims=" %%q in ('where qmake 2^>nul') do (
     for %%p in ("%%~dpq..") do set "QTDIR=%%~fp"
 )
@@ -46,9 +46,9 @@ if defined QTDIR (
 )
 if defined QTDIR goto :qtdir_found
 
-REM 策略 2：搜索常见安装路径（支持多个 Qt 安装位置）
-REM fix(2026-07-19): for 循环不会在首次匹配后跳出，mingw_64 会覆盖 msvc2022_64。
-REM 改为按优先级顺序检测，首个匹配即跳出（goto :qtdir_found）。
+REM Strategy 2: search common install roots (supports multiple Qt locations)
+REM fix(2026-07-19): the for loop never breaks on first match, so mingw_64 would
+REM overwrite msvc2022_64. Probe in priority order; exit on first hit (goto).
 for %%D in (D:\qt C:\qt D:\Qt C:\Qt "%USERPROFILE%\Qt" "%LOCALAPPDATA%\Qt") do (
     if exist "%%~D" (
         for /f "delims=" %%v in ('dir /b /ad "%%~D\6.*" 2^>nul') do (

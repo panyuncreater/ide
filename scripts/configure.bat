@@ -37,7 +37,7 @@ if /i "%~1"=="debug" (
     shift
 )
 
-REM --- 使用公共头部：VS 检测 + MSVC 初始化 + Qt 检测 ---
+REM --- Common header: VS detection + MSVC init + Qt detection ---
 call "%~dp0_common.bat"
 if errorlevel 1 exit /b 1
 
@@ -52,8 +52,8 @@ if exist "%VS_CMAKE%" (
     echo [INFO] Using cmake from PATH
 )
 
-REM --- 对 windows-msvc-* 预设确认 QTDIR 已设置 ---
-echo !PRESET! | findstr /b "windows-msvc-" >/dev/null
+REM --- For windows-msvc-* presets, verify QTDIR is set ---
+echo !PRESET! | findstr /b "windows-msvc-" >nul
 if not errorlevel 1 (
     if not defined QTDIR (
         echo [ERROR] QTDIR not set for preset !PRESET!

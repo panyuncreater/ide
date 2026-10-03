@@ -9,11 +9,11 @@ REM   build.bat            Build Debug (default)
 REM   build.bat release    Build Release
 REM ============================================================
 
-REM --- 构建类型 ---
+REM --- Build type ---
 set "BUILD_TYPE=debug"
 if /i "%~1"=="release" set "BUILD_TYPE=release"
 
-REM --- 使用公共头部：VS 检测 + MSVC 初始化 + Qt 检测 ---
+REM --- Common header: VS detection + MSVC init + Qt detection ---
 call "%~dp0_common.bat"
 if errorlevel 1 exit /b 1
 
