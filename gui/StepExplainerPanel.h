@@ -16,7 +16,7 @@
 // 不修改引擎层，不注册 vmStateChanged 监听器。
 // ============================================================
 
-#include "compiler/Bytecode.h"
+#include "compiler/core/Bytecode.h"
 
 #include <QLineEdit>
 #include <QListWidget>

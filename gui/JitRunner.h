@@ -3,7 +3,7 @@
 // ============================================================
 // JitRunner — JIT 运行隔离层（Qt ↔ asmjit 冲突解耦）
 // ------------------------------------------------------------
-// 问题：compiler/JIT.h 包含 <asmjit/asmjit.h>，asmjit 的标识符
+// 问题：compiler/jit/JIT.h 包含 <asmjit/asmjit.h>，asmjit 的标识符
 // （InstId/inst_id 等）与 Qt 头文件拉入的 Windows 宏冲突，导致
 // 同时包含 Qt 头与 JIT.h 的编译单元解析失败。
 //

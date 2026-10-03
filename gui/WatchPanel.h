@@ -33,7 +33,7 @@
 #include <QTableWidget>
 #include <QTextBrowser>
 #include <QTimer>
-#include <QWidget>
+#include "gui/TeachingPanelBase.h"
 #include <string>
 #include <vector>
 
@@ -60,7 +60,7 @@ public:
 
 // ---- 主面板 ----
 
-class WatchPanel : public QWidget {
+class WatchPanel : public TeachingPanelBase {
     Q_OBJECT
 public:
     explicit WatchPanel(QWidget* parent = nullptr);
@@ -80,6 +80,9 @@ protected:
     /// 面板显示时启动安全网 QTimer + 首次刷新，隐藏时停止 QTimer
     void showEvent(QShowEvent* event) override;
     void hideEvent(QHideEvent* event) override;
+
+    /// 主题切换时刷新教学场景详情 HTML（TeachingPanelBase 基类钩子）
+    void applyTheme() override;
 
 private slots:
     /// 添加 watch 表达式（从输入框读取）

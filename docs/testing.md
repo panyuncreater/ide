@@ -176,7 +176,7 @@ test_harness 使用独立的 DebugController stub，不依赖 Qt Widgets，通�
 
 ## 测试统计
 
-项目当前包含 **110 个测试 .cpp 文件**，`minilang_tests` 目标总计 **3996 个测试用例 / 501 个测试套件**，全量 ctest（含 minilang_app_tests / minilang_gui_smoke）共 **4076 个测试全部通过**（截至 2026-07-31）。测试覆盖多后端语义一致性、新语言特性（运算符重载、宏模板、trait/mixin、async/await、`?` 错误传播、插件/沙箱/C API）、教学面板数据完整性、前端组件、IR 优化（含 SSA 基础设施）、调试器（含 DAP pause 同步暂停 + Interpreter 状态回滚）、JIT、模块系统、并发原语、TCO 尾调用优化、try/catch 异常捕获等全部核心模块。
+项目当前包含 **114 个测试 .cpp 文件**，`minilang_tests` 目标总计 **4029 个测试用例 / 507 个测试套件**，全量 ctest（含 minilang_app_tests / minilang_gui_smoke / minilang_perf_test）共 **4109 个测试全部通过**（截至 2026-10-03）。测试覆盖多后端语义一致性、新语言特性（运算符重载、宏模板、trait/mixin、async/await、`?` 错误传播、插件/沙箱/C API）、教学面板数据完整性、前端组件、IR 优化（含 SSA 基础设施）、调试器（含 DAP pause 同步暂停 + Interpreter 状态回滚）、JIT、模块系统、并发原语、TCO 尾调用优化、try/catch 异常捕获等全部核心模块。
 
 ---
 

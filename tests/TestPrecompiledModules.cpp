@@ -12,10 +12,10 @@
 // fun 声明以 '}' 结尾不需要分号。print 不自动追加换行。
 // ============================================================
 
-#include "compiler/BytecodeCache.h"
-#include "compiler/Compiler.h"
-#include "compiler/RegisterVM.h"
-#include "compiler/VM.h"
+#include "compiler/core/BytecodeCache.h"
+#include "compiler/core/Compiler.h"
+#include "compiler/backend-reg/RegisterVM.h"
+#include "compiler/backend-stack/VM.h"
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
 

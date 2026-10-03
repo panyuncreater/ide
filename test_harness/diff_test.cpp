@@ -18,8 +18,8 @@
 #include "ast/ASTNode.h"
 #include "interpreter/Interpreter.h"
 #include "interpreter/Value.h"
-#include "compiler/Compiler.h"
-#include "compiler/VM.h"
+#include "compiler/core/Compiler.h"
+#include "compiler/backend-stack/VM.h"
 #include "Diagnostic.h"
 
 // ─── Execution result ───────────────────────────────────────────────────

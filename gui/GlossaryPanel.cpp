@@ -91,11 +91,13 @@ GlossaryPanel::GlossaryPanel(QWidget* parent) : QWidget(parent) {
         QString id = full.mid(prefix.length());
         for (int i = 0; i < entries_.size(); ++i) {
             if (entries_[i].id == id) {
-                // 清空搜索过滤，确保目标行可见（blockSignals 避免递归触发 populateList）
+                // 清空搜索过滤，确保目标行可见（QSignalBlocker 避免递归触发 populateList）
+                // D10 fix: RAII 替代手工 blockSignals 配对
                 if (!searchEdit_->text().isEmpty()) {
-                    searchEdit_->blockSignals(true);
-                    searchEdit_->clear();
-                    searchEdit_->blockSignals(false);
+                    {
+                        const QSignalBlocker searchBlocker(searchEdit_);
+                        searchEdit_->clear();
+                    } // 阻塞范围仅限 clear()，与原 blockSignals(true/false) 配对语义一致
                     populateList();
                 }
                 // 选中目标行（触发 currentRowChanged → onTermSelected → showDetail）

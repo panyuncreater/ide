@@ -1,7 +1,7 @@
 // ============================================================
 // P2-10 IR SSA 基础设施单元测试
 // ------------------------------------------------------------
-// 验证 compiler/IRSSA.h 中声明的全部组件：
+// 验证 compiler/ir/IRSSA.h 中声明的全部组件：
 //   1. IRCFG：从 IRFunction 构建严格基本块 CFG
 //   2. DominatorTree：Cooper-Harvey-Kennedy 支配树
 //   3. DominanceFrontier：支配边界（Cytron PHI 插入用）
@@ -19,11 +19,11 @@
 #include <gtest/gtest.h>
 
 #include "ast/ASTNode.h"
-#include "compiler/Compiler.h"
-#include "compiler/IR.h"
-#include "compiler/IRSSA.h"
-#include "compiler/RegisterBytecodeBackend.h"
-#include "compiler/RegisterVM.h"
+#include "compiler/core/Compiler.h"
+#include "compiler/ir/IR.h"
+#include "compiler/ir/IRSSA.h"
+#include "compiler/backend-reg/RegisterBytecodeBackend.h"
+#include "compiler/backend-reg/RegisterVM.h"
 #include "interpreter/Value.h"
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"

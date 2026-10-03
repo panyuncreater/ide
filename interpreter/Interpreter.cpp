@@ -74,7 +74,7 @@ Value Interpreter::execute(Block& program) {
     // BUG-DBG-9 fix: 重置 stopRequested_ 标志，避免上一轮"停止"按钮终止后残留 true
     // 导致本轮立即在首个 checkBreak 抛 DebugStopException。原 execute() 遗漏此重置
     // （executeRepl 有重置但 execute 没有），Run 模式下连续运行会立即中止。
-    stopRequested_.store(false, std::memory_order_relaxed);
+    stopRequested_.store(false, std::memory_order_release);
     // AUDIT-P1-CORRECT fix: 重置条件求值步数计数器，确保正常执行不被误计数
     evaluationStepCount_ = 0;
     // B1 fix: 关闭旧 globalEnv_ 上的闭包捕获，将最终值写回闭包 capturedVars。
@@ -202,7 +202,7 @@ Value Interpreter::executeRepl(Block& program) {
     // 不重置环境，保留已有变量/函数/类定义
     // 清除 funRegistry_ 中的 AST 裸指针（旧 AST 可能已被销毁，闭包自带 body 指针不受影响）
     funRegistry_.clear();
-    stopRequested_.store(false, std::memory_order_relaxed); // 重置中止标志
+    stopRequested_.store(false, std::memory_order_release); // 重置中止标志
     // AUDIT-P1-CORRECT fix: 重置条件求值步数计数器，确保正常执行不被误计数
     evaluationStepCount_ = 0;
     funRegistryGen_++; // H5 fix: 使所有旧缓存的 resolvedDecl 指针失效，防止野指针访问
@@ -326,7 +326,7 @@ void Interpreter::restoreReplState() {
 }
 
 void Interpreter::resetReplEnvironment() {
-    stopRequested_.store(false, std::memory_order_relaxed);
+    stopRequested_.store(false, std::memory_order_release);
     evaluationStepCount_ = 0;
     if (globalEnv_) {
         globalEnv_->closeCapturedVariables();
@@ -454,7 +454,7 @@ bool Interpreter::restoreFromSnapshot(const StateSnapshot& snap) {
 
     // 5. 清理诊断与中止标志（回滚后状态干净）
     diagnostics_.clear();
-    stopRequested_.store(false, std::memory_order_relaxed);
+    stopRequested_.store(false, std::memory_order_release);
     evaluationStepCount_ = 0;
 
     return true;
@@ -929,7 +929,7 @@ Value Interpreter::evaluate(ASTNode* node) {
     // 表达式求值的入口（包括循环条件、二元运算子表达式等），在此检查可实现
     // 表达式级别的细粒度中止。用户点击停止后，requestStop() 设置 stopRequested_=true，
     // 条件求值中下一次 evaluate 调用即抛 DebugStopException，无需等待步数上限。
-    if (evaluationStepCount_ > 0 && stopRequested_.load(std::memory_order_relaxed)) {
+    if (evaluationStepCount_ > 0 && stopRequested_.load(std::memory_order_acquire)) {
         throw DebugStopException();
     }
     // A1 fix: accept 返回 void，结果通过 lastValue_ 传递。
@@ -945,7 +945,7 @@ void Interpreter::checkBreak(ASTNode* node) {
     // RA-C fix: 改抛 DebugStopException（原 std::runtime_error）——类型更明确，
     // 顶层 catch 可区分用户错误（RuntimeError）与中止信号（DebugStopException），
     // 中止信号静默处理（stoppedByUser），不再误报为 genericError。
-    if (stopRequested_.load(std::memory_order_relaxed)) {
+    if (stopRequested_.load(std::memory_order_acquire)) {
         throw DebugStopException();
     }
     // R114 可回放执行时间轴：在每个语句节点入口采集快照。

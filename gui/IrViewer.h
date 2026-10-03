@@ -1,6 +1,6 @@
 #pragma once
 
-#include "compiler/IR.h"
+#include "compiler/ir/IR.h"
 #include <QTextBrowser>
 #include <QWidget>
 #include <vector>

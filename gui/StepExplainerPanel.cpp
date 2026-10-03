@@ -9,7 +9,7 @@
 #include "gui/StepExplainerPanel.h"
 
 #include "common/Diagnostic.h"
-#include "compiler/Compiler.h"
+#include "compiler/core/Compiler.h"
 #include "gui/I18n.h" // mlTrCtx() 国际化
 #include "interpreter/Value.h"
 #include "lexer/Lexer.h"

@@ -2,8 +2,8 @@
  * @file common/VmTypes.h
  * @brief VM 公共类型定义（P1-5 fix: IBackend 子接口落地）。
  *
- * VMResult 从 compiler/VM.h 提取到此头文件，使 common/IBackend.h 的 IVmBackend
- * 子接口可引用该类型而不依赖 compiler/VM.h（避免 common → compiler 反向依赖）。
+ * VMResult 从 compiler/backend-stack/VM.h 提取到此头文件，使 common/IBackend.h 的 IVmBackend
+ * 子接口可引用该类型而不依赖 compiler/backend-stack/VM.h（避免 common → compiler 反向依赖）。
  *
  * VM.h 和 RegisterVM.h 通过 #include 此头文件保持 VMResult 定义单一真相源。
  *

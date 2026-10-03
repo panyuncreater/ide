@@ -34,13 +34,13 @@
 // ============================================================
 
 #include "common/ThreeBackends.h"
-#include "compiler/Compiler.h"
+#include "compiler/core/Compiler.h"
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
 
 #ifdef MINILANG_USE_JIT
 #include "common/RuntimeLimits.h" // R166: RuntimeConfig 循环迭代上限
-#include "compiler/JIT.h"
+#include "compiler/jit/JIT.h"
 #include "interpreter/GcManager.h" // P2-9: CallbackSuppressor 测试
 #endif
 
@@ -855,7 +855,7 @@ TEST(TestJIT, NanBoxMixedTypeArithmetic) {
 // 注意：不做 pass/fail 断言，仅测量并输出对比（避免环境噪声导致 CI 抖动）
 // 基准选取原则：(1) 只用 JIT 已支持的特性 (2) 计算密集可测量 (3) 输出可验证正确性
 
-#include "compiler/VM.h"
+#include "compiler/backend-stack/VM.h"
 #include <chrono>
 #include <iostream>
 

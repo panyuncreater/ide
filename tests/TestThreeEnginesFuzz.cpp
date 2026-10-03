@@ -31,9 +31,9 @@
 
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
-#include "compiler/Compiler.h"
-#include "compiler/VM.h"
-#include "compiler/RegisterVM.h"
+#include "compiler/core/Compiler.h"
+#include "compiler/backend-stack/VM.h"
+#include "compiler/backend-reg/RegisterVM.h"
 #include "interpreter/Interpreter.h"
 #include "interpreter/RuntimeExceptions.h"
 
@@ -347,6 +347,74 @@ public:
         return oss.str();
     }
 
+    // ---- 类别 11：异常处理（AGENTS.md Bug 模式 #5：try/catch 栈残留/catch 作用域）----
+    std::string genException() {
+        std::ostringstream oss;
+        int a = randInt(1, 9);
+        int threshold = randInt(0, 12);
+        // 有条件 throw + catch 变量使用 + finally 日志（三种路径覆盖：正常/捕获/finally）
+        oss << "var log = \"\";\n";
+        oss << "try {\n";
+        oss << "  if (" << a << " < " << threshold << ") { throw \"low\"; }\n";
+        oss << "  log = log + \"ok\";\n";
+        oss << "} catch (err) { log = log + err; } finally { log = log + \"f\"; }\n";
+        oss << "print(log);\n";
+        // 嵌套 try：内层 catch 后外层不可达
+        int b = randInt(0, 5);
+        oss << "var total = " << b << ";\n";
+        oss << "try {\n";
+        oss << "  try { throw total; } catch (inner) { total = total + inner; }\n";
+        oss << "} catch (outer) { total = -1; }\n";
+        oss << "print(total);\n";
+        // catch 内 throw 触发外层 catch（重抛链）
+        oss << "var acc = \"\";\n";
+        oss << "try { try { throw \"e1\"; } catch (e) { acc = acc + e; throw \"e2\"; } }\n";
+        oss << "catch (e2) { acc = acc + e2; }\n";
+        oss << "print(acc);\n";
+        return oss.str();
+    }
+
+    // ---- 类别 12：继承与 super（AGENTS.md Bug 模式 #9：字段默认值/super 方法查找链）----
+    std::string genInheritance() {
+        std::ostringstream oss;
+        int baseMark = randInt(1, 50);
+        int side = randInt(1, 9);
+        oss << "class Shape {\n";
+        oss << "  var name;\n";
+        oss << "  fun init(n) { this.name = n; }\n";
+        oss << "  fun area() { return " << baseMark << "; }\n";
+        oss << "  fun describe() { return this.name + \":\" + this.area(); }\n";
+        oss << "}\n";
+        oss << "class Square extends Shape {\n";
+        oss << "  var side;\n";
+        oss << "  fun init(s) { super.init(\"sq\"); this.side = s; }\n";
+        oss << "  fun area() { return this.side * this.side; }\n";
+        oss << "}\n";
+        oss << "var sq = Square(" << side << ");\n";
+        oss << "print(sq.area());\n";
+        oss << "print(sq.describe());\n";
+        oss << "print(sq.name);\n";
+        return oss.str();
+    }
+
+    // ---- 类别 13：字典与 COW（AGENTS.md Bug 模式 #1-4 相关：容器写前独占检查）----
+    std::string genDict() {
+        std::ostringstream oss;
+        int v1 = randInt(1, 9);
+        int v2 = randInt(10, 99);
+        oss << "var m = {\"a\": " << v1 << ", \"b\": " << v2 << "};\n";
+        oss << "print(m[\"a\"] + m[\"b\"]);\n";
+        oss << "m[\"c\"] = m[\"a\"] * 10;\n";
+        oss << "print(m[\"c\"]);\n";
+        oss << "m[\"a\"] = 100;\n";
+        oss << "print(m[\"a\"] + m[\"b\"] + m[\"c\"]);\n";
+        // COW 别名检查：副本写入不得影响原字典
+        oss << "var m2 = m;\n";
+        oss << "m2[\"b\"] = 0;\n";
+        oss << "print(m[\"b\"]);\n";
+        return oss.str();
+    }
+
 private:
     std::mt19937_64 rng_;
 
@@ -470,6 +538,30 @@ TEST(ThreeEnginesFuzz, LogicFuzz) {
 }
 
 // 确定性回归：固定一组已知三后端一致的程序，作为基准（防止生成器退化）
+TEST(ThreeEnginesFuzz, ExceptionFuzz) {
+    MiniLangProgramGenerator gen(kFuzzSeed + 11);
+    for (int i = 0; i < 30; ++i) {
+        SCOPED_TRACE("iteration " + std::to_string(i));
+        expectThreeAgree(gen.genException());
+    }
+}
+
+TEST(ThreeEnginesFuzz, InheritanceFuzz) {
+    MiniLangProgramGenerator gen(kFuzzSeed + 12);
+    for (int i = 0; i < 30; ++i) {
+        SCOPED_TRACE("iteration " + std::to_string(i));
+        expectThreeAgree(gen.genInheritance());
+    }
+}
+
+TEST(ThreeEnginesFuzz, DictFuzz) {
+    MiniLangProgramGenerator gen(kFuzzSeed + 13);
+    for (int i = 0; i < 40; ++i) {
+        SCOPED_TRACE("iteration " + std::to_string(i));
+        expectThreeAgree(gen.genDict());
+    }
+}
+
 TEST(ThreeEnginesFuzz, DeterministicBaseline) {
     std::vector<std::string> baselines = {
         "print(1 + 2 * 3);\n",

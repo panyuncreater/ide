@@ -85,7 +85,7 @@ const std::vector<WatchpointScenario>& WatchpointLibrary::scenarios() {
 // WatchpointPanel 实现
 // ============================================================
 
-WatchpointPanel::WatchpointPanel(QWidget* parent) : QWidget(parent) {
+WatchpointPanel::WatchpointPanel(QWidget* parent) : TeachingPanelBase(parent) {
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(4, 4, 4, 4);
     mainLayout->setSpacing(4);
@@ -142,17 +142,18 @@ WatchpointPanel::WatchpointPanel(QWidget* parent) : QWidget(parent) {
     refreshTimer_->setInterval(2000);
     connect(refreshTimer_, &QTimer::timeout, this, &WatchpointPanel::refreshLive);
 
+}
+
+void WatchpointPanel::applyTheme() {
     // 主题切换时刷新教学场景详情 HTML（populateScenarioDetail 中 <pre> 背景使用
-    // TeachingTheme::surface()，需重新渲染以跟随新主题）。
-    Theme::onThemeModeChanged(this, [this](Fluent::ThemeMode) {
-        if (scenarioList_ && scenarioDetail_) {
-            populateScenarioDetail(scenarioList_->currentRow());
-        }
-    });
+    // TeachingTheme::surface()，需重新渲染以跟随新主题）
+    if (scenarioList_ && scenarioDetail_) {
+        populateScenarioDetail(scenarioList_->currentRow());
+    }
 }
 
 void WatchpointPanel::showEvent(QShowEvent* event) {
-    QWidget::showEvent(event);
+    TeachingPanelBase::showEvent(event);
     if (refreshTimer_ && !refreshTimer_->isActive()) {
         refreshLive();
         refreshTimer_->start();
@@ -160,7 +161,7 @@ void WatchpointPanel::showEvent(QShowEvent* event) {
 }
 
 void WatchpointPanel::hideEvent(QHideEvent* event) {
-    QWidget::hideEvent(event);
+    TeachingPanelBase::hideEvent(event);
     if (refreshTimer_ && refreshTimer_->isActive()) {
         refreshTimer_->stop();
     }

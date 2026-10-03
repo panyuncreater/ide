@@ -96,7 +96,7 @@ const std::vector<BreakpointScenario>& BreakpointConditionLibrary::scenarios() {
 // BreakpointConditionPanel 实现
 // ============================================================
 
-BreakpointConditionPanel::BreakpointConditionPanel(QWidget* parent) : QWidget(parent) {
+BreakpointConditionPanel::BreakpointConditionPanel(QWidget* parent) : TeachingPanelBase(parent) {
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(4, 4, 4, 4);
     mainLayout->setSpacing(4);
@@ -156,14 +156,13 @@ BreakpointConditionPanel::BreakpointConditionPanel(QWidget* parent) : QWidget(pa
     connect(refreshTimer_, &QTimer::timeout, this, &BreakpointConditionPanel::refreshLive);
     // refreshTimer_->start() 移至 showEvent
 
-    // 主题切换时刷新教学场景详情 HTML（populateScenarioDetail 中 <pre> 背景使用
-    // TeachingTheme::surface()，需重新渲染以跟随新主题）。
-    // receiver=this 保证生命周期安全，析构自动断开。
-    Theme::onThemeModeChanged(this, [this](Fluent::ThemeMode) {
-        if (scenarioList_ && scenarioDetail_) {
-            populateScenarioDetail(scenarioList_->currentRow());
-        }
-    });
+    // 审计问题3: 主题切换接线收敛到 TeachingPanelBase——刷新逻辑移入 applyTheme()。
+}
+
+void BreakpointConditionPanel::applyTheme() {
+    if (scenarioList_ && scenarioDetail_) {
+        populateScenarioDetail(scenarioList_->currentRow());
+    }
 }
 
 void BreakpointConditionPanel::showEvent(QShowEvent* event) {

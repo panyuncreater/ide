@@ -806,10 +806,13 @@ public:
     /// 注意 env 以 shared_ptr 传入，但 ClosureData 内部存为 weak_ptr<Environment>
     /// （V4 fix），用于打破 闭包→环境→闭包 的循环引用，避免引用计数泄漏。
     /// L3 fix: 每次调用分配全局唯一 functionId，用于闭包相等性判断。
+    /// D2 fix: 实现移至 Value.cpp——创建即在 env 上 markClosureEnvRef()。
+    /// envPool_ 回收守卫（use_count==1 + 无捕获 + 无闭包 env 引用）依赖该标记，
+    /// 原先由各创建点手工调用（AUDIT-BUG-I1），漏标即静默语义损坏
+    /// （resetForReuse 清空 weak_ptr 仍指向该 env 的闭包的可见变量）；
+    /// 收口到工厂后不变量结构性成立，新增创建点无需再记忆手工标记。
     static Value makeClosure(const std::string& name, std::shared_ptr<Environment> env,
-                             const std::vector<std::string>& params, std::shared_ptr<FunDecl> body = nullptr) {
-        return fromHeapPtr(new ClosureData(name, env, params, std::move(body), nextFunctionId()));
-    }
+                             const std::vector<std::string>& params, std::shared_ptr<FunDecl> body = nullptr);
 
     /// L3 fix: 全局单调递增的 functionId 生成器（atomic 线程安全）。
     /// 每次 makeClosure 调用消耗一个 ID，保证独立创建的闭包永不判等。

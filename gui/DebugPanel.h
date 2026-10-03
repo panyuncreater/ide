@@ -5,7 +5,7 @@
 #include <QListWidget>
 #include <QTreeWidget>
 #include <QVBoxLayout>
-#include <QWidget>
+#include "gui/TeachingPanelBase.h"
 #include <functional>
 #include <tuple>
 #include <vector>
@@ -16,7 +16,7 @@
 
 /// 调试面板：变量监视 + 调用栈
 /// Round 7: 变量按作用域分层展示（全局/局部/闭包）
-class DebugPanel : public QWidget {
+class DebugPanel : public TeachingPanelBase {
     Q_OBJECT
 
 public:
@@ -55,9 +55,9 @@ private:
     /// 创建作用域分组顶层节点
     QTreeWidgetItem* createScopeGroup(const QString& title, int count);
 
-    /// 集中应用主题色板样式（构造函数与主题切换回调均调用）
-    /// 主题切换时通过 Theme::onThemeModeChanged 重新调用此方法刷新
-    void applyThemeStyles();
+    /// 集中应用主题色板样式（构造函数与主题切换时均调用；
+    /// 主题切换分发由 TeachingPanelBase 基类接线，此处仅 override 钩子）
+    void applyTheme() override;
 
     QTreeWidget* variableTree_ = nullptr;      // 变量监视树
     QLabel* varLabel_ = nullptr;               // 变量监视区标题（保存以便主题刷新）

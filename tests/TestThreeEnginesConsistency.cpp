@@ -11,9 +11,9 @@
 // - 允许的差异用 EXPECT_NE 显式断言，防止被"修正"后差异被掩盖
 // ============================================================
 
-#include "compiler/Compiler.h"
-#include "compiler/RegisterVM.h"
-#include "compiler/VM.h"
+#include "compiler/core/Compiler.h"
+#include "compiler/backend-reg/RegisterVM.h"
+#include "compiler/backend-stack/VM.h"
 #include "interpreter/Interpreter.h"
 #include "interpreter/RuntimeExceptions.h"
 #include "lexer/Lexer.h"

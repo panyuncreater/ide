@@ -4,8 +4,8 @@
  *
  * 为 GUI 教学面板（BackendParallelPanel / PerformanceRacePanel /
  * ProfileDashboardPanel 等）提供对编译器+执行后端的高层封装，
- * 消除面板对 compiler/Compiler.h / compiler/VM.h / compiler/RegisterVM.h /
- * compiler/IR.h / interpreter/Interpreter.h / lexer/Lexer.h / parser/Parser.h
+ * 消除面板对 compiler/core/Compiler.h / compiler/backend-stack/VM.h / compiler/backend-reg/RegisterVM.h /
+ * compiler/ir/IR.h / interpreter/Interpreter.h / lexer/Lexer.h / parser/Parser.h
  * 等内部头文件的直接依赖。
  *
  * 设计原则：
@@ -88,7 +88,7 @@ struct BackendExecResult {
 // ============================================================
 // 抽象 BytecodeChunk / RegBytecodeChunk 的 isGenerator/yieldCount 字段，
 // 供 CoroutineVisualizerPanel 等教学面板展示生成器 chunk 概要，
-// 无需面板直接依赖 compiler/Bytecode.h / compiler/RegisterBytecode.h。
+// 无需面板直接依赖 compiler/core/Bytecode.h / compiler/backend-reg/RegisterBytecode.h。
 struct GeneratorChunkInfo {
     std::string name;       // chunk 名（函数名）
     int yieldCount = 0;     // 静态 yield 数（动态时为 -1 标记）

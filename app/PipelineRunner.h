@@ -22,9 +22,9 @@
 
 #include "Diagnostic.h"
 #include "ast/ASTNode.h"
-#include "compiler/Bytecode.h"
-#include "compiler/BytecodeCache.h"
-#include "compiler/Compiler.h"
+#include "compiler/core/Bytecode.h"
+#include "compiler/core/BytecodeCache.h"
+#include "compiler/core/Compiler.h"
 #include "formatter/Formatter.h"
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"

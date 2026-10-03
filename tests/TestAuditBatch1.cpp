@@ -12,11 +12,11 @@
 
 #include <gtest/gtest.h>
 
-#include "compiler/Bytecode.h"
-#include "compiler/Compiler.h"
-#include "compiler/IR.h"
-#include "compiler/RegisterVM.h"
-#include "compiler/VM.h"
+#include "compiler/core/Bytecode.h"
+#include "compiler/core/Compiler.h"
+#include "compiler/ir/IR.h"
+#include "compiler/backend-reg/RegisterVM.h"
+#include "compiler/backend-stack/VM.h"
 #include "interpreter/Environment.h"
 #include "interpreter/Interpreter.h"
 #include "interpreter/RuntimeExceptions.h"
@@ -752,4 +752,199 @@ TEST(AuditBatch1OptIR, MinimalIRNoCrash) {
     bool changed = optimizeIR(ir, true, true, true, true);
     (void)changed; // 仅验证不崩溃
     SUCCEED();
+}
+
+// ============================================================
+// D2 fix (审计报告 2026-08-03 D2): makeClosure 统一标记闭包 env 引用
+// ------------------------------------------------------------
+// envPool_ 回收守卫（use_count==1 + 无捕获 + 无闭包 env 引用）依赖
+// Environment::hasClosureEnvRef()。原先该标记由 Interpreter 的唯一
+// 闭包创建点手工调用（AUDIT-BUG-I1），属"人工保证"不变量——新增
+// 创建点漏标即静默语义损坏（resetForReuse 清空 weak_ptr 仍指向该
+// env 的闭包的可见变量）。D2 fix 将标记收口到 Value::makeClosure
+// 工厂内部，本组测试锁定该结构性不变量。
+// ============================================================
+
+// ---- 工厂创建即标记：以真实 env 创建闭包后 hasClosureEnvRef 必为 true ----
+TEST(AuditBatch1ClosureEnv, MakeClosureMarksEnvRef) {
+    auto env = std::make_shared<Environment>();
+    ASSERT_FALSE(env->hasClosureEnvRef());
+    Value closureVal = Value::makeClosure("fn", env, {}, nullptr);
+    ASSERT_TRUE(closureVal.isClosure());
+    EXPECT_TRUE(env->hasClosureEnvRef());
+}
+
+// ---- env=nullptr 路径（StackVM/RegisterVM/JIT 的无 env 闭包）：不标记、不崩溃 ----
+TEST(AuditBatch1ClosureEnv, MakeClosureNullptrEnvSafe) {
+    Value closureVal = Value::makeClosure("fn", nullptr, {}, nullptr);
+    ASSERT_TRUE(closureVal.isClosure());
+}
+
+// ---- 行为回归：循环体块 env 承受 envPool_ 回收压力（>64 池上限）后，
+// 每个闭包仍读到各自迭代的捕获值。若工厂标记缺失，块 env 会被回收
+// 复用（resetForReuse 清空 variables），闭包调用读到错值。 ----
+TEST(AuditBatch1ClosureEnv, LambdaInLoopBlockSurvivesPoolReuse) {
+    std::string src =
+        "var fs = [];\n"
+        "for (var i = 0; i < 100; i = i + 1) {\n"
+        "  var x = i;\n"
+        "  fs.push(fun() { return x; });\n"
+        "}\n"
+        "var ok = 0;\n"
+        "for (var j = 0; j < 100; j = j + 1) {\n"
+        "  if (fs[j]() == j) { ok = ok + 1; }\n"
+        "}\n"
+        "print(ok);";
+    EXPECT_EQ(runInterpreter(src), "100");
+}
+
+// ============================================================
+// D1 fix（审计报告 2026-08-03 D1）: IR lowering 栈平衡校验器回归测试
+// ------------------------------------------------------------
+// 校验器在 debug 构建的 BytecodeIRBackend::lower() 中逐指令模拟操作数栈
+// 深度（效应表 + LABEL 锚定，见 IR.h 注释）。本组测试以手工构造的
+// IRFunction 验证两类行为：
+//   1. 负深度（弹出多于可用）→ lowering 拒绝（debug 构建）；
+//   2. 合并点深度冲突 → Logger::Error 报告但 lowering 继续——已知合法形态
+//      AUDIT-R6 "break 丢弃挂起 return 值"（try 内 return 压栈后 finally 中
+//      break 直接跳出）的 break 边深度多 1，运行时由 OP_RETURN 帧回收清理，
+//      静态模拟无法表达该丢弃，故只报告不拒绝。
+// Release 构建（NDEBUG）校验器不启用，所有用例的 lower 均须成功。
+// ============================================================
+
+TEST(AuditBatch1IRBalance, BalancedFunctionLowers) {
+    IRFunction ir;
+    ir.name = "balanced";
+    ir.localCount = 0;
+    uint32_t lbl = ir.allocLabel();
+    IRBasicBlock bb;
+    bb.labelIndex = lbl;
+    // 压 1 → 弹 1 → RETURN_NULL：净 0，标准平衡形态
+    bb.instructions.push_back(IRInstruction(IROp::LOAD_NULL, {IROperand::vreg(0)}));
+    bb.instructions.push_back(IRInstruction(IROp::POP, {}));
+    bb.instructions.push_back(IRInstruction(IROp::RETURN_NULL, {}));
+    ir.blocks.push_back(std::move(bb));
+    BytecodeIRBackend backend;
+    EXPECT_TRUE(backend.lower(ir));
+}
+
+TEST(AuditBatch1IRBalance, NegativeDepthDetected) {
+    IRFunction ir;
+    ir.name = "underflow";
+    IRBasicBlock bb;
+    // 空栈上 POP：深度 -1，校验器必须拒绝（历史 BUG 模式：visit* emit 收尾漏 POP 的反面）
+    bb.instructions.push_back(IRInstruction(IROp::POP, {}));
+    ir.blocks.push_back(std::move(bb));
+    BytecodeIRBackend backend;
+#ifdef NDEBUG
+    EXPECT_TRUE(backend.lower(ir)); // Release 无校验器，lowering 本身合法
+#else
+    EXPECT_FALSE(backend.lower(ir));
+#endif
+}
+
+TEST(AuditBatch1IRBalance, LabelDepthMismatchReportedNotRejected) {
+    IRFunction ir;
+    ir.name = "mergeMismatch";
+    uint32_t end = ir.allocLabel();
+    IRBasicBlock bb;
+    bb.labelIndex = end;
+    // LOAD_NULL 压 1 → JUMP_IF_FALSE peek 条件（记录 end=1）→ POP 弹 1（fall-through 深度 0）
+    // → LABEL end：跳转边期望 1，fall-through 实际 0 → 冲突报告但 lowering 继续
+    bb.instructions.push_back(IRInstruction(IROp::LOAD_NULL, {IROperand::vreg(0)}));
+    bb.instructions.push_back(IRInstruction(IROp::JUMP_IF_FALSE, {IROperand::vreg(1), IROperand::label(end)}));
+    bb.instructions.push_back(IRInstruction(IROp::POP, {}));
+    bb.instructions.push_back(IRInstruction(IROp::LABEL, {IROperand::label(end)}));
+    ir.blocks.push_back(std::move(bb));
+    BytecodeIRBackend backend;
+    EXPECT_TRUE(backend.lower(ir)); // 两种构建下均成功（冲突仅 Logger::Error 报告）
+}
+
+TEST(AuditBatch1IRBalance, BackwardJumpConflictReportedNotRejected) {
+    IRFunction ir;
+    ir.name = "loopConflict";
+    uint32_t top = ir.allocLabel();
+    IRBasicBlock bb;
+    bb.labelIndex = top;
+    // LABEL top（锚定 0）→ LOAD_NULL 压 1 → JUMP top（回边深度 1 ≠ 已锚定 0）→ 报告但继续
+    bb.instructions.push_back(IRInstruction(IROp::LABEL, {IROperand::label(top)}));
+    bb.instructions.push_back(IRInstruction(IROp::LOAD_NULL, {IROperand::vreg(0)}));
+    bb.instructions.push_back(IRInstruction(IROp::JUMP, {IROperand::label(top)}));
+    ir.blocks.push_back(std::move(bb));
+    BytecodeIRBackend backend;
+    EXPECT_TRUE(backend.lower(ir));
+}
+
+// ---- D1 第二步: 效应表完备性的运行时复核 ----
+// static_assert(tableIsComplete()) 已在编译期强制（BytecodeIRBackend.cpp），
+// 本测试从测试侧独立复核：除 PHI（SSA 中间产物，不可 lower）外，全部 IROp
+// 枚举值在给最小合法操作数时都能给出栈效应；PHI 返回 false 且 lowering 拒绝。
+// 公式型操作（pops 依赖操作数）需按其布局给足操作数。
+static std::vector<IROperand> minimalOperandsFor(IROp op) {
+    switch (op) {
+    case IROp::CALL:
+    case IROp::TAIL_CALL:
+    case IROp::CALL_EXPR:
+    case IROp::CLASS_NEW:
+        return {IROperand::vreg(0), IROperand::imm(0), IROperand::imm(0)};
+    case IROp::METHOD_CALL:
+        return {IROperand::vreg(0), IROperand::vreg(1), IROperand::imm(0), IROperand::imm(0)};
+    case IROp::SUPER_CALL:
+        return {IROperand::vreg(0), IROperand::vreg(1), IROperand::imm(0), IROperand::imm(0),
+                IROperand::imm(0)};
+    case IROp::BUILD_ARRAY:
+    case IROp::BUILD_DICT:
+    case IROp::BUILD_TUPLE:
+        return {IROperand::vreg(0), IROperand::imm(0)};
+    case IROp::BUILD_ENUM_VARIANT:
+        return {IROperand::vreg(0), IROperand::imm(0), IROperand::imm(0), IROperand::imm(0)};
+    default:
+        return {};
+    }
+}
+
+TEST(AuditBatch1IRBalance, EffectTableCoversAllIROps) {
+    for (size_t v = 0; v < static_cast<size_t>(IROp::IROp_COUNT); ++v) {
+        const IROp op = static_cast<IROp>(v);
+        if (op == IROp::IROp_COUNT)
+            continue;
+        BytecodeIRBackend::StackEffect fx{0, 0};
+        const bool ok = BytecodeIRBackend::irStackEffect(
+            IRInstruction(op, minimalOperandsFor(op)), fx);
+        if (op == IROp::PHI) {
+            EXPECT_FALSE(ok) << "PHI 不可 lower，效应表不应登记";
+        } else {
+            EXPECT_TRUE(ok) << "IROp #" << v << " 未登记效应（新增 IROp 须补 kFixedStackEffect 或公式分支）";
+            EXPECT_GE(fx.pops, 0);
+            EXPECT_GE(fx.pushes, 0);
+        }
+    }
+}
+
+// PHI 到达 lowering 时必须被拒绝（lowerInstruction 的 default 分支），两种构建一致
+TEST(AuditBatch1IRBalance, PhiInstructionRejectedByLower) {
+    IRFunction ir;
+    ir.name = "phi";
+    IRBasicBlock bb;
+    bb.instructions.push_back(IRInstruction(IROp::PHI, {IROperand::vreg(0)}));
+    ir.blocks.push_back(std::move(bb));
+    BytecodeIRBackend backend;
+    EXPECT_FALSE(backend.lower(ir));
+}
+
+TEST(AuditBatch1IRBalance, BalancedLoopLowers) {
+    IRFunction ir;
+    ir.name = "balancedLoop";
+    uint32_t top = ir.allocLabel();
+    IRBasicBlock bb;
+    bb.labelIndex = top;
+    // LABEL top（0）→ 压 1 → 弹 1 → 回边（深度 0 == 已锚定 0）→ RETURN_NULL
+    bb.instructions.push_back(IRInstruction(IROp::LABEL, {IROperand::label(top)}));
+    bb.instructions.push_back(IRInstruction(IROp::LOAD_NULL, {IROperand::vreg(0)}));
+    bb.instructions.push_back(IRInstruction(IROp::POP, {}));
+    bb.instructions.push_back(IRInstruction(IROp::JUMP, {IROperand::label(top)}));
+    bb.instructions.push_back(IRInstruction(IROp::RETURN_NULL, {}));
+    ir.blocks.push_back(std::move(bb));
+    BytecodeIRBackend backend;
+    EXPECT_TRUE(backend.lower(ir));
 }

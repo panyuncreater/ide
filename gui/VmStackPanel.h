@@ -1,6 +1,6 @@
 #pragma once
 
-#include "compiler/Bytecode.h"
+#include "compiler/core/Bytecode.h"
 #include "interpreter/Value.h"
 #include <QLabel>
 #include <QListWidget>

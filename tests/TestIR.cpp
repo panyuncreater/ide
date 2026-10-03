@@ -10,10 +10,10 @@
 
 #include <gtest/gtest.h>
 
-#include "compiler/IR.h"
-#include "compiler/Bytecode.h"
-#include "compiler/Compiler.h"
-#include "compiler/VM.h"
+#include "compiler/ir/IR.h"
+#include "compiler/core/Bytecode.h"
+#include "compiler/core/Compiler.h"
+#include "compiler/backend-stack/VM.h"
 #include "interpreter/Value.h"
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"

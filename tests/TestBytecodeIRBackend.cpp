@@ -21,8 +21,8 @@
 
 #include <gtest/gtest.h>
 
-#include "compiler/Bytecode.h"
-#include "compiler/IR.h"
+#include "compiler/core/Bytecode.h"
+#include "compiler/ir/IR.h"
 #include "interpreter/Value.h"
 
 #include <memory>
@@ -47,8 +47,36 @@ struct LowerFixture {
         block.instructions.emplace_back(op, std::move(ops), line);
     }
 
+    /// D1 fix 配套：按 BytecodeIRBackend::irStackEffect 的同一效应表自动补平
+    /// 栈深度——深度不足处前置 LOAD_NULL，末尾 POP 归零。
+    /// 本文件大量用例以单条裸指令为 fixture 验证 OpCode 发射（裸指令在栈式
+    /// 语义下可能欠栈）；补平后 IR 满足栈平衡不变量（debug 构建校验器启用），
+    /// 而各用例的 containsOpCode 断言与无补平时的字节码序列不受影响
+    /// （无欠栈的用例不插入任何指令，偏移类断言亦不受影响）。
+    void balanceBlock() {
+        std::vector<IRInstruction> balanced;
+        int depth = 0;
+        for (auto& ins : block.instructions) {
+            BytecodeIRBackend::StackEffect fx{0, 0};
+            if (BytecodeIRBackend::irStackEffect(ins, fx)) {
+                while (depth < fx.pops) {
+                    balanced.emplace_back(IROp::LOAD_NULL, std::vector<IROperand>{IROperand::vreg(0xFFFF)});
+                    ++depth;
+                }
+                depth += fx.pushes - fx.pops;
+            }
+            balanced.push_back(std::move(ins));
+        }
+        while (depth > 0) {
+            balanced.emplace_back(IROp::POP, std::vector<IROperand>{});
+            --depth;
+        }
+        block.instructions = std::move(balanced);
+    }
+
     /// 完成构建，调用 lower
     bool lower() {
+        balanceBlock();
         ir.blocks.push_back(std::move(block));
         return backend.lower(ir);
     }
@@ -677,6 +705,8 @@ TEST(BytecodeIRBackendModule, LowerModuleWithSubFunctionProducesFunctionChunk) {
     IRBasicBlock subBlock;
     subBlock.labelIndex = subFn->allocLabel();
     IROperand rv = subFn->allocVReg();
+    // D1 fix: 栈平衡不变量——RETURN 需要栈顶有返回值，前置 LOAD_NULL 供其消费
+    subBlock.instructions.emplace_back(IROp::LOAD_NULL, std::vector<IROperand>{rv}, 1);
     subBlock.instructions.emplace_back(IROp::RETURN, std::vector<IROperand>{rv}, 1);
     subFn->blocks.push_back(std::move(subBlock));
     module.addFunction(std::move(subFn));

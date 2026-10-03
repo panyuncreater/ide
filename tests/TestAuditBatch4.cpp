@@ -26,11 +26,11 @@
 #include <gtest/gtest.h>
 
 #include "common/Diagnostic.h"
-#include "compiler/Bytecode.h"
-#include "compiler/Compiler.h"
-#include "compiler/IR.h"
-#include "compiler/RegisterVM.h"
-#include "compiler/VM.h"
+#include "compiler/core/Bytecode.h"
+#include "compiler/core/Compiler.h"
+#include "compiler/ir/IR.h"
+#include "compiler/backend-reg/RegisterVM.h"
+#include "compiler/backend-stack/VM.h"
 #include "formatter/Formatter.h"
 #include "interpreter/Environment.h"
 #include "interpreter/Interpreter.h"

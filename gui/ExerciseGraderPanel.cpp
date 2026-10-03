@@ -16,6 +16,7 @@
 #include "common/BackendExecutionService.h" // ARCH-10: 后端执行服务中间层
 
 #include <QApplication>
+#include <QSignalBlocker>  // D10 fix: RAII 信号阻塞
 #include <QComboBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -392,12 +393,14 @@ void ExerciseGraderPanel::buildUI() {
 /// 填充题目下拉框并预选第一题。
 void ExerciseGraderPanel::populateExercises() {
     const auto& exs = ExerciseGraderLibrary::exercises();
-    exerciseCombo_->blockSignals(true);
-    exerciseCombo_->clear();
-    for (const auto& ex : exs) {
-        exerciseCombo_->addItem(QString::fromUtf8(ex.title.c_str()));
+    // D10 fix: QSignalBlocker RAII 替代手工 blockSignals(true/false) 配对
+    {
+        const QSignalBlocker comboBlocker(exerciseCombo_);
+        exerciseCombo_->clear();
+        for (const auto& ex : exs) {
+            exerciseCombo_->addItem(QString::fromUtf8(ex.title.c_str()));
+        }
     }
-    exerciseCombo_->blockSignals(false);
     if (!exs.empty()) {
         onExerciseSelected(0);
     }

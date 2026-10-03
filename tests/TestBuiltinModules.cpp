@@ -8,9 +8,9 @@
 // ============================================================
 
 #include "common/BuiltinModules.h"
-#include "compiler/Compiler.h"
-#include "compiler/RegisterVM.h" // P2-11: RegisterVM 路径命名空间导入测试
-#include "compiler/VM.h"
+#include "compiler/core/Compiler.h"
+#include "compiler/backend-reg/RegisterVM.h" // P2-11: RegisterVM 路径命名空间导入测试
+#include "compiler/backend-stack/VM.h"
 #include "interpreter/Interpreter.h"
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"

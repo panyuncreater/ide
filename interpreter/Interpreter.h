@@ -294,8 +294,11 @@ public:
 
     /// 请求中止当前执行（REPL 超时/关闭时调用）
     /// checkBreak 会在每个语句节点检查此标志并抛异常，实现协作式中止
-    void requestStop() { stopRequested_.store(true, std::memory_order_relaxed); }
-    bool isStopRequested() const { return stopRequested_.load(std::memory_order_relaxed); }
+    // D10 fix: 协作中止标志跨线程（GUI 线程写 / Worker 线程读）——
+    // release/acquire 建立同步关系：requestStop 之前的所有写入对
+    // isStopRequested 之后的读取可见（原 relaxed 依赖 5 秒 _Exit 兜底）。
+    void requestStop() { stopRequested_.store(true, std::memory_order_release); }
+    bool isStopRequested() const { return stopRequested_.load(std::memory_order_acquire); }
 
     // ---- R114 可回放执行时间轴：recorder 集成 ----
     /// 启用/禁用执行轨迹录制。启用后 checkBreak 在每个语句节点入口采集快照。

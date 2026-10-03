@@ -133,7 +133,7 @@ const std::vector<BugHuntItem>& BugHuntLibrary::items() {
              "💡 提示2：StackVM 通过 notifyStep(ip, op) 在所有指令后统一调用，RegisterVM 是否对齐？",
              "💡 提示3：修复：捕获结果，若 VM_OK 则调用 stepCallback_。"},
             "📖 根因：RegisterVM 的 stepCallback_ 在「直接 return」那条捷径上被跳过了，于是调试器单步模式丢了步进事件。"
-            "修复点：compiler/RegisterVM.cpp executeCalls() + executeMisc()。",
+            "修复点：compiler/backend-reg/RegisterVM.cpp executeCalls() + executeMisc()。",
             BugHuntDifficulty::INTERMEDIATE},
         BugHuntItem{"BUG-REPL-1",
                     "💻 clearModuleCache 路径规范化缺失",
@@ -186,7 +186,7 @@ const std::vector<BugHuntItem>& BugHuntLibrary::items() {
              "💡 提示3：修复需要先比较 getType()，再比较 equals()。"},
             "📖 根因：Value::equals() 只比数值、不管类型。可常量池去重该按类型区分时，它就没辙了。"
             "先比较 getType() 再调用 equals()，否则 int(0) 与 float(0.0) 会被误判为同一常量。"
-            "修复点：compiler/Bytecode.h addConstant() + compiler/RegisterBytecode.cpp "
+            "修复点：compiler/core/Bytecode.h addConstant() + compiler/backend-reg/RegisterBytecode.cpp "
             "RegBytecodeChunk::addConstant()。",
             BugHuntDifficulty::EXPERT},
         BugHuntItem{"BUG-CP-2",
@@ -221,7 +221,7 @@ const std::vector<BugHuntItem>& BugHuntLibrary::items() {
                      "💡 提示3：修复方案：在 visitFunDecl 加入类似 IR 的 computeFreeVars 前向分析。"},
                     "📖 根因：resolveUpvalue 的惰性策略，遇到 3 "
                     "层以上嵌套闭包就失灵；中间那层函数得先声明自己要抓哪些外层变量。"
-                    "修复点：compiler/Compiler.cpp resolveUpvalue() + visitFunDecl()。",
+                    "修复点：compiler/core/Compiler.cpp resolveUpvalue() + visitFunDecl()。",
                     BugHuntDifficulty::EXPERT},
         BugHuntItem{
             "BUG-IR-POP-2",
@@ -237,7 +237,7 @@ const std::vector<BugHuntItem>& BugHuntLibrary::items() {
              "💡 提示2：visitStatement 是统一包装器，会对表达式语句 emit POP。",
              "💡 提示3：同样的 Bug 也存在于 visitWhileStmt 和 visitForStmt 的单语句体路径。"},
             "📖 根因：IR 路径里，语句上下文得用 visitStatement 这个统一包装器来发 POP，不能图省事直接调 visitNode。"
-            "修复点：compiler/IR.cpp visitIfStmt() + visitWhileStmt() + visitForStmt()。",
+            "修复点：compiler/ir/IR.cpp visitIfStmt() + visitWhileStmt() + visitForStmt()。",
             BugHuntDifficulty::EXPERT},
         BugHuntItem{"BUG-MOD-1",
                     "🚀 模块路径：'C:foo' 漏网",
@@ -252,7 +252,7 @@ const std::vector<BugHuntItem>& BugHuntLibrary::items() {
                      "💡 提示2：反斜杠在何处被转为正斜杠？若已转，原反斜杠分支是死代码。",
                      "💡 提示3：修复需拒绝所有 path.size() >= 2 && path[1] == ':' 形式。"},
                     "📖 根因：路径安全校验不能只盯着 'X:/'，凡是以 'X:' 开头的形式都得挡回去。"
-                    "修复点：compiler/Compiler.cpp normalizeModulePath() + InterpreterModules.cpp + IR.cpp 三处同步。",
+                    "修复点：compiler/core/Compiler.cpp normalizeModulePath() + InterpreterModules.cpp + IR.cpp 三处同步。",
                     BugHuntDifficulty::EXPERT},
         BugHuntItem{"BUG-DBG-1",
                     "🚀 调用栈顶帧行号：调用点 vs 当前行",

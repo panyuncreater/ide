@@ -20,10 +20,10 @@
 // 这里的测试主要验证语义正确性，不测真实并发性能。
 // ============================================================
 
-#include "compiler/Compiler.h"
-#include "compiler/IR.h"
-#include "compiler/RegisterVM.h"
-#include "compiler/VM.h"
+#include "compiler/core/Compiler.h"
+#include "compiler/ir/IR.h"
+#include "compiler/backend-reg/RegisterVM.h"
+#include "compiler/backend-stack/VM.h"
 #include "interpreter/Interpreter.h"
 #include "interpreter/Value.h"
 #include "lexer/Lexer.h"

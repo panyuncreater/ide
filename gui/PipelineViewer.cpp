@@ -9,9 +9,9 @@
 #include "gui/PipelineViewer.h"
 #include "app/IdeController.h"
 #include "ast/ASTNode.h"
-#include "compiler/Bytecode.h"
-#include "compiler/Compiler.h"
-#include "compiler/IR.h"
+#include "compiler/core/Bytecode.h"
+#include "compiler/core/Compiler.h"
+#include "compiler/ir/IR.h"
 #include "gui/GuiTextUtils.h" // R75: monospaceFont() 跨机器字体回退链
 #include "gui/I18n.h"
 #include "gui/PanelAnimator.h"

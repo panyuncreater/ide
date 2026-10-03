@@ -25,7 +25,7 @@
 // AST→IR→字节码→输出），并提供 6 个阶段跳转按钮与完成状态跟踪。
 // ============================================================
 
-CodeJourneyInfoPanel::CodeJourneyInfoPanel(QWidget* parent) : QWidget(parent) {
+CodeJourneyInfoPanel::CodeJourneyInfoPanel(QWidget* parent) : TeachingPanelBase(parent) {
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(4, 4, 4, 4);
     mainLayout->setSpacing(4);
@@ -53,13 +53,8 @@ CodeJourneyInfoPanel::CodeJourneyInfoPanel(QWidget* parent) : QWidget(parent) {
     // 初始化进度提示
     refreshProgress();
 
-    // 主题切换时重建 HTML（buildJourneyHtml 内部使用 TeachingTheme::surface()
-    // 作为 <pre> 背景，需重新渲染以跟随新主题）。receiver=this 保证生命周期安全。
-    Theme::onThemeModeChanged(this, [this](Fluent::ThemeMode) {
-        if (infoBrowser_) {
-            infoBrowser_->setHtml(buildJourneyHtml());
-        }
-    });
+    // D10/审计问题3: 主题切换接线收敛到 TeachingPanelBase——重建逻辑移入
+    // applyTheme() override（buildJourneyHtml 内部使用 TeachingTheme::surface()）。
 }
 
 // ============================================================
@@ -67,6 +62,12 @@ CodeJourneyInfoPanel::CodeJourneyInfoPanel(QWidget* parent) : QWidget(parent) {
 // ============================================================
 
 /// 面板显示时刷新历程数据。
+void CodeJourneyInfoPanel::applyTheme() {
+    if (infoBrowser_) {
+        infoBrowser_->setHtml(buildJourneyHtml());
+    }
+}
+
 void CodeJourneyInfoPanel::showEvent(QShowEvent* event) {
     QWidget::showEvent(event);
     // 首次显示即标记完成（用户点进来观看就算完成）

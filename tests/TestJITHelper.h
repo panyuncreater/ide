@@ -9,12 +9,12 @@
 // ============================================================
 
 #include "common/ThreeBackends.h"
-#include "compiler/Compiler.h"
+#include "compiler/core/Compiler.h"
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
 
 #ifdef MINILANG_USE_JIT
-#include "compiler/JIT.h"
+#include "compiler/jit/JIT.h"
 #include "interpreter/GcManager.h" // P2-9: CallbackSuppressor 测试
 #endif
 

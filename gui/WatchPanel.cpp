@@ -27,7 +27,7 @@
 // WatchPanel 实现
 // ============================================================
 
-WatchPanel::WatchPanel(QWidget* parent) : QWidget(parent) {
+WatchPanel::WatchPanel(QWidget* parent) : TeachingPanelBase(parent) {
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(4, 4, 4, 4);
     mainLayout->setSpacing(4);
@@ -86,16 +86,17 @@ WatchPanel::WatchPanel(QWidget* parent) : QWidget(parent) {
     // 从 QSettings 加载持久化的表达式
     loadExpressions();
 
-    // 主题切换时刷新教学场景详情 HTML
-    Theme::onThemeModeChanged(this, [this](Fluent::ThemeMode) {
-        if (scenarioList_ && scenarioDetail_) {
-            populateScenarioDetail(scenarioList_->currentRow());
-        }
-    });
+}
+
+void WatchPanel::applyTheme() {
+    // 主题切换时刷新教学场景详情 HTML（<pre> 背景等使用 TeachingTheme 主题色）
+    if (scenarioList_ && scenarioDetail_) {
+        populateScenarioDetail(scenarioList_->currentRow());
+    }
 }
 
 void WatchPanel::showEvent(QShowEvent* event) {
-    QWidget::showEvent(event);
+    TeachingPanelBase::showEvent(event);
     // 面板显示时启动安全网 QTimer，首次立即刷新一次
     if (refreshTimer_ && !refreshTimer_->isActive()) {
         refreshAll();
@@ -104,7 +105,7 @@ void WatchPanel::showEvent(QShowEvent* event) {
 }
 
 void WatchPanel::hideEvent(QHideEvent* event) {
-    QWidget::hideEvent(event);
+    TeachingPanelBase::hideEvent(event);
     // 面板隐藏时停止 QTimer，避免后台空转
     if (refreshTimer_ && refreshTimer_->isActive()) {
         refreshTimer_->stop();

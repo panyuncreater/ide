@@ -22,13 +22,18 @@
 | `async`/`await` | 调度语义一致 | 并发交错、异常跨 await |
 | 闭包捕获 | upvalue 快照/共享语义三后端一致 | 多闭包共享变量、逃逸后写入（见 `docs/testing.md` AUDIT-R5 R2 快照案例） |
 | try/catch | catch 变量作用域隔离、栈残留清零 | 嵌套 finally、break/return 穿 finally |
+| 闭包索引调用写回 | 经数组/字典索引调用的闭包对 capturedVars 的变异跨调用持久 | `AuditBatch6ClosureWriteback.Array/DictIndexCallMutationPersists` |
+| 多闭包捕获语义 | **快照语义**（非 JS/Lua 共享单元格）：作用域关闭后各闭包持有独立 capturedVars | `AuditBatch6ClosureWriteback.SharedCaptureViaIndexCallsSnapshotSemantics`、R2 回归锁 |
+| catch 变量重声明 | catch 块内 `var` 重声明 catch 变量名：块内可见、全局原值不受污染、重声明后可再 throw | `AuditBatch6CatchRedecl.*` |
+| super 非方法上下文 | 顶层/嵌套普通函数中 `super` 为**运行时错误**（"未定义的变量: this"），不崩溃不静默 | `AuditBatch1Super.TopLevelSuperRuntimeError`、`ConsistencyDiff.H7b` |
+| 无限循环防护 | 循环回边注入迭代计数，超限报错（对齐 Interpreter） | R166、`compiler/jit/JIT.cpp` OP_LOOP safepoint |
 
 > 表中每项的新增/修改都必须在三后端同步实现（含 IR 双出口），并以一致性测试锁定（§5）。
 
 ## 3. 新增语言特性：三后端同步 checklist
 
 1. **语义定义先行**：在本文档 §2 或对应 ADR 中明确目标行为（含边界），三后端以此为唯一依据，禁止各自解释。
-2. **三后端实现核对**：Interpreter（`interpreter/`）→ StackVM（`compiler/Compiler.cpp` + `compiler/VM.cpp`）→ RegisterVM（`compiler/RegisterBytecodeBackend.cpp` + `compiler/RegisterVM.cpp`），逐个确认实现存在且行为一致。
+2. **三后端实现核对**：Interpreter（`interpreter/`）→ StackVM（`compiler/core/Compiler.cpp` + `compiler/backend-stack/VM.cpp`）→ RegisterVM（`compiler/backend-reg/RegisterBytecodeBackend.cpp` + `compiler/backend-reg/RegisterVM.cpp`），逐个确认实现存在且行为一致。
 3. **IR 双出口核对**：若特性走 IR 路径（`AstIRBuilder` → IRModule），核对 `BytecodeIRBackend` 与 `RegisterBytecodeBackend` 两个出口都正确 emit。
 4. **JIT 判定**：明确特性在 JIT 的支持状态（见 §4），锁定「支持=一致」或「降级=不崩溃不错值」。
 5. **一致性测试**：按 §5 规则补测试，覆盖三后端 × 边界值。
@@ -52,3 +57,19 @@
 
 - **禁止**仅修改单条路径来"对齐"测试：三后端行为差异必须定位到语义根源，同步修正所有路径。
 - 历史教训：upvalue 快照语义曾出现「Interpreter 快照 vs VM 共享」的误判，实测证明三后端本就一致，单边修改反破坏一致性（`docs/testing.md` AUDIT-R5 R2，由 `ConsistencyDiff.AuditUpvalue_R2_MultiClosureSharedCounterAfterClose` 回归锁定）。若需对齐主流语言（Lua/JS 共享语义），必须三后端同步引入架构级改动（共享 upvalue cell）。
+
+## 7. IR lowering 栈平衡不变量（D1 校验器，2026-10-03 落地）
+
+- **不变量**：IR 指令流在 lowering 后的操作数栈深度必须平衡——每条 IROp 的 (pops, pushes) 由效应知识单一来源描述（D1 第二步表驱动：`compiler/ir/BytecodeIRBackendStackCheck.cpp` 的 `kFixedStackEffect` 数据表 + 公式型分支），编译期 `static_assert(tableIsComplete())` 强制全部枚举值登记（新增 IROp 未补表/补公式即编译失败）。
+- **校验分级**（`checkStackBalance`，debug 构建启用，Release 零开销）：
+  - 负深度（弹出多于可用）→ **拒绝 lowering**（运行时必然 peek/pop 错位）；
+  - LABEL 合并点深度冲突 → **报告但不拒绝**——已知合法形态为 AUDIT-R6 "break 丢弃挂起 return 值"（try 内 return 压栈后 finally 中 break 直接跳出），运行时由 OP_RETURN 帧回收清理；
+  - 未登记效应（PHI 等）→ **拒绝 lowering**。
+- **peek 型语义易错点**：`STORE_LOCAL`/`STORE_UPVALUE`/`JUMP_IF_FALSE`/`TYPE_CHECK` 不消费栈顶（值留栈，由后续显式 POP 消费）；六条 `WRITEBACK_*` 零操作数栈效应；catch 入口栈高 = TRY_BEGIN 时高 + 1（异常值）。
+- **诊断**：`MINILANG_IR_STACK_DEBUG=1` 输出逐指令栈深轨迹。
+- 该校验器落地即捕获一处真实缺陷（顶层 super 写回多发 POP，见 CHANGELOG 2026-10-03）。
+
+## 8. JIT 语义判定补充（2026-10-03 复核）
+
+- JIT 硬编码 NaN-boxing tag 常量与 `NaNBox.h` 编码的一致性由 `verifyNanBoxConstants()` 在 `JITBackend::execute` debug 入口校验（含 `JitContext` 30 个字段偏移的 static_assert 编译期护栏）。
+- JIT 遇不支持场景为 **fail-fast**（整体编译失败显式报错，无静默降级继续执行）；`genericXXX` 路径为运行时类型分发兜底，与审计报告 D4 中"FIXME/TODO 标记"无关（该说法为 `XXX` 子串误扫，勘误见报告内注）。

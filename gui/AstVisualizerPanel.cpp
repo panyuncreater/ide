@@ -508,12 +508,12 @@ QStringList AstVisualizerPanel::extractNodeProperties(ASTNode* node) {
     } else if (dynamic_cast<WhileStmt*>(node)) {
         // WhileStmt 无额外属性（condition/body 已在子节点列表）
     } else if (dynamic_cast<ForStmt*>(node)) {
-        auto* f = static_cast<ForStmt*>(node);
+        auto* f3 = static_cast<ForStmt*>(node);
         props << QStringLiteral("hasInitializer: %1")
-                     .arg(f->initializer ? QStringLiteral("true") : QStringLiteral("false"));
+                     .arg(f3->initializer ? QStringLiteral("true") : QStringLiteral("false"));
         props
-            << QStringLiteral("hasCondition: %1").arg(f->condition ? QStringLiteral("true") : QStringLiteral("false"));
-        props << QStringLiteral("hasUpdate: %1").arg(f->update ? QStringLiteral("true") : QStringLiteral("false"));
+            << QStringLiteral("hasCondition: %1").arg(f3->condition ? QStringLiteral("true") : QStringLiteral("false"));
+        props << QStringLiteral("hasUpdate: %1").arg(f3->update ? QStringLiteral("true") : QStringLiteral("false"));
     } else if (auto* r = dynamic_cast<ReturnStmt*>(node)) {
         props << QStringLiteral("hasValue: %1").arg(r->value ? QStringLiteral("true") : QStringLiteral("false"));
     } else if (dynamic_cast<BreakStmt*>(node)) {
@@ -528,16 +528,16 @@ QStringList AstVisualizerPanel::extractNodeProperties(ASTNode* node) {
         props << QStringLiteral("catchVarName: %1").arg(esc(t->catchVarName));
         props << QStringLiteral("hasFinallyBlock: %1")
                      .arg(t->finallyBlock ? QStringLiteral("true") : QStringLiteral("false"));
-    } else if (auto* t = dynamic_cast<ThrowStmt*>(node)) {
+    } else if (auto* t2 = dynamic_cast<ThrowStmt*>(node)) {
         props << QStringLiteral("hasExpression: %1")
-                     .arg(t->expression ? QStringLiteral("true") : QStringLiteral("false"));
+                     .arg(t2->expression ? QStringLiteral("true") : QStringLiteral("false"));
     } else if (auto* i = dynamic_cast<ImportStmt*>(node)) {
         props << QStringLiteral("modulePath: %1").arg(esc(i->modulePath));
         props << QStringLiteral("importAll: %1").arg(i->importAll ? QStringLiteral("true") : QStringLiteral("false"));
         props << QStringLiteral("nameCount: %1").arg(i->names.size());
-    } else if (auto* e = dynamic_cast<ExportStmt*>(node)) {
+    } else if (auto* e2 = dynamic_cast<ExportStmt*>(node)) {
         props << QStringLiteral("hasDeclaration: %1")
-                     .arg(e->declaration ? QStringLiteral("true") : QStringLiteral("false"));
+                     .arg(e2->declaration ? QStringLiteral("true") : QStringLiteral("false"));
         // ---- 表达式类 ----
     } else if (auto* n = dynamic_cast<NumberLiteral*>(node)) {
         if (n->isFloat_) {
@@ -547,58 +547,58 @@ QStringList AstVisualizerPanel::extractNodeProperties(ASTNode* node) {
         }
     } else if (auto* s = dynamic_cast<StringLiteral*>(node)) {
         props << QStringLiteral("value: \"%1\"").arg(esc(s->value));
-    } else if (auto* b = dynamic_cast<BoolLiteral*>(node)) {
-        props << QStringLiteral("value: %1").arg(b->value ? QStringLiteral("true") : QStringLiteral("false"));
+    } else if (auto* b2 = dynamic_cast<BoolLiteral*>(node)) {
+        props << QStringLiteral("value: %1").arg(b2->value ? QStringLiteral("true") : QStringLiteral("false"));
     } else if (dynamic_cast<NullLiteral*>(node)) {
         props << QStringLiteral("value: null");
-    } else if (auto* b = dynamic_cast<BinaryOp*>(node)) {
-        props << QStringLiteral("opType: %1").arg(QString::fromUtf8(BinaryOp::opTypeStr(b->opType)));
-        props << QStringLiteral("precedence: %1").arg(BinaryOp::precedence(b->opType));
+    } else if (auto* b22 = dynamic_cast<BinaryOp*>(node)) {
+        props << QStringLiteral("opType: %1").arg(QString::fromUtf8(BinaryOp::opTypeStr(b22->opType)));
+        props << QStringLiteral("precedence: %1").arg(BinaryOp::precedence(b22->opType));
     } else if (auto* u = dynamic_cast<UnaryOp*>(node)) {
         props << QStringLiteral("opType: %1").arg(QString::fromUtf8(UnaryOp::opTypeStr(u->opType)));
-    } else if (auto* f = dynamic_cast<FunCall*>(node)) {
-        if (f->callee) {
+    } else if (auto* f2 = dynamic_cast<FunCall*>(node)) {
+        if (f2->callee) {
             props << QStringLiteral("callMode: 链式调用（callee 非空）");
         } else {
-            props << QStringLiteral("name: %1").arg(esc(f->name));
+            props << QStringLiteral("name: %1").arg(esc(f2->name));
         }
-        props << QStringLiteral("argumentCount: %1").arg(f->arguments.size());
+        props << QStringLiteral("argumentCount: %1").arg(f2->arguments.size());
     } else if (auto* m = dynamic_cast<MemberAccess*>(node)) {
         props << QStringLiteral("fieldName: %1").arg(esc(m->fieldName));
-    } else if (auto* m = dynamic_cast<MethodCall*>(node)) {
-        props << QStringLiteral("methodName: %1").arg(esc(m->methodName));
-        props << QStringLiteral("argumentCount: %1").arg(m->arguments.size());
+    } else if (auto* m2 = dynamic_cast<MethodCall*>(node)) {
+        props << QStringLiteral("methodName: %1").arg(esc(m2->methodName));
+        props << QStringLiteral("argumentCount: %1").arg(m2->arguments.size());
     } else if (dynamic_cast<IndexAccess*>(node)) {
         // 无额外属性（object/index 在子节点列表）
     } else if (dynamic_cast<IndexAssign*>(node)) {
         // 无额外属性
     } else if (auto* a = dynamic_cast<Assignment*>(node)) {
         props << QStringLiteral("name: %1").arg(esc(a->name));
-    } else if (auto* v = dynamic_cast<VarRef*>(node)) {
-        props << QStringLiteral("name: %1").arg(esc(v->name));
-    } else if (auto* a = dynamic_cast<ArrayLiteral*>(node)) {
-        props << QStringLiteral("elementCount: %1").arg(a->elements.size());
+    } else if (auto* v2 = dynamic_cast<VarRef*>(node)) {
+        props << QStringLiteral("name: %1").arg(esc(v2->name));
+    } else if (auto* a2 = dynamic_cast<ArrayLiteral*>(node)) {
+        props << QStringLiteral("elementCount: %1").arg(a2->elements.size());
     } else if (auto* d = dynamic_cast<DictLiteral*>(node)) {
         props << QStringLiteral("pairCount: %1").arg(d->pairs.size());
-    } else if (auto* i = dynamic_cast<InterpolatedString*>(node)) {
-        props << QStringLiteral("literalCount: %1").arg(i->literals.size());
-        props << QStringLiteral("expressionCount: %1").arg(i->expressions.size());
-    } else if (auto* d = dynamic_cast<DestructureBinding*>(node)) {
+    } else if (auto* i2 = dynamic_cast<InterpolatedString*>(node)) {
+        props << QStringLiteral("literalCount: %1").arg(i2->literals.size());
+        props << QStringLiteral("expressionCount: %1").arg(i2->expressions.size());
+    } else if (auto* d2 = dynamic_cast<DestructureBinding*>(node)) {
         QString names;
-        for (size_t i = 0; i < d->names.size(); ++i) {
-            if (i > 0)
+        for (size_t i13 = 0; i13 < d2->names.size(); ++i13) {
+            if (i13 > 0)
                 names += QStringLiteral(", ");
-            names += QString::fromStdString(d->names[i]);
+            names += QString::fromStdString(d2->names[i13]);
         }
         props << QStringLiteral("names: [%1]").arg(names);
-    } else if (auto* e = dynamic_cast<EnumVariantExpr*>(node)) {
-        props << QStringLiteral("enumName: %1").arg(esc(e->enumName));
-        props << QStringLiteral("variantName: %1").arg(esc(e->variantName));
-        props << QStringLiteral("argumentCount: %1").arg(e->arguments.size());
-    } else if (auto* m = dynamic_cast<MatchExpr*>(node)) {
-        props << QStringLiteral("caseCount: %1").arg(m->cases.size());
-    } else if (auto* t = dynamic_cast<TupleLiteral*>(node)) {
-        props << QStringLiteral("elementCount: %1").arg(t->elements.size());
+    } else if (auto* e22 = dynamic_cast<EnumVariantExpr*>(node)) {
+        props << QStringLiteral("enumName: %1").arg(esc(e22->enumName));
+        props << QStringLiteral("variantName: %1").arg(esc(e22->variantName));
+        props << QStringLiteral("argumentCount: %1").arg(e22->arguments.size());
+    } else if (auto* m24 = dynamic_cast<MatchExpr*>(node)) {
+        props << QStringLiteral("caseCount: %1").arg(m24->cases.size());
+    } else if (auto* t23 = dynamic_cast<TupleLiteral*>(node)) {
+        props << QStringLiteral("elementCount: %1").arg(t23->elements.size());
     } else if (dynamic_cast<SuperExpr*>(node)) {
         props << QStringLiteral("note: 引用父类方法/字段");
     } else {
@@ -653,18 +653,18 @@ QStringList AstVisualizerPanel::extractChildDescriptions(ASTNode* node) {
                                 .arg(QString::fromStdString(w->condition->nodeName()).toHtmlEscaped());
         if (w->body)
             childrenDesc << QStringLiteral("body: %1").arg(QString::fromStdString(w->body->nodeName()).toHtmlEscaped());
-    } else if (auto* f = dynamic_cast<ForStmt*>(node)) {
-        if (f->initializer)
+    } else if (auto* f2 = dynamic_cast<ForStmt*>(node)) {
+        if (f2->initializer)
             childrenDesc << QStringLiteral("initializer: %1")
-                                .arg(QString::fromStdString(f->initializer->nodeName()).toHtmlEscaped());
-        if (f->condition)
+                                .arg(QString::fromStdString(f2->initializer->nodeName()).toHtmlEscaped());
+        if (f2->condition)
             childrenDesc << QStringLiteral("condition: %1")
-                                .arg(QString::fromStdString(f->condition->nodeName()).toHtmlEscaped());
-        if (f->update)
+                                .arg(QString::fromStdString(f2->condition->nodeName()).toHtmlEscaped());
+        if (f2->update)
             childrenDesc
-                << QStringLiteral("update: %1").arg(QString::fromStdString(f->update->nodeName()).toHtmlEscaped());
-        if (f->body)
-            childrenDesc << QStringLiteral("body: %1").arg(QString::fromStdString(f->body->nodeName()).toHtmlEscaped());
+                << QStringLiteral("update: %1").arg(QString::fromStdString(f2->update->nodeName()).toHtmlEscaped());
+        if (f2->body)
+            childrenDesc << QStringLiteral("body: %1").arg(QString::fromStdString(f2->body->nodeName()).toHtmlEscaped());
     } else if (auto* r = dynamic_cast<ReturnStmt*>(node)) {
         if (r->value)
             childrenDesc
@@ -679,74 +679,74 @@ QStringList AstVisualizerPanel::extractChildDescriptions(ASTNode* node) {
         if (u->operand)
             childrenDesc
                 << QStringLiteral("operand: %1").arg(QString::fromStdString(u->operand->nodeName()).toHtmlEscaped());
-    } else if (auto* f = dynamic_cast<FunCall*>(node)) {
-        if (f->callee)
+    } else if (auto* f22 = dynamic_cast<FunCall*>(node)) {
+        if (f22->callee)
             childrenDesc
-                << QStringLiteral("callee: %1").arg(QString::fromStdString(f->callee->nodeName()).toHtmlEscaped());
-        for (size_t i = 0; i < f->arguments.size(); ++i) {
-            if (f->arguments[i]) {
+                << QStringLiteral("callee: %1").arg(QString::fromStdString(f22->callee->nodeName()).toHtmlEscaped());
+        for (size_t i12 = 0; i12 < f22->arguments.size(); ++i12) {
+            if (f22->arguments[i12]) {
                 childrenDesc << QStringLiteral("arg[%1]: %2")
-                                    .arg(i)
-                                    .arg(QString::fromStdString(f->arguments[i]->nodeName()).toHtmlEscaped());
+                                    .arg(i12)
+                                    .arg(QString::fromStdString(f22->arguments[i12]->nodeName()).toHtmlEscaped());
             }
         }
     } else if (auto* m = dynamic_cast<MemberAccess*>(node)) {
         if (m->object)
             childrenDesc
                 << QStringLiteral("object: %1").arg(QString::fromStdString(m->object->nodeName()).toHtmlEscaped());
-    } else if (auto* m = dynamic_cast<MethodCall*>(node)) {
-        if (m->object)
+    } else if (auto* m2 = dynamic_cast<MethodCall*>(node)) {
+        if (m2->object)
             childrenDesc
-                << QStringLiteral("object: %1").arg(QString::fromStdString(m->object->nodeName()).toHtmlEscaped());
-        for (size_t i = 0; i < m->arguments.size(); ++i) {
-            if (m->arguments[i]) {
+                << QStringLiteral("object: %1").arg(QString::fromStdString(m2->object->nodeName()).toHtmlEscaped());
+        for (size_t i11 = 0; i11 < m2->arguments.size(); ++i11) {
+            if (m2->arguments[i11]) {
                 childrenDesc << QStringLiteral("arg[%1]: %2")
-                                    .arg(i)
-                                    .arg(QString::fromStdString(m->arguments[i]->nodeName()).toHtmlEscaped());
+                                    .arg(i11)
+                                    .arg(QString::fromStdString(m2->arguments[i11]->nodeName()).toHtmlEscaped());
             }
         }
-    } else if (auto* i = dynamic_cast<IndexAccess*>(node)) {
-        if (i->object)
+    } else if (auto* i2 = dynamic_cast<IndexAccess*>(node)) {
+        if (i2->object)
             childrenDesc
-                << QStringLiteral("object: %1").arg(QString::fromStdString(i->object->nodeName()).toHtmlEscaped());
-        if (i->index)
+                << QStringLiteral("object: %1").arg(QString::fromStdString(i2->object->nodeName()).toHtmlEscaped());
+        if (i2->index)
             childrenDesc
-                << QStringLiteral("index: %1").arg(QString::fromStdString(i->index->nodeName()).toHtmlEscaped());
-    } else if (auto* i = dynamic_cast<IndexAssign*>(node)) {
-        if (i->object)
+                << QStringLiteral("index: %1").arg(QString::fromStdString(i2->index->nodeName()).toHtmlEscaped());
+    } else if (auto* i22 = dynamic_cast<IndexAssign*>(node)) {
+        if (i22->object)
             childrenDesc
-                << QStringLiteral("object: %1").arg(QString::fromStdString(i->object->nodeName()).toHtmlEscaped());
-        if (i->index)
+                << QStringLiteral("object: %1").arg(QString::fromStdString(i22->object->nodeName()).toHtmlEscaped());
+        if (i22->index)
             childrenDesc
-                << QStringLiteral("index: %1").arg(QString::fromStdString(i->index->nodeName()).toHtmlEscaped());
-        if (i->value)
+                << QStringLiteral("index: %1").arg(QString::fromStdString(i22->index->nodeName()).toHtmlEscaped());
+        if (i22->value)
             childrenDesc
-                << QStringLiteral("value: %1").arg(QString::fromStdString(i->value->nodeName()).toHtmlEscaped());
+                << QStringLiteral("value: %1").arg(QString::fromStdString(i22->value->nodeName()).toHtmlEscaped());
     } else if (auto* a = dynamic_cast<Assignment*>(node)) {
         if (a->value)
             childrenDesc
                 << QStringLiteral("value: %1").arg(QString::fromStdString(a->value->nodeName()).toHtmlEscaped());
-    } else if (auto* m = dynamic_cast<MemberAssign*>(node)) {
-        if (m->object)
+    } else if (auto* m23 = dynamic_cast<MemberAssign*>(node)) {
+        if (m23->object)
             childrenDesc
-                << QStringLiteral("object: %1").arg(QString::fromStdString(m->object->nodeName()).toHtmlEscaped());
-        if (m->value)
+                << QStringLiteral("object: %1").arg(QString::fromStdString(m23->object->nodeName()).toHtmlEscaped());
+        if (m23->value)
             childrenDesc
-                << QStringLiteral("value: %1").arg(QString::fromStdString(m->value->nodeName()).toHtmlEscaped());
-    } else if (auto* b = dynamic_cast<Block*>(node)) {
-        for (size_t i = 0; i < b->statements.size(); ++i) {
-            if (b->statements[i]) {
+                << QStringLiteral("value: %1").arg(QString::fromStdString(m23->value->nodeName()).toHtmlEscaped());
+    } else if (auto* b2 = dynamic_cast<Block*>(node)) {
+        for (size_t i10 = 0; i10 < b2->statements.size(); ++i10) {
+            if (b2->statements[i10]) {
                 childrenDesc << QStringLiteral("stmt[%1]: %2")
-                                    .arg(i)
-                                    .arg(QString::fromStdString(b->statements[i]->nodeName()).toHtmlEscaped());
+                                    .arg(i10)
+                                    .arg(QString::fromStdString(b2->statements[i10]->nodeName()).toHtmlEscaped());
             }
         }
     } else if (auto* p = dynamic_cast<PrintStmt*>(node)) {
-        for (size_t i = 0; i < p->values.size(); ++i) {
-            if (p->values[i]) {
+        for (size_t i9 = 0; i9 < p->values.size(); ++i9) {
+            if (p->values[i9]) {
                 childrenDesc << QStringLiteral("value[%1]: %2")
-                                    .arg(i)
-                                    .arg(QString::fromStdString(p->values[i]->nodeName()).toHtmlEscaped());
+                                    .arg(i9)
+                                    .arg(QString::fromStdString(p->values[i9]->nodeName()).toHtmlEscaped());
             }
         }
     } else if (auto* t = dynamic_cast<TryStmt*>(node)) {
@@ -759,77 +759,77 @@ QStringList AstVisualizerPanel::extractChildDescriptions(ASTNode* node) {
         if (t->finallyBlock)
             childrenDesc << QStringLiteral("finallyBlock: %1")
                                 .arg(QString::fromStdString(t->finallyBlock->nodeName()).toHtmlEscaped());
-    } else if (auto* t = dynamic_cast<ThrowStmt*>(node)) {
-        if (t->expression)
+    } else if (auto* t2 = dynamic_cast<ThrowStmt*>(node)) {
+        if (t2->expression)
             childrenDesc << QStringLiteral("expression: %1")
-                                .arg(QString::fromStdString(t->expression->nodeName()).toHtmlEscaped());
+                                .arg(QString::fromStdString(t2->expression->nodeName()).toHtmlEscaped());
     } else if (auto* e = dynamic_cast<ExportStmt*>(node)) {
         if (e->declaration)
             childrenDesc << QStringLiteral("declaration: %1")
                                 .arg(QString::fromStdString(e->declaration->nodeName()).toHtmlEscaped());
-    } else if (auto* a = dynamic_cast<ArrayLiteral*>(node)) {
-        for (size_t i = 0; i < a->elements.size(); ++i) {
-            if (a->elements[i]) {
+    } else if (auto* a2 = dynamic_cast<ArrayLiteral*>(node)) {
+        for (size_t i8 = 0; i8 < a2->elements.size(); ++i8) {
+            if (a2->elements[i8]) {
                 childrenDesc << QStringLiteral("element[%1]: %2")
-                                    .arg(i)
-                                    .arg(QString::fromStdString(a->elements[i]->nodeName()).toHtmlEscaped());
+                                    .arg(i8)
+                                    .arg(QString::fromStdString(a2->elements[i8]->nodeName()).toHtmlEscaped());
             }
         }
     } else if (auto* d = dynamic_cast<DictLiteral*>(node)) {
-        for (size_t i = 0; i < d->pairs.size(); ++i) {
-            if (d->pairs[i].first) {
+        for (size_t i7 = 0; i7 < d->pairs.size(); ++i7) {
+            if (d->pairs[i7].first) {
                 childrenDesc << QStringLiteral("key[%1]: %2")
-                                    .arg(i)
-                                    .arg(QString::fromStdString(d->pairs[i].first->nodeName()).toHtmlEscaped());
+                                    .arg(i7)
+                                    .arg(QString::fromStdString(d->pairs[i7].first->nodeName()).toHtmlEscaped());
             }
-            if (d->pairs[i].second) {
+            if (d->pairs[i7].second) {
                 childrenDesc << QStringLiteral("value[%1]: %2")
-                                    .arg(i)
-                                    .arg(QString::fromStdString(d->pairs[i].second->nodeName()).toHtmlEscaped());
+                                    .arg(i7)
+                                    .arg(QString::fromStdString(d->pairs[i7].second->nodeName()).toHtmlEscaped());
             }
         }
-    } else if (auto* d = dynamic_cast<DestructureBinding*>(node)) {
-        if (d->initializer)
+    } else if (auto* d2 = dynamic_cast<DestructureBinding*>(node)) {
+        if (d2->initializer)
             childrenDesc << QStringLiteral("initializer: %1")
-                                .arg(QString::fromStdString(d->initializer->nodeName()).toHtmlEscaped());
-    } else if (auto* e = dynamic_cast<EnumVariantExpr*>(node)) {
-        for (size_t i = 0; i < e->arguments.size(); ++i) {
-            if (e->arguments[i]) {
+                                .arg(QString::fromStdString(d2->initializer->nodeName()).toHtmlEscaped());
+    } else if (auto* e2 = dynamic_cast<EnumVariantExpr*>(node)) {
+        for (size_t i6 = 0; i6 < e2->arguments.size(); ++i6) {
+            if (e2->arguments[i6]) {
                 childrenDesc << QStringLiteral("arg[%1]: %2")
-                                    .arg(i)
-                                    .arg(QString::fromStdString(e->arguments[i]->nodeName()).toHtmlEscaped());
+                                    .arg(i6)
+                                    .arg(QString::fromStdString(e2->arguments[i6]->nodeName()).toHtmlEscaped());
             }
         }
-    } else if (auto* m = dynamic_cast<MatchExpr*>(node)) {
-        if (m->scrutinee)
+    } else if (auto* m22 = dynamic_cast<MatchExpr*>(node)) {
+        if (m22->scrutinee)
             childrenDesc << QStringLiteral("scrutinee: %1")
-                                .arg(QString::fromStdString(m->scrutinee->nodeName()).toHtmlEscaped());
-        for (size_t i = 0; i < m->cases.size(); ++i) {
-            if (m->cases[i].body)
+                                .arg(QString::fromStdString(m22->scrutinee->nodeName()).toHtmlEscaped());
+        for (size_t i5 = 0; i5 < m22->cases.size(); ++i5) {
+            if (m22->cases[i5].body)
                 childrenDesc << QStringLiteral("case[%1].body: %2")
-                                    .arg(i)
-                                    .arg(QString::fromStdString(m->cases[i].body->nodeName()).toHtmlEscaped());
-            if (m->cases[i].guard)
+                                    .arg(i5)
+                                    .arg(QString::fromStdString(m22->cases[i5].body->nodeName()).toHtmlEscaped());
+            if (m22->cases[i5].guard)
                 childrenDesc << QStringLiteral("case[%1].guard: %2")
-                                    .arg(i)
-                                    .arg(QString::fromStdString(m->cases[i].guard->nodeName()).toHtmlEscaped());
+                                    .arg(i5)
+                                    .arg(QString::fromStdString(m22->cases[i5].guard->nodeName()).toHtmlEscaped());
         }
-    } else if (auto* t = dynamic_cast<TupleLiteral*>(node)) {
-        for (size_t i = 0; i < t->elements.size(); ++i) {
-            if (t->elements[i]) {
+    } else if (auto* t22 = dynamic_cast<TupleLiteral*>(node)) {
+        for (size_t i4 = 0; i4 < t22->elements.size(); ++i4) {
+            if (t22->elements[i4]) {
                 childrenDesc << QStringLiteral("element[%1]: %2")
-                                    .arg(i)
-                                    .arg(QString::fromStdString(t->elements[i]->nodeName()).toHtmlEscaped());
+                                    .arg(i4)
+                                    .arg(QString::fromStdString(t22->elements[i4]->nodeName()).toHtmlEscaped());
             }
         }
     } else {
         // 兜底：直接遍历 children() 接口，不附角色标签
         auto ch = node->children();
-        for (size_t i = 0; i < ch.size(); ++i) {
-            if (ch[i]) {
+        for (size_t i3 = 0; i3 < ch.size(); ++i3) {
+            if (ch[i3]) {
                 childrenDesc << QStringLiteral("child[%1]: %2")
-                                    .arg(i)
-                                    .arg(QString::fromStdString(ch[i]->nodeName()).toHtmlEscaped());
+                                    .arg(i3)
+                                    .arg(QString::fromStdString(ch[i3]->nodeName()).toHtmlEscaped());
             }
         }
     }

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "gui/TeachingPanelBase.h"
+
 // ============================================================
 // IRTransformPanel — IR 变换过程可视化面板（第二波 P1-1）
 // ------------------------------------------------------------
@@ -85,7 +87,7 @@ public:
 
 // ---- 主面板 ----
 
-class IRTransformPanel : public QWidget {
+class IRTransformPanel : public TeachingPanelBase {
     Q_OBJECT
 public:
     explicit IRTransformPanel(QWidget* parent = nullptr);
@@ -98,6 +100,9 @@ public:
 signals:
     void loadSampleRequested(const QString& code);
     void sourceLineRequested(int line);
+
+protected:
+    void applyTheme() override; // 主题切换刷新当前页（TeachingPanelBase 钩子）
 
 private:
     IdeController* controller_ = nullptr;

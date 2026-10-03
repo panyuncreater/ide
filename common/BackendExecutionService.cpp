@@ -15,11 +15,11 @@
 
 #include "common/Diagnostic.h"
 #include "common/IBackend.h"   // IVmBackend 完整定义（createBackend 返回类型）
-#include "compiler/Bytecode.h" // BytecodeChunk::isGenerator/yieldCount/kDynamicYieldCount
-#include "compiler/Compiler.h"
-#include "compiler/RegisterBytecode.h" // RegBytecodeChunk::isGenerator/yieldCount
-#include "compiler/RegisterVM.h"
-#include "compiler/VM.h"
+#include "compiler/core/Bytecode.h" // BytecodeChunk::isGenerator/yieldCount/kDynamicYieldCount
+#include "compiler/core/Compiler.h"
+#include "compiler/backend-reg/RegisterBytecode.h" // RegBytecodeChunk::isGenerator/yieldCount
+#include "compiler/backend-reg/RegisterVM.h"
+#include "compiler/backend-stack/VM.h"
 #include "interpreter/GcManager.h" // GcManager::instance().trackedCount()（executeWithDetail 用）
 #include "interpreter/Interpreter.h"
 #include "interpreter/RuntimeExceptions.h"

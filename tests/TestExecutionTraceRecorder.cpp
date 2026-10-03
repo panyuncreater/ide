@@ -26,7 +26,7 @@
 #include <gtest/gtest.h>
 
 #include "app/VmStepper.h"
-#include "compiler/Compiler.h"
+#include "compiler/core/Compiler.h"
 #include "debug/ExecutionTraceRecorder.h"
 #include "gui/PanelCatalog.h"
 #include "interpreter/Interpreter.h"

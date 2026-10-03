@@ -17,8 +17,8 @@
 
 #include "ast/ASTNode.h"
 #include "common/RuntimeLimits.h" // P3-14: NO_INDEX 哨兵值
-#include "compiler/Bytecode.h"
-#include "compiler/Compiler.h"
+#include "compiler/core/Bytecode.h"
+#include "compiler/core/Compiler.h"
 #include "interpreter/Value.h"
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"

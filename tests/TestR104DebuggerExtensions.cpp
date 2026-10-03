@@ -22,9 +22,9 @@
 #include <gtest/gtest.h>
 
 #include "ast/ASTNode.h"
-#include "compiler/Compiler.h"    // 拓展二期：VM/RegisterVM setVariable 写接口测试
-#include "compiler/RegisterVM.h" // 拓展二期
-#include "compiler/VM.h"         // 拓展二期
+#include "compiler/core/Compiler.h"    // 拓展二期：VM/RegisterVM setVariable 写接口测试
+#include "compiler/backend-reg/RegisterVM.h" // 拓展二期
+#include "compiler/backend-stack/VM.h"         // 拓展二期
 #include "debug/DebugController.h"
 #include "debug/DebugTypes.h"
 #include "interpreter/Interpreter.h"

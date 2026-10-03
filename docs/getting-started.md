@@ -252,6 +252,7 @@ ctest -R "VME2E\..*" --output-on-failure
 ## 构建问题排查
 
 - **Windows SEH 0xc0000005 崩溃**（修改头文件 struct 布局后）：删除 `out/build/debug` 目录后全量重配置 + 重编译
+- **修改头文件后 ninja 不重编译（增量构建不生效）**（2026-10-03 更新根因与修法）：症状为改动 `.h` 后 `cmake --build` 报 "no work to do"、或链接期出现 LNK2005 多重定义。**根因**：MSVC 中文版 `/showIncludes` 前缀为 `注意: 包含文件:`（GBK 字节）；CMake 把探测到的前缀以 UTF-8 文本存入编译器检测缓存 `out/build/debug/CMakeFiles/<版本>-msvc1/CMake{C,CXX}Compiler.cmake`，生成 `rules.ninja` 时再转码回当前控制台代码页。若探测期控制台代码页与构建期 cl 输出编码不一致，缓存里存入的是**双重乱码**，此后每次 reconfigure 都把乱码写回 `rules.ninja`（这正是此前"每次重配置都得手工重注入修复"的真正来源；正常代码页下全新 configure 探测结果本来就正确，无需任何注入）。**诊断**：`ninja -t deps <obj>` 显示 `#deps 0`（注意：ninja 不在 Git Bash PATH 上，须用 VS 自带 `D:\vs\...\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe` 全路径）。**修复（治本）**：把缓存文件中 `CMAKE_{C,CXX}_CL_SHOWINCLUDES_PREFIX` 的引号内乱码替换为规范 UTF-8 文本 `注意: 包含文件:  `（可从任一全新 configure 的同文件复制），再 reconfigure 一次——此后 regen 自动产出与构建期 cl（GBK）匹配的前缀，无需再手工注入。治标方案（直接改 `rules.ninja` 的 `msvc_deps_prefix` 行为 GBK 字节）会在下次 reconfigure 时被乱码覆盖
 - **Qt 找不到**：确认 `QTDIR` 环境变量指向 Qt 安装前缀（含 `lib/cmake/Qt6` 子目录）
 - **Ninja 找不到**：安装 Ninja 或使用 `-G "Unix Makefiles"` 替代
 

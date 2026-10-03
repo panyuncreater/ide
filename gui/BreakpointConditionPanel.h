@@ -1,5 +1,7 @@
 #pragma once
 
+#include "gui/TeachingPanelBase.h"
+
 // ============================================================
 // BreakpointConditionPanel — 条件断点可视化面板（第二档 P1-2）
 // ------------------------------------------------------------
@@ -55,7 +57,7 @@ public:
 
 // ---- 主面板 ----
 
-class BreakpointConditionPanel : public QWidget {
+class BreakpointConditionPanel : public TeachingPanelBase {
     Q_OBJECT
 public:
     explicit BreakpointConditionPanel(QWidget* parent = nullptr);
@@ -74,6 +76,7 @@ signals:
     void loadSampleRequested(const QString& code);
 
 protected:
+    void applyTheme() override; // 主题切换刷新场景详情（TeachingPanelBase 钩子）
     /// 面板显示时启动 QTimer 轮询，隐藏时停止（避免后台空转浪费 CPU）
     void showEvent(QShowEvent* event) override;
     void hideEvent(QHideEvent* event) override;

@@ -5,6 +5,7 @@
 #include <QCursor>             // BUG-DBG-G5 fix: QToolTip 定位
 #include <QHeaderView>
 #include <QListWidgetItem> // BUG-DBG-G3 fix: 超长调用栈提示项
+#include <QSignalBlocker>  // D10 fix: RAII 信号阻塞替代手工 blockSignals 配对
 #include <QSplitter>
 #include <QToolTip> // BUG-DBG-G5 fix: 解析失败提示
 #include <QTreeWidgetItem>
@@ -155,7 +156,7 @@ void DebugPanel::onVariableItemChanged(QTreeWidgetItem* item, int column) {
 }
 
 /// 构造调试面板：搭建变量树/调用栈布局并连接主题切换。
-DebugPanel::DebugPanel(QWidget* parent) : QWidget(parent) {
+DebugPanel::DebugPanel(QWidget* parent) : TeachingPanelBase(parent) {
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(4, 4, 4, 4);
     mainLayout->setSpacing(4);
@@ -214,15 +215,13 @@ DebugPanel::DebugPanel(QWidget* parent) : QWidget(parent) {
 
     mainLayout->addWidget(splitter);
 
-    // 集中应用主题色板样式（替代原内联硬编码颜色）
-    applyThemeStyles();
-
-    // 主题切换时重新应用样式（receiver=this 保证生命周期安全，析构自动断开）
-    Theme::onThemeModeChanged(this, [this](Fluent::ThemeMode) { applyThemeStyles(); });
+    // 集中应用主题色板样式（替代原内联硬编码颜色）；
+    // 主题切换重应用由 TeachingPanelBase 基类接线分发到 applyTheme() override
+    applyTheme();
 }
 
 /// 集中应用主题色板到标题、变量树与调用栈列表样式。
-void DebugPanel::applyThemeStyles() {
+void DebugPanel::applyTheme() {
     // 标题标签：次要文本色 + 12px + 中等字重
     // 原硬编码 #616161 → TeachingTheme::textSecondary()
     const QString labelQss = QString("color: %1; font-size: 12px; font-weight: 500; padding: 2px;")
@@ -288,8 +287,10 @@ void DebugPanel::updateCallStack(const std::vector<CallStackEntry>& stack) {
     // 保存当前选中行，刷新后恢复
     int savedRow = callStackList_->currentRow();
 
+    // D10 fix: QSignalBlocker RAII 替代手工 blockSignals(true/false) 配对——
+    // 析构时恢复进入前状态，提前返回/异常路径不再泄漏阻塞状态。
     // 阻塞信号防止 clear/addItem 触发 currentRowChanged 级联更新变量树
-    callStackList_->blockSignals(true);
+    const QSignalBlocker callStackSignalBlocker(callStackList_);
     callStackList_->clear();
 
     // BUG-DBG-G3 fix (P2): 限制调用栈显示帧数上限，避免深度递归（如未优化的
@@ -314,18 +315,15 @@ void DebugPanel::updateCallStack(const std::vector<CallStackEntry>& stack) {
         item->setFlags(item->flags() & ~Qt::ItemIsSelectable);
         callStackList_->addItem(item);
     }
-    callStackList_->blockSignals(false);
 
     // 恢复选中行（若仍在有效范围内）
-    // BUG-DBG-G1 fix (P2): 原 setCurrentRow(savedRow) 在 blockSignals(false) 之后调用，
+    // BUG-DBG-G1 fix (P2): setCurrentRow(savedRow) 若在信号未阻塞时调用，
     // 会触发 currentRowChanged 信号 → onStackFrameSelected → populateVariableTree，
     // 覆盖刚由 updateVariables 设置的完整变量视图（仅显示选中帧的局部变量）。
-    // 此处保持 blockSignals(true) 阻塞信号，仅恢复视觉选中状态，不触发变量树更新，
-    // 让用户保留 updateVariables 提供的完整作用域视图。
+    // 此处保持 QSignalBlocker 阻塞（至函数退出），仅恢复视觉选中状态，不触发
+    // 变量树更新，让用户保留 updateVariables 提供的完整作用域视图。
     if (savedRow >= 0 && savedRow < callStackList_->count()) {
-        bool wasBlocked = callStackList_->blockSignals(true);
         callStackList_->setCurrentRow(savedRow);
-        callStackList_->blockSignals(wasBlocked);
     }
 }
 

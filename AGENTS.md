@@ -28,6 +28,8 @@ Lexer → Parser → AST（MacroExpander 宏展开在 parse 期完成）→ {
   (3) AstIRBuilder → IRModule → { BytecodeIRBackend → VM；RegisterBytecodeBackend → RegisterVM（68 RegOp，32 虚拟寄存器 R0-R31）}
 }
 
+> `compiler/` 自 2026-10-03 按职责拆分五个子目录：`core/`（Compiler/Bytecode/BytecodeCache）、`ir/`（IR 定义/构建/优化/lowering）、`backend-stack/`（栈式 VM）、`backend-reg/`（寄存器 VM）、`jit/`（JIT）；include 一律使用根相对路径 `compiler/<子目录>/<文件>.h`。
+
 ### 核心约束：四后端一致性（出处：`docs/adr/ADR-002-triple-backend.md`、`docs/testing.md`）
 - 同一源码在 Interpreter / StackVM / RegisterVM 三条路径必须产生相同语义；JIT 对已支持场景与 StackVM 严格一致，未支持场景优雅降级（不崩溃不错值）
 - 整数除法截断向零、and/or 短路返回操作数原值（非布尔）、类型注解强制、super 调用语义、dunder 分派、? 错误传播、async/await 调度均需多后端统一
@@ -40,7 +42,7 @@ Lexer → Parser → AST（MacroExpander 宏展开在 parse 期完成）→ {
 - Environment 链式作用域，boundInstance_ 缓存优化
 
 ### 已知高频 Bug 模式（出处：`docs/changelog/` 归档、`docs/testing.md`）
-1. **IR 路径栈不平衡**：表达式语句返回值未 POP（曾 16 种节点类型遗漏）→ 审计入口 `compiler/BytecodeIRBackend.cpp` 各 `visit*` emit 收尾
+1. **IR 路径栈不平衡**：表达式语句返回值未 POP（曾 16 种节点类型遗漏）→ 审计入口 `compiler/ir/BytecodeIRBackend.cpp` 各 `visit*` emit 收尾；debug 构建已有自动栈平衡校验器（D1 fix，2026-10-03；第二步已表驱动化并拆分至 `compiler/ir/BytecodeIRBackendStackCheck.cpp`：效应数据表 `kFixedStackEffect` + 公式分支，`static_assert(tableIsComplete())` 编译期强制全部 IROp 登记，未登记 op 拒绝 lowering），新增 IROp 须同步补充效应表或公式分支（否则编译失败）
 2. **三后端语义不一致**：错误消息文本、类型检查行为、边界条件差异 → 差分入口 `TestThreeEnginesConsistency.cpp`（6 组合矩阵）
 3. **闭包/upvalue 生命周期**：多嵌套层捕获、变量快照恢复、闭包调用参数顺序
 4. **模块系统**：路径安全、循环依赖、预扫描遗漏（FunDecl/ExportStmt）、错误传播
@@ -64,7 +66,7 @@ Lexer → Parser → AST（MacroExpander 宏展开在 parse 期完成）→ {
 | 关键架构决策 ADR | `docs/adr/`（ADR-001~006：NaN-boxing/三后端/IR/COW/调试一致性/JIT） |
 | 变更历史 | `docs/changelog/`（`archive/` 分月归档） |
 | 内存管理约定 | `docs/specs/memory-model.md` |
-| 多后端一致性 checklist | `docs/specs/backend-consistency.md` |
+| 多后端一致性 checklist + IR 栈平衡不变量 + JIT 语义判定 | `docs/specs/backend-consistency.md` |
 | 测试编写约定 | `docs/specs/testing-conventions.md` |
 
 ## 5. 你的工作方式（审计）
@@ -106,13 +108,14 @@ Lexer → Parser → AST（MacroExpander 宏展开在 parse 期完成）→ {
 ### 标准命令（Windows）
 ```bash
 cmake --preset windows-msvc-debug
-cmake --build out/build/debug --target minilang_tests --target minilang_ide
+cmake --build out/build/debug --target minilang_tests --target minilang_app_tests --target minilang_gui_smoke --target minilang_perf_test --target minilang_ide
 ctest --test-dir out/build/debug --output-on-failure
 ```
+> 注意：`ctest` 依赖全部 4 个测试可执行文件（`minilang_tests` / `minilang_app_tests` / `minilang_gui_smoke` / `minilang_perf_test`）。只构建 `minilang_tests` 时 ctest 会以 `*_NOT_BUILT (Not Run)` 结尾并返回非 0（clean 构建后尤其必现，2026-10-03 实测）。
 便捷入口：`configure.bat` / `build.bat` / `run_tests.bat`（与 `scripts/` 同名脚本等价）。
 
 ### 验证通过标准
-1. 编译零错误：`cmake --build` 退出码 0（minilang_core 为 /W4 + /WX 零警告基线；gui/ 目录历史代码有 W4 警告豁免，见 CMakeLists.txt 相关注释）
+1. 编译零错误：`cmake --build` 退出码 0（全项目 /W4 + /WX 零警告零豁免基线——gui/ 的历史豁免已于 2026-10-03 全量清偿退役，见 CMakeLists.txt C2 注释）
 2. 测试全绿：`ctest` 退出码 0，所有测试通过
 3. 三后端一致性：语义修改须确认 Interpreter / StackVM / RegisterVM 一致；JIT 已支持场景同步验证，未支持场景验证优雅降级（不崩溃不错值）——差分套件 `TestThreeEnginesConsistency` / `TestThreeEnginesFuzz`，见 `docs/testing.md`
 
@@ -131,3 +134,4 @@ Qoder 环境：以 `.qoder/skills/minilang-build/SKILL.md` 为诊断补充源（
 | 历史 | 1.x | 历史版本；PowerShell 执行规则已迁移至用户级 `%USERPROFILE%\.agent\AGENTS.md`，不再逐项目维护 |
 | 2026-08-02 | 2.1 | 联动：新增 `minilang-bughunt` / `minilang-diffcheck` skill 与 `docs/specs/` 三份规范（内存/一致性/测试约定）；§3 加排查流程指针、§4 文档索引补 specs、§6 诊断补崩溃分析 |
 | 2026-08-02 | 2.2 | 精度修正（可行性审计）：§3 OpCode 计数口径改为「89 条有效 OpCode（枚举 90 成员，OP_CONSTANT 废弃保留）」，§6 补 gui/ 目录 W4 警告豁免说明 |
+| 2026-10-03 | 2.3 | 审计清偿同步：§3 #1 更新为表驱动校验器（BytecodeIRBackendStackCheck.cpp + 编译期完备性）；§6 W4 豁免说明退役（gui/ 与 core 同基线）；新增 IROp 补表要求升级为编译期强制 |

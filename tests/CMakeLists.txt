@@ -96,6 +96,8 @@ add_executable(minilang_tests
     TestThreeEnginesAudit.cpp
     TestDebugAudit.cpp
     TestFormatterAudit.cpp
+    # D15 fix: Formatter 往返等价（astEqual 比较器 + samples/mini 数据驱动）进常规回归
+    TestFormatterRoundTrip.cpp
     TestTeachingPanelsAudit.cpp
     TestTeachingPanelsAudit2.cpp
     TestTeachingPanelsAudit3.cpp
@@ -108,6 +110,8 @@ add_executable(minilang_tests
     TestAuditBatch3.cpp
     TestAuditBatch4.cpp
     TestAuditBatch5.cpp
+    # 审计批次 6（2026-08-03 审计剩余项复核）：D7 闭包索引调用写回 + D8 catch 重声明语义锁
+    TestAuditBatch6.cpp
     # P2-12 错误处理统一回归测试（IBackend 接口 + DiagCodes + Lexer/Parser 补全）
     ${CMAKE_CURRENT_SOURCE_DIR}/TestErrorUnification.cpp
     # R98 runToCursor 临时断点机制回归测试（DebugController 一次性断点 API）
@@ -195,6 +199,8 @@ add_executable(minilang_tests
     # UX-R fix: BytecodeTracePanel 等面板统一子页切换组件（仅依赖 Qt Widgets，无 IdeController 依赖）
     ${MINILANG_ROOT_DIR}/gui/TeachingSubPageBar.cpp
     # 第二档 P1-2：BreakpointConditionLibrary
+    # 审计问题3: BreakpointConditionPanel/IRTransformPanel 迁移到 TeachingPanelBase，基类需一并编译
+    ${MINILANG_ROOT_DIR}/gui/TeachingPanelBase.cpp
     ${MINILANG_ROOT_DIR}/gui/BreakpointConditionPanel.cpp
     # R117: WatchExpressionLibrary（独立编译单元，不依赖 IdeController.cpp）
     # WatchPanel.cpp 调用 evaluateWatchExpression（非 inline，定义在 IdeController.cpp），
@@ -390,6 +396,10 @@ target_link_libraries(minilang_test_plugin PRIVATE minilang_compile_options)
 add_dependencies(minilang_tests minilang_test_plugin)
 set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/TestPlugin.cpp APPEND PROPERTY
     COMPILE_DEFINITIONS "MINILANG_TEST_PLUGIN_PATH=\"$<TARGET_FILE:minilang_test_plugin>\"")
+
+# D15 fix: Formatter 往返数据驱动测试的样例目录（TestFormatterRoundTrip.cpp 枚举 .mini）
+target_compile_definitions(minilang_tests PRIVATE
+    MINILANG_SAMPLES_DIR="${MINILANG_ROOT_DIR}/samples/mini")
 
 # QFluentKit 组件头文件（PushButton.h / Label.h / CardWidget.h 等）位于 src/QFluent/
 # 子目录，而 QFluent 目标仅导出 src/。补充两个路径以支持 #include "PushButton.h"

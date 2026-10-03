@@ -1,8 +1,8 @@
 // 临时边界场景审计 - 验证 RegisterVM 闭包调用潜在 bug
-#include "compiler/Compiler.h"
-#include "compiler/IR.h"
-#include "compiler/RegisterVM.h"
-#include "compiler/VM.h"
+#include "compiler/core/Compiler.h"
+#include "compiler/ir/IR.h"
+#include "compiler/backend-reg/RegisterVM.h"
+#include "compiler/backend-stack/VM.h"
 #include "interpreter/Interpreter.h"
 #include "interpreter/Value.h"
 #include "lexer/Lexer.h"

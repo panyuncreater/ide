@@ -4,6 +4,37 @@
 
 条目以版本快照粒度组织，不重复 git log。历史版本归档至 [docs/changelog/archive/](docs/changelog/archive/)。版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)，以 [CMakeLists.txt](CMakeLists.txt) `project(MiniLangIDE VERSION ...)` 为基线。
 
+## [Unreleased]（2026-10-03）
+
+### Added
+
+- **IR lowering 栈平衡校验器（D1 第一步）**：[compiler/ir/BytecodeIRBackend.cpp](compiler/ir/BytecodeIRBackend.cpp) 新增 debug 构建专用校验（`#ifndef NDEBUG`，Release 零开销）——每条 IROp 的 (pops, pushes) 效应表（`irStackEffect`，逐条对齐 StackVM 运行时实现）+ `lower()` 指令循环内的操作数栈深度模拟（`checkStackBalance`），替代"发现一个补一个"的人工保证模式（对应 2026-08-03 审计报告 D1 的第一步：先校验后重构）。失败分级：负深度（弹出多于可用，运行时必然错位）拒绝 lowering；LABEL 合并点深度冲突报告但不拒绝（兼容 AUDIT-R6 "break 丢弃挂起 return 值"的合法不平衡——运行时由 OP_RETURN 帧回收清理）。peek 型指令（STORE_LOCAL/JUMP_IF_FALSE/TYPE_CHECK 不消费栈顶）与 catch 标签深度协议（TRY_BEGIN 高度 + 1）已正确建模；`MINILANG_IR_STACK_DEBUG=1` 可输出逐指令栈深轨迹。回归测试 `AuditBatch1IRBalance.*` 5 用例。**校验器落地过程中顺带捕获并修复一个真实 lowering 缺陷**：顶层/嵌套普通函数中的 `super.method()` 写回链多发一个 POP（BUG-INH-4 的条件对齐 isVarRef 分支遗漏——`this` 回退到 GLOBAL 时 OP_SET_GLOBAL 已 pop），此前被"未定义的变量： this"运行时错误掩盖，见 Fixed 条目。
+
+- **审计剩余项复核与测试补强（D3/D4/D7/D8/D15 复核）**：三路并行复核 2026-08-03 审计报告剩余项的现状——D3 条件断点三个子问题（入口快照未初始化/沙箱标志跨求值/D1 求值缓存与 slot 失配）均已被既有修复覆盖或属误报（SandboxGuard 16 类状态 RAII 恢复、VM 路径每求值全新临时 Interpreter、缓存为按条件文本键控的 AST 而非 BytecodeChunk）；D4 的"4 处 FIXME + 1 处 TODO"不存在（`genericXXX` 标识符被 XXX 子串扫描误命中，审计报告已加勘误注记），NaN-boxing tag 检查与编码严格一致。落地补强：
+  - **D15**：astEqual AST 等价比较器自 test_harness 提升进常规回归（[tests/TestFormatterRoundTrip.cpp](../tests/TestFormatterRoundTrip.cpp)），samples/mini 全部 .mini 样例数据驱动「parse → format → reparse → AST 等价 + 二次格式化幂等」，另含右/左嵌套括号、成员链、try/catch/finally+闭包等内联边界用例。
+  - **D7**：闭包经数组/字典索引调用的 capturedVars 写回持久性回归锁（此前仅覆盖读取路径）；多闭包快照语义（对齐 R2）锁定为 "1102" 四后端一致。
+  - **D8**：catch 块内 var 重声明 catch 变量的三后端语义锁（含顶层遮蔽 + DELETE_VAR 清理交互、重声明后 rethrow）。
+  - **D4**：`verifyNanBoxConstants()` 接入 `JITBackend::execute` debug 调用点（原实现无任何调用点，注释声称"首次 execute 时校验"但从未接线）。
+  - **D10**：gui/ 全部手工 `blockSignals(true/false)` 配对（4 文件 8 处）替换为 `QSignalBlocker` RAII；`Interpreter::stopRequested_` 协作中止标志 relaxed → release/acquire（GUI 线程写 / Worker 线程读建立同步关系）。
+  - **W4 警告豁免全量退役（审计问题 5 闭环）**：CMakeLists.txt 的 gui/ 五类豁免（C4456/C4458/C4189/C4100/C4996）全部移除——C4189/C4100/C4996 复核为零警告（原豁免为陈旧保护），C4456/C4458 遮蔽 38 处集中于 AstVisualizerPanel.cpp 的 else-if 链条件声明与循环变量，逐处重命名清偿；gui/ 全部编译单元现与 core 同处 /W4 + /WX 零豁免基线。
+  - **BaseTeachingPanel 面板基类（审计问题 3 第一步）**：新增 [gui/TeachingPanelBase.h](../gui/TeachingPanelBase.h)/.cpp——主题切换接线收敛为 `applyTheme()` 虚钩子（原 6 处 `Theme::onThemeModeChanged` 手工 lambda 样板），CodeJourneyInfoPanel / BreakpointConditionPanel / IRTransformPanel 三个面板先行迁移验证，其余面板按家族分批迁移（迁移路径见基类头注释）。
+  - **Fuzz 语料扩充**：[tests/TestThreeEnginesFuzz.cpp](../tests/TestThreeEnginesFuzz.cpp) 新增 3 个生成器类别（每次运行 100 个随机程序，固定种子可复现）——异常处理（有条件 throw/catch 变量/finally/嵌套/重抛链，对齐已知 Bug 模式 #5）、继承与 super（super.init/方法动态派发/字段查找链，模式 #9）、字典与 COW（索引读写/副本写别名隔离，模式 #1-4）。
+  - **MSVC ASan CI 门禁提案**：新增 [docs/ci-msvc-asan-proposal.md](ci-msvc-asan-proposal.md)——Windows MSVC 侧 `/fsanitize=address` 阻断式测试 job 的可直接合入定义（现有 ASan 门禁仅覆盖 Linux，主力开发平台 Windows 存在内存错误检测盲区；平台差异风险已有 v1.3.0 SysV ABI P0 先例）。CI 配置属只读范围，故以提案形式交付；job 命令已在本地 ASan 构建树验证。
+
+### Changed
+
+- **D1 第二步（表驱动 + 文件拆分）**：栈效应知识迁移为数据表——[compiler/ir/BytecodeIRBackendStackCheck.cpp](../compiler/ir/BytecodeIRBackendStackCheck.cpp)（自 BytecodeIRBackend.cpp 拆分，1929→1493+456 行）承载 `kFixedStackEffect` constexpr 效应表（64 条固定效应）+ 10 条公式型分支，`static_assert(tableIsComplete())` 在编译期强制全部 IROp 枚举值登记（新增 IROp 未补表即编译失败，关闭"静默跳过校验"缺口）；PHI 等不可 lower 操作的未登记路径由保守跳过改为显式拒绝；新增 `AuditBatch1IRBalance.EffectTableCoversAllIROps` / `PhiInstructionRejectedByLower` 测试。
+- **compiler/ 子目录拆分（审计问题 1 落地）**：`compiler/` 41 个文件按职责迁入五个子目录——`core/`（Compiler 全家族、Bytecode、BytecodeCache、ExprStmtPop、GlobalSlotAllocator 共享基础设施）、`ir/`（IR、IRSSA、IROptPasses、AstIRBuilder、BytecodeIRBackend + 栈平衡校验器）、`backend-stack/`（VM、VMCalls、VMContainers）、`backend-reg/`（RegisterBytecode、RegisterBytecodeBackend、RegisterVM 全家族）、`jit/`（JIT 全家族，含 JITA64）。仓库内 include 均为根相对路径，批量更新为 `compiler/<子目录>/<文件>.h`；`cmake/minilang_core.cmake` 源列表同步；`docs/changelog/archive/` 历史条目保持时点原貌不回写。4109 用例全量回归验证通过。
+
+### Fixed
+
+- **IR 路径顶层/嵌套函数 super 调用栈不平衡（D1 校验器捕获）**：[compiler/ir/AstIRBuilder.cpp](compiler/ir/AstIRBuilder.cpp) `emitMethodCallWriteback` 的 super 分支无条件补 `POP` 消费 `LOAD_MUTATED` 残留（BUG-INH-4 注释假设 `this` 是 LOCAL 槽 0），但非方法上下文（顶层、嵌套普通函数）中 `resolveVar("this")` 回退到 GLOBAL——`OP_SET_GLOBAL` 为 pop 语义，多发一个 `POP` 使 `var x = super.foo()` 的 `DEFINE_GLOBAL` 欠栈。此前被"未定义的变量： this"运行时错误先触发而掩盖（静态字节码不平衡从未被执行到）。修复为条件对齐 isVarRef 分支：仅 LOCAL/UPVALUE（peek 语义）补 `POP`。方法体内合法 super 调用的发射序列不变。
+- **Environment 弱指针悬挂风险收口（D2）**：`Value::makeClosure` 工厂内统一执行 `env->markClosureEnvRef()`（[interpreter/Value.cpp](interpreter/Value.cpp)，实现随 D2 fix 移出 Value.h——Environment 仅有前向声明，避免循环包含）。原先该标记由 Interpreter 唯一闭包创建点手工调用（AUDIT-BUG-I1），属"人工保证"不变量：新增创建点漏标即静默语义损坏（envPool_ 回收复用后 `resetForReuse` 清空闭包 weak_ptr 仍指向的 variables）。收口后不变量结构性成立。回归测试 `AuditBatch1ClosureEnv.*` 3 用例（含 >64 次 env 池回收压力下的循环闭包行为回归）。
+- **TeachingPanelBase 双布局冲突隐患（审计问题 3 迁移修正）**：基类构造函数原先无条件 `new QVBoxLayout(this)`，而已迁移的三个面板构造函数仍自建顶层布局——QWidget 仅允许一个顶层布局，子类二次创建会被 Qt 拒绝（运行时告警 + 子控件失去布局管理，面板显示错乱；此前的编译/测试验证未覆盖 GUI 运行时布局路径）。修复为 `rootLayout()` 惰性创建/采纳：子类已自建布局则直接采纳，否则才创建标准零边距容器。同步迁移调试家族三面板（DebugPanel / WatchPanel / WatchpointPanel）到基类：主题切换接线收敛为 `applyTheme()` override，gui/ 内手工 `Theme::onThemeModeChanged` 样板清零（审计问题 3 按家族迁移第二步）。
+- **JIT 异常分派 use-after-pop 容器溢出（MSVC ASan 门禁首捕获）**：[compiler/jit/JITRuntime.cpp](compiler/jit/JITRuntime.cpp) `jitThrow` 命中 handler 后先 `tryStack_.pop_back()` 销毁栈顶 `JitTryHandler`，再经 `back()` 引用读 `handler.catchAddr` 返回——MSVC STL 容器注解将 [size, capacity) 标记为毒化区，ASan 以 container-overflow 拦截（TestJIT.R162\* 12 项 + L14RuntimeErrorCatch.\* 6 项；非插桩构建因旧槽位尚未被覆写而侥幸通过，属潜伏 UB）。修复为 pop 前按值复制 `catchAddr`；修复后 R162/L14 全家族 26 项在 ASan 下零报告，非插桩全量回归 4109/4109 通过。缺陷由本次落地的本地 MSVC ASan 验证流程首次捕获（CI 合入提案见 [docs/ci-msvc-asan-proposal.md](ci-msvc-asan-proposal.md)）。
+- **Windows 增量构建依赖跟踪失效根治（debug 构建树）**：`out/build/debug` 编译器检测缓存（`CMakeFiles/<版本>-msvc1/CMake{C,CXX}Compiler.cmake`）存有历史乱码 `msvc_deps_prefix`（代码页不一致的 configure 遗留），导致每次 reconfigure 都把乱码写回 `rules.ninja`、ninja 依赖解析丢失（改头文件不重编），此前只能每次手工注入 GBK 字节。对照实验确认真因后（正常 936 代码页下全新 configure 的探测与生成本就正确、VSLANG=1033 因未装英文语言包无效），将缓存中的前缀修正为规范 UTF-8 文本——此后 regen 自动产出与构建期 cl（GBK）匹配的前缀，**无需任何手工注入**。端到端验证：`ninja -t deps` 记录有效、touch 头文件正确触发重编、全量 4109/4109 通过。排查指引已更新至 [docs/getting-started.md](getting-started.md)（原"修正 rules.ninja"指引属治标，已标注）
+- **构建入口脚本在中文控制台下失效修复（`scripts/`，经用户授权的一次性修改）**：`_common.bat` / `configure.bat` / `build.bat` / `run_tests.bat` 内的 UTF-8 中文注释在默认 GBK（代码页 936）控制台下被 cmd 逐行误解析为命令（REM 行同样会被分词，全角标点的 UTF-8 字节按 GBK 配对错位后暴露命令碎片，如 `'锛孧SVC' 不是内部或外部命令`），导致 configure.bat 在运行 cmake 之前即异常退出（实测日志止于环境检测 INFO、exit 1）。修复：全部 .bat 注释转写为 ASCII 英文（逻辑零改动，对任意控制台代码页免疫），顺修 configure.bat 的 `>/dev/null` 重定向（cmd 无此语义，改 `>nul`——此前重定向失败会令 windows-msvc-\* 预设的 QTDIR 校验被静默跳过）；另为 5 个含中文且无 BOM 的 .ps1 补 UTF-8 BOM（Windows PowerShell 5.1 无 BOM 时按 ANSI 误读）。端到端验证：configure.bat 完整跑通 cmake（exit 0、零乱码），reconfigure 后 deps 前缀保持正确 GBK，build.bat / run_tests.bat 全流程通过（4109/4109）。
+
 ## [v1.3.0] - 2026-07-31
 
 插件系统与沙箱模式落地，教学板块面向初学者做六维体验优化，JIT 修复 Linux 下 SysV ABI 违规导致的 SIGSEGV。
@@ -28,7 +59,7 @@
 
 ### Fixed
 
-- **JIT SysV ABI 违规（P0，Linux SIGSEGV）**：[compiler/JITCodeGen.cpp](compiler/JITCodeGen.cpp) / [compiler/JITCodeGenHelpers.cpp](compiler/JITCodeGenHelpers.cpp) 中 6 处运行时回调硬编码 Win64 参数寄存器 rcx/rdx，Linux SysV ABI 应为 rdi/rsi，导致 ctx 指针传入垃圾值，TestJIT OSR/Deopt 16 项测试 SIGSEGV。按平台 `#ifdef` 选择参数寄存器修复。
+- **JIT SysV ABI 违规（P0，Linux SIGSEGV）**：[compiler/jit/JITCodeGen.cpp](compiler/jit/JITCodeGen.cpp) / [compiler/jit/JITCodeGenHelpers.cpp](compiler/jit/JITCodeGenHelpers.cpp) 中 6 处运行时回调硬编码 Win64 参数寄存器 rcx/rdx，Linux SysV ABI 应为 rdi/rsi，导致 ctx 指针传入垃圾值，TestJIT OSR/Deopt 16 项测试 SIGSEGV。按平台 `#ifdef` 选择参数寄存器修复。
 - **教学面板 closing_ UAF（P0）**：`ensureTeachingPanelCreated` / `showTeachingPanel` / `showQuickPanelJumpDialog` 补 `closing_` 检查，避免关闭流程中 `maybeSave` 模态事件循环派发挂起回调时懒构造"孤儿"面板。
 - **reverse-timeline 懒加载工厂未注册（P1）**：面板已登记且实现完整但工厂从未注册、源文件未入 CMake，教学树点击静默回退编辑器。补 [cmake/minilang_core.cmake](cmake/minilang_core.cmake) 源列表 + [app/ide.cpp](app/ide.cpp) 工厂注册。
 - **教学样例语法错误（P1）**：ClosureInspector 全部 16 个样例 + VariableInspector 引导样例长期使用无括号 `print counter();`，但 `print` 强制要求 `(`，加载样例后必然 parse 失败。全部修正为 `print(...)`。

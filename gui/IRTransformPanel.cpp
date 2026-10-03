@@ -10,8 +10,8 @@
 
 #include "gui/IRTransformPanel.h"
 #include "app/IdeController.h"
-#include "compiler/Compiler.h"
-#include "compiler/IR.h"
+#include "compiler/core/Compiler.h"
+#include "compiler/ir/IR.h"
 #include "gui/GuiTextUtils.h" // R75: monospaceFont() 跨机器字体回退链
 #include "gui/I18n.h"         // mlTr() 国际化
 #include "gui/PanelAnimator.h"
@@ -70,7 +70,33 @@ static QString irTextToClickableHtml(const QString& plainText) {
 
 /// 构造面板：组装顶部 4 个子页切换按钮（lowering / 优化对比 / 当前源码 IR /
 /// 逐步回放）与 QStackedWidget，构建各子页并连接切换信号、主题刷新与列表填充。
-IRTransformPanel::IRTransformPanel(QWidget* parent) : QWidget(parent) {
+void IRTransformPanel::applyTheme() {
+    // 主题切换时刷新当前页 HTML（populateLoweringDetail 中 <pre> 背景使用
+    // TeachingTheme::surface()，需重新渲染以跟随新主题）。
+    if (!stack_)
+        return;
+    switch (stack_->currentIndex()) {
+    case 0: // AST → IR lowering 页（HTML 含主题色 <pre> 背景）
+        if (loweringList_)
+            populateLoweringDetail(loweringList_->currentRow());
+        break;
+    case 1: // 优化 pass 对比页（setPlainText，无主题依赖，仍刷新以防未来扩展）
+        if (optList_)
+            populateOptDetail(optList_->currentRow());
+        break;
+    case 2: // 当前源码 IR 页（setPlainText，无主题依赖）
+        populateCurrentIR();
+        break;
+    case 3: // 逐步优化回放页（setPlainText，无主题依赖）
+        if (replayList_ && replayStepsList_)
+            populateReplayStep(replayList_->currentRow(), replayStepsList_->currentRow());
+        break;
+    default:
+        break;
+    }
+}
+
+IRTransformPanel::IRTransformPanel(QWidget* parent) : TeachingPanelBase(parent) {
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(4, 4, 4, 4);
     mainLayout->setSpacing(4);
@@ -148,32 +174,7 @@ IRTransformPanel::IRTransformPanel(QWidget* parent) : QWidget(parent) {
     populateOptList();
     populateReplayList();
 
-    // 主题切换时刷新当前页 HTML（populateLoweringDetail 中 <pre> 背景使用
-    // TeachingTheme::surface()，需重新渲染以跟随新主题）。
-    // receiver=this 保证生命周期安全，析构自动断开。
-    Theme::onThemeModeChanged(this, [this](Fluent::ThemeMode) {
-        if (!stack_)
-            return;
-        switch (stack_->currentIndex()) {
-        case 0: // AST → IR lowering 页（HTML 含主题色 <pre> 背景）
-            if (loweringList_)
-                populateLoweringDetail(loweringList_->currentRow());
-            break;
-        case 1: // 优化 pass 对比页（setPlainText，无主题依赖，仍刷新以防未来扩展）
-            if (optList_)
-                populateOptDetail(optList_->currentRow());
-            break;
-        case 2: // 当前源码 IR 页（setPlainText，无主题依赖）
-            populateCurrentIR();
-            break;
-        case 3: // 逐步优化回放页（setPlainText，无主题依赖）
-            if (replayList_ && replayStepsList_)
-                populateReplayStep(replayList_->currentRow(), replayStepsList_->currentRow());
-            break;
-        default:
-            break;
-        }
-    });
+    // 审计问题3: 主题切换接线收敛到 TeachingPanelBase——刷新逻辑移入 applyTheme()。
 }
 
 /// 构建「AST → IR lowering」子页：左侧产生式/节点列表 + 右侧说明浏览器，

@@ -22,9 +22,9 @@
 #include "app/IdeController.h"
 
 #include "ast/ASTNode.h"
-#include "compiler/Bytecode.h"
-#include "compiler/Compiler.h"
-#include "compiler/IR.h"
+#include "compiler/core/Bytecode.h"
+#include "compiler/core/Compiler.h"
+#include "compiler/ir/IR.h"
 #include "interpreter/Value.h"
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"

@@ -346,13 +346,11 @@ target_link_libraries(minilang_ide PRIVATE
 # PCH 可减少重复解析开销（增量构建 -10~20%）。
 minilang_enable_pch(minilang_ide ${CMAKE_CURRENT_SOURCE_DIR})
 
-# C2 (P3-A2): GUI 源文件预存警告豁免。
-# gui/ 目录 146 个文件含大量历史代码，存在 C4456/C4189/C4100 等 W4 警告，
-# 待后续面板注册表迁移时逐步清理。不影响 minilang_core 的 /W4 /WX 基线。
-if(MSVC)
-    set_source_files_properties(${MINILANG_GUI_SOURCES} PROPERTIES
-        COMPILE_OPTIONS "/wd4456;/wd4189;/wd4100;/wd4458;/wd4996")
-endif()
+# C2 (P3-A2): GUI 源文件警告豁免已全量退役（2026-10-03 W4 清偿）。
+# 原清单压制 C4456/C4458/C4189/C4100/C4996 五类警告；经逐项清偿
+# （C4456/C4458 遮蔽重命名 38 处于 AstVisualizerPanel.cpp，其余四类
+# 复核为零警告），gui/ 全部编译单元现与 core 同处 /W4 + /WX 零豁免基线，
+# 消除 core 与 gui 之间的代码质量鸿沟（审计报告问题 5 闭环）。
 
 # C2: 启用 QtCharts 时链接到 IDE 目标
 if(MINILANG_USE_QTCHARTS)

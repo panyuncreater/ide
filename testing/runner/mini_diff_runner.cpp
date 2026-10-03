@@ -33,11 +33,11 @@
 #include "interpreter/Interpreter.h"
 #include "interpreter/RuntimeExceptions.h"
 #include "interpreter/Value.h"
-#include "compiler/Compiler.h"
-#include "compiler/VM.h"
-#include "compiler/RegisterVM.h"
+#include "compiler/core/Compiler.h"
+#include "compiler/backend-stack/VM.h"
+#include "compiler/backend-reg/RegisterVM.h"
 #ifdef MINILANG_USE_JIT
-#include "compiler/JIT.h"
+#include "compiler/jit/JIT.h"
 #endif
 
 #include <atomic>

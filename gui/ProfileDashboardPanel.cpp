@@ -7,8 +7,8 @@
 #include "common/BackendExecutionService.h" // ARCH-10: 后端执行服务中间层
 // ARCH-10: 仍保留 Bytecode.h/RegisterBytecode.h 仅用于 opcode 名称查询
 // （opCodeName / regOpName 是 inline 函数，无副作用，不构成对编译器内部实现的依赖）
-#include "compiler/Bytecode.h"
-#include "compiler/RegisterBytecode.h"
+#include "compiler/core/Bytecode.h"
+#include "compiler/backend-reg/RegisterBytecode.h"
 // AUDIT-R2 P1-5 fix: 不再直接依赖 GcManager（peak tracked 由
 // BackendExecutionService::executeWithDetail 基线差值语义提供）
 

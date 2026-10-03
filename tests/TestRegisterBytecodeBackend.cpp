@@ -19,9 +19,9 @@
 
 #include <gtest/gtest.h>
 
-#include "compiler/IR.h"
-#include "compiler/RegisterBytecode.h"
-#include "compiler/RegisterBytecodeBackend.h"
+#include "compiler/ir/IR.h"
+#include "compiler/backend-reg/RegisterBytecode.h"
+#include "compiler/backend-reg/RegisterBytecodeBackend.h"
 #include "interpreter/Value.h"
 
 #include <memory>

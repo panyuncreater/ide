@@ -8,8 +8,8 @@
 #include "gui/JitRunner.h"
 
 #ifdef MINILANG_USE_JIT
-#include "compiler/Compiler.h"
-#include "compiler/JIT.h"
+#include "compiler/core/Compiler.h"
+#include "compiler/jit/JIT.h"
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
 

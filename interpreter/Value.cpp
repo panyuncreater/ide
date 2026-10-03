@@ -7,11 +7,30 @@
 // ============================================================
 
 #include "interpreter/Value.h"
+#include "interpreter/Environment.h" // D2 fix: makeClosure 中调用 Environment::markClosureEnvRef
 #include "common/RuntimeLimits.h"
 #include "interpreter/NumericUtils.h"
 #include <cmath>
 #include <cstdio>
 #include <unordered_set>
+
+// ============================================================
+// D2 fix: 闭包工厂（实现移出 Value.h）
+// ------------------------------------------------------------
+// Value.h 中 Environment 仅有前向声明（Environment.h 反向包含 Value.h，
+// 不能循环包含），故 markClosureEnvRef 只能在本文件调用。
+// makeClosure 是全引擎唯一以真实 env 创建 ClosureData 的入口
+// （其余调用点传 nullptr；COW 拷贝共享同一 weak_ptr，无需补标），
+// 在此统一标记后，"闭包 env 不得回收入 envPool_" 的不变量不再依赖
+// 各创建点手工调用 markClosureEnvRef（AUDIT-BUG-I1）。
+// ============================================================
+Value Value::makeClosure(const std::string& name, std::shared_ptr<Environment> env,
+                         const std::vector<std::string>& params, std::shared_ptr<FunDecl> body) {
+    if (env) {
+        env->markClosureEnvRef();
+    }
+    return fromHeapPtr(new ClosureData(name, env, params, std::move(body), nextFunctionId()));
+}
 
 // ============================================================
 // R114 阶段 2：Value JSON 序列化辅助

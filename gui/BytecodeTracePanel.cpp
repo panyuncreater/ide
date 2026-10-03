@@ -26,7 +26,7 @@
 /// 调用/容器/闭包/类），每条含分类、操作数格式、栈效果、语义与样例代码，
 /// 供「OpCode 教学库」子页展示并支持加载样例到主编辑器。
 /// 需求 8 扩充：新增 29 条（元组/枚举/协程/finally 续跳/类型检查/尾调用/
-/// 特化算术/写回族等），与 compiler/Bytecode.h 枚举注释保持语义一致。
+/// 特化算术/写回族等），与 compiler/core/Bytecode.h 枚举注释保持语义一致。
 const std::vector<OpCodeDocEntry>& BytecodeTraceLibrary::opCodeDocs() {
     static const std::vector<OpCodeDocEntry> kDocs = {
         OpCodeDocEntry{"OP_INT", "const", "nameIdx(2B)", "push 1", "📜 从常量池读取整数并压入栈顶。", "var x = 42;"},

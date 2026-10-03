@@ -7,6 +7,8 @@
 
 ---
 
+> **处置总注（2026-10-03 复核与清偿）**：本报告为 2026-08-03 时点快照。此后 D1/D2/D4/D6/D7/D8/D9/D11/D12/D15 及问题 3/5 已清偿或复核消解（D1 表驱动校验器并捕获真实缺陷、D2 makeClosure 工厂收口、D4 标记属误报已勘误、D6/D9/D11/D12 于 2026-08-11 前修复、D7 共享描述层已存在、D8 由校验器+差分覆盖、D15/问题3/问题5 已落地）；D3/D5/D10/D13/D14 经复核为已修复或残余风险低（详见各条勘误注与 `docs/specs/backend-consistency.md` §7/§8）。完整变更清单见 `CHANGELOG.md` [Unreleased] 与 2026-10-03 条目。结构性建议进展（2026-10-03 补记）：**问题 1 已落地**——compiler/ 拆分为 core/ir/backend-stack/backend-reg/jit 五个子目录（仓库内 include 均为根相对路径，已批量更新）；**问题 3 推进中**——TeachingPanelBase 基类落地并修复双布局冲突隐患（rootLayout 惰性采纳），调试家族三面板（DebugPanel/WatchPanel/WatchpointPanel）已迁移，其余面板按家族分批；**问题 6 补充**——JIT 异常分派 use-after-pop 容器溢出由新增的 MSVC ASan 本地验证捕获并修复（jitThrow pop 前按值复制 catchAddr），Windows ASan CI 门禁合入提案见 `docs/ci-msvc-asan-proposal.md`。
+
 ## 一、项目概况
 
 | 属性 | 值 |
@@ -80,7 +82,7 @@ capi/       ▏                                          435行    (<1%)
 
 | 属性 | 值 |
 |------|-----|
-| **位置** | compiler/BytecodeIRBackend.cpp 全文（1,466行） |
+| **位置** | compiler/ir/BytecodeIRBackend.cpp 全文（1,466行） |
 | **类型** | 栈不平衡 / 表驱动缺失 |
 | **严重性** | 🔴 P0 — 可能导致VM执行乱码字节码、数据损坏、崩溃 |
 
@@ -197,7 +199,7 @@ foo(-1);  // 断点条件可能误判为true（读到垃圾值>0）或crash
 
 | 属性 | 值 |
 |------|-----|
-| **位置** | compiler/JITCodeGenHelpers.cpp（第829/864/888/898行）、compiler/JITCodeGen.cpp（第221行）、compiler/JITTiering.cpp |
+| **位置** | compiler/jit/JITCodeGenHelpers.cpp（第829/864/888/898行）、compiler/jit/JITCodeGen.cpp（第221行）、compiler/jit/JITTiering.cpp |
 | **类型** | 类型安全 / 边界绕过 |
 | **严重性** | 🔴 P0 — 热路径上NaN-boxing tag检查被绕过可能导致错位指令执行 |
 
@@ -222,6 +224,16 @@ print(z);                     // 可能打印错误值或crash
 2. 在genericXXX回退路径入口加统计计数，监控热路径miss rate
 3. 清除JITCodeGenHelpers.cpp和JITTiering.cpp的TODO/FIXME标记并补充测试
 
+> **勘误（2026-10-03 复核）**：建议 3 的前提不成立——上述行号的"FIXME/TODO 标记"实为
+> `genericXXX` 标识符（generic 兜底路径命名前缀）被 "XXX" 子串扫描误命中，git 全历史
+> （pickaxe `--pickaxe-regex`）中这两个文件从未存在过 FIXME/TODO 标记；D13 的
+> JitVisualizerPanel "TODO/FIXME" 同为误报。实质复核结论：JIT tag 检查与 NaNBox.h
+> 编码严格一致（fromFloat 将 boxed 区间位模式规范化为 0x7FFC marker，合法 FLOAT
+> 不会落入 [0x7FF8,0x7FFB]），JitContext 30 个字段偏移有 static_assert 编译期护栏，
+> `verifyNanBoxConstants()` 已于 2026-10-03 接入 `JITBackend::execute` debug 调用点
+> （D4 加固）。审计的复现场景（0.0/0.0 产生 NaN）不成立——本语言除零是运行时错误，
+> JIT 有专门 divByZeroLabel 路径与 StackVM 一致报"除零错误"。
+
 ---
 
 ### 🟠 P1级 — 语义错误/三后端不一致
@@ -230,7 +242,7 @@ print(z);                     // 可能打印错误值或crash
 
 | 属性 | 值 |
 |------|-----|
-| **位置** | interpreter/、compiler/VM.cpp、compiler/RegisterVM.cpp、compiler/JITCodeGen.cpp 全局 |
+| **位置** | interpreter/、compiler/backend-stack/VM.cpp、compiler/backend-reg/RegisterVM.cpp、compiler/jit/JITCodeGen.cpp 全局 |
 | **类型** | 三后端语义不一致 |
 | **严重性** | 🟠 P1 — 同一程序在不同执行引擎产生不同结果 |
 
@@ -266,7 +278,7 @@ AGENTS.md §3核心约束要求同一源码在Interpreter/StackVM/RegisterVM三�
 
 | 属性 | 值 |
 |------|-----|
-| **位置** | compiler/BytecodeIRBackend.cpp 第35~37行 |
+| **位置** | compiler/ir/BytecodeIRBackend.cpp 第35~37行 |
 | **类型** | 脆弱约定 / 字符串匹配hack |
 | **严重性** | 🟠 P1 — 嵌套类/泛型/模块场景下可能误判方法arity |
 
@@ -297,7 +309,7 @@ chunk_->requiredArity = isMethod ? (ir.requiredArity > 0 ? ir.requiredArity - 1 
 
 | 属性 | 值 |
 |------|-----|
-| **位置** | interpreter/（Environment、ClosureData）、compiler/VM.cpp、compiler/RegisterBytecodeBackend.cpp |
+| **位置** | interpreter/（Environment、ClosureData）、compiler/backend-stack/VM.cpp、compiler/backend-reg/RegisterBytecodeBackend.cpp |
 | **类型** | Upvalue生命周期 / 四路径一致性问题 |
 | **严重性** | 🟠 P1 — 多嵌套层捕获、变量快照恢复、参数顺序可能在不同执行路径表现不同 |
 
@@ -323,7 +335,7 @@ chunk_->requiredArity = isMethod ? (ir.requiredArity > 0 ? ir.requiredArity - 1 
 
 | 属性 | 值 |
 |------|-----|
-| **位置** | compiler/BytecodeIRBackend.cpp（BUG-IR-TRY-1 fix，第478行附近）、各执行引擎异常处理路径 |
+| **位置** | compiler/ir/BytecodeIRBackend.cpp（BUG-IR-TRY-1 fix，第478行附近）、各执行引擎异常处理路径 |
 | **类型** | 栈残留 / 作用域泄漏 |
 | **严重性** | 🟠 P1 — catch块退出后栈上可能残留多余值或丢失应有值 |
 
@@ -358,7 +370,7 @@ print(e);  // 应报错，但可能打印出"error"
 
 | 属性 | 值 |
 |------|-----|
-| **位置** | compiler/BytecodeIRBackend.cpp 第1055~1092行（BUG-INH-1/BUG-INH-IR-1 fix系列） |
+| **位置** | compiler/ir/BytecodeIRBackend.cpp 第1055~1092行（BUG-INH-1/BUG-INH-IR-1 fix系列） |
 | **类型** | 功能缺陷 / Workaround |
 | **严重性** | 🟠 P1 — 非字面量字段默认值可能不被正确应用 |
 
@@ -447,7 +459,7 @@ print(c.step);  // 期望11，但可能读到base=0（未初始化）→ 结果�
 
 | 属性 | 值 |
 |------|-----|
-| **位置** | compiler/BytecodeIRBackend.cpp 第66行（BUG-IBACKEND-2） |
+| **位置** | compiler/ir/BytecodeIRBackend.cpp 第66行（BUG-IBACKEND-2） |
 | **类型** | 信息丢失 |
 | **严重性** | 🟡 P2 |
 

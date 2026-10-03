@@ -23,9 +23,9 @@
 #include <gtest/gtest.h>
 
 #include "ast/ASTNode.h"
-#include "compiler/Compiler.h"
-#include "compiler/RegisterVM.h"
-#include "compiler/VM.h"
+#include "compiler/core/Compiler.h"
+#include "compiler/backend-reg/RegisterVM.h"
+#include "compiler/backend-stack/VM.h"
 #include "debug/DebugController.h" // L19: Interpreter watchpoint 测试
 #include "debug/DebugTypes.h"      // R161: WatchpointInfo + WriteTarget
 #include "interpreter/Interpreter.h"

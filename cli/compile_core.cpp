@@ -7,8 +7,8 @@
 // ============================================================
 #include "cli/compile_core.h"
 
-#include "compiler/BytecodeCache.h"
-#include "compiler/Compiler.h"
+#include "compiler/core/BytecodeCache.h"
+#include "compiler/core/Compiler.h"
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
 

@@ -18,13 +18,15 @@ MiniLang 采用可选的三段式编译管线（外加 JIT 热路径分层编译
 |------|------|------|
 | 词法分析 | `lexer/Lexer` | 源码 → Token 流，支持插值字符串词法拆分 |
 | 语法分析 | `parser/Parser` | Token 流 → AST，递归下降 |
-| 中间表示 | `compiler/IR` | AST → IR 三地址码（可选），支持常量折叠/死代码消除/复制传播 |
-| 字节码编译 | `compiler/Compiler` | AST → 栈式 VM 字节码 |
-| 寄存器编译 | `compiler/RegisterBytecodeBackend` | IR → 寄存器式字节码 |
-| 栈式 VM | `compiler/VM` | 执行栈式字节码 |
-| 寄存器 VM | `compiler/RegisterVM` | 执行寄存器式字节码 |
+| 中间表示 | `compiler/ir/IR` | AST → IR 三地址码（可选），支持常量折叠/死代码消除/复制传播 |
+| 字节码编译 | `compiler/core/Compiler` | AST → 栈式 VM 字节码 |
+| 寄存器编译 | `compiler/backend-reg/RegisterBytecodeBackend` | IR → 寄存器式字节码 |
+| 栈式 VM | `compiler/backend-stack/VM` | 执行栈式字节码 |
+| 寄存器 VM | `compiler/backend-reg/RegisterVM` | 执行寄存器式字节码 |
 | 解释器 | `interpreter/` | 直接遍历 AST 执行（基准后端） |
-| JIT | `compiler/JIT*` | 栈式字节码 → x86-64 本机码分层编译（asmjit） |
+| JIT | `compiler/jit/JIT*` | 栈式字节码 → x86-64 本机码分层编译（asmjit） |
+
+> `compiler/` 自 2026-10-03 起按职责拆分为五个子目录：`core/`（Compiler/Bytecode/BytecodeCache 等共享基础设施）、`ir/`（IR 定义、AstIRBuilder、优化 pass、BytecodeIRBackend lowering 与栈平衡校验器）、`backend-stack/`（栈式 VM）、`backend-reg/`（寄存器 VM）、`jit/`（JIT 各层）。拆分对应 2026-08-03 审计报告问题 1（compiler/ 单模块超 4.5 万行）；源码 include 均使用根相对路径 `compiler/<子目录>/<文件>.h`。
 
 ---
 
@@ -65,6 +67,8 @@ MiniLang 维护四个执行后端并存策略：
 | JIT | `JITBackend` | 基于 asmjit 的本地机器码后端（x86-64），可选启用（`MINILANG_USE_JIT`，x86-64 默认 ON）；另有实验性 ARM64 PoC（`MINILANG_USE_JIT_A64`，仅基本算术+控制流） |
 
 三解释后端（Interpreter / StackVM / RegisterVM）必须保持语义一致性。IR 层作为可选中间表示，启用后在 lowering 前执行优化 pass。JIT 后端与 StackVM 共享 `BytecodeChunk` 输入，定位为"StackVM 的硬件加速器"，语义必须与三后端对齐。
+
+IR → StackVM 字节码的 lowering 由栈平衡校验器护航（`compiler/ir/BytecodeIRBackendStackCheck.cpp`，2026-10-03）：效应数据表 `kFixedStackEffect` + 公式型分支为每条 IROp 的 (pops, pushes) 单一事实源，编译期 `static_assert(tableIsComplete())` 强制枚举完备；debug 构建逐指令模拟操作数栈深度，负深度与未登记 op 拒绝 lowering，合并点冲突报告（AUDIT-R6 break-discard 合法豁免）。细则见 [backend-consistency.md](specs/backend-consistency.md) §7。
 
 ### JIT 后端
 

@@ -7,6 +7,7 @@
 #include "gui/TeachingTheme.h"
 
 #include <QApplication>
+#include <QSignalBlocker>  // D10 fix: RAII 信号阻塞
 #include <QHBoxLayout>
 #include <QSplitter>
 #include <QTimer>
@@ -378,15 +379,14 @@ void ExecutionTimelinePanel::navigateToStep(int idx) {
     currentStepIdx_ = idx;
 
     // 同步 UI 控件（避免信号回环）
+    // D10 fix: QSignalBlocker RAII 替代手工 blockSignals(true/false) 配对
     if (slider_->value() != idx) {
-        slider_->blockSignals(true);
+        const QSignalBlocker sliderBlocker(slider_);
         slider_->setValue(idx);
-        slider_->blockSignals(false);
     }
     if (stepList_->currentRow() != idx) {
-        stepList_->blockSignals(true);
+        const QSignalBlocker stepListBlocker(stepList_);
         stepList_->setCurrentRow(idx);
-        stepList_->blockSignals(false);
     }
     // 滚动到当前行可见
     stepList_->scrollToItem(stepList_->item(idx), QAbstractItemView::PositionAtCenter);

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "gui/TeachingPanelBase.h"
+
 #include <QHash>
 #include <QWidget>
 
@@ -16,7 +18,7 @@ class QLabel;
 // 时发射 journeyCompleted 信号）。
 // ============================================================
 
-class CodeJourneyInfoPanel : public QWidget {
+class CodeJourneyInfoPanel : public TeachingPanelBase {
     Q_OBJECT
 public:
     explicit CodeJourneyInfoPanel(QWidget* parent = nullptr);
@@ -27,6 +29,7 @@ signals:
 
 protected:
     void showEvent(QShowEvent* event) override;
+    void applyTheme() override; // 主题切换重建 journey HTML（TeachingPanelBase 钩子）
 
 private:
     QTextBrowser* infoBrowser_ = nullptr;

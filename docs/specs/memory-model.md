@@ -45,10 +45,11 @@
 
 | 高危点 | 风险形态 | 检查方式 |
 |--------|---------|---------|
-| 闭包 upvalue | 闭包逃逸定义作用域后捕获变量被释放 | `compiler/VM.cpp` OP_CLOSURE/upvalue 描述符生命周期；`compiler/RegisterVM.cpp` 对应 RegOp |
+| 闭包 upvalue | 闭包逃逸定义作用域后捕获变量被释放 | `compiler/backend-stack/VM.cpp` OP_CLOSURE/upvalue 描述符生命周期；`compiler/backend-reg/RegisterVM.cpp` 对应 RegOp |
 | 条件断点 | 断点对象持引用失效（slot→name 映射） | `tests/TestVME2E.cpp` VMConditionalBreakpoint 套件；断点销毁路径 |
 | 回调持引用 | `this` 泄漏进单例/回调（GC 回调、输出回调） | 构造注册 vs 析构清理配对审计 |
 | Environment/boundInstance_ | 链式作用域中缓存实例释放 | `interpreter/Environment.h` 释放顺序；缓存失效路径 |
+| envPool_ 回收 × 闭包 env 弱引用 | `resetForReuse` 清空 weak_ptr 仍指向该 env 的闭包的可见变量（陈旧读/语义损坏） | 不变量已收口到 `Value::makeClosure`（D2 fix，2026-10-03）：工厂内统一 `markClosureEnvRef()`，回收守卫（use_count==1 + 无捕获 + 无闭包 env 引用）不再依赖各创建点手工标记；回归测试 `AuditBatch1ClosureEnv.*` |
 | JIT 上下文 | `JitContext` 邮箱持有跨线程引用 | `compiler/JIT*.cpp` 上下文生命周期与 VM 停靠同步 |
 
 ## 7. 内存审计清单（配合 AGENTS.md §5 策略 4）

@@ -8,10 +8,10 @@
 
 #include <gtest/gtest.h>
 
-#include "compiler/Compiler.h"
-#include "compiler/IR.h"
-#include "compiler/RegisterVM.h"
-#include "compiler/VM.h"
+#include "compiler/core/Compiler.h"
+#include "compiler/ir/IR.h"
+#include "compiler/backend-reg/RegisterVM.h"
+#include "compiler/backend-stack/VM.h"
 #include "interpreter/Interpreter.h"
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"

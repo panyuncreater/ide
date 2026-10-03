@@ -83,26 +83,28 @@ set(MINILANG_FRONTEND_SOURCES
 #   Compiler.cpp → Compiler.cpp + CompilerExpr.cpp + CompilerStmt.cpp + CompilerClass.cpp
 #   RegisterVM.cpp → RegisterVM.cpp + RegisterVMExec.cpp + RegisterVMCalls.cpp
 set(MINILANG_BACKEND_SOURCES
-    ${MINILANG_ROOT_DIR}/compiler/Bytecode.cpp
-    ${MINILANG_ROOT_DIR}/compiler/Compiler.cpp
-    ${MINILANG_ROOT_DIR}/compiler/CompilerExpr.cpp
-    ${MINILANG_ROOT_DIR}/compiler/CompilerStmt.cpp
-    ${MINILANG_ROOT_DIR}/compiler/CompilerClass.cpp
-    ${MINILANG_ROOT_DIR}/compiler/VM.cpp
-    ${MINILANG_ROOT_DIR}/compiler/VMCalls.cpp
-    ${MINILANG_ROOT_DIR}/compiler/VMContainers.cpp
-    ${MINILANG_ROOT_DIR}/compiler/IR.cpp
-    ${MINILANG_ROOT_DIR}/compiler/AstIRBuilder.cpp
-    ${MINILANG_ROOT_DIR}/compiler/BytecodeIRBackend.cpp
-    ${MINILANG_ROOT_DIR}/compiler/IROptPasses.cpp
-    ${MINILANG_ROOT_DIR}/compiler/IRSSA.cpp
-    ${MINILANG_ROOT_DIR}/compiler/RegisterBytecode.cpp
-    ${MINILANG_ROOT_DIR}/compiler/RegisterBytecodeBackend.cpp
-    ${MINILANG_ROOT_DIR}/compiler/RegisterVM.cpp
-    ${MINILANG_ROOT_DIR}/compiler/RegisterVMExec.cpp
-    ${MINILANG_ROOT_DIR}/compiler/RegisterVMCalls.cpp
+    ${MINILANG_ROOT_DIR}/compiler/core/Bytecode.cpp
+    ${MINILANG_ROOT_DIR}/compiler/core/Compiler.cpp
+    ${MINILANG_ROOT_DIR}/compiler/core/CompilerExpr.cpp
+    ${MINILANG_ROOT_DIR}/compiler/core/CompilerStmt.cpp
+    ${MINILANG_ROOT_DIR}/compiler/core/CompilerClass.cpp
+    ${MINILANG_ROOT_DIR}/compiler/backend-stack/VM.cpp
+    ${MINILANG_ROOT_DIR}/compiler/backend-stack/VMCalls.cpp
+    ${MINILANG_ROOT_DIR}/compiler/backend-stack/VMContainers.cpp
+    ${MINILANG_ROOT_DIR}/compiler/ir/IR.cpp
+    ${MINILANG_ROOT_DIR}/compiler/ir/AstIRBuilder.cpp
+    ${MINILANG_ROOT_DIR}/compiler/ir/BytecodeIRBackend.cpp
+    # D1 第二步: 栈平衡校验器自 BytecodeIRBackend.cpp 拆分（效应表 + 深度模拟）
+    ${MINILANG_ROOT_DIR}/compiler/ir/BytecodeIRBackendStackCheck.cpp
+    ${MINILANG_ROOT_DIR}/compiler/ir/IROptPasses.cpp
+    ${MINILANG_ROOT_DIR}/compiler/ir/IRSSA.cpp
+    ${MINILANG_ROOT_DIR}/compiler/backend-reg/RegisterBytecode.cpp
+    ${MINILANG_ROOT_DIR}/compiler/backend-reg/RegisterBytecodeBackend.cpp
+    ${MINILANG_ROOT_DIR}/compiler/backend-reg/RegisterVM.cpp
+    ${MINILANG_ROOT_DIR}/compiler/backend-reg/RegisterVMExec.cpp
+    ${MINILANG_ROOT_DIR}/compiler/backend-reg/RegisterVMCalls.cpp
     # P1-7: 字节码磁盘缓存（CompileResult 序列化，跳过重复编译）
-    ${MINILANG_ROOT_DIR}/compiler/BytecodeCache.cpp
+    ${MINILANG_ROOT_DIR}/compiler/core/BytecodeCache.cpp
     # ARCH-10: 后端执行服务中间层（GUI 面板通过此服务触发编译执行，
     # 消除对 compiler/VM/RegisterVM/Interpreter/Lexer/Parser 内部头文件的直接依赖）
     # 放在 backend 子库而非 base 的原因：依赖 lexer/parser/compiler/VM/RegisterVM，
@@ -115,19 +117,19 @@ set(MINILANG_BACKEND_SOURCES
 # JIT 后端源文件（条件编译，MINILANG_USE_JIT = ON 时包含）
 if(MINILANG_USE_JIT)
     list(APPEND MINILANG_BACKEND_SOURCES
-        ${MINILANG_ROOT_DIR}/compiler/JIT.cpp
-        ${MINILANG_ROOT_DIR}/compiler/JITCodeGen.cpp
-        ${MINILANG_ROOT_DIR}/compiler/JITCodeGenHelpers.cpp
-        ${MINILANG_ROOT_DIR}/compiler/JITRuntime.cpp
-        ${MINILANG_ROOT_DIR}/compiler/JITTiering.cpp
-        ${MINILANG_ROOT_DIR}/compiler/JITClosure.cpp
+        ${MINILANG_ROOT_DIR}/compiler/jit/JIT.cpp
+        ${MINILANG_ROOT_DIR}/compiler/jit/JITCodeGen.cpp
+        ${MINILANG_ROOT_DIR}/compiler/jit/JITCodeGenHelpers.cpp
+        ${MINILANG_ROOT_DIR}/compiler/jit/JITRuntime.cpp
+        ${MINILANG_ROOT_DIR}/compiler/jit/JITTiering.cpp
+        ${MINILANG_ROOT_DIR}/compiler/jit/JITClosure.cpp
     )
 endif()
 
 # ARM64 JIT 后端源文件（条件编译，MINILANG_USE_JIT_A64 = ON 时包含）
 if(MINILANG_USE_JIT_A64)
     list(APPEND MINILANG_BACKEND_SOURCES
-        ${MINILANG_ROOT_DIR}/compiler/JITA64CodeGen.cpp
+        ${MINILANG_ROOT_DIR}/compiler/jit/JITA64CodeGen.cpp
     )
 endif()
 
@@ -158,6 +160,8 @@ set(MINILANG_CORE_SOURCES
 #   4. 在 app/ide.cpp registerLazyTeachingPanels() 的对应 register*Panels helper 中
 #      调用 registrar("panel-id", mlTr("标题"), [this]() { ... return panel; })
 set(MINILANG_GUI_SOURCES
+    # 审计问题3: 教学面板公共基类（主题切换钩子收敛，见 .h 迁移路径说明）
+    gui/TeachingPanelBase.cpp
     gui/CodeEditor.cpp
     gui/CodeSnippetEngine.cpp
     gui/SyntaxHighlighter.cpp

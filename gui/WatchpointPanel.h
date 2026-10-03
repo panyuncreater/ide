@@ -32,7 +32,7 @@
 #include <QTableWidget>
 #include <QTextBrowser>
 #include <QTimer>
-#include <QWidget>
+#include "gui/TeachingPanelBase.h"
 #include <string>
 #include <vector>
 
@@ -60,7 +60,7 @@ public:
 
 // ---- 主面板 ----
 
-class WatchpointPanel : public QWidget {
+class WatchpointPanel : public TeachingPanelBase {
     Q_OBJECT
 public:
     explicit WatchpointPanel(QWidget* parent = nullptr);
@@ -81,6 +81,9 @@ protected:
     /// 面板显示时启动 QTimer 安全网，隐藏时停止
     void showEvent(QShowEvent* event) override;
     void hideEvent(QHideEvent* event) override;
+
+    /// 主题切换时刷新教学场景详情 HTML（TeachingPanelBase 基类钩子）
+    void applyTheme() override;
 
 private:
     /// vmStateChanged 监听回调——仅当面板可见时即时刷新列表
