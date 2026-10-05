@@ -106,7 +106,7 @@ AstIRBuilder::AstIRBuilder() {
     // 创建初始基本块
     uint32_t entryLabel = ir_->allocLabel();
     currentBlock_ = &ir_->addBlock(entryLabel);
-    currentBlock_->instructions.emplace_back(IROp::LABEL, std::vector<IROperand>{IROperand::label(entryLabel)}, 0);
+    currentBlock_->instructions.emplace_back(IROp::LABEL, IROperandList{IROperand::label(entryLabel)}, 0);
 }
 
 std::unique_ptr<IRFunction> AstIRBuilder::build(Block& program) {
@@ -406,7 +406,7 @@ void AstIRBuilder::emitNamespaceImportIR(ImportStmt& node, const std::string& pa
     }
 
     // 逐个 emit LOAD_CONST(key) + LOAD_GLOBAL(value)
-    std::vector<IROperand> ops;
+    IROperandList ops;
     IROperand dictVReg = ir_->allocVReg();
     ops.push_back(dictVReg);
     ops.push_back(IROperand::imm(static_cast<uint32_t>(sortedExports.size())));
@@ -601,7 +601,7 @@ void AstIRBuilder::handleImportStmt(ImportStmt& node) {
                 // RegisterBytecodeBackend lowers to REG_CALL，运行时按名查找 functionChunks_
                 IROperand dest = ir_->allocVReg();
                 uint32_t nameIdx = ir_->addGlobal(initFnName);
-                std::vector<IROperand> callOps;
+                IROperandList callOps;
                 callOps.push_back(dest);
                 callOps.push_back(IROperand::funcName(nameIdx));
                 callOps.push_back(IROperand::imm(0u)); // argCount = 0
@@ -781,6 +781,10 @@ void AstIRBuilder::leaveBlockScope() {
     // hasNestedFunction 在 visitFunDecl 中被设置（仅 inFunction_==true 时）。
     if (!scope.hasNestedFunction) {
         nextLocalSlot_ = scope.slotBase;
+        // PERF: 回滚可能使 nextLocalSlot_ 低于已缓存的短路暂存槽号（该槽号之后
+        // 可能被新变量占用），保守失效，下次分配重新取号。
+        if (shortCircuitScratchValid_ && shortCircuitScratchSlot_ >= nextLocalSlot_)
+            shortCircuitScratchValid_ = false;
         // 清除 varMap_ 中属于本块的局部变量条目，避免块外引用到已回收的 slot。
         // 注意：临时 slot（AND/OR 短路）未记录在 localSlots，仅靠 slotBase 回收即可，
         // 因其 varMap_ 无对应条目（临时 slot 不绑定变量名）。
@@ -813,11 +817,11 @@ IRBasicBlock& AstIRBuilder::newBlock() {
     IRBasicBlock& blk = ir_->addBlock(label);
     currentBlock_ = &blk;
     // 新块起始插入 LABEL 指令，便于 lowering 记录偏移
-    currentBlock_->instructions.emplace_back(IROp::LABEL, std::vector<IROperand>{IROperand::label(label)}, 0);
+    currentBlock_->instructions.emplace_back(IROp::LABEL, IROperandList{IROperand::label(label)}, 0);
     return *currentBlock_;
 }
 
-void AstIRBuilder::emitIR(IROp op, std::vector<IROperand> operands, int line, int column) {
+void AstIRBuilder::emitIR(IROp op, IROperandList operands, int line, int column) {
     // D12 fix: column 默认 -1 时沿用 currentColumn_（visitNode 入口记录最近节点列）
     int col = (column >= 0) ? column : currentColumn_;
     currentBlock_->instructions.emplace_back(op, std::move(operands), line, col);
@@ -1367,6 +1371,20 @@ IROperand AstIRBuilder::visitNode(ASTNode* node) {
     }
 }
 
+// PERF: 短路求值暂存槽分配（说明见 IR.h 成员与声明处注释）。
+uint32_t AstIRBuilder::acquireShortCircuitSlot() {
+    if (blockScopes_.empty()) {
+        // 顶层：函数级共享一个槽。失效后（函数入口/嵌套函数返回/块回滚）重新分配。
+        if (!shortCircuitScratchValid_) {
+            shortCircuitScratchSlot_ = nextLocalSlot_++;
+            shortCircuitScratchValid_ = true;
+        }
+        return shortCircuitScratchSlot_;
+    }
+    // 块作用域内：沿用逐次分配，由 leaveBlockScope 的 slotBase 回滚回收。
+    return nextLocalSlot_++;
+}
+
 // R111 重构：BIN_AND 短路求值提取为单一职责 helper。
 // 语义：左值为假时短路返回左值原值（与 Interpreter 的 `and` 操作数原值语义对齐），
 // 左值为真时返回右操作数原值。用临时 local slot 汇合两条路径保证 dest 总有定义。
@@ -1377,7 +1395,7 @@ IROperand AstIRBuilder::emitShortCircuitAnd(BinaryOp* node) {
     IROperand left = visitNode(node->left.get());
     uint32_t shortCircuitLabel = ir_->allocLabel();
     uint32_t endLabel = ir_->allocLabel();
-    uint32_t tempSlot = nextLocalSlot_++; // 临时 slot 存放结果
+    uint32_t tempSlot = acquireShortCircuitSlot(); // 临时 slot 存放结果
     // 左值为假则短路（结果 = left）
     emitIR(IROp::JUMP_IF_FALSE, {left, IROperand::label(shortCircuitLabel)}, node->line);
     // 非短路路径：left 在栈顶，存入 tempSlot，POP 消费残留
@@ -1405,7 +1423,7 @@ IROperand AstIRBuilder::emitShortCircuitOr(BinaryOp* node) {
     IROperand left = visitNode(node->left.get());
     uint32_t evalRightLabel = ir_->allocLabel();
     uint32_t endLabel = ir_->allocLabel();
-    uint32_t tempSlot = nextLocalSlot_++; // 临时 slot 存放结果
+    uint32_t tempSlot = acquireShortCircuitSlot(); // 临时 slot 存放结果
     // 左值为假则去求值右操作数
     emitIR(IROp::JUMP_IF_FALSE, {left, IROperand::label(evalRightLabel)}, node->line);
     // 左值为真，短路（结果 = left）：left 在栈顶，存入 tempSlot，POP 消费残留
@@ -1914,6 +1932,7 @@ void AstIRBuilder::emitFunctionPrologue(FunDecl& node, FunctionEmitCtx& ctx) {
     ir_->yieldCount = node.yieldCount;
     inFunction_ = true;
     nextLocalSlot_ = 0;
+    shortCircuitScratchValid_ = false; // PERF: 新函数槽位空间，短路暂存槽失效重分配
     varMap_.clear();
     varTypes_.clear();       // 2026-06-29: 清空子函数类型注解
     localSlotNames_.clear(); // BUG-IDE-12 fix: 清空 slot→name 映射
@@ -2024,7 +2043,7 @@ void AstIRBuilder::emitFunctionPrologue(FunDecl& node, FunctionEmitCtx& ctx) {
     // 6. 创建初始基本块
     uint32_t entryLabel = ir_->allocLabel();
     currentBlock_ = &ir_->addBlock(entryLabel);
-    currentBlock_->instructions.emplace_back(IROp::LABEL, std::vector<IROperand>{IROperand::label(entryLabel)},
+    currentBlock_->instructions.emplace_back(IROp::LABEL, IROperandList{IROperand::label(entryLabel)},
                                              node.line);
 
     // R109/L15 TCO: 设置子函数 TCO 状态（currentFunctionIsMethod_ 已在函数入口提前快照）。
@@ -2109,6 +2128,9 @@ void AstIRBuilder::restoreParentFunctionState(FunctionEmitCtx& ctx) {
     varTypes_ = std::move(ctx.savedVarTypes); // 2026-06-29
     inFunction_ = ctx.savedInFunction;
     nextLocalSlot_ = ctx.savedLocalSlot;
+    // PERF: 恢复父函数槽位空间后，短路暂存槽失效——子函数编译期间槽位编号空间
+    // 独立（从 0/1 重新开始），缓存的父函数槽号需重新分配（保守重分配，≤1 槽开销）。
+    shortCircuitScratchValid_ = false;
     localSlotNames_ = std::move(ctx.savedLocalSlotNames); // BUG-IDE-12 fix
     slotNameRanges_ = std::move(ctx.savedSlotNameRanges); // L1 fix
     loopStack_ = std::move(ctx.savedLoopStack);
@@ -2152,7 +2174,7 @@ IROperand AstIRBuilder::emitFunctionClosureRegistration(FunDecl& node, const std
     IROperand dest = ir_->allocVReg();
     IRFunction* fnIr = module_->findFunction(fnName);
     uint32_t uvCount = fnIr ? static_cast<uint32_t>(fnIr->upvalues.size()) : 0;
-    std::vector<IROperand> ops;
+    IROperandList ops;
     ops.push_back(dest);
     ops.push_back(IROperand::funcName(nameIdx));
     ops.push_back(IROperand::imm(uvCount));
@@ -2265,7 +2287,7 @@ IROperand AstIRBuilder::visitFunCall(FunCall* node) {
     if (node->callee) {
         // 表达式调用：编译 callee + 参数，emit CALL_EXPR
         IROperand calleeVreg = visitNode(node->callee.get());
-        std::vector<IROperand> ops;
+        IROperandList ops;
         ops.push_back(dest);
         ops.push_back(calleeVreg);
         ops.push_back(IROperand::imm(static_cast<uint32_t>(node->arguments.size())));
@@ -2295,7 +2317,7 @@ IROperand AstIRBuilder::visitFunCall(FunCall* node) {
          (varIt->second.kind == VarInfo::Kind::GLOBAL_SLOT &&
           topLevelFunDeclNames_.find(node->name) == topLevelFunDeclNames_.end()))) {
         IROperand calleeVreg = emitLoadVar(node->name, node->line);
-        std::vector<IROperand> ops;
+        IROperandList ops;
         ops.push_back(dest);
         ops.push_back(calleeVreg);
         ops.push_back(IROperand::imm(static_cast<uint32_t>(node->arguments.size())));
@@ -2307,7 +2329,7 @@ IROperand AstIRBuilder::visitFunCall(FunCall* node) {
     }
     // 全局命名调用：emit CALL nameIdx argCount
     uint32_t nameIdx = ir_->addGlobal(node->name);
-    std::vector<IROperand> ops;
+    IROperandList ops;
     ops.push_back(dest);
     ops.push_back(IROperand::funcName(nameIdx));
     ops.push_back(IROperand::imm(static_cast<uint32_t>(node->arguments.size())));
@@ -2389,7 +2411,7 @@ void AstIRBuilder::visitReturnStmt(ReturnStmt* node) {
         }
         if (args->size() <= paramCount && paramSlotBase + paramCount <= 255) {
             // 1. 编译所有实参表达式到 vreg（StackVM lowering 后压栈 N 个值）
-            std::vector<IROperand> argVregs;
+            IROperandList argVregs;
             argVregs.reserve(paramCount);
             for (auto& arg : *args) {
                 argVregs.push_back(visitNode(arg.get()));
@@ -2604,7 +2626,7 @@ void AstIRBuilder::visitBlock(Block* node) {
 
 IROperand AstIRBuilder::visitArrayLiteral(ArrayLiteral* node) {
     IROperand dest = ir_->allocVReg();
-    std::vector<IROperand> ops;
+    IROperandList ops;
     ops.push_back(dest);
     ops.push_back(IROperand::imm(static_cast<uint32_t>(node->elements.size())));
     for (auto& e : node->elements) {
@@ -2617,7 +2639,7 @@ IROperand AstIRBuilder::visitArrayLiteral(ArrayLiteral* node) {
 // R98 元组与解构：元组字面量 IR 生成
 IROperand AstIRBuilder::visitTupleLiteral(TupleLiteral* node) {
     IROperand dest = ir_->allocVReg();
-    std::vector<IROperand> ops;
+    IROperandList ops;
     ops.push_back(dest);
     ops.push_back(IROperand::imm(static_cast<uint32_t>(node->elements.size())));
     for (auto& e : node->elements) {
@@ -2700,7 +2722,7 @@ IROperand AstIRBuilder::visitEnumVariantExpr(EnumVariantExpr* node) {
     IROperand dest = ir_->allocVReg();
     uint32_t enumNameConstIdx = ir_->addConstant(Value(node->enumName));
     uint32_t variantNameConstIdx = ir_->addConstant(Value(node->variantName));
-    std::vector<IROperand> ops;
+    IROperandList ops;
     ops.push_back(dest);
     ops.push_back(IROperand::constant(enumNameConstIdx));
     ops.push_back(IROperand::constant(variantNameConstIdx));
@@ -3206,7 +3228,7 @@ void AstIRBuilder::visitDestructureBinding(DestructureBinding* node) {
 
 IROperand AstIRBuilder::visitDictLiteral(DictLiteral* node) {
     IROperand dest = ir_->allocVReg();
-    std::vector<IROperand> ops;
+    IROperandList ops;
     ops.push_back(dest);
     ops.push_back(IROperand::imm(static_cast<uint32_t>(node->pairs.size())));
     for (auto& p : node->pairs) {
@@ -3469,7 +3491,7 @@ IROperand AstIRBuilder::visitMethodCall(MethodCall* node) {
     IROperand obj = isSuperCall ? emitLoadVar("this", node->line) : visitNode(node->object.get());
     IROperand dest = ir_->allocVReg();
     uint32_t methodIdx = ir_->addGlobal(node->methodName);
-    std::vector<IROperand> ops;
+    IROperandList ops;
     ops.push_back(dest);
     ops.push_back(obj);
     ops.push_back(IROperand::field(methodIdx));
@@ -3621,7 +3643,7 @@ void AstIRBuilder::visitClassDecl(ClassDecl* node) {
     //   [3+i*3+2] fieldExprLocalSlot (IMM_UINT, UINT32_MAX=使用常量或null, 否则使用临时局部变量)
     //   [3+3F] methodCount (IMM_UINT)
     //   [3+3F+1 .. ] (methodName FIELD_NAME, funName FUNC_NAME) × M
-    std::vector<IROperand> ops;
+    IROperandList ops;
     ops.push_back(IROperand::funcName(nameIdx));
     ops.push_back(IROperand::imm(parentIdx));
     ops.push_back(IROperand::imm(static_cast<uint32_t>(fieldIdxs.size())));

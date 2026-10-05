@@ -171,36 +171,36 @@ std::unique_ptr<IRFunction> buildNestedLoopWithInvariantIR() {
 
     // entry: i = 0; JUMP L_outerCond
     IROperand vZeroI = ir->allocVReg();
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{vZeroI, IROperand::constant(cZero)}, 1);
-    block.instructions.emplace_back(IROp::STORE_LOCAL, std::vector<IROperand>{IROperand::local(0), vZeroI}, 2);
-    block.instructions.emplace_back(IROp::JUMP, std::vector<IROperand>{IROperand::label(lOuterCond)}, 3);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{vZeroI, IROperand::constant(cZero)}, 1);
+    block.instructions.emplace_back(IROp::STORE_LOCAL, IROperandList{IROperand::local(0), vZeroI}, 2);
+    block.instructions.emplace_back(IROp::JUMP, IROperandList{IROperand::label(lOuterCond)}, 3);
 
     // L_outerCond
     IROperand vI = ir->allocVReg();
     IROperand vLim = ir->allocVReg();
     IROperand vCmp = ir->allocVReg();
-    block.instructions.emplace_back(IROp::LABEL, std::vector<IROperand>{IROperand::label(lOuterCond)}, 4);
-    block.instructions.emplace_back(IROp::LOAD_LOCAL, std::vector<IROperand>{vI, IROperand::local(0)}, 5);
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{vLim, IROperand::constant(cTwo)}, 6);
-    block.instructions.emplace_back(IROp::LT, std::vector<IROperand>{vCmp, vI, vLim}, 7);
-    block.instructions.emplace_back(IROp::JUMP_IF_FALSE, std::vector<IROperand>{vCmp, IROperand::label(lExit)}, 8);
+    block.instructions.emplace_back(IROp::LABEL, IROperandList{IROperand::label(lOuterCond)}, 4);
+    block.instructions.emplace_back(IROp::LOAD_LOCAL, IROperandList{vI, IROperand::local(0)}, 5);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{vLim, IROperand::constant(cTwo)}, 6);
+    block.instructions.emplace_back(IROp::LT, IROperandList{vCmp, vI, vLim}, 7);
+    block.instructions.emplace_back(IROp::JUMP_IF_FALSE, IROperandList{vCmp, IROperand::label(lExit)}, 8);
 
     // L_outerBody: j = 0; JUMP L_innerCond
     IROperand vZeroJ = ir->allocVReg();
-    block.instructions.emplace_back(IROp::LABEL, std::vector<IROperand>{IROperand::label(lOuterBody)}, 9);
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{vZeroJ, IROperand::constant(cZero)}, 10);
-    block.instructions.emplace_back(IROp::STORE_LOCAL, std::vector<IROperand>{IROperand::local(1), vZeroJ}, 11);
-    block.instructions.emplace_back(IROp::JUMP, std::vector<IROperand>{IROperand::label(lInnerCond)}, 12);
+    block.instructions.emplace_back(IROp::LABEL, IROperandList{IROperand::label(lOuterBody)}, 9);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{vZeroJ, IROperand::constant(cZero)}, 10);
+    block.instructions.emplace_back(IROp::STORE_LOCAL, IROperandList{IROperand::local(1), vZeroJ}, 11);
+    block.instructions.emplace_back(IROp::JUMP, IROperandList{IROperand::label(lInnerCond)}, 12);
 
     // L_innerCond
     IROperand vJ = ir->allocVReg();
     IROperand vJLim = ir->allocVReg();
     IROperand vJCmp = ir->allocVReg();
-    block.instructions.emplace_back(IROp::LABEL, std::vector<IROperand>{IROperand::label(lInnerCond)}, 13);
-    block.instructions.emplace_back(IROp::LOAD_LOCAL, std::vector<IROperand>{vJ, IROperand::local(1)}, 14);
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{vJLim, IROperand::constant(cTwo)}, 15);
-    block.instructions.emplace_back(IROp::LT, std::vector<IROperand>{vJCmp, vJ, vJLim}, 16);
-    block.instructions.emplace_back(IROp::JUMP_IF_FALSE, std::vector<IROperand>{vJCmp, IROperand::label(lOuterIncr)},
+    block.instructions.emplace_back(IROp::LABEL, IROperandList{IROperand::label(lInnerCond)}, 13);
+    block.instructions.emplace_back(IROp::LOAD_LOCAL, IROperandList{vJ, IROperand::local(1)}, 14);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{vJLim, IROperand::constant(cTwo)}, 15);
+    block.instructions.emplace_back(IROp::LT, IROperandList{vJCmp, vJ, vJLim}, 16);
+    block.instructions.emplace_back(IROp::JUMP_IF_FALSE, IROperandList{vJCmp, IROperand::label(lOuterIncr)},
                                     17);
 
     // L_innerBody: sink = 99（不变量）; j = j + 1; JUMP L_innerCond
@@ -208,33 +208,122 @@ std::unique_ptr<IRFunction> buildNestedLoopWithInvariantIR() {
     IROperand vJc = ir->allocVReg();
     IROperand vJOne = ir->allocVReg();
     IROperand vJn = ir->allocVReg();
-    block.instructions.emplace_back(IROp::LABEL, std::vector<IROperand>{IROperand::label(lInnerBody)}, 18);
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{vInv, IROperand::constant(cInv)}, 19);
-    block.instructions.emplace_back(IROp::STORE_LOCAL, std::vector<IROperand>{IROperand::local(2), vInv}, 20);
-    block.instructions.emplace_back(IROp::LOAD_LOCAL, std::vector<IROperand>{vJc, IROperand::local(1)}, 21);
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{vJOne, IROperand::constant(cOne)}, 22);
-    block.instructions.emplace_back(IROp::ADD, std::vector<IROperand>{vJn, vJc, vJOne}, 23);
-    block.instructions.emplace_back(IROp::STORE_LOCAL, std::vector<IROperand>{IROperand::local(1), vJn}, 24);
-    block.instructions.emplace_back(IROp::JUMP, std::vector<IROperand>{IROperand::label(lInnerCond)}, 25);
+    block.instructions.emplace_back(IROp::LABEL, IROperandList{IROperand::label(lInnerBody)}, 18);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{vInv, IROperand::constant(cInv)}, 19);
+    block.instructions.emplace_back(IROp::STORE_LOCAL, IROperandList{IROperand::local(2), vInv}, 20);
+    block.instructions.emplace_back(IROp::LOAD_LOCAL, IROperandList{vJc, IROperand::local(1)}, 21);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{vJOne, IROperand::constant(cOne)}, 22);
+    block.instructions.emplace_back(IROp::ADD, IROperandList{vJn, vJc, vJOne}, 23);
+    block.instructions.emplace_back(IROp::STORE_LOCAL, IROperandList{IROperand::local(1), vJn}, 24);
+    block.instructions.emplace_back(IROp::JUMP, IROperandList{IROperand::label(lInnerCond)}, 25);
 
     // L_outerIncr: i = i + 1; JUMP L_outerCond
     IROperand vIc = ir->allocVReg();
     IROperand vIOne = ir->allocVReg();
     IROperand vIn = ir->allocVReg();
-    block.instructions.emplace_back(IROp::LABEL, std::vector<IROperand>{IROperand::label(lOuterIncr)}, 26);
-    block.instructions.emplace_back(IROp::LOAD_LOCAL, std::vector<IROperand>{vIc, IROperand::local(0)}, 27);
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{vIOne, IROperand::constant(cOne)}, 28);
-    block.instructions.emplace_back(IROp::ADD, std::vector<IROperand>{vIn, vIc, vIOne}, 29);
-    block.instructions.emplace_back(IROp::STORE_LOCAL, std::vector<IROperand>{IROperand::local(0), vIn}, 30);
-    block.instructions.emplace_back(IROp::JUMP, std::vector<IROperand>{IROperand::label(lOuterCond)}, 31);
+    block.instructions.emplace_back(IROp::LABEL, IROperandList{IROperand::label(lOuterIncr)}, 26);
+    block.instructions.emplace_back(IROp::LOAD_LOCAL, IROperandList{vIc, IROperand::local(0)}, 27);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{vIOne, IROperand::constant(cOne)}, 28);
+    block.instructions.emplace_back(IROp::ADD, IROperandList{vIn, vIc, vIOne}, 29);
+    block.instructions.emplace_back(IROp::STORE_LOCAL, IROperandList{IROperand::local(0), vIn}, 30);
+    block.instructions.emplace_back(IROp::JUMP, IROperandList{IROperand::label(lOuterCond)}, 31);
 
     // L_exit
-    block.instructions.emplace_back(IROp::LABEL, std::vector<IROperand>{IROperand::label(lExit)}, 32);
-    block.instructions.emplace_back(IROp::RETURN_NULL, std::vector<IROperand>{}, 33);
+    block.instructions.emplace_back(IROp::LABEL, IROperandList{IROperand::label(lExit)}, 32);
+    block.instructions.emplace_back(IROp::RETURN_NULL, IROperandList{}, 33);
 
     ir->blocks.push_back(std::move(block));
     ir->localCount = 3;
     ir->localSlotNames = {"i", "j", "sink"};
+    return ir;
+}
+
+// ============================================================
+// IR 构造辅助：双循环 + "gap 块仅含可外提纯计算"（触发 LICM 分区塌缩）
+// ------------------------------------------------------------
+// 语义等价：i=0; while i<3 { s1=42; } while i<2 { s2=7; }
+// 关键构造：每个循环体内"JUMP_IF_FALSE 与下一 LABEL 之间"的 gap 节点仅含
+// 一条可外提的 LOAD_CONST——全量外提后该 gap 节点从 CFG 分区中消失
+// （节点数 9→8→7 递减），触发 licmPass 结构分析复用的塌缩重建回退路径；
+// 第二个循环的外提发生在第一次塌缩重建之后，锁定"重建后的支配树/循环
+// 信息仍可用"不变量。局部槽：i=0, s1=1, s2=2
+// ============================================================
+std::unique_ptr<IRFunction> buildTwoLoopsCollapsingGapIR() {
+    auto ir = std::make_unique<IRFunction>();
+    ir->name = "two_loops_collapsing_gap";
+    ir->arity = 0;
+
+    uint32_t lCond1 = ir->allocLabel(); // 0
+    uint32_t lBody1 = ir->allocLabel(); // 1
+    uint32_t lExit1 = ir->allocLabel(); // 2
+    uint32_t lCond2 = ir->allocLabel(); // 3
+    uint32_t lBody2 = ir->allocLabel(); // 4
+    uint32_t lExit2 = ir->allocLabel(); // 5
+
+    uint32_t cZero = ir->addConstant(Value(0));
+    uint32_t cThree = ir->addConstant(Value(3));
+    uint32_t cTwo = ir->addConstant(Value(2));
+    uint32_t cInv1 = ir->addConstant(Value(42)); // 循环 1 不变量（gap 块）
+    uint32_t cInv2 = ir->addConstant(Value(7));  // 循环 2 不变量（gap 块）
+
+    IRBasicBlock block;
+    block.labelIndex = lCond1;
+
+    // 入口：i = 0; JUMP L_cond1（循环 1 preheader）
+    IROperand vZero = ir->allocVReg();
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{vZero, IROperand::constant(cZero)}, 1);
+    block.instructions.emplace_back(IROp::STORE_LOCAL, IROperandList{IROperand::local(0), vZero}, 2);
+    block.instructions.emplace_back(IROp::JUMP, IROperandList{IROperand::label(lCond1)}, 3);
+
+    // L_cond1（循环 1 header）
+    IROperand vI1 = ir->allocVReg();
+    IROperand vLim1 = ir->allocVReg();
+    IROperand vCmp1 = ir->allocVReg();
+    block.instructions.emplace_back(IROp::LABEL, IROperandList{IROperand::label(lCond1)}, 4);
+    block.instructions.emplace_back(IROp::LOAD_LOCAL, IROperandList{vI1, IROperand::local(0)}, 5);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{vLim1, IROperand::constant(cThree)}, 6);
+    block.instructions.emplace_back(IROp::LT, IROperandList{vCmp1, vI1, vLim1}, 7);
+    block.instructions.emplace_back(IROp::JUMP_IF_FALSE, IROperandList{vCmp1, IROperand::label(lExit1)}, 8);
+
+    // gap 块（JUMP_IF_FALSE 与 LABEL 之间，无 LABEL 起始）：仅含可外提纯计算
+    IROperand vA = ir->allocVReg();
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{vA, IROperand::constant(cInv1)}, 9);
+
+    // L_body1：消费 vA 后回跳（STORE_LOCAL 不可外提，留在循环体内）
+    block.instructions.emplace_back(IROp::LABEL, IROperandList{IROperand::label(lBody1)}, 10);
+    block.instructions.emplace_back(IROp::STORE_LOCAL, IROperandList{IROperand::local(1), vA}, 11);
+    block.instructions.emplace_back(IROp::JUMP, IROperandList{IROperand::label(lCond1)}, 12);
+
+    // L_exit1 → 串接进入循环 2（循环 2 preheader）
+    block.instructions.emplace_back(IROp::LABEL, IROperandList{IROperand::label(lExit1)}, 13);
+    block.instructions.emplace_back(IROp::JUMP, IROperandList{IROperand::label(lCond2)}, 14);
+
+    // L_cond2（循环 2 header）
+    IROperand vI2 = ir->allocVReg();
+    IROperand vLim2 = ir->allocVReg();
+    IROperand vCmp2 = ir->allocVReg();
+    block.instructions.emplace_back(IROp::LABEL, IROperandList{IROperand::label(lCond2)}, 15);
+    block.instructions.emplace_back(IROp::LOAD_LOCAL, IROperandList{vI2, IROperand::local(0)}, 16);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{vLim2, IROperand::constant(cTwo)}, 17);
+    block.instructions.emplace_back(IROp::LT, IROperandList{vCmp2, vI2, vLim2}, 18);
+    block.instructions.emplace_back(IROp::JUMP_IF_FALSE, IROperandList{vCmp2, IROperand::label(lExit2)}, 19);
+
+    // gap 块 2：仅含可外提纯计算
+    IROperand vB = ir->allocVReg();
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{vB, IROperand::constant(cInv2)}, 20);
+
+    // L_body2
+    block.instructions.emplace_back(IROp::LABEL, IROperandList{IROperand::label(lBody2)}, 21);
+    block.instructions.emplace_back(IROp::STORE_LOCAL, IROperandList{IROperand::local(2), vB}, 22);
+    block.instructions.emplace_back(IROp::JUMP, IROperandList{IROperand::label(lCond2)}, 23);
+
+    // L_exit2
+    block.instructions.emplace_back(IROp::LABEL, IROperandList{IROperand::label(lExit2)}, 24);
+    block.instructions.emplace_back(IROp::RETURN_NULL, IROperandList{}, 25);
+
+    ir->blocks.push_back(std::move(block));
+    ir->localCount = 3;
+    ir->localSlotNames = {"i", "s1", "s2"};
     return ir;
 }
 
@@ -262,13 +351,13 @@ std::unique_ptr<IRFunction> buildTwoIdenticalCallsIR() {
     IROperand v1 = ir->allocVReg();
     IROperand v2 = ir->allocVReg();
 
-    block.instructions.emplace_back(IROp::LABEL, std::vector<IROperand>{IROperand::label(0)}, 1);
-    block.instructions.emplace_back(IROp::CALL, std::vector<IROperand>{v0, IROperand::funcName(fIdx), IROperand::imm(0)},
+    block.instructions.emplace_back(IROp::LABEL, IROperandList{IROperand::label(0)}, 1);
+    block.instructions.emplace_back(IROp::CALL, IROperandList{v0, IROperand::funcName(fIdx), IROperand::imm(0)},
                                     2);
-    block.instructions.emplace_back(IROp::CALL, std::vector<IROperand>{v1, IROperand::funcName(fIdx), IROperand::imm(0)},
+    block.instructions.emplace_back(IROp::CALL, IROperandList{v1, IROperand::funcName(fIdx), IROperand::imm(0)},
                                     3);
-    block.instructions.emplace_back(IROp::ADD, std::vector<IROperand>{v2, v0, v1}, 4);
-    block.instructions.emplace_back(IROp::RETURN, std::vector<IROperand>{v2}, 5);
+    block.instructions.emplace_back(IROp::ADD, IROperandList{v2, v0, v1}, 4);
+    block.instructions.emplace_back(IROp::RETURN, IROperandList{v2}, 5);
 
     ir->blocks.push_back(std::move(block));
     ir->localCount = 0;
@@ -292,11 +381,11 @@ std::unique_ptr<IRFunction> buildLeaf(const std::string& name) {
     IROperand vOne = fn->allocVReg();
     IROperand vAcc = fn->allocVReg();
     uint32_t cOne = fn->addConstant(Value(1));
-    block.instructions.emplace_back(IROp::LABEL, std::vector<IROperand>{IROperand::label(0)}, 1);
-    block.instructions.emplace_back(IROp::LOAD_LOCAL, std::vector<IROperand>{vParam, IROperand::local(0)}, 2);
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{vOne, IROperand::constant(cOne)}, 3);
-    block.instructions.emplace_back(IROp::ADD, std::vector<IROperand>{vAcc, vParam, vOne}, 4);
-    block.instructions.emplace_back(IROp::RETURN, std::vector<IROperand>{vAcc}, 5);
+    block.instructions.emplace_back(IROp::LABEL, IROperandList{IROperand::label(0)}, 1);
+    block.instructions.emplace_back(IROp::LOAD_LOCAL, IROperandList{vParam, IROperand::local(0)}, 2);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{vOne, IROperand::constant(cOne)}, 3);
+    block.instructions.emplace_back(IROp::ADD, IROperandList{vAcc, vParam, vOne}, 4);
+    block.instructions.emplace_back(IROp::RETURN, IROperandList{vAcc}, 5);
     fn->blocks.push_back(std::move(block));
     fn->localCount = 1;
     fn->localSlotNames = {"x"};
@@ -312,11 +401,11 @@ std::unique_ptr<IRFunction> buildRelay(const std::string& name, const std::strin
     block.labelIndex = fn->allocLabel();
     IROperand vParam = fn->allocVReg();
     IROperand vRes = fn->allocVReg();
-    block.instructions.emplace_back(IROp::LABEL, std::vector<IROperand>{IROperand::label(0)}, 1);
-    block.instructions.emplace_back(IROp::LOAD_LOCAL, std::vector<IROperand>{vParam, IROperand::local(0)}, 2);
+    block.instructions.emplace_back(IROp::LABEL, IROperandList{IROperand::label(0)}, 1);
+    block.instructions.emplace_back(IROp::LOAD_LOCAL, IROperandList{vParam, IROperand::local(0)}, 2);
     block.instructions.emplace_back(
-        IROp::CALL, std::vector<IROperand>{vRes, IROperand::funcName(tIdx), IROperand::imm(1), vParam}, 3);
-    block.instructions.emplace_back(IROp::RETURN, std::vector<IROperand>{vRes}, 4);
+        IROp::CALL, IROperandList{vRes, IROperand::funcName(tIdx), IROperand::imm(1), vParam}, 3);
+    block.instructions.emplace_back(IROp::RETURN, IROperandList{vRes}, 4);
     fn->blocks.push_back(std::move(block));
     fn->localCount = 1;
     fn->localSlotNames = {"x"};
@@ -333,11 +422,11 @@ std::unique_ptr<IRFunction> buildMainCalling(const std::string& calleeName) {
     IROperand mv0 = mainFn->allocVReg();
     IROperand mv1 = mainFn->allocVReg();
     uint32_t mc0 = mainFn->addConstant(Value(10));
-    block.instructions.emplace_back(IROp::LABEL, std::vector<IROperand>{IROperand::label(0)}, 1);
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{mv0, IROperand::constant(mc0)}, 2);
+    block.instructions.emplace_back(IROp::LABEL, IROperandList{IROperand::label(0)}, 1);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{mv0, IROperand::constant(mc0)}, 2);
     block.instructions.emplace_back(
-        IROp::CALL, std::vector<IROperand>{mv1, IROperand::funcName(nameIdx), IROperand::imm(1), mv0}, 3);
-    block.instructions.emplace_back(IROp::RETURN, std::vector<IROperand>{mv1}, 4);
+        IROp::CALL, IROperandList{mv1, IROperand::funcName(nameIdx), IROperand::imm(1), mv0}, 3);
+    block.instructions.emplace_back(IROp::RETURN, IROperandList{mv1}, 4);
     mainFn->blocks.push_back(std::move(block));
     return mainFn;
 }
@@ -474,7 +563,8 @@ TEST(LICMNestedGaps3, NestedLoopNoCrashKeepsControlFlow) {
     size_t jumpBefore = countOp(*ir, IROp::JUMP);
     size_t jifBefore = countOp(*ir, IROp::JUMP_IF_FALSE);
 
-    // LICM 对嵌套循环做自然循环检测 + 不变量分析（每次修改后重建 CFG/支配树/循环信息）
+    // LICM 对嵌套循环做自然循环检测 + 不变量分析（每轮重建 CFG 取新鲜指令区间，
+    // 支配树/循环信息结构复用，块分区塌缩时重建——见 LICMCollapseGaps3 组）
     bool modified = licmPass(*ir);
     (void)modified; // LICM 保守，可能不修改；重点是嵌套循环路径被覆盖且不崩溃
 
@@ -488,6 +578,87 @@ TEST(LICMNestedGaps3, NestedLoopNoCrashKeepsControlFlow) {
         EXPECT_FALSE(blk.instructions.empty()) << "LICM 后基本块不应为空";
     }
     SUCCEED();
+}
+
+// ============================================================
+// 第五组：LICM 结构分析复用的分区塌缩回退路径（第四轮优化）
+// ------------------------------------------------------------
+// licmPass 现将 DominatorTree/NaturalLoopInfo 建一次跨不动点批次复用，仅当
+// 重建 IRCFG 后节点数变化（块分区塌缩）时才重建。本测试手工构造触发塌缩的
+// IR：循环体内 gap 节点（JUMP_IF_FALSE 与下一 LABEL 之间，无 LABEL 起始）仅含
+// 一条可外提 LOAD_CONST，全量外提后 gap 节点消失 → 节点数 9→8→7 → 触发两次
+// 塌缩重建；第二个循环的外提发生在第一次塌缩重建之后。断言锁定：
+//   (1) 两个循环的不变量都被外提（modified 且外提指令位于对应循环 header
+//       之前——第二次外提证明重建后的支配树/循环信息仍可用）；
+//   (2) 外提是移动而非删除（LOAD_CONST/STORE_LOCAL/LABEL 计数不变）；
+//   (3) 控制流完整（JUMP/JUMP_IF_FALSE 计数不变）。
+// ============================================================
+TEST(LICMCollapseGaps3, CollapsedGapRebuildStillHoistsSecondLoop) {
+    auto ir = buildTwoLoopsCollapsingGapIR();
+
+    size_t jumpBefore = countOp(*ir, IROp::JUMP);
+    size_t jifBefore = countOp(*ir, IROp::JUMP_IF_FALSE);
+    size_t loadConstBefore = countOp(*ir, IROp::LOAD_CONST);
+    size_t storeLocalBefore = countOp(*ir, IROp::STORE_LOCAL);
+    size_t labelBefore = countOp(*ir, IROp::LABEL);
+    ASSERT_EQ(jumpBefore, 4u);
+    ASSERT_EQ(jifBefore, 2u);
+    ASSERT_EQ(loadConstBefore, 5u);
+    ASSERT_EQ(storeLocalBefore, 3u);
+    ASSERT_EQ(labelBefore, 6u);
+
+    bool modified = licmPass(*ir);
+    EXPECT_TRUE(modified) << "两个循环的不变量均应被外提";
+
+    // 外提是移动而非删除：指令总数按类别守恒
+    EXPECT_EQ(countOp(*ir, IROp::LOAD_CONST), loadConstBefore) << "LOAD_CONST 应移动而非删除";
+    EXPECT_EQ(countOp(*ir, IROp::STORE_LOCAL), storeLocalBefore) << "STORE_LOCAL 应保留";
+    EXPECT_EQ(countOp(*ir, IROp::LABEL), labelBefore) << "LABEL 应保留";
+    // 控制流完整
+    EXPECT_EQ(countOp(*ir, IROp::JUMP), jumpBefore) << "JUMP 边应保留";
+    EXPECT_EQ(countOp(*ir, IROp::JUMP_IF_FALSE), jifBefore) << "条件跳转应保留";
+    EXPECT_EQ(countOp(*ir, IROp::RETURN_NULL), 1u) << "RETURN_NULL 应保留";
+
+    // 位置断言：外提常量位于对应循环 header LABEL 之前（ flattened 指令序）。
+    // 第二个循环的外提发生在第一次塌缩重建之后——此断言失败即意味着重建后的
+    // 支配树/循环信息不可用（节点 id 偏移导致外提错位或漏做）。
+    auto flattenIndexOf = [&](IROp op, uint32_t constIdx) -> ptrdiff_t {
+        ptrdiff_t idx = 0;
+        for (const auto& blk : ir->blocks) {
+            for (const auto& instr : blk.instructions) {
+                bool match = instr.op == op;
+                if (match && op == IROp::LOAD_CONST)
+                    match = instr.operands.size() >= 2 && instr.operands[1].kind == IROperandKind::CONSTANT &&
+                            instr.operands[1].index == constIdx;
+                if (match)
+                    return idx;
+                ++idx;
+            }
+        }
+        return -1;
+    };
+    auto labelIndexOf = [&](uint32_t labelIdx) -> ptrdiff_t {
+        ptrdiff_t idx = 0;
+        for (const auto& blk : ir->blocks) {
+            for (const auto& instr : blk.instructions) {
+                if (instr.op == IROp::LABEL && instr.operands.size() == 1 &&
+                    instr.operands[0].kind == IROperandKind::LABEL && instr.operands[0].index == labelIdx)
+                    return idx;
+                ++idx;
+            }
+        }
+        return -1;
+    };
+    ptrdiff_t inv1Pos = flattenIndexOf(IROp::LOAD_CONST, 3); // 常量池 3 = 42
+    ptrdiff_t inv2Pos = flattenIndexOf(IROp::LOAD_CONST, 4); // 常量池 4 = 7
+    ptrdiff_t cond1Pos = labelIndexOf(0);
+    ptrdiff_t cond2Pos = labelIndexOf(3);
+    ASSERT_GE(inv1Pos, 0);
+    ASSERT_GE(inv2Pos, 0);
+    ASSERT_GE(cond1Pos, 0);
+    ASSERT_GE(cond2Pos, 0);
+    EXPECT_LT(inv1Pos, cond1Pos) << "循环 1 不变量应外提到 L_cond1 之前（preheader）";
+    EXPECT_LT(inv2Pos, cond2Pos) << "循环 2 不变量应外提到 L_cond2 之前（塌缩重建后仍正确）";
 }
 
 // ============================================================
@@ -516,14 +687,16 @@ TEST(GVNSideEffectGaps3, DoesNotEliminateRedundantCalls) {
 // ============================================================
 // 第四组：级联内联（方向 5：IR 优化）
 // ------------------------------------------------------------
-// inlinePass 单趟遍历 allFns（main 在前，子函数在后），main 内联的是 a 的
-// 「原始」副本（仍含 CALL b）。故 main → a → b 的完全塌缩需要多趟迭代到
-// 不动点。本组两个测试分别锁定：
-//   (1) 单趟 inlinePass 后 main 仍残留 1 个 CALL（对 b）——证明单趟不足以级联；
-//   (2) 迭代到不动点后 main 与 a 的 CALL 全部消除——证明级联内联最终收敛。
+// 2026-10-04 优化审计修复：inlinePass 原实现仅扫 caller blocks[0] 且单趟遍历
+// （main 在前，子函数在后），main 内联的是 a 的「原始」副本（仍含 CALL b），
+// main → a → b 的塌缩需调用方多趟迭代。现 inlinePass 内部迭代到不动点
+// （最多 3 轮）并扫描 caller 全部块——单次调用即完成级联塌缩。
+// 本组两个测试更新为锁定新行为：
+//   (1) 单次 inlinePass 调用后 main 与 a 的 CALL 全部消除（级联一次到位）；
+//   (2) 再次调用应收敛（返回 false，无更多内联）。
 // ============================================================
 
-// 单趟：main 内联 a（原始副本）→ main 残留 CALL b
+// 单次调用：main 内联 a → 轮 2 内联残留的 CALL b → main 与 a 的 CALL 清零
 TEST(InlineCascadeGaps3, SinglePassLeavesResidualCall) {
     IRModule module;
     module.mainFunction = buildMainCalling("a"); // main { return a(10); }
@@ -531,26 +704,25 @@ TEST(InlineCascadeGaps3, SinglePassLeavesResidualCall) {
     module.addFunction(buildLeaf("b"));          // b(x) { return x + 1; }
 
     bool modified = inlinePass(module);
-    EXPECT_TRUE(modified) << "单趟应发生内联";
-    // main 内联的是 a 的原始副本（含 CALL b），故 main 仍残留 1 个 CALL
-    EXPECT_EQ(countCallIn(module.mainFunction.get()), 1u) << "单趟后 main 应残留对 b 的 CALL";
+    EXPECT_TRUE(modified) << "调用应发生内联";
+    // 不动点迭代下，轮 1 内联 a（原始副本含 CALL b），轮 2 继续内联该 CALL——
+    // 单次调用即完全塌缩（旧行为：单趟残留 1 个 CALL，需调用方自行迭代）
+    EXPECT_EQ(countCallIn(module.mainFunction.get()), 0u) << "单次调用后 main 应无 CALL（级联塌缩）";
     // a 内已把 b 内联，a 的 CALL 清零
     EXPECT_EQ(countCallIn(module.findFunction("a")), 0u) << "a 内的 b 应已内联";
 }
 
-// 迭代到不动点：main 与 a 的 CALL 全部消除
+// 收敛性：第二次调用应无更多内联（不动点已达成）
 TEST(InlineCascadeGaps3, CascadeReachesFixpointZeroCalls) {
     IRModule module;
     module.mainFunction = buildMainCalling("a");
     module.addFunction(buildRelay("a", "b"));
     module.addFunction(buildLeaf("b"));
 
-    // 迭代到不动点（上限保护，防潜在无限循环）
-    int passes = 0;
-    while (inlinePass(module) && passes < 8) {
-        ++passes;
-    }
-    EXPECT_GE(passes, 2) << "级联内联应需要至少 2 趟（单趟不足以塌缩 main→a→b）";
+    // 首次调用：级联塌缩 main→a→b（旧行为需外部 while 循环 ≥2 趟，现内部迭代）
+    ASSERT_TRUE(inlinePass(module)) << "首趟应发生内联";
     EXPECT_EQ(countCallIn(module.mainFunction.get()), 0u) << "不动点后 main 应无 CALL";
     EXPECT_EQ(countCallIn(module.findFunction("a")), 0u) << "不动点后 a 应无 CALL";
+    // 第二次调用：已到不动点，无修改
+    EXPECT_FALSE(inlinePass(module)) << "第二趟应收敛（无更多内联）";
 }

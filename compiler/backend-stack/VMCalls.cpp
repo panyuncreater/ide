@@ -1735,13 +1735,39 @@ VMResult VM::invokeClosureSync(const Value& closure, const Value* args, size_t a
 }
 
 // ============================================================
-// R164 协程/生成器：OP_YIELD 指令执行（重放模式）
+// R164 协程/生成器：OP_YIELD 指令执行（重放模式 + 真挂起模式）
 // ============================================================
 // 语义: pop 栈顶 yield 值，递增运行时 yield 执行计数器。
+//   真挂起模式（MINILANG_CORO_FIBER=1 且处于 .next() 挂起上下文）：
+//     每个 yield 都挂起——push yieldValue 回栈（yield 表达式结果，对齐重放
+//     skip 语义），快照生成器执行状态进 CoroutineData::vmSuspension 后抛出
+//     VMYieldSignal，由 callCoroutineNext 捕获并返回给 .next() 调用方。
+//   重放模式（MINILANG_CORO_FIBER=0 平台）：
 //   - 若计数器 == 当前重放目标 yieldId：抛出 VMYieldSignal(yieldValue)，被 callCoroutineNext 捕获
 //   - 若计数器 < 目标：push yieldValue 回栈（作为 yield 表达式的结果），继续执行
-// 注：VM 使用与 Interpreter 相同的重放模式，保证四后端语义一致。
 // ============================================================
+
+#if MINILANG_CORO_FIBER
+namespace {
+// CoroutineData 为 Value 私有嵌套类型，经公有访问器返回类型推导取得指针类别
+using VmCoroutineDataRawPtr = std::decay_t<decltype(*std::declval<Value &>().coroutineData())> *;
+} // namespace
+
+// StackVM 挂起快照（VM.h 内前向声明的私有嵌套类型）：恢复 = 帧链回位 + 栈切片
+// 回推 + try 栈/开放 upvalue 重挂。帧的 basePointer、try 的 stackBase、upvalue 的
+// stackSlot/owningFrameIdx 均为绝对索引，快照时按 .next() 入口基线转相对存储，
+// 恢复时以新入口基线重定基（两次 .next() 的调用方栈深/帧深可不同）。
+struct VM::VMCoroutineSuspension {
+    std::vector<Value> stackSuffix; // stack_[baseStack..]（含 args/局部槽/操作数栈）
+    std::vector<VMCallFrame> frames; // frames_[baseFrames..]（含生成器帧与体内嵌套调用帧）
+    std::vector<TryHandler> tryStack;
+    size_t resumeIp = 0; // 触发 yield 的帧（顶层）恢复 ip（越过 OP_YIELD 1 字节）
+    size_t baseStack = 0; // 快照时的栈基线（相对化参照）
+    size_t baseFrames = 0;
+    std::vector<std::pair<size_t, std::weak_ptr<VMUpvalue>>> openUpvalues;
+};
+#endif // MINILANG_CORO_FIBER
+
 VMResult VM::executeCoroutineOps(OpCode op, size_t& ip) {
     // 七特性 MVP 阶段 4：OP_AWAIT——同步 drain 协程到完成（与 Interpreter::visitAwaitExpr 对齐）。
     // pop 栈顶值：非协程恒等 push 回；协程循环 callCoroutineNext 直到 done，
@@ -1793,6 +1819,46 @@ VMResult VM::executeCoroutineOps(OpCode op, size_t& ip) {
     // 运行时 yield 执行计数：每次 OP_YIELD 调用递增
     // 用于区分循环内同一 yield 节点的多次执行（编译期 yieldId 无法区分）
     int thisExecutionId = currentYieldExecutionCount_++;
+#if MINILANG_CORO_FIBER
+    if (currentSuspendingCoro_) {
+        // 真挂起模式：每个 yield 都挂起（重放目标 gating 不适用）。yield 表达式
+        // 结果 push 回栈（对齐重放 skip 语义），状态快照进 CoroutineData 后抛出
+        // VMYieldSignal——callCoroutineNext 捕获后跳过生成器帧清理、保留快照供
+        // 下次 .next() 恢复。
+        Value exprResult = yieldValue; // 栈上表达式结果与 .next() 返回值各自独立持有
+        push(std::move(exprResult));
+        auto *cd = static_cast<VmCoroutineDataRawPtr>(currentSuspendingCoro_);
+        auto sus = std::make_shared<VMCoroutineSuspension>();
+        sus->baseStack = coroSuspendBaseStack_;
+        sus->baseFrames = coroSuspendBaseFrames_;
+        sus->stackSuffix.reserve(stack_.size() - coroSuspendBaseStack_);
+        for (size_t i = coroSuspendBaseStack_; i < stack_.size(); ++i)
+            sus->stackSuffix.push_back(std::move(stack_[i]));
+        sus->frames.reserve(frames_.size() - coroSuspendBaseFrames_);
+        for (size_t i = coroSuspendBaseFrames_; i < frames_.size(); ++i) {
+            sus->frames.push_back(std::move(frames_[i]));
+            sus->frames.back().basePointer -= coroSuspendBaseStack_; // 绝对→相对
+        }
+        for (const auto &t : tryStack_) {
+            if (t.frameIndex >= coroSuspendBaseFrames_) {
+                sus->tryStack.push_back(t);
+                sus->tryStack.back().stackBase -= coroSuspendBaseStack_;
+                sus->tryStack.back().frameIndex -= coroSuspendBaseFrames_;
+            }
+        }
+        sus->resumeIp = frames_.back().ip + 1; // OP_YIELD 为 1 字节指令（触发抛出时 ip 未推进）
+        for (auto it = openUpvalues_.lower_bound(coroSuspendBaseStack_); it != openUpvalues_.end(); ++it) {
+            sus->openUpvalues.emplace_back(it->first - coroSuspendBaseStack_, it->second);
+            if (auto uv = it->second.lock()) {
+                uv->stackSlot -= coroSuspendBaseStack_;
+                uv->owningFrameIdx -= coroSuspendBaseFrames_;
+            }
+        }
+        openUpvalues_.erase(openUpvalues_.lower_bound(coroSuspendBaseStack_), openUpvalues_.end());
+        cd->vmSuspension = std::move(sus);
+        throw VMYieldSignal(std::move(yieldValue));
+    }
+#endif
     if (thisExecutionId == currentCoroutineTargetYieldId_) {
         // 命中目标 yield：抛出 VMYieldSignal，被 callCoroutineNext 捕获
         throw VMYieldSignal(std::move(yieldValue));
@@ -1948,12 +2014,49 @@ Value VM::callCoroutineNext(Value& coroVal) {
     int savedTargetYieldId = currentCoroutineTargetYieldId_;
     int savedYieldExecCount = currentYieldExecutionCount_;
 
-    // 压入参数（左到右，arg0 在栈低位）
-    uint8_t argCount =
-        static_cast<uint8_t>(std::min(cd->args.size(), static_cast<size_t>(std::numeric_limits<uint8_t>::max())));
-    for (const auto& arg : cd->args) {
-        push(arg);
-    }
+#if MINILANG_CORO_FIBER
+    if (cd->vmSuspension) {
+        // —— 真挂起恢复：帧链/栈切片/try 栈/开放 upvalue 回位（相对→绝对重定基），
+        // 从挂起点 ip 继续执行。快照消费后清空（再次挂起时产生新快照）。
+        auto *sus = static_cast<VMCoroutineSuspension *>(cd->vmSuspension.get());
+        for (auto &v : sus->stackSuffix)
+            stack_.push_back(std::move(v));
+        for (auto &f : sus->frames) {
+            f.basePointer += savedStackSize; // 相对→绝对（重定基到本次入口深度）
+            frames_.push_back(std::move(f));
+        }
+        for (auto &t : sus->tryStack) {
+            t.stackBase += savedStackSize;
+            t.frameIndex += savedFrameCount;
+            tryStack_.push_back(t);
+        }
+        for (auto &entry : sus->openUpvalues) {
+            openUpvalues_.emplace(entry.first + savedStackSize, entry.second);
+            if (auto uv = entry.second.lock()) {
+                uv->stackSlot += savedStackSize;
+                uv->owningFrameIdx += savedFrameCount;
+            }
+        }
+        frames_.back().ip = sus->resumeIp;
+        // 最外层生成器帧的 returnIp 指向首次 .next() 的调用点；挂起模式下自然
+        // 完成（OP_RETURN 以 returnIp 恢复调用方 ip，再由 dispatch 的 ip +=
+        // instrLen 推进）可能发生在任意一次 .next() 中——重定基到本次调用点
+        // （调用方帧即恢复前的栈顶）。帧链内部帧的 returnIp 指向生成器体内
+        // 调用点，与调用方无关，保持不变。
+        frames_[savedFrameCount].returnIp = frames_[savedFrameCount - 1].ip;
+        savedFrameCount = sus->baseFrames;
+        savedStackSize = sus->baseStack;
+        cd->vmSuspension.reset();
+        currentCoroutineTargetYieldId_ = cd->currentYieldId; // 过 OP_YIELD 防御检查（挂起模式不做目标比较）
+    } else
+#endif
+    {
+        // 压入参数（左到右，arg0 在栈低位）
+        uint8_t argCount =
+            static_cast<uint8_t>(std::min(cd->args.size(), static_cast<size_t>(std::numeric_limits<uint8_t>::max())));
+        for (const auto &arg : cd->args) {
+            push(arg);
+        }
 
     // 填充默认参数
     uint8_t effectiveArgCount = argCount;
@@ -2004,6 +2107,24 @@ Value VM::callCoroutineNext(Value& coroVal) {
     // 设置协程重放上下文
     currentCoroutineTargetYieldId_ = cd->currentYieldId;
     currentYieldExecutionCount_ = 0;
+    }
+
+#if MINILANG_CORO_FIBER
+    // 嵌套 .next()（await drain / 生成器体内再调 .next()）：登记前保存外层挂起
+    // 上下文，全部退出路径恢复——外层执行体随后的 OP_YIELD 仍需以外层身份挂起。
+    void *outerSuspendingCoro = currentSuspendingCoro_;
+    size_t outerSuspendBaseStack = coroSuspendBaseStack_;
+    size_t outerSuspendBaseFrames = coroSuspendBaseFrames_;
+    auto restoreOuterCoroCtx = [&]() {
+        currentSuspendingCoro_ = outerSuspendingCoro;
+        coroSuspendBaseStack_ = outerSuspendBaseStack;
+        coroSuspendBaseFrames_ = outerSuspendBaseFrames;
+    };
+    // 真挂起上下文登记：OP_YIELD 据此进入快照路径（含全新启动与恢复两种进入方式）
+    currentSuspendingCoro_ = cd;
+    coroSuspendBaseStack_ = savedStackSize;
+    coroSuspendBaseFrames_ = savedFrameCount;
+#endif
 
     Value result = Value::nullValue();
     bool needCleanup = false; // true = 需手动清理帧/栈（yield 信号或错误路径）
@@ -2036,6 +2157,9 @@ Value VM::callCoroutineNext(Value& coroVal) {
             // 由 dispatchCoroutineBuiltin 同样检测并返回 VM_EXCEPTION_THROW。
             currentCoroutineTargetYieldId_ = savedTargetYieldId;
             currentYieldExecutionCount_ = savedYieldExecCount;
+#if MINILANG_CORO_FIBER
+            restoreOuterCoroCtx();
+#endif
             return Value::nullValue();
         } else {
             if (stack_.size() > savedStackSize) {
@@ -2052,6 +2176,27 @@ Value VM::callCoroutineNext(Value& coroVal) {
         cd->currentValueBox.clear();
         cd->currentValueBox.push_back(result);
         cd->currentYieldId++;
+#if MINILANG_CORO_FIBER
+        if (currentSuspendingCoro_) {
+            // 真挂起：执行状态已在 OP_YIELD 处快照进 cd->vmSuspension。最终 yield
+            // （currentYieldId 达 yieldCount）后 done——快照弃用，尾部语句不执行
+            // （逐点对齐重放 done 语义）。此处仅清理 live 状态：帧/try 出栈、栈截断；
+            // 不 closeUpvaluesFrom——生成器区开放 upvalue 已随快照摘除保存，恢复时重挂。
+            if (cd->currentYieldId >= cd->yieldCount) {
+                cd->done = true;
+                cd->vmSuspension.reset();
+            }
+            while (frames_.size() > savedFrameCount)
+                frames_.pop_back();
+            while (!tryStack_.empty() && tryStack_.back().frameIndex >= savedFrameCount)
+                tryStack_.pop_back();
+            stack_.resize(savedStackSize);
+            restoreOuterCoroCtx();
+            currentCoroutineTargetYieldId_ = savedTargetYieldId;
+            currentYieldExecutionCount_ = savedYieldExecCount;
+            return result;
+        }
+#endif
         // 若递增后达到 yieldCount，标记 done（下次 .next() 将返回 currentValue）
         if (cd->currentYieldId >= cd->yieldCount) {
             cd->done = true;
@@ -2077,5 +2222,8 @@ Value VM::callCoroutineNext(Value& coroVal) {
     // 恢复协程上下文
     currentCoroutineTargetYieldId_ = savedTargetYieldId;
     currentYieldExecutionCount_ = savedYieldExecCount;
+#if MINILANG_CORO_FIBER
+    restoreOuterCoroCtx();
+#endif
     return result;
 }

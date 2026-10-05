@@ -67,6 +67,124 @@ TEST(IRFunctionTest, AddGlobalDeduplicates) {
 }
 
 // ============================================================
+// IROperandList 小向量容器测试（第四轮优化）
+// ------------------------------------------------------------
+// IRInstruction::operands 由 std::vector 迁移至内联存储小向量（≤4 内联，
+// 超出回落堆）。本组锁定容器值语义：复制/移动独立性、跨内联容量增长、
+// initializer_list 赋值、clear 后复用、reserve 预留。
+// ============================================================
+TEST(IROperandListTest, InitializerListConstructionAndIteration) {
+    IROperandList ops{IROperand::vreg(1), IROperand::constant(2), IROperand::local(3)};
+    EXPECT_EQ(ops.size(), 3u);
+    EXPECT_FALSE(ops.empty());
+    EXPECT_EQ(ops[0].kind, IROperandKind::VIRTUAL);
+    EXPECT_EQ(ops[0].index, 1u);
+    EXPECT_EQ(ops[1].kind, IROperandKind::CONSTANT);
+    EXPECT_EQ(ops[2].kind, IROperandKind::LOCAL_SLOT);
+    // range-for 迭代顺序与下标一致
+    uint32_t expected = 1;
+    for (const auto& op : ops) {
+        EXPECT_EQ(op.index, expected++);
+    }
+}
+
+TEST(IROperandListTest, EmptyListDefaults) {
+    IROperandList ops;
+    EXPECT_TRUE(ops.empty());
+    EXPECT_EQ(ops.size(), 0u);
+    ops.push_back(IROperand::imm(9));
+    EXPECT_EQ(ops.size(), 1u);
+    EXPECT_EQ(ops[0].kind, IROperandKind::IMM_UINT);
+    EXPECT_EQ(ops[0].index, 9u);
+}
+
+TEST(IROperandListTest, GrowsBeyondInlineCapacityPreservingOrder) {
+    IROperandList ops;
+    for (uint32_t i = 0; i < 10; ++i)
+        ops.push_back(IROperand::vreg(i));
+    EXPECT_EQ(ops.size(), 10u);
+    for (uint32_t i = 0; i < 10; ++i) {
+        EXPECT_EQ(ops[i].kind, IROperandKind::VIRTUAL);
+        EXPECT_EQ(ops[i].index, i) << "跨内联容量增长后元素顺序应保持";
+    }
+}
+
+TEST(IROperandListTest, CopyIsDeepAndIndependent) {
+    // 堆路径（>4 元素）复制
+    IROperandList big;
+    for (uint32_t i = 0; i < 6; ++i)
+        big.push_back(IROperand::vreg(i));
+    IROperandList bigCopy = big;
+    big[0] = IROperand::imm(999);
+    EXPECT_EQ(bigCopy[0].kind, IROperandKind::VIRTUAL) << "堆路径复制应独立于源";
+    EXPECT_EQ(bigCopy[0].index, 0u);
+    // 内联路径复制
+    IROperandList small{IROperand::vreg(1), IROperand::label(2)};
+    IROperandList smallCopy = small;
+    small[0] = IROperand::imm(777);
+    EXPECT_EQ(smallCopy[0].kind, IROperandKind::VIRTUAL) << "内联路径复制应独立于源";
+}
+
+TEST(IROperandListTest, MoveLeavesSourceEmptyAndTargetComplete) {
+    IROperandList src;
+    for (uint32_t i = 0; i < 6; ++i)
+        src.push_back(IROperand::vreg(i));
+    IROperandList dst = std::move(src);
+    EXPECT_TRUE(src.empty()) << "移动后源应为空";
+    EXPECT_EQ(dst.size(), 6u);
+    for (uint32_t i = 0; i < 6; ++i)
+        EXPECT_EQ(dst[i].index, i);
+}
+
+TEST(IROperandListTest, InitializerListAssignmentReplacesContent) {
+    IROperandList ops{IROperand::vreg(1), IROperand::vreg(2), IROperand::vreg(3)};
+    ops = {IROperand::label(7)};
+    EXPECT_EQ(ops.size(), 1u);
+    EXPECT_EQ(ops[0].kind, IROperandKind::LABEL);
+    EXPECT_EQ(ops[0].index, 7u);
+    // 空列表赋值 = 清空（对齐 IRSSA/branchFolding 的 operands = {} 用法）
+    ops = {};
+    EXPECT_TRUE(ops.empty());
+}
+
+TEST(IROperandListTest, ClearThenReuseKeepsDataVisible) {
+    // 上堆后 clear，再少量 push_back——clear 保留的堆缓冲必须与新元素一致
+    // （覆盖 push_back 内联/堆路径判定在 heap_ 驻留时的正确分支）
+    IROperandList ops;
+    for (uint32_t i = 0; i < 6; ++i)
+        ops.push_back(IROperand::vreg(i));
+    ops.clear();
+    EXPECT_TRUE(ops.empty());
+    ops.push_back(IROperand::constant(42));
+    ops.push_back(IROperand::local(1));
+    EXPECT_EQ(ops.size(), 2u);
+    EXPECT_EQ(ops[0].kind, IROperandKind::CONSTANT);
+    EXPECT_EQ(ops[0].index, 42u);
+    EXPECT_EQ(ops[1].kind, IROperandKind::LOCAL_SLOT);
+    // 继续增长跨过旧容量
+    for (uint32_t i = 0; i < 10; ++i)
+        ops.push_back(IROperand::vreg(i));
+    EXPECT_EQ(ops.size(), 12u);
+    EXPECT_EQ(ops[11].index, 9u);
+}
+
+TEST(IROperandListTest, ReservePreallocatesWithoutDataLoss) {
+    IROperandList ops;
+    ops.reserve(9); // 超内联容量 → 上堆
+    for (uint32_t i = 0; i < 9; ++i)
+        ops.push_back(IROperand::vreg(i));
+    EXPECT_EQ(ops.size(), 9u);
+    for (uint32_t i = 0; i < 9; ++i)
+        EXPECT_EQ(ops[i].index, i);
+    // 小于内联容量的 reserve 为无害 no-op
+    IROperandList small{IROperand::vreg(1)};
+    small.reserve(2);
+    small.push_back(IROperand::label(3));
+    EXPECT_EQ(small.size(), 2u);
+    EXPECT_EQ(small[1].kind, IROperandKind::LABEL);
+}
+
+// ============================================================
 // BytecodeIRBackend lowering 测试
 // ============================================================
 
@@ -92,7 +210,7 @@ TEST(BytecodeIRBackendTest, LowerLoadConstIntEmitsOP_INT) {
     uint32_t constIdx = ir.addConstant(Value(42));
     IROperand dest = ir.allocVReg();
     block.instructions.emplace_back(IROp::LOAD_CONST,
-        std::vector<IROperand>{ dest, IROperand::constant(constIdx) }, 1);
+        IROperandList{ dest, IROperand::constant(constIdx) }, 1);
 
     ir.blocks.push_back(std::move(block));
 
@@ -125,11 +243,11 @@ TEST(BytecodeIRBackendTest, LowerArithEmitsCorrectOpCode) {
     IROperand v2 = ir.allocVReg();
 
     block.instructions.emplace_back(IROp::LOAD_CONST,
-        std::vector<IROperand>{ v0, IROperand::constant(c0) }, 1);
+        IROperandList{ v0, IROperand::constant(c0) }, 1);
     block.instructions.emplace_back(IROp::LOAD_CONST,
-        std::vector<IROperand>{ v1, IROperand::constant(c1) }, 2);
+        IROperandList{ v1, IROperand::constant(c1) }, 2);
     block.instructions.emplace_back(IROp::ADD,
-        std::vector<IROperand>{ v2, v0, v1 }, 3);
+        IROperandList{ v2, v0, v1 }, 3);
 
     ir.blocks.push_back(std::move(block));
 
@@ -154,13 +272,13 @@ TEST(BytecodeIRBackendTest, LowerJumpResolvesLabelTarget) {
 
     // LABEL start
     block.instructions.emplace_back(IROp::LABEL,
-        std::vector<IROperand>{ IROperand::label(labelStart) }, 1);
+        IROperandList{ IROperand::label(labelStart) }, 1);
     // JUMP end
     block.instructions.emplace_back(IROp::JUMP,
-        std::vector<IROperand>{ IROperand::label(labelEnd) }, 2);
+        IROperandList{ IROperand::label(labelEnd) }, 2);
     // LABEL end
     block.instructions.emplace_back(IROp::LABEL,
-        std::vector<IROperand>{ IROperand::label(labelEnd) }, 3);
+        IROperandList{ IROperand::label(labelEnd) }, 3);
 
     ir.blocks.push_back(std::move(block));
 
@@ -214,7 +332,7 @@ TEST(IRToStringTest, IncludesInstructionInfo) {
     uint32_t c0 = ir.addConstant(Value(42));
     IROperand v0 = ir.allocVReg();
     block.instructions.emplace_back(IROp::LOAD_CONST,
-        std::vector<IROperand>{ v0, IROperand::constant(c0) }, 10);
+        IROperandList{ v0, IROperand::constant(c0) }, 10);
 
     ir.blocks.push_back(std::move(block));
 
@@ -482,9 +600,9 @@ TEST(IROptimizeTest, ConstantFoldingAddInt) {
     IROperand v1 = ir.allocVReg();
     IROperand v2 = ir.allocVReg();
 
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{ v0, IROperand::constant(c0) }, 1);
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{ v1, IROperand::constant(c1) }, 2);
-    block.instructions.emplace_back(IROp::ADD, std::vector<IROperand>{ v2, v0, v1 }, 3);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{ v0, IROperand::constant(c0) }, 1);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{ v1, IROperand::constant(c1) }, 2);
+    block.instructions.emplace_back(IROp::ADD, IROperandList{ v2, v0, v1 }, 3);
 
     ir.blocks.push_back(std::move(block));
 
@@ -513,9 +631,9 @@ TEST(IROptimizeTest, ConstantFoldingSubFloat) {
     IROperand v1 = ir.allocVReg();
     IROperand v2 = ir.allocVReg();
 
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{ v0, IROperand::constant(c0) }, 1);
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{ v1, IROperand::constant(c1) }, 2);
-    block.instructions.emplace_back(IROp::SUB, std::vector<IROperand>{ v2, v0, v1 }, 3);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{ v0, IROperand::constant(c0) }, 1);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{ v1, IROperand::constant(c1) }, 2);
+    block.instructions.emplace_back(IROp::SUB, IROperandList{ v2, v0, v1 }, 3);
 
     ir.blocks.push_back(std::move(block));
 
@@ -542,9 +660,9 @@ TEST(IROptimizeTest, ConstantFoldingComparison) {
     IROperand v1 = ir.allocVReg();
     IROperand v2 = ir.allocVReg();
 
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{ v0, IROperand::constant(c0) }, 1);
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{ v1, IROperand::constant(c1) }, 2);
-    block.instructions.emplace_back(IROp::LT, std::vector<IROperand>{ v2, v0, v1 }, 3);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{ v0, IROperand::constant(c0) }, 1);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{ v1, IROperand::constant(c1) }, 2);
+    block.instructions.emplace_back(IROp::LT, IROperandList{ v2, v0, v1 }, 3);
 
     ir.blocks.push_back(std::move(block));
 
@@ -569,8 +687,8 @@ TEST(IROptimizeTest, ConstantFoldingNegate) {
     IROperand v0 = ir.allocVReg();
     IROperand v1 = ir.allocVReg();
 
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{ v0, IROperand::constant(c0) }, 1);
-    block.instructions.emplace_back(IROp::NEGATE, std::vector<IROperand>{ v1, v0 }, 2);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{ v0, IROperand::constant(c0) }, 1);
+    block.instructions.emplace_back(IROp::NEGATE, IROperandList{ v1, v0 }, 2);
 
     ir.blocks.push_back(std::move(block));
 
@@ -597,9 +715,9 @@ TEST(IROptimizeTest, ConstantFoldingDivByZeroNotFolded) {
     IROperand v1 = ir.allocVReg();
     IROperand v2 = ir.allocVReg();
 
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{ v0, IROperand::constant(c0) }, 1);
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{ v1, IROperand::constant(c1) }, 2);
-    block.instructions.emplace_back(IROp::DIV, std::vector<IROperand>{ v2, v0, v1 }, 3);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{ v0, IROperand::constant(c0) }, 1);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{ v1, IROperand::constant(c1) }, 2);
+    block.instructions.emplace_back(IROp::DIV, IROperandList{ v2, v0, v1 }, 3);
 
     ir.blocks.push_back(std::move(block));
 
@@ -622,9 +740,9 @@ TEST(IROptimizeTest, DeadCodeEliminationRemovesUnused) {
     IROperand v0 = ir.allocVReg();
     IROperand v1 = ir.allocVReg();
 
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{ v0, IROperand::constant(c0) }, 1);
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{ v1, IROperand::constant(c1) }, 2);
-    block.instructions.emplace_back(IROp::PRINT, std::vector<IROperand>{ v1 }, 3);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{ v0, IROperand::constant(c0) }, 1);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{ v1, IROperand::constant(c1) }, 2);
+    block.instructions.emplace_back(IROp::PRINT, IROperandList{ v1 }, 3);
 
     ir.blocks.push_back(std::move(block));
 
@@ -654,10 +772,10 @@ TEST(IROptimizeTest, DeadCodeEliminationKeepsUsed) {
     IROperand v1 = ir.allocVReg();
     IROperand v2 = ir.allocVReg();
 
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{ v0, IROperand::constant(c0) }, 1);
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{ v1, IROperand::constant(c1) }, 2);
-    block.instructions.emplace_back(IROp::ADD, std::vector<IROperand>{ v2, v0, v1 }, 3);
-    block.instructions.emplace_back(IROp::PRINT, std::vector<IROperand>{ v2 }, 4);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{ v0, IROperand::constant(c0) }, 1);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{ v1, IROperand::constant(c1) }, 2);
+    block.instructions.emplace_back(IROp::ADD, IROperandList{ v2, v0, v1 }, 3);
+    block.instructions.emplace_back(IROp::PRINT, IROperandList{ v2 }, 4);
 
     ir.blocks.push_back(std::move(block));
 
@@ -679,8 +797,8 @@ TEST(IROptimizeTest, CopyPropagationReplacesVregWithConstant) {
     uint32_t c0 = ir.addConstant(Value(42));
     IROperand v0 = ir.allocVReg();
 
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{ v0, IROperand::constant(c0) }, 1);
-    block.instructions.emplace_back(IROp::PRINT, std::vector<IROperand>{ v0 }, 2);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{ v0, IROperand::constant(c0) }, 1);
+    block.instructions.emplace_back(IROp::PRINT, IROperandList{ v0 }, 2);
 
     ir.blocks.push_back(std::move(block));
 
@@ -704,8 +822,8 @@ TEST(IROptimizeTest, OptimizeIRStackModeSkipsCopyPropagation) {
     uint32_t c0 = ir.addConstant(Value(42));
     IROperand v0 = ir.allocVReg();
 
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{ v0, IROperand::constant(c0) }, 1);
-    block.instructions.emplace_back(IROp::PRINT, std::vector<IROperand>{ v0 }, 2);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{ v0, IROperand::constant(c0) }, 1);
+    block.instructions.emplace_back(IROp::PRINT, IROperandList{ v0 }, 2);
 
     ir.blocks.push_back(std::move(block));
 
@@ -736,12 +854,12 @@ TEST(IROptimizeTest, OptimizeReducesInstructionCount) {
     IROperand v3 = ir.allocVReg();
     IROperand v4 = ir.allocVReg();
 
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{ v0, IROperand::constant(c1) }, 1);
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{ v1, IROperand::constant(c2) }, 2);
-    block.instructions.emplace_back(IROp::ADD, std::vector<IROperand>{ v2, v0, v1 }, 3);
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{ v3, IROperand::constant(c3) }, 4);
-    block.instructions.emplace_back(IROp::ADD, std::vector<IROperand>{ v4, v2, v3 }, 5);
-    block.instructions.emplace_back(IROp::PRINT, std::vector<IROperand>{ v4 }, 6);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{ v0, IROperand::constant(c1) }, 1);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{ v1, IROperand::constant(c2) }, 2);
+    block.instructions.emplace_back(IROp::ADD, IROperandList{ v2, v0, v1 }, 3);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{ v3, IROperand::constant(c3) }, 4);
+    block.instructions.emplace_back(IROp::ADD, IROperandList{ v4, v2, v3 }, 5);
+    block.instructions.emplace_back(IROp::PRINT, IROperandList{ v4 }, 6);
 
     ir.blocks.push_back(std::move(block));
 

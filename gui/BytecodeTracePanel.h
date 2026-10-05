@@ -101,6 +101,7 @@ private:
     QPushButton* captureBtn_ = nullptr;
     QCheckBox* autoCaptureCheck_ = nullptr;
     QTimer* autoTimer_ = nullptr;
+    std::uint64_t lastAutoRefreshEpoch_ = 0; // PERF: 安全网轮询纪元门控（见 timer 连接处注释）
     QPushButton* clearBtn_ = nullptr;
     QTableWidget* traceTable_ = nullptr;
     QTextBrowser* stackDetail_ = nullptr;

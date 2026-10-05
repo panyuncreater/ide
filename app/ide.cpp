@@ -99,6 +99,8 @@
 #endif
 #endif
 
+
+#include "lexer/Token.h" // updateCompletionWords reuses the pipeline token stream (explicit dep)
 // ADS headers
 #include "DockAreaWidget.h"
 #include "DockManager.h"
@@ -3292,6 +3294,12 @@ void Ide::createContentWidgets() {
     outputTextEdit_->setPalette(outPal);
     outputTextEdit_->setAutoFillBackground(true);
 
+    // PERF: 输出合批定时器——30ms 单发攒批窗口（密集 print 时合并重绘）
+    outputFlushTimer_ = new QTimer(this);
+    outputFlushTimer_->setSingleShot(true);
+    outputFlushTimer_->setInterval(30);
+    connect(outputFlushTimer_, &QTimer::timeout, this, &Ide::flushPendingOutput);
+
     // Error list
     errorListWidget_ = new QListWidget;
     errorListWidget_->setObjectName("errorList");
@@ -6270,7 +6278,24 @@ void Ide::appendOutput(const QString& text, OutputLevel level) {
                    .arg(kTs, timestamp, prefixStyle, prefix, bodyStyle, escaped);
     }
 
-    outputTextEdit_->append(html);
+    // PERF: 攒批到缓冲，由 outputFlushTimer_（30ms 单发）统一刷新。
+    // 仅在定时器空闲时启动，保证窗口内多条输出合并为一次刷新。
+    pendingOutputHtml_.push_back(std::move(html));
+    if (!outputFlushTimer_->isActive())
+        outputFlushTimer_->start();
+}
+
+/// 刷新输出合批缓冲（outputFlushTimer_ 30ms 单发触发）。
+/// 关闭更新后批量 append，重绘合并为一次；append 的逐条段落语义保持不变
+/// （每行仍是独立 <p> 段落，maximumBlockCount 上限照常生效）。
+void Ide::flushPendingOutput() {
+    if (!outputTextEdit_ || pendingOutputHtml_.empty())
+        return;
+    outputTextEdit_->setUpdatesEnabled(false);
+    for (const QString& html : pendingOutputHtml_)
+        outputTextEdit_->append(html);
+    pendingOutputHtml_.clear();
+    outputTextEdit_->setUpdatesEnabled(true);
 }
 
 /// 向错误列表追加诊断项（带行/列与严重级别）。
@@ -6357,6 +6382,10 @@ void Ide::appendError(const QString& text, int line, int column, DiagLevel level
 
 /// 清空输出面板与错误列表。
 void Ide::clearOutput() {
+    // PERF: 同步丢弃未刷新的攒批行并停表，避免上一轮输出残留到新会话
+    pendingOutputHtml_.clear();
+    if (outputFlushTimer_)
+        outputFlushTimer_->stop();
     outputTextEdit_->clear();
     errorListWidget_->clear();
     errorPanelHasErrors_ = false;
@@ -6453,7 +6482,23 @@ void Ide::runRealTimeSyntaxCheck() {
         return;
 
     std::string source = codeEditor_->toPlainText().toStdString();
-    auto result = controller_->runFrontendPipeline(source);
+
+    // PERF-FIX: 抑制管线内部同步 emit 的 diagnosticsReady → displayDiagnostics 直连链。
+    // PipelineRunner::runLexer/runParser 在主线程同步 emit，displayDiagnostics 会先把
+    // 词法/语法诊断完整渲染一遍（错误 + 警告 + "--- summary ---" 全部进面板），随后
+    // 本函数下方又对同一批诊断再迭代渲染一遍——警告在输出面板重复显示且随每次防抖
+    // 累积，错误消息重复做拼写纠错与文本构建（双倍开销，大文件下加重打字卡顿）。
+    // 阻塞 controller_ 信号期间（仅覆盖本同步管线调用），本函数是唯一渲染方；
+    // onRun 等其他 diagnosticsReady 消费路径不受影响。
+    PipelineRunner::PipelineResult result;
+    {
+        QSignalBlocker blocker(controller_);
+        result = controller_->runFrontendPipeline(source);
+    }
+    // PERF: record doc revision at syntax-check time; updateCompletionWords
+    // uses it to validate the pipeline token stream (no full-text compare).
+    if (codeEditor_ && codeEditor_->document())
+        lastSyntaxCheckDocRevision_ = codeEditor_->document()->revision();
 
     // 先清空旧的错误列表和波浪下划线，防止累积
     errorListWidget_->clear();
@@ -8054,20 +8099,48 @@ void Ide::setupCompletion() {
 void Ide::updateCompletionWords() {
     if (!codeEditor_)
         return;
-    QString text = codeEditor_->toPlainText();
     QStringList words = staticCompletionWords_;
 
-    text.remove(QRegularExpression("\"(?:\\\\.|[^\"\\\\\\n])*\""));
-    text.remove(QRegularExpression("/\\*.*?\\*/", QRegularExpression::DotMatchesEverythingOption));
-
-    static const QRegularExpression pattern("\\b(?:var|fun|class)\\s+([A-Za-z_][A-Za-z0-9_]*)");
-    auto matchIt = pattern.globalMatch(text);
     QSet<QString> userSymbols;
-    while (matchIt.hasNext()) {
-        QRegularExpressionMatch match = matchIt.next();
-        QString name = match.captured(1);
-        if (!name.isEmpty())
-            userSymbols.insert(name);
+
+    // PERF: reuse the token stream cached by the 300ms syntax-check pipeline
+    // (skip toPlainText copy + 2 regex strips + 1 regex scan over the full
+    // text). Token stream is trusted only when the doc revision matches the
+    // last syntax check; otherwise fall back to the legacy regex path. The
+    // token stream may lag the last keystroke by one debounce cycle (word
+    // list is 500ms-debounced anyway - imperceptible).
+    const bool tokensUsable =
+        controller_ && lastSyntaxCheckDocRevision_ >= 0 &&
+        codeEditor_->document() && codeEditor_->document()->revision() == lastSyntaxCheckDocRevision_;
+
+    if (tokensUsable) {
+        // declaration pattern: keyword var|fun|class followed by identifier
+        // (equivalent to the legacy regex: strings/comments are never keyword
+        // tokens, so they are excluded naturally)
+        const auto& toks = controller_->lastTokens();
+        for (size_t i = 0; i + 1 < toks.size(); ++i) {
+            const auto kw = toks[i].type;
+            if ((kw == TokenType::TK_VAR || kw == TokenType::TK_FUN || kw == TokenType::TK_CLASS) &&
+                toks[i + 1].type == TokenType::TK_IDENTIFIER) {
+                QString name = QString::fromStdString(toks[i + 1].lexeme);
+                if (!name.isEmpty())
+                    userSymbols.insert(name);
+            }
+        }
+    } else {
+        // fallback (legacy path): full-text copy + string/comment strip + regex
+        QString text = codeEditor_->toPlainText();
+        text.remove(QRegularExpression("\"(?:\\\\.|[^\"\\\\\\n])*\""));
+        text.remove(QRegularExpression("/\\*.*?\\*/", QRegularExpression::DotMatchesEverythingOption));
+
+        static const QRegularExpression pattern("\\b(?:var|fun|class)\\s+([A-Za-z_][A-Za-z0-9_]*)");
+        auto matchIt = pattern.globalMatch(text);
+        while (matchIt.hasNext()) {
+            QRegularExpressionMatch match = matchIt.next();
+            QString name = match.captured(1);
+            if (!name.isEmpty())
+                userSymbols.insert(name);
+        }
     }
 
     QSet<QString> existingWords;

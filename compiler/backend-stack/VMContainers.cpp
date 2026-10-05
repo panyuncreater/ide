@@ -281,12 +281,12 @@ VMResult VM::executeIndexGet(size_t& ip) {
         }
     } else if (obj.isDict()) {
         // L4 fix: 字典键支持 string/int/bool/float
-        auto dk = Value::dictKeyFromValue(idx);
-        if (!dk)
+        // PERF: 透明查找，string 键免 DictKey 构造的字符串深拷贝
+        if (!Value::dictKeyIsValid(idx))
             return runtimeError(ErrorMessages::kDictKeyInvalidType, DiagCodes::kTypeMismatch);
-        auto it = obj.dictVal().find(*dk);
-        if (it != obj.dictVal().end()) {
-            push(it->second);
+        const Value* found = Value::dictFindValue(obj.dictVal(), idx);
+        if (found) {
+            push(*found);
         } else {
             push(Value::nullValue()); // 字典访问不存在的键返回 null（与解释器一致）
         }
@@ -383,10 +383,10 @@ VMResult VM::executeIndexSet(size_t& ip) {
         }
     } else if (obj.isDict()) {
         // L4 fix: 字典键支持 string/int/bool/float
-        auto dk = Value::dictKeyFromValue(innerIdx);
-        if (!dk)
+        // PERF: 透明写路径，string 键命中时免字符串深拷贝
+        if (!Value::dictKeyIsValid(innerIdx))
             return runtimeError(ErrorMessages::kDictKeyInvalidType, DiagCodes::kTypeMismatch);
-        obj.dictVal()[*dk] = val;
+        Value::dictGetOrInsertRef(obj.dictVal(), innerIdx) = val;
     } else if (obj.isArray()) {
         return runtimeError(ErrorMessages::kArrayIndexMustBeInt, DiagCodes::kTypeMismatch);
     } else {
@@ -431,10 +431,10 @@ VMResult VM::executeIndexSetVar(size_t& ip) {
         }
     } else if (obj.isDict()) {
         // L4 fix: 字典键支持 string/int/bool/float
-        auto dk = Value::dictKeyFromValue(index);
-        if (!dk)
+        // PERF: 透明写路径，string 键命中时免字符串深拷贝
+        if (!Value::dictKeyIsValid(index))
             return runtimeError(ErrorMessages::kDictKeyInvalidType, DiagCodes::kTypeMismatch);
-        obj.dictVal()[*dk] = val;
+        Value::dictGetOrInsertRef(obj.dictVal(), index) = val;
     } else if (obj.isArray()) {
         return runtimeError(ErrorMessages::kArrayIndexMustBeInt, DiagCodes::kTypeMismatch);
     } else {
@@ -482,10 +482,10 @@ VMResult VM::executeIndexSetLocal(size_t& ip) {
         }
     } else if (obj.isDict()) {
         // L4 fix: 字典键支持 string/int/bool/float
-        auto dk = Value::dictKeyFromValue(index);
-        if (!dk)
+        // PERF: 透明写路径，string 键命中时免字符串深拷贝
+        if (!Value::dictKeyIsValid(index))
             return runtimeError(ErrorMessages::kDictKeyInvalidType, DiagCodes::kTypeMismatch);
-        obj.dictVal()[*dk] = val;
+        Value::dictGetOrInsertRef(obj.dictVal(), index) = val;
         if (isFieldSlot)
             currentFrame().fieldsModified = true;
     } else if (obj.isArray()) {

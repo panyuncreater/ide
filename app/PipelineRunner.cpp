@@ -52,6 +52,14 @@ bool PipelineRunner::runCompiler() {
 
         if (compiler_.getUseRegisterVM()) {
             // L17: RegisterVM 路径缓存
+            // PERF: 进程内 memo 命中免磁盘 IO + 反序列化（见 BytecodeCache::tryMemo）
+            if (auto memo = bytecodeCache_.tryMemoRegister(key)) {
+                compiler_.setLastRegisterResult(std::move(*memo));
+                compiler_.clearDiagnostics();
+                emit diagnosticsReady(compiler_.getDiagnostics());
+                return true;
+            }
+
             auto cachedReg = bytecodeCache_.tryLoadRegister(key);
             if (cachedReg) {
                 // 缓存命中:跳过编译,直接注入到 compiler_.lastRegisterResult_
@@ -68,11 +76,20 @@ bool PipelineRunner::runCompiler() {
             // 仅在编译成功时写入缓存(避免缓存错误结果)
             if (!compiler_.getDiagnostics().hasErrors()) {
                 bytecodeCache_.storeRegister(key, compiler_.getLastRegisterResult());
+                bytecodeCache_.storeMemoRegister(key, compiler_.getLastRegisterResult());
             }
             return !compiler_.getDiagnostics().hasErrors();
         }
 
         // StackVM 路径缓存
+        // PERF: 进程内 memo 命中免磁盘 IO + 反序列化（见 BytecodeCache::tryMemo）
+        if (auto memo = bytecodeCache_.tryMemo(key)) {
+            lastCompileResult_ = std::move(*memo);
+            compiler_.clearDiagnostics();
+            emit diagnosticsReady(compiler_.getDiagnostics());
+            return true;
+        }
+
         auto cached = bytecodeCache_.tryLoad(key);
         if (cached) {
             // 缓存命中:跳过编译,直接使用反序列化的 CompileResult
@@ -89,6 +106,7 @@ bool PipelineRunner::runCompiler() {
         // 仅在编译成功时写入缓存(避免缓存错误结果)
         if (!compiler_.getDiagnostics().hasErrors()) {
             bytecodeCache_.store(key, lastCompileResult_);
+            bytecodeCache_.storeMemo(key, lastCompileResult_);
         }
         return !compiler_.getDiagnostics().hasErrors();
     }

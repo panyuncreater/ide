@@ -348,7 +348,7 @@ P3-19 轮次针对「后续覆盖率提升方向」5 个点名的低覆盖区域
 | 并发原语 mutex 自死锁检测 | `MutexDeadlockGaps3` (3) | 同线程重复 lock → fail-fast 报死锁 runtime 错误 / lock-unlock-relock 不误报 / 自持时 tryLock 返回 false，四后端一致 | ✅ |
 | IR 优化 LICM 嵌套循环 | `LICMNestedGaps3` (1) | 两层嵌套 while 循环 + 内层循环不变量，LICM 分析不崩溃且控制流完整 | ✅ |
 | IR 优化 GVN 副作用不消除 | `GVNSideEffectGaps3` (1) | 两次相同 CALL f()（含副作用）不被 GVN 值编号消除 | ✅ |
-| IR 优化级联内联 | `InlineCascadeGaps3` (2) | 单趟 main→a→b 残留 1 CALL / 迭代到不动点全部塌缩为 0 CALL | ✅ |
+| IR 优化级联内联 | `InlineCascadeGaps3` (2) | 单次调用级联塌缩 main→a→b 全部 0 CALL（inlinePass 内部不动点，2026-10-04 起）/ 再次调用收敛返回 false | ✅ |
 
 ### 后续覆盖率提升方向
 

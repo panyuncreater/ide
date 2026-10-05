@@ -1662,7 +1662,104 @@ void BytecodeCache::storeRegister(const CacheKey& key, const RegisterCompileResu
     }
 }
 
+// ============================================================
+// PERF: 进程内 memo（磁盘缓存上一级，2026-10-03 优化审计）
+// 设计见 BytecodeCache.h tryMemo 注释。
+// ============================================================
+
+// memo 键：与磁盘 key 同源（fnv1a64(source)）并折叠 compilerMode/optFlags/mtime。
+// 磁盘缓存靠文件头部五重校验区分这些字段，memo 无头部，必须全部并入 hash。
+static uint64_t memoKeyHash(const BytecodeCache::CacheKey& key) {
+    std::string salt = std::to_string(key.compilerMode);
+    salt += '|';
+    salt += std::to_string(key.optFlags);
+    salt += '|';
+    salt += std::to_string(key.mtime);
+    salt += '|';
+    salt += key.source;
+    return fnv1a64(salt);
+}
+
+void BytecodeCache::moveToFront(size_t idx) {
+    if (idx == 0 || idx >= memo_.size())
+        return;
+    MemoEntry e = std::move(memo_[idx]);
+    memo_.erase(memo_.begin() + static_cast<std::ptrdiff_t>(idx));
+    memo_.insert(memo_.begin(), std::move(e));
+}
+
+std::optional<CompileResult> BytecodeCache::tryMemo(const CacheKey& key) {
+    std::lock_guard<std::mutex> lock(memoMutex_);
+    uint64_t h = memoKeyHash(key);
+    for (size_t i = 0; i < memo_.size(); ++i) {
+        if (memo_[i].keyHash == h && memo_[i].stackResult) {
+            std::optional<CompileResult> out = memo_[i].stackResult; // 副本返回，条目保留
+            moveToFront(i);
+            return out;
+        }
+    }
+    return std::nullopt;
+}
+
+void BytecodeCache::storeMemo(const CacheKey& key, const CompileResult& result) {
+    std::lock_guard<std::mutex> lock(memoMutex_);
+    uint64_t h = memoKeyHash(key);
+    for (size_t i = 0; i < memo_.size(); ++i) {
+        if (memo_[i].keyHash == h) {
+            memo_[i].stackResult = result;
+            memo_[i].regResult.reset(); // 同键只保留一种路径结果（与磁盘文件一一对应）
+            moveToFront(i);
+            return;
+        }
+    }
+    MemoEntry e;
+    e.keyHash = h;
+    e.stackResult = result;
+    memo_.insert(memo_.begin(), std::move(e));
+    if (memo_.size() > kMemoCapacity)
+        memo_.resize(kMemoCapacity);
+}
+
+std::optional<RegisterCompileResult> BytecodeCache::tryMemoRegister(const CacheKey& key) {
+    std::lock_guard<std::mutex> lock(memoMutex_);
+    uint64_t h = memoKeyHash(key);
+    for (size_t i = 0; i < memo_.size(); ++i) {
+        if (memo_[i].keyHash == h && memo_[i].regResult) {
+            std::optional<RegisterCompileResult> out = memo_[i].regResult;
+            moveToFront(i);
+            return out;
+        }
+    }
+    return std::nullopt;
+}
+
+void BytecodeCache::storeMemoRegister(const CacheKey& key, const RegisterCompileResult& result) {
+    std::lock_guard<std::mutex> lock(memoMutex_);
+    uint64_t h = memoKeyHash(key);
+    for (size_t i = 0; i < memo_.size(); ++i) {
+        if (memo_[i].keyHash == h) {
+            memo_[i].regResult = result;
+            memo_[i].stackResult.reset();
+            moveToFront(i);
+            return;
+        }
+    }
+    MemoEntry e;
+    e.keyHash = h;
+    e.regResult = result;
+    memo_.insert(memo_.begin(), std::move(e));
+    if (memo_.size() > kMemoCapacity)
+        memo_.resize(kMemoCapacity);
+}
+
+void BytecodeCache::clearMemo() {
+    std::lock_guard<std::mutex> lock(memoMutex_);
+    memo_.clear();
+}
+
 void BytecodeCache::clear() {
+    // PERF: 同步清空进程内 memo（磁盘目录已清，条目不可再对应有效文件）
+    clearMemo();
     namespace fs = std::filesystem;
     if (cacheDir_.empty())
         return;

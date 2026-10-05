@@ -106,9 +106,14 @@ void GcManager::checkIncrementalGc() {
 void GcManager::checkPendingGc() {
     // P0 fix: 供 Interpreter 在语句边界（容器构造完成后）调用。
     // 若 registerTracked 期间累积了待触发的增量 GC 请求，此处安全执行。
+    // PERF-GC: 无锁快速路径——本方法每条语句调用一次，pending==false 占绝对多数。
+    // relaxed 读足够：false 直接返回无误读风险；true 时进入锁内复查（取锁的
+    // acquire 语义保证看到 registerTracked 锁内写入的完整状态）。
+    if (!pendingIncrementalGc_.load(std::memory_order_relaxed))
+        return;
     std::lock_guard<std::recursive_mutex> lock(mutex_);
-    if (pendingIncrementalGc_) {
-        pendingIncrementalGc_ = false;
+    if (pendingIncrementalGc_.load(std::memory_order_relaxed)) {
+        pendingIncrementalGc_.store(false, std::memory_order_relaxed);
         checkIncrementalGc();
     }
 }
@@ -124,7 +129,8 @@ void GcManager::onDestroyed(RefCounted* obj) {
     aliveSet_.erase(obj);
 }
 
-void GcManager::markValue(const Value& v, std::unordered_set<const void*>& marked) {
+void GcManager::markValue(const Value& v, std::unordered_set<const void*>& marked,
+                          std::vector<const Value*>& worklist) {
     // AUDIT-P1-ROUND53 fix: 原 markValue 对 ARRAY/DICT/INSTANCE/CLOSURE 四种堆类型
     // 纯递归遍历子元素。MiniLang 的 MAX_LOOP_ITERATIONS=10000000 允许 while 循环
     // 构建极深嵌套的线性容器链（如 100000 层 [[[[...]]]]）。这条链不是循环引用
@@ -133,7 +139,8 @@ void GcManager::markValue(const Value& v, std::unordered_set<const void*>& marke
     // Windows 默认 1MB 栈容量（每帧约 100-200 字节，~5000-10000 层即溢出）。
     // 改为显式 worklist 迭代式：栈深度恒定，消除栈溢出风险，且 worklist 连续
     // 内存访问对 cache 友好（同时解决 PERF-53-4 递归调用开销）。
-    std::vector<const Value*> worklist;
+    // PERF-GC: worklist 由调用方持有（整个 collectCycle 仅 1 次 vector 分配），
+    // 原实现每个根元素各建一个 worklist，在 stop-the-world 暂停内产生 R 次分配。
     worklist.push_back(&v);
 
     while (!worklist.empty()) {
@@ -247,6 +254,8 @@ void GcManager::collectCycle(const std::vector<const void*>& roots) {
     currentPhase_ = GcPhase::Marking;
     std::unordered_set<const void*> marked;
     marked.reserve(tracked_.size() * 2);
+    // PERF-GC: 整个 mark 阶段共享一个 worklist（1 次分配），传引用给所有 markValue 调用。
+    std::vector<const Value*> markWorklist;
     for (const void* rootPtr : roots) {
         if (marked.insert(rootPtr).second) {
             // 根据 type 遍历根指针的子元素
@@ -255,28 +264,28 @@ void GcManager::collectCycle(const std::vector<const void*>& roots) {
             case ValueType::VAL_ARRAY: {
                 const auto& elements = static_cast<const Value::ArrayData*>(rootPtr)->elements;
                 for (const auto& elem : elements) {
-                    markValue(elem, marked);
+                    markValue(elem, marked, markWorklist);
                 }
                 break;
             }
             case ValueType::VAL_DICT: {
                 const auto& entries = static_cast<const Value::DictData*>(rootPtr)->entries;
                 for (const auto& kv : entries) {
-                    markValue(kv.second, marked);
+                    markValue(kv.second, marked, markWorklist);
                 }
                 break;
             }
             case ValueType::VAL_INSTANCE: {
                 const auto& fields = static_cast<const Value::InstanceData*>(rootPtr)->fields;
                 for (const auto& kv : fields) {
-                    markValue(kv.second, marked);
+                    markValue(kv.second, marked, markWorklist);
                 }
                 break;
             }
             case ValueType::VAL_CLOSURE: {
                 const auto& captured = static_cast<const Value::ClosureData*>(rootPtr)->capturedVars;
                 for (const auto& kv : captured) {
-                    markValue(kv.second, marked);
+                    markValue(kv.second, marked, markWorklist);
                 }
                 break;
             }
@@ -284,7 +293,7 @@ void GcManager::collectCycle(const std::vector<const void*>& roots) {
                 // R98 元组与解构：元组作为根时，标记其元素
                 const auto& elements = static_cast<const Value::TupleData*>(rootPtr)->elements;
                 for (const auto& elem : elements) {
-                    markValue(elem, marked);
+                    markValue(elem, marked, markWorklist);
                 }
                 break;
             }
@@ -292,7 +301,7 @@ void GcManager::collectCycle(const std::vector<const void*>& roots) {
                 // R99 枚举与 ADT：enum variant 作为根时，标记其 fields
                 const auto& fields = static_cast<const Value::EnumVariantData*>(rootPtr)->fields;
                 for (const auto& f : fields) {
-                    markValue(f, marked);
+                    markValue(f, marked, markWorklist);
                 }
                 break;
             }
@@ -300,11 +309,11 @@ void GcManager::collectCycle(const std::vector<const void*>& roots) {
                 // AUDIT-R3 P1-6 fix: 协程作为根时，标记其持有的参数/yield 值/闭包值
                 const auto* cd = static_cast<const Value::CoroutineData*>(rootPtr);
                 for (const auto& a : cd->args)
-                    markValue(a, marked);
+                    markValue(a, marked, markWorklist);
                 for (const auto& v : cd->currentValueBox)
-                    markValue(v, marked);
+                    markValue(v, marked, markWorklist);
                 for (const auto& v : cd->vmClosureBox)
-                    markValue(v, marked);
+                    markValue(v, marked, markWorklist);
                 break;
             }
             default:
@@ -531,39 +540,36 @@ GcManager::CallbackSuppressor::~CallbackSuppressor() {
     gc.gcTriggerOwner_ = savedOwner_;
 }
 
+// PERF-GC: 统计字段已迁移到 atomic（GcManager.h），只读访问无锁化（relaxed 读）；
+// 写入仍在锁内（registerTracked/collectCycle/reset），锁的 release 语义 + atomic
+// 保证 GUI 线程读到的是完整写入后的值。trackedCount() 仍读 vector，保持加锁。
 size_t GcManager::allocationsSinceLastGc() const {
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
-    return allocationsSinceLastGc_;
+    return allocationsSinceLastGc_.load(std::memory_order_relaxed);
 }
 
 void GcManager::setGcAllocationThreshold(size_t threshold) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
-    gcAllocationThreshold_ = threshold;
+    gcAllocationThreshold_.store(threshold, std::memory_order_relaxed);
 }
 
 size_t GcManager::gcAllocationThreshold() const {
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
-    return gcAllocationThreshold_;
+    return gcAllocationThreshold_.load(std::memory_order_relaxed);
 }
 
 GcPhase GcManager::currentPhase() const {
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
-    return currentPhase_;
+    return currentPhase_.load(std::memory_order_relaxed);
 }
 
 size_t GcManager::lastMarkedCount() const {
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
-    return lastMarkedCount_;
+    return lastMarkedCount_.load(std::memory_order_relaxed);
 }
 
 size_t GcManager::lastCollectedCount() const {
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
-    return lastCollectedCount_;
+    return lastCollectedCount_.load(std::memory_order_relaxed);
 }
 
 size_t GcManager::totalGcCount() const {
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
-    return totalGcCount_;
+    return totalGcCount_.load(std::memory_order_relaxed);
 }
 
 GcMode GcManager::gcMode() const {

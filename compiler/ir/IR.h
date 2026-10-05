@@ -113,6 +113,144 @@ struct IROperand {
 };
 
 // ============================================================
+// IROperandList：IR 指令操作数容器（小向量）
+// ============================================================
+
+/// 指令操作数容器：≤4 个操作数内联存储免堆分配，超出回落堆缓冲。
+/// 第四轮优化：原 std::vector<IROperand> 使每条 IRInstruction 携带一次独立
+/// 堆分配（IR 构建 / pass 复制 / lowering 全链路），绝大多数指令操作数
+/// ≤4 个（LOAD_CONST/BINOP/JUMP/STORE_LOCAL 等），内联后零分配且提升
+/// 局部性（操作数与指令同处缓存行）。IROperand 为平凡可复制类型，
+/// 实现按 memcpy 语义复制，无元素级构造/析构分叉。
+///
+/// 接口刻意收敛到 IR 层现有使用面（size/empty/operator[]/push_back/
+/// 迭代/initializer_list 赋值），不实现完整 vector 接口——新调用点若
+/// 需要 erase/insert 等能力应先评估是否真适用于 IR 操作数语义。
+class IROperandList {
+public:
+    IROperandList() = default;
+    IROperandList(std::initializer_list<IROperand> ops) {
+        for (const auto& op : ops)
+            push_back(op);
+    }
+    IROperandList(const IROperandList& other) { copyFrom(other); }
+    IROperandList(IROperandList&& other) noexcept { moveFrom(other); }
+    IROperandList& operator=(const IROperandList& other) {
+        if (this != &other) {
+            destroy();
+            copyFrom(other);
+        }
+        return *this;
+    }
+    IROperandList& operator=(IROperandList&& other) noexcept {
+        if (this != &other) {
+            destroy();
+            moveFrom(other);
+        }
+        return *this;
+    }
+    IROperandList& operator=(std::initializer_list<IROperand> ops) {
+        clear();
+        for (const auto& op : ops)
+            push_back(op);
+        return *this;
+    }
+    ~IROperandList() { destroy(); }
+
+    size_t size() const { return size_; }
+    bool empty() const { return size_ == 0; }
+    const IROperand& operator[](size_t i) const { return data()[i]; }
+    IROperand& operator[](size_t i) { return data()[i]; }
+    void push_back(const IROperand& op) {
+        if (size_ < kInlineCapacity && !heap_) {
+            inline_[size_] = op;
+            ++size_;
+            return;
+        }
+        if (heap_ && size_ < heapCapacity_) {
+            heap_[size_] = op;
+            ++size_;
+            return;
+        }
+        grow();
+        heap_[size_++] = op;
+    }
+    void clear() {
+        size_ = 0; // IROperand 平凡可复制，无元素析构；heap_ 保留复用
+    }
+    /// 预留至少 n 个元素的容量（n ≤ 内联容量且未上堆时为 no-op）
+    void reserve(size_t n) {
+        if (n <= kInlineCapacity && !heap_)
+            return;
+        if (heap_ && n <= heapCapacity_)
+            return;
+        size_t newCapacity = heapCapacity_ == 0 ? kInlineCapacity * 2 : heapCapacity_;
+        while (newCapacity < n)
+            newCapacity *= 2;
+        auto* newHeap = new IROperand[newCapacity];
+        for (size_t i = 0; i < size_; ++i)
+            newHeap[i] = data()[i];
+        delete[] heap_;
+        heap_ = newHeap;
+        heapCapacity_ = static_cast<uint32_t>(newCapacity);
+    }
+    IROperand* begin() { return data(); }
+    IROperand* end() { return data() + size_; }
+    const IROperand* begin() const { return data(); }
+    const IROperand* end() const { return data() + size_; }
+
+private:
+    static constexpr size_t kInlineCapacity = 4;
+
+    IROperand* data() { return heap_ ? heap_ : inline_; }
+    const IROperand* data() const { return heap_ ? heap_ : inline_; }
+    void grow() {
+        size_t newCapacity = heapCapacity_ == 0 ? kInlineCapacity * 2 : heapCapacity_ * 2;
+        auto* newHeap = new IROperand[newCapacity];
+        for (size_t i = 0; i < size_; ++i)
+            newHeap[i] = data()[i];
+        delete[] heap_;
+        heap_ = newHeap;
+        heapCapacity_ = static_cast<uint32_t>(newCapacity);
+    }
+    void copyFrom(const IROperandList& other) {
+        size_ = other.size_;
+        heapCapacity_ = other.heapCapacity_;
+        if (other.heap_) {
+            heap_ = new IROperand[other.heapCapacity_];
+            for (uint32_t i = 0; i < size_; ++i)
+                heap_[i] = other.heap_[i];
+        } else {
+            for (uint32_t i = 0; i < size_; ++i)
+                inline_[i] = other.inline_[i];
+        }
+    }
+    void moveFrom(IROperandList& other) noexcept {
+        size_ = other.size_;
+        heapCapacity_ = other.heapCapacity_;
+        heap_ = other.heap_;
+        if (!other.heap_) {
+            for (uint32_t i = 0; i < size_; ++i)
+                inline_[i] = other.inline_[i];
+        }
+        other.size_ = 0;
+        other.heap_ = nullptr;
+        other.heapCapacity_ = 0;
+    }
+    void destroy() {
+        delete[] heap_;
+        heap_ = nullptr;
+        heapCapacity_ = 0;
+        size_ = 0;
+    }
+
+    uint32_t size_ = 0;
+    uint32_t heapCapacity_ = 0; // 0 = 未使用堆
+    IROperand* heap_ = nullptr;
+    IROperand inline_[kInlineCapacity] = {}; // 聚合值初始化（IROperand 无用户构造函数）
+};
+
+// ============================================================
 // IR 指令
 // ============================================================
 
@@ -300,11 +438,11 @@ enum class IROp : uint8_t {
 /// IR 指令
 struct IRInstruction {
     IROp op;
-    std::vector<IROperand> operands;
+    IROperandList operands;
     int line = 0;   // 源码行号（用于调试）
     int column = 0; // D12 fix: 源码列号（BUG-IBACKEND-2，此前恒 0）
 
-    IRInstruction(IROp o, std::vector<IROperand> ops, int ln = 0, int col = 0)
+    IRInstruction(IROp o, IROperandList ops, int ln = 0, int col = 0)
         : op(o), operands(std::move(ops)), line(ln), column(col) {}
 };
 
@@ -617,6 +755,9 @@ private:
     // 仍比恒 0 精确（调试器列级定位辅助）。
     int currentColumn_ = 0;
     uint32_t nextLocalSlot_ = 0;
+    // PERF: 短路求值暂存槽（顶层共享，见 acquireShortCircuitSlot 说明）
+    uint32_t shortCircuitScratchSlot_ = 0;
+    bool shortCircuitScratchValid_ = false;
     // BUG-IDE-12 fix: 局部变量 slot→name 映射（索引即 slot），跨作用域累积（不随块退出清除）。
     // 函数最终化时复制到 ir_->localSlotNames，供 RegisterVM 条件断点求值反查变量名。
     std::vector<std::string> localSlotNames_;
@@ -864,7 +1005,7 @@ private:
     IRBasicBlock& newBlock();
     // 注意：方法名用 emitIR 而非 emit，避免与 Qt 的 emit 宏（Q_EMIT）冲突
     // D12 fix: column 默认 -1 表示沿用 currentColumn_（最近访问的 AST 节点列）
-    void emitIR(IROp op, std::vector<IROperand> operands = {}, int line = 0, int column = -1);
+    void emitIR(IROp op, IROperandList operands = {}, int line = 0, int column = -1);
     IROperand emitConst(const Value& v, int line = 0);
     IROperand emitLoadVar(const std::string& name, int line = 0);
     void emitStoreVar(const std::string& name, IROperand val, int line = 0);
@@ -904,6 +1045,12 @@ private:
     IROperand emitShortCircuitAnd(class BinaryOp* node);
     IROperand emitShortCircuitOr(class BinaryOp* node);
     ///@}
+    /// PERF: 短路求值暂存槽分配。块作用域内沿用 nextLocalSlot_++（由 slotBase
+    /// 回滚回收）；顶层（blockScopes_ 为空）改为整个函数共享一个槽——原实现每次
+    /// nextLocalSlot_++ 永不复用，localCount 随布尔表达式数量单调增长，触发
+    /// RegisterVM 32 寄存器上限告警。求值非重入（嵌套 and/or 的槽使用严格括号化：
+    /// 内层完成后外层才写回），共享安全。失效点：函数入口/嵌套函数返回/块回滚。
+    uint32_t acquireShortCircuitSlot();
     // R111 重构：嵌套左值变异写回共享 helper（visitIndexAssign / visitMemberAssign /
     // emitMethodCallWriteback 三处共用）。处理 IndexAccess(VarRef) | MemberAccess(VarRef)
     // 形态的接收者：LOAD_MUTATED + 外层 INDEX_SET/MEMBER_SET + WRITEBACK 链。
@@ -1220,6 +1367,21 @@ bool constantFoldingPass(IRFunction& ir);
 ///   3. 保留有副作用的指令：STORE_*/CALL/RETURN/PRINT/JUMP/JUMP_IF_FALSE/THROW 等
 /// 返回：是否修改了 IR（true 表示有指令被删除）
 bool deadCodeEliminationPass(IRFunction& ir);
+
+/// 分支折叠：利用常量折叠的结果化简控制流（2026-10-03 优化审计新增）
+/// 规则：
+///   1. 常量条件分支：JUMP_IF_FALSE 的条件 vreg 由唯一 LOAD_CONST bool 定义时，
+///      true → 删除分支（peek 零栈效应，fall-through 路径已含条件值消费）；
+///      false → 替换为 JUMP（目标路径期望条件值留在栈上）
+///   2. 跳转线程化：JUMP 的目标 LABEL 紧跟另一条 JUMP 时重定向到最终目标（防环）
+///   3. 跳转到紧邻 LABEL 的 JUMP 删除（fall-through 等价）
+///   4. 不可达代码删除：JUMP/RETURN/RETURN_NULL/THROW 之后到下一 LABEL 之间的
+///      指令删除（与 BytecodeIRBackendStackCheck 深度模型的死区口径一致，IR.h:1119）
+/// 安全性：全部为局部变换，不重建 CFG；JUMP_IF_FALSE 在两个 lowering 均为 peek
+/// 语义（零栈效应），移除/替换不改变栈平衡。仅折叠 bool 常量（其他类型的真值
+/// 语义不在本 pass 建模）。条件 vreg 须单一定义（多定义保守跳过）。
+/// 返回：是否修改了 IR
+bool branchFoldingPass(IRFunction& ir);
 
 /// 复制传播：将 vreg = LOAD_* 后续使用替换为直接引用源
 /// 规则：

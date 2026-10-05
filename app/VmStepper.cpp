@@ -33,6 +33,7 @@ VmStepper::~VmStepper() {
 
 /// 在“活动执行”模式下执行单条 VM 指令，返回是否已抵达终止条件（断点/结束）。
 VMResult VmStepper::stepOnceActive() {
+    ++stateEpoch_; // PERF: 状态纪元递增（安全网轮询门控，见 stateEpoch()）
     return useRegister_ ? regVm_.stepOnce() : vm_.stepOnce();
 }
 
@@ -764,6 +765,7 @@ void VmStepper::runBatch() {
 /// 停止 VM 执行：中断运行循环并复位执行状态。
 void VmStepper::stop() {
     assertMainThread(); // AUDIT-R4 BUG-14: 非 atomic 状态字段仅限主线程访问
+    ++stateEpoch_; // PERF: 状态纪元递增（安全网轮询门控，见 stateEpoch()）
     // QT-R-01 fix: 停止 RUN 模式定时器
     if (vmRunTimer_)
         vmRunTimer_->stop();

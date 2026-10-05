@@ -284,30 +284,30 @@ static std::unique_ptr<IRFunction> buildWhileLoopWithInvariantIR() {
     block.labelIndex = lCond;
 
     // entry
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{vInit, IROperand::constant(cZero)}, 1);
-    block.instructions.emplace_back(IROp::STORE_LOCAL, std::vector<IROperand>{IROperand::local(0), vInit}, 2);
-    block.instructions.emplace_back(IROp::JUMP, std::vector<IROperand>{IROperand::label(lCond)}, 3);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{vInit, IROperand::constant(cZero)}, 1);
+    block.instructions.emplace_back(IROp::STORE_LOCAL, IROperandList{IROperand::local(0), vInit}, 2);
+    block.instructions.emplace_back(IROp::JUMP, IROperandList{IROperand::label(lCond)}, 3);
 
     // cond
-    block.instructions.emplace_back(IROp::LABEL, std::vector<IROperand>{IROperand::label(lCond)}, 4);
-    block.instructions.emplace_back(IROp::LOAD_LOCAL, std::vector<IROperand>{vI, IROperand::local(0)}, 5);
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{vLimit, IROperand::constant(cThree)}, 6);
-    block.instructions.emplace_back(IROp::LT, std::vector<IROperand>{vCmp, vI, vLimit}, 7);
-    block.instructions.emplace_back(IROp::JUMP_IF_FALSE, std::vector<IROperand>{vCmp, IROperand::label(lExit)}, 8);
+    block.instructions.emplace_back(IROp::LABEL, IROperandList{IROperand::label(lCond)}, 4);
+    block.instructions.emplace_back(IROp::LOAD_LOCAL, IROperandList{vI, IROperand::local(0)}, 5);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{vLimit, IROperand::constant(cThree)}, 6);
+    block.instructions.emplace_back(IROp::LT, IROperandList{vCmp, vI, vLimit}, 7);
+    block.instructions.emplace_back(IROp::JUMP_IF_FALSE, IROperandList{vCmp, IROperand::label(lExit)}, 8);
 
     // body: 含循环不变量 LOAD_CONST 99
-    block.instructions.emplace_back(IROp::LABEL, std::vector<IROperand>{IROperand::label(lBody)}, 9);
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{vInv, IROperand::constant(cInv)}, 10);
-    block.instructions.emplace_back(IROp::STORE_LOCAL, std::vector<IROperand>{IROperand::local(1), vInv}, 11);
-    block.instructions.emplace_back(IROp::LOAD_LOCAL, std::vector<IROperand>{vCur, IROperand::local(0)}, 12);
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{vOne, IROperand::constant(cOne)}, 13);
-    block.instructions.emplace_back(IROp::ADD, std::vector<IROperand>{vNew, vCur, vOne}, 14);
-    block.instructions.emplace_back(IROp::STORE_LOCAL, std::vector<IROperand>{IROperand::local(0), vNew}, 15);
-    block.instructions.emplace_back(IROp::JUMP, std::vector<IROperand>{IROperand::label(lCond)}, 16);
+    block.instructions.emplace_back(IROp::LABEL, IROperandList{IROperand::label(lBody)}, 9);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{vInv, IROperand::constant(cInv)}, 10);
+    block.instructions.emplace_back(IROp::STORE_LOCAL, IROperandList{IROperand::local(1), vInv}, 11);
+    block.instructions.emplace_back(IROp::LOAD_LOCAL, IROperandList{vCur, IROperand::local(0)}, 12);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{vOne, IROperand::constant(cOne)}, 13);
+    block.instructions.emplace_back(IROp::ADD, IROperandList{vNew, vCur, vOne}, 14);
+    block.instructions.emplace_back(IROp::STORE_LOCAL, IROperandList{IROperand::local(0), vNew}, 15);
+    block.instructions.emplace_back(IROp::JUMP, IROperandList{IROperand::label(lCond)}, 16);
 
     // exit
-    block.instructions.emplace_back(IROp::LABEL, std::vector<IROperand>{IROperand::label(lExit)}, 17);
-    block.instructions.emplace_back(IROp::RETURN_NULL, std::vector<IROperand>{}, 18);
+    block.instructions.emplace_back(IROp::LABEL, IROperandList{IROperand::label(lExit)}, 17);
+    block.instructions.emplace_back(IROp::RETURN_NULL, IROperandList{}, 18);
 
     ir->blocks.push_back(std::move(block));
     ir->localCount = 2;
@@ -350,28 +350,28 @@ static std::unique_ptr<IRFunction> buildIfElseWithEquivalentBranchesIR() {
     block.labelIndex = lEntry;
 
     // entry
-    block.instructions.emplace_back(IROp::LABEL, std::vector<IROperand>{IROperand::label(lEntry)}, 1);
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{vCond, IROperand::constant(cOne)}, 2);
-    block.instructions.emplace_back(IROp::JUMP_IF_FALSE, std::vector<IROperand>{vCond, IROperand::label(lElse)}, 3);
+    block.instructions.emplace_back(IROp::LABEL, IROperandList{IROperand::label(lEntry)}, 1);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{vCond, IROperand::constant(cOne)}, 2);
+    block.instructions.emplace_back(IROp::JUMP_IF_FALSE, IROperandList{vCond, IROperand::label(lElse)}, 3);
 
     // then: v1 = 42; v2 = 1; v3 = v1 + v2
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{vT1, IROperand::constant(c42)}, 4);
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{vT2, IROperand::constant(cOne)}, 5);
-    block.instructions.emplace_back(IROp::ADD, std::vector<IROperand>{vTSum, vT1, vT2}, 6);
-    block.instructions.emplace_back(IROp::STORE_LOCAL, std::vector<IROperand>{IROperand::local(0), vTSum}, 7);
-    block.instructions.emplace_back(IROp::JUMP, std::vector<IROperand>{IROperand::label(lMerge)}, 8);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{vT1, IROperand::constant(c42)}, 4);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{vT2, IROperand::constant(cOne)}, 5);
+    block.instructions.emplace_back(IROp::ADD, IROperandList{vTSum, vT1, vT2}, 6);
+    block.instructions.emplace_back(IROp::STORE_LOCAL, IROperandList{IROperand::local(0), vTSum}, 7);
+    block.instructions.emplace_back(IROp::JUMP, IROperandList{IROperand::label(lMerge)}, 8);
 
     // else: v4 = 42; v5 = 1; v6 = v4 + v5  ← 与 then 等价
-    block.instructions.emplace_back(IROp::LABEL, std::vector<IROperand>{IROperand::label(lElse)}, 9);
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{vE1, IROperand::constant(c42)}, 10);
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{vE2, IROperand::constant(cOne)}, 11);
-    block.instructions.emplace_back(IROp::ADD, std::vector<IROperand>{vESum, vE1, vE2}, 12);
-    block.instructions.emplace_back(IROp::STORE_LOCAL, std::vector<IROperand>{IROperand::local(0), vESum}, 13);
+    block.instructions.emplace_back(IROp::LABEL, IROperandList{IROperand::label(lElse)}, 9);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{vE1, IROperand::constant(c42)}, 10);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{vE2, IROperand::constant(cOne)}, 11);
+    block.instructions.emplace_back(IROp::ADD, IROperandList{vESum, vE1, vE2}, 12);
+    block.instructions.emplace_back(IROp::STORE_LOCAL, IROperandList{IROperand::local(0), vESum}, 13);
 
     // merge
-    block.instructions.emplace_back(IROp::LABEL, std::vector<IROperand>{IROperand::label(lMerge)}, 14);
-    block.instructions.emplace_back(IROp::LOAD_LOCAL, std::vector<IROperand>{vLoad, IROperand::local(0)}, 15);
-    block.instructions.emplace_back(IROp::RETURN, std::vector<IROperand>{vLoad}, 16);
+    block.instructions.emplace_back(IROp::LABEL, IROperandList{IROperand::label(lMerge)}, 14);
+    block.instructions.emplace_back(IROp::LOAD_LOCAL, IROperandList{vLoad, IROperand::local(0)}, 15);
+    block.instructions.emplace_back(IROp::RETURN, IROperandList{vLoad}, 16);
 
     ir->blocks.push_back(std::move(block));
     ir->localCount = 1;
@@ -406,22 +406,22 @@ static std::unique_ptr<IRFunction> buildCalleeWithInstrCount(const std::string& 
 
     uint32_t cOne = fn->addConstant(Value(1));
 
-    block.instructions.emplace_back(IROp::LABEL, std::vector<IROperand>{IROperand::label(0)}, 1);
-    block.instructions.emplace_back(IROp::LOAD_LOCAL, std::vector<IROperand>{vParam, IROperand::local(0)}, 2);
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{vOne, IROperand::constant(cOne)}, 3);
-    block.instructions.emplace_back(IROp::ADD, std::vector<IROperand>{vAcc, vParam, vOne}, 4);
+    block.instructions.emplace_back(IROp::LABEL, IROperandList{IROperand::label(0)}, 1);
+    block.instructions.emplace_back(IROp::LOAD_LOCAL, IROperandList{vParam, IROperand::local(0)}, 2);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{vOne, IROperand::constant(cOne)}, 3);
+    block.instructions.emplace_back(IROp::ADD, IROperandList{vAcc, vParam, vOne}, 4);
 
     for (size_t i = 0; i < extraPairs; ++i) {
         IROperand vNOne = fn->allocVReg();
         IROperand vNext = fn->allocVReg();
-        block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{vNOne, IROperand::constant(cOne)},
+        block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{vNOne, IROperand::constant(cOne)},
                                         static_cast<int>(5 + i * 2));
-        block.instructions.emplace_back(IROp::ADD, std::vector<IROperand>{vNext, vAcc, vNOne},
+        block.instructions.emplace_back(IROp::ADD, IROperandList{vNext, vAcc, vNOne},
                                         static_cast<int>(6 + i * 2));
         vAcc = vNext;
     }
 
-    block.instructions.emplace_back(IROp::RETURN, std::vector<IROperand>{vAcc}, static_cast<int>(5 + extraPairs * 2));
+    block.instructions.emplace_back(IROp::RETURN, IROperandList{vAcc}, static_cast<int>(5 + extraPairs * 2));
     fn->blocks.push_back(std::move(block));
     fn->localCount = 1;
     fn->localSlotNames = {"x"};
@@ -439,11 +439,11 @@ static std::unique_ptr<IRFunction> buildMainCalling(const std::string& calleeNam
     IROperand mv0 = mainFn->allocVReg(); // 10
     IROperand mv1 = mainFn->allocVReg(); // call result
     uint32_t mc0 = mainFn->addConstant(Value(10));
-    block.instructions.emplace_back(IROp::LABEL, std::vector<IROperand>{IROperand::label(0)}, 1);
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{mv0, IROperand::constant(mc0)}, 2);
+    block.instructions.emplace_back(IROp::LABEL, IROperandList{IROperand::label(0)}, 1);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{mv0, IROperand::constant(mc0)}, 2);
     block.instructions.emplace_back(
-        IROp::CALL, std::vector<IROperand>{mv1, IROperand::funcName(nameIdx), IROperand::imm(1), mv0}, 3);
-    block.instructions.emplace_back(IROp::RETURN, std::vector<IROperand>{mv1}, 4);
+        IROp::CALL, IROperandList{mv1, IROperand::funcName(nameIdx), IROperand::imm(1), mv0}, 3);
+    block.instructions.emplace_back(IROp::RETURN, IROperandList{mv1}, 4);
     mainFn->blocks.push_back(std::move(block));
     return mainFn;
 }

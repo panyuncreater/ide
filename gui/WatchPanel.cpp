@@ -81,7 +81,18 @@ WatchPanel::WatchPanel(QWidget* parent) : TeachingPanelBase(parent) {
     // OPT-1: 安全网 QTimer（vmStateChanged 即时刷新的兜底）
     refreshTimer_ = new QTimer(this);
     refreshTimer_->setInterval(2000);
-    connect(refreshTimer_, &QTimer::timeout, this, &WatchPanel::refreshAll);
+    connect(refreshTimer_, &QTimer::timeout, this, [this]() {
+        // PERF: 安全网轮询纪元门控——VM 状态纪元未变时跳过 refreshAll 的
+        // 表达式求值与表格重建；表达式编辑（onCellChanged）与手动刷新
+        // （refreshBtn_）均直接调用 refreshAll，不受门控影响。
+        if (controller_) {
+            const std::uint64_t epoch = controller_->vmStateEpoch();
+            if (epoch == lastAutoRefreshEpoch_)
+                return;
+            lastAutoRefreshEpoch_ = epoch;
+        }
+        refreshAll();
+    });
 
     // 从 QSettings 加载持久化的表达式
     loadExpressions();

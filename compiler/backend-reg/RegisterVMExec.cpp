@@ -817,16 +817,11 @@ VMResult RegisterVM::executeArrayIndexOps(RegOp op, size_t& ip) {
             }
             reg(dst) = arr[static_cast<size_t>(i)];
         } else if (obj.isDict()) {
-            auto dk = Value::dictKeyFromValue(idx);
-            if (!dk)
+            // PERF: 透明查找，string 键免 DictKey 构造的字符串深拷贝
+            if (!Value::dictKeyIsValid(idx))
                 return runtimeError(ErrorMessages::kDictKeyInvalidType, DiagCodes::kTypeMismatch);
-            const auto& dict = obj.dictVal();
-            auto it = dict.find(*dk);
-            if (it == dict.end()) {
-                reg(dst) = Value::nullValue();
-            } else {
-                reg(dst) = it->second;
-            }
+            const Value* found = Value::dictFindValue(obj.dictVal(), idx);
+            reg(dst) = found ? *found : Value::nullValue();
         } else if (obj.isString()) {
             if (!idx.isInt())
                 return runtimeError(ErrorMessages::kStringIndexMustBeInt, DiagCodes::kTypeMismatch);
@@ -878,10 +873,10 @@ VMResult RegisterVM::executeArrayIndexOps(RegOp op, size_t& ip) {
             }
             arr[static_cast<size_t>(i)] = val;
         } else if (obj.isDict()) {
-            auto dk = Value::dictKeyFromValue(idx);
-            if (!dk)
+            // PERF: 透明写路径，string 键命中时免字符串深拷贝
+            if (!Value::dictKeyIsValid(idx))
                 return runtimeError(ErrorMessages::kDictKeyInvalidType, DiagCodes::kTypeMismatch);
-            obj.dictVal()[*dk] = val;
+            Value::dictGetOrInsertRef(obj.dictVal(), idx) = val;
         } else {
             return runtimeError(ErrorMessages::kTypeNotIndexAssignable);
         }
@@ -1589,8 +1584,33 @@ VMResult RegisterVM::executeMisc(RegOp op, size_t& ip) {
 }
 
 // ============================================================
-// R164 协程/生成器：REG_YIELD 指令执行（重放模式）
+// R164 协程/生成器：REG_YIELD 指令执行（重放模式 + 真挂起模式）
 // ============================================================
+// 真挂起模式（MINILANG_CORO_FIBER=1 且处于 .next() 挂起上下文）：每个 yield
+// 都挂起——yield 表达式值写回 dst（对齐重放 skip 语义 reg(dst)=yieldValue），
+// 帧链快照进 CoroutineData::vmSuspension 后抛出 VMYieldSignal，由
+// callCoroutineNext 捕获返回。快照结构 RegVMCoroutineSuspension 定义于下方。
+// ============================================================
+
+#if MINILANG_CORO_FIBER
+namespace {
+// CoroutineData 为 Value 私有嵌套类型，经公有访问器返回类型推导取得指针类别
+using RegCoroutineDataRawPtr = std::decay_t<decltype(*std::declval<Value &>().coroutineData())> *;
+} // namespace
+
+// RegisterVM 挂起快照（RegisterVM.h 内前向声明的私有嵌套类型）：寄存器随帧走
+// （RegCallFrame 内嵌 registers），无独立值栈。try 栈 frameIndex、开放 upvalue 的
+// stackSlot（frameIdx*32+regIdx 绝对编号）与 owningFrameIdx 为绝对索引，快照按
+// .next() 入口帧基线转相对存储，恢复时以新入口帧深重定基。
+struct RegisterVM::RegVMCoroutineSuspension {
+    std::vector<RegCallFrame> frames; // frames_[baseFrames..]（含生成器帧与体内嵌套调用帧）
+    std::vector<RegTryHandler> tryStack;
+    size_t resumeIp = 0; // 触发 yield 的帧（顶层）恢复 ip（越过 REG_YIELD 3 字节）
+    size_t baseFrames = 0;
+    std::vector<std::pair<size_t, std::weak_ptr<VMUpvalue>>> openUpvalues;
+};
+#endif // MINILANG_CORO_FIBER
+
 VMResult RegisterVM::executeCoroutineOps(RegOp op, size_t& ip) {
     // 七特性 MVP 阶段 4：REG_AWAIT——同步 drain 协程到完成（与 Interpreter::visitAwaitExpr 对齐）。
     // dst = src 非协程时的恒等值；src 为协程时循环 callCoroutineNext 直到 done，dst = 最终值。
@@ -1631,6 +1651,39 @@ VMResult RegisterVM::executeCoroutineOps(RegOp op, size_t& ip) {
     uint8_t src = chunk.code[ip + 2];
     Value yieldValue = reg(src);
     int thisExecutionId = currentYieldExecutionCount_++;
+#if MINILANG_CORO_FIBER
+    if (currentSuspendingCoro_) {
+        // 真挂起模式：每个 yield 都挂起。yield 表达式值先写回 dst（对齐重放
+        // skip 语义 reg(dst)=yieldValue——恢复后 ip 越过本指令继续消费 dst），
+        // 帧链快照（相对化）后抛出 VMYieldSignal。
+        reg(dst) = yieldValue;
+        auto *cd = static_cast<RegCoroutineDataRawPtr>(currentSuspendingCoro_);
+        auto sus = std::make_shared<RegVMCoroutineSuspension>();
+        sus->baseFrames = coroSuspendBaseFrames_;
+        sus->frames.reserve(frames_.size() - coroSuspendBaseFrames_);
+        for (size_t i = coroSuspendBaseFrames_; i < frames_.size(); ++i)
+            sus->frames.push_back(frames_[i]); // RegCallFrame 值拷贝（寄存器窗口随帧）
+        sus->frames.back().ip = currentFrame().ip + 3; // REG_YIELD 为 3 字节指令（ip 越过本指令）
+        sus->resumeIp = currentFrame().ip + 3; // 恢复时重设顶层帧 ip（frames 内 ip 会被此值覆盖）
+        for (const auto &t : tryStack_) {
+            if (t.frameIndex >= coroSuspendBaseFrames_) {
+                sus->tryStack.push_back(t);
+                sus->tryStack.back().frameIndex -= coroSuspendBaseFrames_;
+            }
+        }
+        const size_t regBase = coroSuspendBaseFrames_ * RegCallFrame::MAX_REGISTERS;
+        for (auto it = openUpvalues_.lower_bound(regBase); it != openUpvalues_.end(); ++it) {
+            sus->openUpvalues.emplace_back(it->first - regBase, it->second.uv);
+            if (auto uv = it->second.uv.lock()) {
+                uv->stackSlot -= regBase;
+                uv->owningFrameIdx -= coroSuspendBaseFrames_;
+            }
+        }
+        openUpvalues_.erase(openUpvalues_.lower_bound(regBase), openUpvalues_.end());
+        cd->vmSuspension = std::move(sus);
+        throw VMYieldSignal(std::move(yieldValue));
+    }
+#endif
     if (thisExecutionId == currentCoroutineTargetYieldId_) {
         throw VMYieldSignal(std::move(yieldValue));
     }

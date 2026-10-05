@@ -345,6 +345,19 @@ private:
     // executeReturnImpl 在 returnReg<0 时将返回值保存到此邮箱，供 callCoroutineNext 读取。
     Value coroutineReturnValue_;
 
+#if MINILANG_CORO_FIBER
+    // —— 协程真挂起（第四轮架构优化；经 VM.h 间接获得 CoroutineFiber.h 宏，
+    // 与 Interpreter/StackVM 同门控）——快照结构 RegVMCoroutineSuspension 定义于
+    // RegisterVMCalls.cpp，经 CoroutineData::vmSuspension（shared_ptr<void>）持有。
+    // 语义同 StackVM：REG_YIELD 处快照帧链（寄存器在帧内，无独立值栈），
+    // .next() 恢复时按新入口帧深重定基。currentSuspendingCoro_ 为 CoroutineData*
+    // （Value 私有嵌套类型，经 void* 不透明传递），退出路径一律清空。
+    void *currentSuspendingCoro_ = nullptr;
+    size_t coroSuspendBaseFrames_ = 0; // 本次 .next() 入口时的帧基线（快照相对化参照）
+    /// 挂起快照（定义于 RegisterVMExec.cpp；CoroutineData::vmSuspension 以 shared_ptr<void> 持有）
+    struct RegVMCoroutineSuspension;
+#endif
+
     // 常量
     static constexpr size_t MAX_FRAMES = RuntimeLimits::MAX_FRAMES;
     static constexpr int64_t MAX_INSTRUCTIONS = RuntimeLimits::MAX_INSTRUCTIONS;
@@ -411,15 +424,16 @@ private:
     Value* resolveOpenUpvalueSlot(struct VMUpvalue& uv);
 
     // 指令执行分类
-    // PERF: HOT 方法标记 MINILANG_FORCE_INLINE，等效 computed goto 在 MSVC 上的替代方案。
-    VMResult executeConstants(RegOp op, size_t& ip);
-    VMResult executeArith(RegOp op, size_t& ip);
-    VMResult executeCompare(RegOp op, size_t& ip);
-    VMResult executeVars(RegOp op, size_t& ip);
-    VMResult executeCalls(RegOp op, size_t& ip);
-    VMResult executeContainers(RegOp op, size_t& ip);
-    VMResult executeControl(RegOp op, size_t& ip);
-    VMResult executeMisc(RegOp op, size_t& ip);
+    // PERF: HOT 方法标记 MINILANG_FORCE_INLINE，让编译器将两级 switch 展平为单级，
+    // 消除每条指令的间接函数调用开销（等效 computed goto 在 MSVC 上的替代方案）。
+    MINILANG_FORCE_INLINE VMResult executeConstants(RegOp op, size_t& ip);
+    MINILANG_FORCE_INLINE VMResult executeArith(RegOp op, size_t& ip);
+    MINILANG_FORCE_INLINE VMResult executeCompare(RegOp op, size_t& ip);
+    MINILANG_FORCE_INLINE VMResult executeVars(RegOp op, size_t& ip);
+    MINILANG_FORCE_INLINE VMResult executeCalls(RegOp op, size_t& ip);
+    MINILANG_FORCE_INLINE VMResult executeContainers(RegOp op, size_t& ip);
+    MINILANG_FORCE_INLINE VMResult executeControl(RegOp op, size_t& ip);
+    MINILANG_FORCE_INLINE VMResult executeMisc(RegOp op, size_t& ip);
 
     // executeMisc 子分类（按 RegOp 类别拆分，避免单函数过长）
     // 子函数自包含 stepCallback_ 调用，主函数 dispatch 后直接 return。

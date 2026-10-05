@@ -159,10 +159,39 @@ void RegisterVM::setInputCallback(std::function<std::string(const std::string&)>
 // 执行入口
 // ============================================================
 
+// 字节码截断预扫描（对齐 StackVM 的 validateChunkInstructionBoundaries）：加载期
+// 对 chunk 线性走一遍指令边界，校验每条指令完整落在 code 范围内。与原主循环逐指令
+// 的 instructionSizeAt 检查逐点等价（对每个真实指令起点做同一计算），校验通过后
+// 主循环 release 不再逐指令展开变长指令长度。
+static bool validateRegChunkInstructionBoundaries(const RegBytecodeChunk& chunk) {
+    const size_t size = chunk.code.size();
+    size_t ip = 0;
+    while (ip < size) {
+        size_t instrSize = chunk.instructionSizeAt(ip);
+        if (ip + instrSize > size)
+            return false;
+        ip += instrSize;
+    }
+    return true;
+}
+
 void RegisterVM::initExecution(const RegisterCompileResult& result) {
     resetState();
     mainChunk_ = result.mainChunk;
     functionChunks_ = result.functionChunks;
+
+    // 字节码截断预扫描：加载期一次性校验主 chunk 与全部函数 chunk 的指令边界。
+    // 校验失败属内部不变量破坏（编译器不会产出截断字节码），置 hasError_ 后由
+    // executeOneInstruction 入口的 hasError_ 短路返回 VM_RUNTIME_ERROR。
+    if (!validateRegChunkInstructionBoundaries(mainChunk_)) {
+        runtimeError("字节码截断: 主 chunk 指令不完整");
+    }
+    for (const auto& [funcName, funcChunk] : functionChunks_) {
+        if (!validateRegChunkInstructionBoundaries(funcChunk)) {
+            runtimeError("字节码截断: 函数 '" + funcName + "' 指令不完整");
+            break;
+        }
+    }
 
     // 预分配到 MAX_FRAMES 上限：push_back 前已有 frames_.size() < MAX_FRAMES 检查，
     // reserve 到上限可保证 push_back 永不 realloc / 抛 bad_alloc，消除帧推入异常安全窗口。
@@ -316,8 +345,8 @@ VMResult RegisterVM::runtimeError(const std::string& msg, const std::string& dia
 
 VMResult RegisterVM::executeOneInstruction() {
     // 单条寄存器指令执行的核心分派点，execute() 与 stepOnce() 共用。
-    // 流程：① 判空帧/hasError_ 短路；② 取 RegOp；③ 用 instructionSizeAt 计算
-    // 完整指令长度（变长指令据操作数展开）并做字节码截断边界检查；
+    // 流程：① 判空帧/hasError_ 短路；② 取 RegOp；③ (仅 debug) 用 instructionSizeAt
+    // 计算完整指令长度并做字节码截断边界检查——release 由 initExecution 预扫描覆盖；
     // ④ 按类别 switch 到 executeXxx 方法，再由各方法按具体 RegOp 处理。
     // 注意 REG_TYPE_CHECK / REG_SUPER_CALL 归入 executeMisc（杂项）——它们与
     // 异常、I/O 共用同一分发桶，仅因历史归类，不影响语义。
@@ -335,10 +364,14 @@ VMResult RegisterVM::executeOneInstruction() {
     }
 
     RegOp op = static_cast<RegOp>(chunk.code[ip]);
+#ifndef NDEBUG
+    // 截断校验已上移至 initExecution 预扫描（validateRegChunkInstructionBoundaries），
+    // release 主循环不再逐指令展开变长指令长度；debug 保留作双保险。
     size_t instrSize = chunk.instructionSizeAt(ip);
     if (ip + instrSize > chunk.code.size()) {
         return runtimeError("字节码截断: 指令不完整");
     }
+#endif
 
     // 按类别分发
     switch (op) {

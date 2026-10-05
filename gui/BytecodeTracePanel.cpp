@@ -284,7 +284,17 @@ BytecodeTracePanel::BytecodeTracePanel(QWidget* parent) : QWidget(parent) {
     // QTimer 降级为 2000ms 安全网，覆盖监听器未触达的边角场景。
     autoTimer_ = new QTimer(this);
     autoTimer_->setInterval(2000);
-    connect(autoTimer_, &QTimer::timeout, this, &BytecodeTracePanel::onCaptureNow);
+    connect(autoTimer_, &QTimer::timeout, this, [this]() {
+        // PERF: 安全网轮询纪元门控——VM 未步进时重复捕获只会产生内容相同的
+        // 冗余快照；步进期间纪元持续变化，捕获频率不受影响。
+        if (controller_) {
+            const std::uint64_t epoch = controller_->vmStateEpoch();
+            if (epoch == lastAutoRefreshEpoch_)
+                return;
+            lastAutoRefreshEpoch_ = epoch;
+        }
+        onCaptureNow();
+    });
 
     populateDocs();
 }

@@ -64,6 +64,11 @@ std::string intToString(int64_t v) {
     return os.str();
 }
 
+// PERF-DETAIL 前向声明（定义在 executeWithDetail 区域；execute() 的单遍
+// detail 收集在编译成功后立即提取生成器 chunk 信息）
+std::vector<GeneratorChunkInfo> extractStackGeneratorChunks(const std::map<std::string, BytecodeChunk>& chunks);
+std::vector<GeneratorChunkInfo> extractRegGeneratorChunks(const std::map<std::string, RegBytecodeChunk>& chunks);
+
 } // namespace
 
 // ============================================================
@@ -134,7 +139,8 @@ std::string BackendExecResult::compileStageText() const {
 // BackendExecutionService::execute
 // ============================================================
 
-BackendExecResult BackendExecutionService::execute(const std::string& src, BackendType backend) {
+BackendExecResult BackendExecutionService::execute(const std::string& src, BackendType backend,
+                                                   BackendExecDetail* detail) {
     BackendExecResult r;
     r.backend = backend;
 
@@ -188,10 +194,27 @@ BackendExecResult BackendExecutionService::execute(const std::string& src, Backe
     auto t0 = std::chrono::steady_clock::now();
     std::string out;
 
+    // PERF-DETAIL: 单遍 detail 收集脚手架。detail == nullptr 时全部零开销
+    // （updateDetailPeak 直通返回，stepCallback 不安装，无 trackedCount 查询）。
+    const size_t detailBaseTracked = detail ? GcManager::instance().trackedCount() : 0;
+    size_t detailPeakTracked = 0;
+    auto updateDetailPeak = [&]() {
+        if (!detail)
+            return;
+        size_t cur = GcManager::instance().trackedCount();
+        size_t delta = (cur > detailBaseTracked) ? (cur - detailBaseTracked) : 0;
+        if (delta > detailPeakTracked)
+            detailPeakTracked = delta;
+    };
+
     if (backend == BackendType::Interpreter) {
         // Interpreter 直接执行 AST，无字节码
         Interpreter interp;
-        interp.setOutputCallback([&](const std::string& s) { out += s; });
+        // PERF-DETAIL: 输出回调顺带采样 tracked 峰值（对齐原两遍 detail 路径）
+        interp.setOutputCallback([&](const std::string& s) {
+            out += s;
+            updateDetailPeak();
+        });
 
         bool hasRuntimeError = false;
         std::string runtimeErr;
@@ -217,6 +240,8 @@ BackendExecResult BackendExecutionService::execute(const std::string& src, Backe
         } else {
             r.success = true;
         }
+        if (detail)
+            detail->peakTrackedCount = detailPeakTracked;
         return r;
     }
 
@@ -249,12 +274,26 @@ BackendExecResult BackendExecutionService::execute(const std::string& src, Backe
             return r;
         }
         r.instrCount = static_cast<int64_t>(cr.mainChunk.code.size());
+        // PERF-DETAIL: 生成器 chunk 提取（原在第二遍执行前完成）
+        if (detail)
+            detail->generatorChunks = extractStackGeneratorChunks(cr.functionChunks);
 
         VM vm;
         vm.setOutputCallback([&](const std::string& s) { out += s; });
         // AUDIT-R2 P2-3 fix: 重置计时基线——此前 t0 在编译前取，VM 路径耗时含
         // 编译时间而 Interpreter 路径不含，三后端耗时对比口径不对称。
         t0 = std::chrono::steady_clock::now();
+        // PERF-DETAIL: step 回调统计 opcode 频次 + 每 64 条采样 tracked 峰值
+        // （仅 detail 模式安装；无 detail 时 notifyStep 保持默认关闭零开销）
+        uint64_t detailStepCounter = 0;
+        if (detail) {
+            vm.setStepCallback([&](const VMStepInfo& info) {
+                detail->opcodeCounts[static_cast<uint8_t>(info.opcode)]++;
+                if ((++detailStepCounter & 63u) == 0)
+                    updateDetailPeak();
+            });
+            vm.setStepCallbackEnabled(true);
+        }
         // AUDIT-R2 P1-4 fix: 包裹执行异常——与 Interpreter 路径及 executeWithDetail
         // 的 try/catch 处理对齐（后两者均已包裹），避免 std::bad_alloc 等异常
         // 穿透到 GUI 槽函数导致 Qt 事件循环终止。
@@ -269,6 +308,7 @@ BackendExecResult BackendExecutionService::execute(const std::string& src, Backe
             execThrew = true;
             execThrewMsg = "未知异常";
         }
+        vm.setStepCallbackEnabled(false);
 
         auto t1 = std::chrono::steady_clock::now();
         r.elapsedUs = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
@@ -286,6 +326,8 @@ BackendExecResult BackendExecutionService::execute(const std::string& src, Backe
         } else {
             r.success = true;
         }
+        if (detail)
+            detail->peakTrackedCount = detailPeakTracked;
         r.diagnostics = collectDiagnostics(vm.getDiagnostics());
         return r;
     }
@@ -312,11 +354,24 @@ BackendExecResult BackendExecutionService::execute(const std::string& src, Backe
 
     const auto& regResult = compiler.getLastRegisterResult();
     r.instrCount = static_cast<int64_t>(regResult.mainChunk.code.size());
+    // PERF-DETAIL: 生成器 chunk 提取（原在第二遍执行前完成）
+    if (detail)
+        detail->generatorChunks = extractRegGeneratorChunks(regResult.functionChunks);
 
     RegisterVM vm;
     vm.setOutputCallback([&](const std::string& s) { out += s; });
     // AUDIT-R2 P2-3 fix: 重置计时基线（同 StackVM 路径，不含编译时间）
     t0 = std::chrono::steady_clock::now();
+    // PERF-DETAIL: step 回调统计 opcode 频次 + 每 64 条采样 tracked 峰值
+    uint64_t detailStepCounter = 0;
+    if (detail) {
+        vm.setStepCallback([&](const RegVMStepInfo& info) {
+            detail->opcodeCounts[static_cast<uint8_t>(info.opcode)]++;
+            if ((++detailStepCounter & 63u) == 0)
+                updateDetailPeak();
+        });
+        vm.setStepCallbackEnabled(true);
+    }
     // AUDIT-R2 P1-4 fix: 包裹执行异常（同 StackVM 路径）
     bool execThrew = false;
     std::string execThrewMsg;
@@ -329,6 +384,7 @@ BackendExecResult BackendExecutionService::execute(const std::string& src, Backe
         execThrew = true;
         execThrewMsg = "未知异常";
     }
+    vm.setStepCallbackEnabled(false);
 
     auto t1 = std::chrono::steady_clock::now();
     r.elapsedUs = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
@@ -346,6 +402,8 @@ BackendExecResult BackendExecutionService::execute(const std::string& src, Backe
     } else {
         r.success = true;
     }
+    if (detail)
+        detail->peakTrackedCount = detailPeakTracked;
     r.diagnostics = collectDiagnostics(vm.getDiagnostics());
     return r;
 }
@@ -353,7 +411,8 @@ BackendExecResult BackendExecutionService::execute(const std::string& src, Backe
 // ============================================================
 // BackendExecutionService::executeWithDetail
 // ============================================================
-// 与 execute() 流程一致，但额外提取：
+// PERF-DETAIL（2026-10-04）: 现为 execute() 的薄封装——detail 数据由 execute()
+// 的可选出参在单次执行内联收集，不再重新执行第二遍。收集语义：
 //   - generatorChunks：扫描 CompileResult/RegisterCompileResult 的 functionChunks，
 //     过滤 isGenerator=true 的 chunk 并提取 yieldCount（动态则标记 isDynamic=true）
 //   - opcodeCounts：通过 VM/RegisterVM 的 stepCallback 机制累加每条指令的 opcode
@@ -410,138 +469,15 @@ std::vector<GeneratorChunkInfo> extractRegGeneratorChunks(const std::map<std::st
 } // namespace
 
 BackendExecDetail BackendExecutionService::executeWithDetail(const std::string& src, BackendType backend) {
+    // PERF-DETAIL: 单遍完成执行 + detail 收集（原实现全流程执行两遍——第二遍
+    // 重新 Lexer+Parser+compile+execute 仅为收集 generatorChunks / opcodeCounts /
+    // peakTrackedCount，开销与 execute() 相同）。detail 数据现由 execute() 的
+    // 可选出参在本次执行内联收集；词法/语法/编译错误在 execute() 阶段 1/2 即
+    // 返回，detail 扩展字段保持默认值（与原早退语义一致）。
+    // 注：detail 模式的 elapsedUs 含 step 采样开销（每条指令一次回调），原两遍
+    // 方案首遍计时不含采样——profile 面板展示时口径自洽（计数与耗时同源）。
     BackendExecDetail d;
-    // 复用 execute() 完成基类字段填充
-    static_cast<BackendExecResult&>(d) = execute(src, backend);
-
-    // 若基类执行失败（词法/语法/编译错误），无字节码可分析，直接返回
-    if (!d.success && (d.errorPrefix == "词法错误" || d.errorPrefix == "语法错误" || d.errorPrefix == "编译错误")) {
-        return d;
-    }
-
-    // 重新执行一次以收集详细数据（generator chunks + opcode counts）
-    // 注：重新执行开销与 execute() 相同，但仅在用户主动请求详细分析时触发
-    // （ProfileDashboardPanel/CoroutineVisualizerPanel），频率可接受。
-    // AUDIT-R2 P1-5 fix: 不再调用 GcManager::instance().reset()——reset 会清空
-    // 全局单例的 tracked_/aliveSet_，若此时 worker 线程正在执行用户程序，其容器
-    // 节点会从跟踪结构中消失，后续 collectCycle 的存活判定被破坏，违反头文件
-    // "不同线程并发调用是安全的"的契约。改为记录执行前基线，peakTrackedCount
-    // 报告相对基线的净增峰值。
-    // AUDIT-R2 P2-6 fix: 峰值采样不再仅在执行结束后一次——VM 路径借用
-    // stepCallback 周期性采样（每 64 条指令），Interpreter 路径借用输出回调
-    // 采样，执行中途分配又释放的峰值不再完全漏计。
-    const size_t baseTracked = GcManager::instance().trackedCount();
-    size_t peakTracked = 0;
-
-    // Lexer + Parser（与 execute 共享逻辑，但因 detail 路径独立，此处重新执行）
-    Lexer lex;
-    std::vector<Token> tokens;
-    try {
-        tokens = lex.scan(src);
-    } catch (...) {
-        return d; // 词法错误已在 execute() 中记录
-    }
-    if (lex.getDiagnostics().hasErrors()) {
-        return d;
-    }
-    Parser parser;
-    std::unique_ptr<Block> ast;
-    try {
-        ast = parser.parse(tokens);
-    } catch (...) {
-        return d;
-    }
-    if (!ast || parser.hasErrors()) {
-        return d;
-    }
-
-    auto updatePeak = [&peakTracked, baseTracked]() {
-        size_t cur = GcManager::instance().trackedCount();
-        size_t delta = (cur > baseTracked) ? (cur - baseTracked) : 0;
-        if (delta > peakTracked)
-            peakTracked = delta;
-    };
-
-    if (backend == BackendType::Interpreter) {
-        // Interpreter：无 opcode/generatorChunks，仅测 peakTracked
-        Interpreter interp;
-        // AUDIT-R2 P2-6 fix: 输出回调中采样，捕捉执行中途峰值
-        interp.setOutputCallback([&updatePeak](const std::string&) { updatePeak(); });
-        try {
-            interp.execute(*ast);
-        } catch (...) {
-            // 已在 execute() 中记录
-        }
-        updatePeak();
-        d.peakTrackedCount = peakTracked;
-        return d;
-    }
-
-    if (backend == BackendType::StackVM_IR) {
-        Compiler compiler;
-        compiler.setUseIR(true);
-        CompileResult cr;
-        try {
-            cr = compiler.compile(*ast);
-        } catch (...) {
-            return d;
-        }
-        if (compiler.getDiagnostics().hasErrors()) {
-            return d;
-        }
-        d.generatorChunks = extractStackGeneratorChunks(cr.functionChunks);
-
-        VM vm;
-        vm.setOutputCallback([](const std::string&) {});
-        // AUDIT-R2 P2-6 fix: 每 64 条指令采样一次 tracked 峰值
-        uint64_t stepCounter = 0;
-        vm.setStepCallback([&d, &stepCounter, &updatePeak](const VMStepInfo& info) {
-            d.opcodeCounts[static_cast<uint8_t>(info.opcode)]++;
-            if ((++stepCounter & 63u) == 0)
-                updatePeak();
-        });
-        vm.setStepCallbackEnabled(true);
-        try {
-            vm.execute(cr);
-        } catch (...) {
-        }
-        vm.setStepCallbackEnabled(false);
-        updatePeak();
-        d.peakTrackedCount = peakTracked;
-        return d;
-    }
-
-    // RegisterVM_IR 路径
-    Compiler compiler;
-    compiler.setUseRegisterVM(true);
-    try {
-        compiler.compile(*ast);
-    } catch (...) {
-        return d;
-    }
-    if (compiler.getDiagnostics().hasErrors()) {
-        return d;
-    }
-    const auto& regResult = compiler.getLastRegisterResult();
-    d.generatorChunks = extractRegGeneratorChunks(regResult.functionChunks);
-
-    RegisterVM vm;
-    vm.setOutputCallback([](const std::string&) {});
-    // AUDIT-R2 P2-6 fix: 每 64 条指令采样一次 tracked 峰值
-    uint64_t stepCounter = 0;
-    vm.setStepCallback([&d, &stepCounter, &updatePeak](const RegVMStepInfo& info) {
-        d.opcodeCounts[static_cast<uint8_t>(info.opcode)]++;
-        if ((++stepCounter & 63u) == 0)
-            updatePeak();
-    });
-    vm.setStepCallbackEnabled(true);
-    try {
-        vm.execute(regResult);
-    } catch (...) {
-    }
-    vm.setStepCallbackEnabled(false);
-    updatePeak();
-    d.peakTrackedCount = peakTracked;
+    static_cast<BackendExecResult&>(d) = execute(src, backend, &d);
     return d;
 }
 

@@ -34,6 +34,7 @@
 
 #include "common/MemoryInspectionAPI.h" // GcMode, GcPhase 枚举（ARCH-10 单一真相源）
 #include "interpreter/ValueTypes.h"     // ValueType
+#include <atomic>
 #include <functional>
 #include <mutex>
 #include <unordered_set>
@@ -157,8 +158,11 @@ private:
     GcManager(const GcManager&) = delete;
     GcManager& operator=(const GcManager&) = delete;
 
-    // 从单个 Value 出发递归 mark 所有可达容器
-    void markValue(const Value& v, std::unordered_set<const void*>& marked);
+    // 从单个 Value 出发迭代 mark 所有可达容器。
+    // PERF-GC: worklist 由调用方（collectCycle）持有并按引用传入——整个 GC
+    // 暂停期仅 1 次分配，取代原先每个根元素各建一个 vector 的模式。
+    void markValue(const Value& v, std::unordered_set<const void*>& marked,
+                   std::vector<const Value*>& worklist);
 
     // BUG-003 fix: 检查分配阈值，达到则调用 gcTriggerCallback_ 进行增量回收
     void checkIncrementalGc();
@@ -172,31 +176,36 @@ private:
     std::unordered_set<RefCounted*> aliveSet_;
 
     // BUG-003 fix: 增量触发相关状态
-    size_t allocationsSinceLastGc_ = 0;
-    size_t gcAllocationThreshold_ = GC_ALLOCATION_THRESHOLD;
+    // PERF-GC: 统计/标志字段改 std::atomic——写入点（registerTracked/collectCycle/
+    // reset）均在锁内，读取点（GUI 面板轮询、checkPendingGc 快速路径）无锁化，
+    // 消除 UI 每次轮询 8 次加锁与每语句 1 次加锁的开销。
+    std::atomic<size_t> allocationsSinceLastGc_{0};
+    std::atomic<size_t> gcAllocationThreshold_{GC_ALLOCATION_THRESHOLD};
     std::function<void()> gcTriggerCallback_;
     // AUDIT-R3 P2-9 fix: 当前回调的所有者令牌（如 Interpreter 实例指针），
     // 供 clearGcTriggerCallbackIfOwner 判定回调归属；nullptr = 未指定所有者。
     const void* gcTriggerOwner_ = nullptr;
     // 进行中标志：防止回调内 collectCycle → 析构 → registerTracked → 再触发 GC 的递归
     bool gcInProgress_ = false;
-    // P0 fix: 延迟增量 GC 触发标志——registerTracked 中设置，checkPendingGc() 中消费
-    bool pendingIncrementalGc_ = false;
+    // P0 fix: 延迟增量 GC 触发标志——registerTracked 中设置（锁内），
+    // checkPendingGc() 中消费（无锁快速读 + 慢路径锁内复查）
+    std::atomic<bool> pendingIncrementalGc_{false};
 
-    // R113 C 项：GC 进度统计（仅 collectCycle 内部写入，外部只读访问）
-    GcPhase currentPhase_ = GcPhase::Idle;
-    size_t lastMarkedCount_ = 0;    // 上次 GC 标记的可达节点数
-    size_t lastCollectedCount_ = 0; // 上次 GC 回收的孤岛数
-    size_t totalGcCount_ = 0;       // 累计 GC 次数
+    // R113 C 项：GC 进度统计（锁内写入，atomic 无锁只读访问）
+    std::atomic<GcPhase> currentPhase_{GcPhase::Idle};
+    std::atomic<size_t> lastMarkedCount_{0};    // 上次 GC 标记的可达节点数
+    std::atomic<size_t> lastCollectedCount_{0}; // 上次 GC 回收的孤岛数
+    std::atomic<size_t> totalGcCount_{0};       // 累计 GC 次数
 
     // R135 GC 模式字段——控制 registerTracked / collectCycle 的行为分流。
     // 默认 RefCountWithCycleGc 保持向后兼容。
     GcMode gcMode_ = GcMode::RefCountWithCycleGc;
 
-    // P0-1 fix: 全局锁，保护 tracked_/aliveSet_/所有计数器/回调/模式字段。
+    // P0-1 fix: 全局锁，保护 tracked_/aliveSet_/回调/模式字段。
     // 使用 recursive_mutex 是因为 collectCycle 在 GcOnly 模式下 delete 对象会触发
     // ~RefCounted→onDestroyed 重入同一把锁；registerTracked→checkIncrementalGc→
     // gcTriggerCallback_→collectCycle 也是同线程重入。recursive_mutex 保证这些
     // 合法的重入不死锁，同时互斥其他线程的并发访问。
+    // PERF-GC: 统计计数器已迁移到 atomic（见上），锁不再覆盖只读统计访问。
     mutable std::recursive_mutex mutex_;
 };

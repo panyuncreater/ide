@@ -126,8 +126,15 @@ public:
     /// 完整执行入口：Lexer → Parser → Compiler → 指定后端执行。
     /// @param src MiniLang 源码
     /// @param backend 后端类型（Interpreter / StackVM_IR / RegisterVM_IR）
+    /// @param detail 可选出参（PERF-DETAIL，2026-10-04）：非空时在本次执行内
+    ///               单遍收集 generatorChunks / opcodeCounts / peakTrackedCount——
+    ///               原设计 executeWithDetail 需全流程执行两遍（第二遍重新
+    ///               Lexer+Parser+compile+execute）。注意 detail 模式的耗时含
+    ///               step 采样开销（每条指令一次回调），与无 detail 的计时口径
+    ///               不完全可比。
     /// @return 执行结果（含输出/错误/耗时/指令数）
-    static BackendExecResult execute(const std::string& src, BackendType backend);
+    static BackendExecResult execute(const std::string& src, BackendType backend,
+                                     BackendExecDetail* detail = nullptr);
 
     /// 扩展执行入口：返回详细执行信息（含生成器 chunk / opcode 计数 / GC 峰值）。
     /// 用于 CoroutineVisualizerPanel（生成器 chunk 信息）和

@@ -43,7 +43,7 @@ struct LowerFixture {
     }
 
     /// 添加一条 IR 指令到当前块
-    void emit(IROp op, std::vector<IROperand> ops, int line = 1) {
+    void emit(IROp op, IROperandList ops, int line = 1) {
         block.instructions.emplace_back(op, std::move(ops), line);
     }
 
@@ -60,7 +60,7 @@ struct LowerFixture {
             BytecodeIRBackend::StackEffect fx{0, 0};
             if (BytecodeIRBackend::irStackEffect(ins, fx)) {
                 while (depth < fx.pops) {
-                    balanced.emplace_back(IROp::LOAD_NULL, std::vector<IROperand>{IROperand::vreg(0xFFFF)});
+                    balanced.emplace_back(IROp::LOAD_NULL, IROperandList{IROperand::vreg(0xFFFF)});
                     ++depth;
                 }
                 depth += fx.pushes - fx.pops;
@@ -68,7 +68,7 @@ struct LowerFixture {
             balanced.push_back(std::move(ins));
         }
         while (depth > 0) {
-            balanced.emplace_back(IROp::POP, std::vector<IROperand>{});
+            balanced.emplace_back(IROp::POP, IROperandList{});
             --depth;
         }
         block.instructions = std::move(balanced);
@@ -675,7 +675,7 @@ TEST(BytecodeIRBackendModule, LowerModuleProducesMainChunk) {
     block.labelIndex = mainFn->allocLabel();
     // [[maybe_unused]]：仅需 allocVReg 的分配副作用，返回值不参与断言
     [[maybe_unused]] IROperand v = mainFn->allocVReg();
-    block.instructions.emplace_back(IROp::RETURN_NULL, std::vector<IROperand>{}, 1);
+    block.instructions.emplace_back(IROp::RETURN_NULL, IROperandList{}, 1);
     mainFn->blocks.push_back(std::move(block));
     module.mainFunction = std::move(mainFn);
 
@@ -695,7 +695,7 @@ TEST(BytecodeIRBackendModule, LowerModuleWithSubFunctionProducesFunctionChunk) {
     mainFn->name = "main";
     IRBasicBlock mainBlock;
     mainBlock.labelIndex = mainFn->allocLabel();
-    mainBlock.instructions.emplace_back(IROp::RETURN_NULL, std::vector<IROperand>{}, 1);
+    mainBlock.instructions.emplace_back(IROp::RETURN_NULL, IROperandList{}, 1);
     mainFn->blocks.push_back(std::move(mainBlock));
     module.mainFunction = std::move(mainFn);
 
@@ -706,8 +706,8 @@ TEST(BytecodeIRBackendModule, LowerModuleWithSubFunctionProducesFunctionChunk) {
     subBlock.labelIndex = subFn->allocLabel();
     IROperand rv = subFn->allocVReg();
     // D1 fix: 栈平衡不变量——RETURN 需要栈顶有返回值，前置 LOAD_NULL 供其消费
-    subBlock.instructions.emplace_back(IROp::LOAD_NULL, std::vector<IROperand>{rv}, 1);
-    subBlock.instructions.emplace_back(IROp::RETURN, std::vector<IROperand>{rv}, 1);
+    subBlock.instructions.emplace_back(IROp::LOAD_NULL, IROperandList{rv}, 1);
+    subBlock.instructions.emplace_back(IROp::RETURN, IROperandList{rv}, 1);
     subFn->blocks.push_back(std::move(subBlock));
     module.addFunction(std::move(subFn));
 

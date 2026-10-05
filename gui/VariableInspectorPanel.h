@@ -122,6 +122,7 @@ private:
     QTreeWidget* varTree_ = nullptr;
     QTextBrowser* varDetail_ = nullptr;
     QTimer* autoTimer_ = nullptr;
+    std::uint64_t lastAutoRefreshEpoch_ = 0; // PERF: 安全网轮询纪元门控（见 timer 连接处注释）
 
     // 子页 2：教学场景库
     QListWidget* exampleList_ = nullptr;

@@ -69,6 +69,18 @@ Interpreter::~Interpreter() {
     GcManager::instance().clearGcTriggerCallbackIfOwner(this);
 }
 
+// PERF-GC: 只读遍历 env 本层变量收集 GC 根指针（零拷贝）。
+// 取代 snapshotLocalVariables() 的 toUnorderedMap 全量深拷贝——GC 根收集是纯
+// 只读操作（单线程执行点调用），无需构建临时哈希表与逐变量 string/Value 拷贝
+// （原实现每次根收集 = O(可见变量数) 次堆分配 + 2N 次原子引用计数操作）。
+static void collectEnvLocalGcRoots(const Environment* env, std::vector<const void*>& out) {
+    for (const auto& var : env->localVariables()) {
+        const void* ptr = var.second.gcRootPtr();
+        if (ptr)
+            out.push_back(ptr);
+    }
+}
+
 Value Interpreter::execute(Block& program) {
     // 重置状态
     // BUG-DBG-9 fix: 重置 stopRequested_ 标志，避免上一轮"停止"按钮终止后残留 true
@@ -123,23 +135,13 @@ Value Interpreter::execute(Block& program) {
     // 可保证复用场景的正确性。
     if (!replState_.active) {
         if (globalEnv_) {
-            auto vars = globalEnv_->snapshotLocalVariables();
-            for (const auto& var : vars) {
-                const void* ptr = var.second.gcRootPtr();
-                if (ptr)
-                    gcRoots.push_back(ptr);
-            }
+            collectEnvLocalGcRoots(globalEnv_.get(), gcRoots);
         }
     }
     if (replState_.active) {
         // (1) savedGlobalEnv 顶层变量
         if (replState_.savedGlobalEnv) {
-            auto vars = replState_.savedGlobalEnv->snapshotLocalVariables();
-            for (const auto& var : vars) {
-                const void* ptr = var.second.gcRootPtr();
-                if (ptr)
-                    gcRoots.push_back(ptr);
-            }
+            collectEnvLocalGcRoots(replState_.savedGlobalEnv.get(), gcRoots);
         }
         // (2) savedClassRegistry 中每个 ClassInfo.fields 的默认值 + closureEnv
         for (const auto& clsPair : replState_.savedClassRegistry) {
@@ -149,23 +151,13 @@ Value Interpreter::execute(Block& program) {
                     gcRoots.push_back(ptr);
             }
             if (clsPair.second.closureEnv) {
-                auto clsVars = clsPair.second.closureEnv->snapshotLocalVariables();
-                for (const auto& var : clsVars) {
-                    const void* ptr = var.second.gcRootPtr();
-                    if (ptr)
-                        gcRoots.push_back(ptr);
-                }
+                collectEnvLocalGcRoots(clsPair.second.closureEnv.get(), gcRoots);
             }
         }
         // (3) savedModuleCache 中每个 Environment 的顶层变量
         for (const auto& modPair : replState_.savedModuleCache) {
             if (modPair.second) {
-                auto modVars = modPair.second->snapshotLocalVariables();
-                for (const auto& var : modVars) {
-                    const void* ptr = var.second.gcRootPtr();
-                    if (ptr)
-                        gcRoots.push_back(ptr);
-                }
+                collectEnvLocalGcRoots(modPair.second.get(), gcRoots);
             }
         }
     }
@@ -175,12 +167,7 @@ Value Interpreter::execute(Block& program) {
     // 或 REPL 模式添加 GC），栈上闭包引用的循环容器需被标记为可达，否则会被误回收。
     for (const auto& frame : callStack_) {
         if (frame.env) {
-            auto vars = frame.env->snapshotLocalVariables();
-            for (const auto& var : vars) {
-                const void* ptr = var.second.gcRootPtr();
-                if (ptr)
-                    gcRoots.push_back(ptr);
-            }
+            collectEnvLocalGcRoots(frame.env.get(), gcRoots);
         }
     }
     GcManager::instance().collectCycle(gcRoots);
@@ -1267,15 +1254,16 @@ void Interpreter::triggerIncrementalGc() {
     // （snapshotLocalVariables 不含子块环境），块作用域变量/模块加载期环境
     // 中的活容器不在根集内，sweep 会静默清空其元素（数据损坏）。
     // 现沿 parent 链全层收集；重复根无害（mark 阶段 marked 集去重）。
-    auto collectEnvChainRoots = [&gcRoots](const Environment* env) {
+    // PERF-GC: visitedEnvs 去重——链间常重叠（currentEnv_ 链尾即 globalEnv_/
+    // 模块环境、调用栈帧父链与全局链相交），避免同一 env 重复收集；
+    // collectEnvLocalGcRoots 只读遍历（零拷贝），见函数上方说明。
+    std::unordered_set<const Environment*> visitedEnvs;
+    auto collectEnvChainRoots = [&gcRoots, &visitedEnvs](const Environment* env) {
         int depth = 0;
         constexpr int MAX_CHAIN_DEPTH = 1024;
         while (env && depth++ < MAX_CHAIN_DEPTH) {
-            auto vars = env->snapshotLocalVariables();
-            for (const auto& var : vars) {
-                const void* ptr = var.second.gcRootPtr();
-                if (ptr)
-                    gcRoots.push_back(ptr);
+            if (visitedEnvs.insert(env).second) {
+                collectEnvLocalGcRoots(env, gcRoots);
             }
             env = env->parent.get();
         }
@@ -1527,11 +1515,11 @@ Interpreter::ChainInfo Interpreter::collectAndEvaluateChain(ASTNode* objectNode,
                 info.vals[i] = std::as_const(parent).arrayVal()[indexVal.intVal()];
             } else if (parent.isDict()) {
                 // L4 fix: 字典键支持 string/int/bool/float
-                auto dk = Value::dictKeyFromValue(indexVal);
-                if (!dk)
+                // PERF: 透明查找，string 键免 DictKey 构造的字符串深拷贝
+                if (!Value::dictKeyIsValid(indexVal))
                     runtimeError(ErrorMessages::kDictKeyInvalidType, line, col, DiagCodes::kTypeMismatch);
-                auto it = std::as_const(parent).dictVal().find(*dk);
-                info.vals[i] = (it != std::as_const(parent).dictVal().end()) ? it->second : Value::nullValue();
+                const Value* found = Value::dictFindValue(std::as_const(parent).dictVal(), indexVal);
+                info.vals[i] = found ? *found : Value::nullValue();
             } else {
                 runtimeError(ErrorMessages::kTypeNotIndexable, line, col, DiagCodes::kTypeMismatch);
             }
@@ -1585,14 +1573,14 @@ void Interpreter::writeBackChain(ChainInfo& info, Value innermost, int line, int
                 }
             } else if (parentVal.isDict()) {
                 // L4 fix: 字典键支持 string/int/bool/float
-                auto dk = Value::dictKeyFromValue(indexVal);
-                if (!dk)
+                // PERF: 透明写路径，string 键命中时免字符串深拷贝
+                if (!Value::dictKeyIsValid(indexVal))
                     runtimeError(ErrorMessages::kDictKeyInvalidType, line, col, DiagCodes::kTypeMismatch);
                 // S1 fix: 优先使用 tryGetMutableDict 跳过 COW 深拷贝
                 if (auto* entries = parentVal.tryGetMutableDict()) {
-                    (*entries)[*dk] = currentVal;
+                    Value::dictGetOrInsertRef(*entries, indexVal) = currentVal;
                 } else {
-                    parentVal.dictVal()[*dk] = currentVal;
+                    Value::dictGetOrInsertRef(parentVal.dictVal(), indexVal) = currentVal;
                 }
             } else {
                 runtimeError(ErrorMessages::kTypeNotIndexAssignable, line, col, DiagCodes::kTypeMismatch);
@@ -1636,10 +1624,10 @@ Value Interpreter::writeBack(ASTNode* objectNode, bool isIndexAssign, ASTNode* i
             modifiedObj.arrayVal()[idx.intVal()] = val;
         } else if (modifiedObj.isDict()) {
             // L4 fix: 字典键支持 string/int/bool/float
-            auto dk = Value::dictKeyFromValue(idx);
-            if (!dk)
+            // PERF: 透明写路径，string 键命中时免字符串深拷贝
+            if (!Value::dictKeyIsValid(idx))
                 runtimeError(ErrorMessages::kDictKeyInvalidType, line, col);
-            modifiedObj.dictVal()[*dk] = val;
+            Value::dictGetOrInsertRef(modifiedObj.dictVal(), idx) = val;
         } else {
             runtimeError(ErrorMessages::kTypeNotIndexAssignable, line, col);
         }
@@ -3150,7 +3138,8 @@ void Interpreter::visitMatchExpr(MatchExpr& node) {
 
 // R164 协程/生成器：yield 表达式求值（Interpreter 重放模式）
 // ============================================================
-// 重放模式核心思路：
+// 重放模式核心思路（MINILANG_CORO_FIBER=0 平台；=1 平台走下方 fiber 挂起
+// 分支，见 InterpreterCoroutine.cpp 文件头"模式选择"）：
 //   - 生成器函数调用时，Interpreter 不直接执行函数体，而是返回 Coroutine 值
 //   - 每次调用 .next() 时，从头重新执行函数体，用运行时 yield 执行计数器
 //     （currentYieldExecutionCount_）跳过已返回的 yield，到达目标时返回
@@ -3169,6 +3158,14 @@ void Interpreter::visitMatchExpr(MatchExpr& node) {
 // 普通函数执行期间此字段为 -1，visitYieldExpr 在非协程上下文被调用属于语义错误。
 // ============================================================
 void Interpreter::visitYieldExpr(YieldExpr& node) {
+    // 真挂起模式（MINILANG_CORO_FIBER=1）：fiber 上下文中的 yield = 挂起——保存
+    // yield 值与解释器上下文后切回调用方，下一次 .next() 从本表达式恢复继续执行。
+    // 每个 yield 都挂起（重放的目标 gating 不适用）；前缀副作用只执行一次。
+    if (activeCoroutineFiber_) {
+        Value yieldValue = node.value ? evaluate(node.value.get()) : Value::nullValue();
+        coroutineSuspend(std::move(yieldValue));
+        return;
+    }
     if (currentCoroutineTargetYieldId_ < 0) {
         // 防御性检查：yield 在非生成器函数体中出现（Parser 已在 primary() 拦截，
         // 但闭包路径或动态构造的 AST 可能绕过——此处兜底报错而非崩溃）
@@ -3425,17 +3422,12 @@ void Interpreter::visitIndexAccess(IndexAccess& node) {
     // 字典索引访问
     if (objC.isDict()) {
         // L4 fix: 字典键支持 string/int/bool/float
-        auto dk = Value::dictKeyFromValue(idx);
-        if (!dk) {
+        // PERF: 透明查找，string 键免 DictKey 构造的字符串深拷贝
+        if (!Value::dictKeyIsValid(idx)) {
             runtimeError(ErrorMessages::kDictKeyInvalidType, node.line, node.column, DiagCodes::kTypeMismatch);
         }
-        const auto& dict = objC.dictVal();
-        auto it = dict.find(*dk);
-        if (it == dict.end()) {
-            lastValue_ = Value::nullValue();
-            return;
-        }
-        lastValue_ = it->second;
+        const Value* found = Value::dictFindValue(objC.dictVal(), idx);
+        lastValue_ = found ? *found : Value::nullValue();
         return;
     }
 

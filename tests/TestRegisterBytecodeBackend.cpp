@@ -41,7 +41,7 @@ struct RegLowerFixture {
         block.labelIndex = ir.allocLabel();
     }
 
-    void emit(IROp op, std::vector<IROperand> ops, int line = 1) {
+    void emit(IROp op, IROperandList ops, int line = 1) {
         block.instructions.emplace_back(op, std::move(ops), line);
     }
 
@@ -571,7 +571,7 @@ TEST(RegisterBytecodeRegAlloc, TooManyLiveVRegsReportsError) {
     // 否则线性扫描分配器在 vreg 最后使用（即其自身 LOAD_CONST）后
     // 立即释放寄存器供后续 vreg 复用，永远不会同时活跃 33 个。
     RegLowerFixture f;
-    std::vector<IROperand> vregs;
+    IROperandList vregs;
     for (int i = 0; i < 33; ++i) {
         vregs.push_back(f.ir.allocVReg());
     }
@@ -625,7 +625,7 @@ TEST(RegisterBytecodeModule, LowerModuleProducesMainChunk) {
     mainFn->name = "main";
     IRBasicBlock block;
     block.labelIndex = mainFn->allocLabel();
-    block.instructions.emplace_back(IROp::RETURN_NULL, std::vector<IROperand>{}, 1);
+    block.instructions.emplace_back(IROp::RETURN_NULL, IROperandList{}, 1);
     mainFn->blocks.push_back(std::move(block));
     module.mainFunction = std::move(mainFn);
 
@@ -643,7 +643,7 @@ TEST(RegisterBytecodeModule, LowerModuleWithSubFunctionProducesFunctionChunk) {
     mainFn->name = "main";
     IRBasicBlock mainBlock;
     mainBlock.labelIndex = mainFn->allocLabel();
-    mainBlock.instructions.emplace_back(IROp::RETURN_NULL, std::vector<IROperand>{}, 1);
+    mainBlock.instructions.emplace_back(IROp::RETURN_NULL, IROperandList{}, 1);
     mainFn->blocks.push_back(std::move(mainBlock));
     module.mainFunction = std::move(mainFn);
 
@@ -652,7 +652,7 @@ TEST(RegisterBytecodeModule, LowerModuleWithSubFunctionProducesFunctionChunk) {
     IRBasicBlock subBlock;
     subBlock.labelIndex = subFn->allocLabel();
     IROperand rv = subFn->allocVReg();
-    subBlock.instructions.emplace_back(IROp::RETURN, std::vector<IROperand>{ rv }, 1);
+    subBlock.instructions.emplace_back(IROp::RETURN, IROperandList{ rv }, 1);
     subFn->blocks.push_back(std::move(subBlock));
     module.addFunction(std::move(subFn));
 

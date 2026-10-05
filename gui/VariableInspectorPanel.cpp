@@ -229,7 +229,17 @@ VariableInspectorPanel::VariableInspectorPanel(QWidget* parent) : QWidget(parent
     autoTimer_ = new QTimer(this);
     // OPT-1: 500ms→2000ms 安全网，状态变更由 vmStateChanged 监听器即时触发。
     autoTimer_->setInterval(2000);
-    connect(autoTimer_, &QTimer::timeout, this, &VariableInspectorPanel::onRefresh);
+    connect(autoTimer_, &QTimer::timeout, this, [this]() {
+        // PERF: 安全网轮询纪元门控（同 CallStackPanel 注释）——VM 状态未变时
+        // 跳过 refreshLive 的 clear/rebuild 与状态快照深拷贝。
+        if (controller_) {
+            const std::uint64_t epoch = controller_->vmStateEpoch();
+            if (epoch == lastAutoRefreshEpoch_)
+                return;
+            lastAutoRefreshEpoch_ = epoch;
+        }
+        onRefresh();
+    });
 
     populateExamples();
 }

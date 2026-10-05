@@ -215,6 +215,23 @@ public:
         bool operator()(const DictKey& a, double b) const {
             return std::holds_alternative<double>(a) && std::get<double>(a) == b;
         }
+        // PERF: 对称反向重载——C++20 异构查找仅要求比较器对 (查找键, 存储键) 可调用，
+        // 不同 STL 实现的参数顺序不同，提供两种顺序保证可移植。
+        bool operator()(const std::string_view& a, const DictKey& b) const {
+            return std::holds_alternative<std::string>(b) && a == std::get<std::string>(b);
+        }
+        bool operator()(const std::string& a, const DictKey& b) const {
+            return std::holds_alternative<std::string>(b) && a == std::get<std::string>(b);
+        }
+        bool operator()(int64_t a, const DictKey& b) const {
+            return std::holds_alternative<int64_t>(b) && a == std::get<int64_t>(b);
+        }
+        bool operator()(bool a, const DictKey& b) const {
+            return std::holds_alternative<bool>(b) && a == std::get<bool>(b);
+        }
+        bool operator()(double a, const DictKey& b) const {
+            return std::holds_alternative<double>(b) && a == std::get<double>(b);
+        }
     };
 
     /// R97 #2 fix: DictMap typedef 简化 unordered_map 类型引用（19 处统一引用）。
@@ -249,6 +266,53 @@ public:
         if (v.isFloat())
             return DictKey{v.floatVal()};
         return std::nullopt;
+    }
+
+    /// PERF: 字典键类型快速校验（接受范围与 dictKeyFromValue 一致：string/int/bool/float）。
+    /// 供透明查找路径使用——标量校验无任何分配，取代"构造 DictKey 仅判断类型"的旧模式。
+    static bool dictKeyIsValid(const Value& v) { return v.isString() || v.isInt() || v.isBool() || v.isFloat(); }
+
+    /// PERF: 字典透明查找——R97 #2 透明 hash（is_transparent）的实际启用点（此前
+    /// 无任何调用方）。string 键走 string_view 异构查找，免 DictKey{string} 的
+    /// 字符串深拷贝（每次 d[key] 读取省 1 次堆分配 + 拷贝）；int/bool/float 为标量，
+    /// K 按值推导，无堆分配。跨三后端共用（Interpreter/StackVM/RegisterVM）。
+    /// 前置条件：dictKeyIsValid(key)（调用方负责先校验并报错）。
+    /// 返回命中条目指针；未命中返回 nullptr。
+    static const Value* dictFindValue(const DictMap& entries, const Value& key) {
+        if (key.isString()) {
+            auto it = entries.find(std::string_view(key.stringVal()));
+            return it != entries.end() ? &it->second : nullptr;
+        }
+        if (key.isInt()) {
+            auto it = entries.find(key.intVal());
+            return it != entries.end() ? &it->second : nullptr;
+        }
+        if (key.isBool()) {
+            auto it = entries.find(key.boolVal());
+            return it != entries.end() ? &it->second : nullptr;
+        }
+        auto it = entries.find(key.floatVal());
+        return it != entries.end() ? &it->second : nullptr;
+    }
+
+    /// PERF: 字典透明写路径——先异构查找命中则原地返回既有条目引用，未命中才
+    /// 构造拥有型 DictKey 插入（string 键仅在真正插入时发生一次深拷贝）。
+    /// 前置条件：dictKeyIsValid(key)（调用方负责先校验并报错）。
+    /// 返回可写条目引用（语义对齐 entries[DictKey] 的 operator[] 默认构造 + 赋值）。
+    /// 注意：返回引用在 map rehash 后失效，与 operator[] 相同约束。
+    static Value& dictGetOrInsertRef(DictMap& entries, const Value& key) {
+        if (key.isString()) {
+            std::string_view sv(key.stringVal());
+            auto it = entries.find(sv);
+            if (it != entries.end())
+                return it->second;
+            return entries[DictKey{std::string(sv)}];
+        }
+        if (key.isInt())
+            return entries[key.intVal()];
+        if (key.isBool())
+            return entries[key.boolVal()];
+        return entries[key.floatVal()];
     }
 
     /// DictKey → string 转换（用于 toString/打印/Formatter 兼容旧接口）。
@@ -432,6 +496,15 @@ private:
         // R164 D.6: RegisterVM 路径字段（非拥有，functionChunks_ 拥有 RegBytecodeChunk 生命周期）
         // 与 vmChunk 互斥使用：vmChunk 用于 StackVM/StackVM-IR 路径，regChunk 用于 RegisterVM 路径。
         const RegBytecodeChunk* regChunk = nullptr;
+        // —— 真挂起状态（第四轮架构优化，见 interpreter/CoroutineFiber.h）——
+        // 挂起模式（MINILANG_CORO_FIBER=1，当前为 Windows）下 .next() 不再重放：
+        // Interpreter 侧 fiber 状态 / StackVM/RegisterVM 侧帧链快照存于本结构，
+        // 下次 .next() 恢复执行。类型对 Value 不透明（具体结构定义于
+        // InterpreterCoroutine.cpp / VMCalls.cpp / RegisterVMCalls.cpp，shared_ptr
+        // 自定义 deleter 负责平台资源释放）；克隆路径（cloneImpl VAL_COROUTINE
+        // 分支）逐字段复制、有意不复制这两个字段——克隆得到未启动的独立协程。
+        std::shared_ptr<void> interpreterFiber; // Interpreter fiber 状态
+        std::shared_ptr<void> vmSuspension;     // StackVM/RegisterVM 挂起快照（按 chunk 互斥使用）
         CoroutineData() : RefCounted(ValueType::VAL_COROUTINE) {}
     };
 

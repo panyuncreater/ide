@@ -13,6 +13,7 @@
 
 堆类型通过侵入式 `RefCounted` 基类管理引用计数（`interpreter/RefCounted.h`）。
 
+**内存序约定（2026-10-04 起）**：`release()` 使用 shared_ptr 同款惯用法——`fetch_sub(1, memory_order_release)` + 归零时 `atomic_thread_fence(memory_order_acquire)` 后 `delete this`（非归零递减省去 acquire 半序，堆值密集代码每次少一次强同步）。**勿"修复"回 `acq_rel`**：归零路径的 acquire fence 已覆盖跨线程析构可见性语义。
 **新增堆类型强制 checklist**：
 1. 继承 `RefCounted`，实现 `release`/减引用语义，禁止手工 `delete` 裸 `Value` 持有者。
 2. 检查是否需要被 `GcManager` 追踪（见 §3）；`Value.h` 中 `friend class GcManager` 表明 GC 可访问内部结构，新类型如参与循环引用检测须配合 GC 遍历接口。
@@ -26,6 +27,9 @@
   - `Interpreter` 析构必须清除 GcManager 单例中持有 `this` 的回调，避免悬垂指针（`Interpreter.cpp` R157 fix 即此模式，新加回调必须成对清理）。
   - 被追踪对象注册/注销必须与构造/析构配对；任何「先于析构注销」的路径缺失都会导致 UAF。
   - GC 触发点是增量式的（阈值驱动），**不得假设 GC 只在特定时机运行**——持引用跨 GC 边界的代码必须自行保住引用计数。
+  - **根集收集零拷贝（2026-10-04 起）**：`Interpreter::triggerIncrementalGc` 与 execute 入口兜底 GC 只读遍历 `Environment::localVariables()`（`collectEnvLocalGcRoots`）取 `gcRootPtr()`，并按 `visitedEnvs` 对重叠环境链去重——**禁止改回 `snapshotLocalVariables()` 深拷贝模式**（每次触发 O(可见变量数) 次堆分配 + 2N 原子操作）。
+  - **统计字段为 `std::atomic`（2026-10-04 起）**：`allocationsSinceLastGc_`/`currentPhase_`/`lastMarkedCount_`/`lastCollectedCount_`/`totalGcCount_`/`gcAllocationThreshold_`/`pendingIncrementalGc_` 均为 atomic，写入点在锁内、只读访问（GUI 轮询）无锁；`checkPendingGc` 走无锁快速路径（relaxed 读 + 慢路径锁内复查）。新增统计字段沿用此模式。
+  - mark 阶段整个 `collectCycle` 共享一个 worklist（按引用传入 `markValue`），不得在每个根元素内新建。
 
 ## 4. Copy-On-Write（COW）
 

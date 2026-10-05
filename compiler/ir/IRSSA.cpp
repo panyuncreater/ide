@@ -27,6 +27,7 @@
 #include <map>
 #include <queue>
 #include <set>
+#include <memory>
 #include <sstream>
 #include <stack>
 
@@ -645,7 +646,7 @@ bool ssaConstructPass(IRFunction& ir) {
         size_t offset = 0;
         for (uint32_t slot : slots) {
             uint32_t destVReg = ir.nextVReg++;
-            std::vector<IROperand> ops;
+            IROperandList ops;
             ops.push_back(IROperand::vreg(destVReg));
             ops.push_back(IROperand::local(slot));
             // pred/vreg 对在重命名阶段填充
@@ -910,7 +911,7 @@ bool ssaDestructPass(IRFunction& ir) {
                     uint32_t destVReg = instr.operands[0].index;
                     uint32_t slot = instr.operands[1].index;
                     newInstrs.emplace_back(IROp::LOAD_LOCAL,
-                                           std::vector<IROperand>{IROperand::vreg(destVReg), IROperand::local(slot)},
+                                           IROperandList{IROperand::vreg(destVReg), IROperand::local(slot)},
                                            instr.line);
                     modified = true;
                 }
@@ -1033,25 +1034,46 @@ bool licmPass(IRFunction& ir) {
     const size_t kMaxIterations = totalInstrs + 16;
     size_t iterations = 0;
 
+    // 结构分析复用（第四轮优化）：LICM 只增删纯计算指令（isPureComputeForSSA
+    // 不含 LABEL/终结指令），从不增删/移动块图定界符，因此节点分区唯一可能的
+    // 变化是"非 LABEL 起始的指令块（块首无 LABEL gap / 终结指令后 gap）的指令
+    // 被全部外提 → 该节点消失"，且外提指令的插入（preheader 终结指令前或尾部
+    // gap 末尾）不产生新节点——节点数严格单调不增，任一分区变化必使节点数减 1。
+    // 故"重建 IRCFG 后节点数不变"⇔ 分区与基准一致 ⇒ 节点 id 语义未变，
+    // DominatorTree（CHK 不动点）/NaturalLoopInfo（回边扫描）可跨不动点批次
+    // 复用；每轮仅重建 IRCFG 取新鲜指令区间 (startInstr/endInstr)（P2-10 语义
+    // 保留）。节点数变化（分区塌缩）时重建三者，退化为原每批全量重建行为。
+    // 注意 dominates/loops 查询只读已存的 idom_/loops_ 数据，不解引用 cfg_
+    // 引用；analysisCfg 原地赋值保持地址稳定，重建后引用不悬垂。
+    IRCFG analysisCfg(ir);
+    if (analysisCfg.size() < 2)
+        return false;
+    auto domTree = std::make_unique<DominatorTree>(analysisCfg);
+    auto loopInfo = std::make_unique<NaturalLoopInfo>(analysisCfg, *domTree);
+    if (loopInfo->loops().empty())
+        return false;
+    size_t analysisNodeCount = analysisCfg.size();
+
     while (true) {
         if (++iterations > kMaxIterations) {
             LOG_DEBUG("licmPass: 达到迭代上限 " + std::to_string(kMaxIterations) + "，强制收敛（函数 " + ir.name + "）",
                       "IR-SSA");
             break;
         }
-        IRCFG cfg(ir);
-        if (cfg.size() < 2)
-            break;
+        IRCFG cfg(ir); // 每轮重建：仅取外提增删后的新鲜指令区间与 preds
+        if (cfg.size() != analysisNodeCount) {
+            analysisCfg = IRCFG(ir);
+            domTree = std::make_unique<DominatorTree>(analysisCfg);
+            loopInfo = std::make_unique<NaturalLoopInfo>(analysisCfg, *domTree);
+            analysisNodeCount = analysisCfg.size();
+        }
 
-        DominatorTree domTree(cfg);
-        NaturalLoopInfo loopInfo(cfg, domTree);
-
-        if (loopInfo.loops().empty())
+        if (loopInfo->loops().empty())
             break;
 
         bool changedThisIter = false;
 
-        for (const auto& loop : loopInfo.loops()) {
+        for (const auto& loop : loopInfo->loops()) {
             uint32_t header = loop.header;
 
             // 寻找 preheader：header 的前驱中不在循环体内的节点
@@ -1082,7 +1104,7 @@ bool licmPass(IRFunction& ir) {
             //   (1) 首次进入函数不经过该块 → 读未初始化寄存器（语义错）；
             //   (2) 候选在两个循环的回边源块间乒乓迁移，不动点永不收敛
             //   → 编译期挂死（复现：irOptimize 编译 ackermann）。
-            if (!domTree.dominates(preheader, header))
+            if (!domTree->dominates(preheader, header))
                 continue;
 
             // 收集循环体内定义的所有 vreg
@@ -1261,195 +1283,213 @@ bool inlinePass(IRModule& module) {
             allFns.push_back(fn.get());
     }
 
-    for (auto* caller : allFns) {
-        if (!caller || caller->blocks.empty())
-            continue;
+    // PERF-INLINE: 迭代到不动点（最多 3 轮）——单轮内联会暴露新的 CALL（a→b→c
+    // 传递内联），且被内联体复制进 caller 后原 CALL 不再被重扫。总指令预算跨轮
+    // 共享，防代码膨胀。每轮内无修改即收敛。
+    for (int round = 0; round < 3; ++round) {
+        bool roundModified = false;
+        for (auto* caller : allFns) {
+            if (!caller || caller->blocks.empty())
+                continue;
 
-        auto& instrs = caller->blocks[0].instructions;
-        std::vector<IRInstruction> newInstrs;
-        newInstrs.reserve(instrs.size());
+            // PERF-INLINE: 扫描 caller 全部块——原实现仅扫 blocks[0]，任何含控制流
+            // 的 caller（≥2 块）中位于其他块的 CALL 永远不会被内联。
+            for (size_t blockIdx = 0; blockIdx < caller->blocks.size(); ++blockIdx) {
+                auto& instrs = caller->blocks[blockIdx].instructions;
+                std::vector<IRInstruction> newInstrs;
+                newInstrs.reserve(instrs.size());
+                bool blockModified = false;
 
-        for (size_t i = 0; i < instrs.size(); ++i) {
-            const auto& instr = instrs[i];
+                for (size_t i = 0; i < instrs.size(); ++i) {
+                    const auto& instr = instrs[i];
 
-            // 查找 CALL 指令: dest = call name(args)
-            // operands: [dest, name_idx, arg_count, arg1, arg2, ...]
-            if (instr.op == IROp::CALL && instr.operands.size() >= 3) {
-                uint32_t nameIdx = instr.operands[1].index;
-                if (nameIdx < caller->globalNames.size()) {
-                    const std::string& calleeName = caller->globalNames[nameIdx];
-                    IRFunction* callee = module.findFunction(calleeName);
+                // 查找 CALL 指令: dest = call name(args)
+                // operands: [dest, name_idx, arg_count, arg1, arg2, ...]
+                if (instr.op == IROp::CALL && instr.operands.size() >= 3) {
+                    uint32_t nameIdx = instr.operands[1].index;
+                    if (nameIdx < caller->globalNames.size()) {
+                        const std::string& calleeName = caller->globalNames[nameIdx];
+                        IRFunction* callee = module.findFunction(calleeName);
 
-                    // 防递归内联
-                    // L17 fix3: 实参数量必须等于 callee arity——否则运行时应报
-                    // "参数数量不匹配"错误，内联会吞掉该错误破坏三后端一致性
-                    // （复现：foo(a,b) 调用 foo(1,2,3) 内联后静默成功）。
-                    uint32_t callArgCount = instr.operands[2].index;
-                    if (callee && callee != caller && callArgCount == static_cast<uint32_t>(callee->arity) &&
-                        isInlineable(*callee) && totalInlinedOps < kMaxTotalInlineOps) {
-                        // 内联：复制 callee 指令，重映射 vreg
-                        uint32_t vregBase = caller->nextVReg;
-                        uint32_t calleeVRegCount = callee->nextVReg;
-                        caller->nextVReg += calleeVRegCount;
+                        // 防递归内联
+                        // L17 fix3: 实参数量必须等于 callee arity——否则运行时应报
+                        // "参数数量不匹配"错误，内联会吞掉该错误破坏三后端一致性
+                        // （复现：foo(a,b) 调用 foo(1,2,3) 内联后静默成功）。
+                        uint32_t callArgCount = instr.operands[2].index;
+                        if (callee && callee != caller && callArgCount == static_cast<uint32_t>(callee->arity) &&
+                            isInlineable(*callee) && totalInlinedOps < kMaxTotalInlineOps) {
+                            // 内联：复制 callee 指令，重映射 vreg
+                            uint32_t vregBase = caller->nextVReg;
+                            uint32_t calleeVRegCount = callee->nextVReg;
+                            caller->nextVReg += calleeVRegCount;
 
-                        auto remapVReg = [&](uint32_t v) -> uint32_t { return vregBase + v; };
+                            auto remapVReg = [&](uint32_t v) -> uint32_t { return vregBase + v; };
 
-                        // P2-10 fix: 常量池/名称池重映射——callee 的 CONSTANT/FUNC_NAME/
-                        // GLOBAL_NAME/FIELD_NAME 操作数索引指向 callee 自己的 constants/
-                        // globalNames 数组，内联到 caller 后必须重映射到 caller 的对应数组，
-                        // 否则 LOAD_CONST 读到错误常量、CALL 调用错误函数名。
-                        std::unordered_map<uint32_t, uint32_t> constRemap;
-                        std::unordered_map<uint32_t, uint32_t> nameRemap;
-                        auto remapConst = [&](uint32_t idx) -> uint32_t {
-                            auto it = constRemap.find(idx);
-                            if (it != constRemap.end())
-                                return it->second;
-                            if (idx < callee->constants.size()) {
-                                uint32_t newIdx = caller->addConstant(callee->constants[idx]);
-                                constRemap[idx] = newIdx;
-                                return newIdx;
-                            }
-                            return idx;
-                        };
-                        auto remapName = [&](uint32_t idx) -> uint32_t {
-                            auto it = nameRemap.find(idx);
-                            if (it != nameRemap.end())
-                                return it->second;
-                            if (idx < callee->globalNames.size()) {
-                                uint32_t newIdx = caller->addGlobal(callee->globalNames[idx]);
-                                nameRemap[idx] = newIdx;
-                                return newIdx;
-                            }
-                            return idx;
-                        };
-
-                        // P2-10 fix: 参数映射——callee 的 LOAD_LOCAL slot_p (p < arity) 读取的是
-                        // callee 自己的参数槽位，但内联到 caller 后这些槽位属于 caller 的局部变量，
-                        // 语义错误（会读到无关变量）。正确做法：将 callee 参数的 LOAD_LOCAL 替换为
-                        // 对 CALL 指令中对应实参 vreg 的引用（DUP 语义）。
-                        // CALL operands: [dest, name_idx, arg_count, arg1, arg2, ...]
-                        // arg_{p+1} 对应 callee 的 slot_p（参数 p）。
-                        std::unordered_map<uint32_t, uint32_t> paramSlotToArgVReg;
-                        if (instr.operands.size() >= 3 + static_cast<size_t>(callee->arity)) {
-                            for (int p = 0; p < callee->arity; ++p) {
-                                uint32_t argVReg = instr.operands[3 + p].index;
-                                paramSlotToArgVReg[static_cast<uint32_t>(p)] = argVReg;
-                            }
-                        }
-                        // paramDestRemap: callee 内 LOAD_LOCAL slot_p 的 dest vreg（已重映射）
-                        // → 对应实参 vreg。后续引用此 dest 的指令直接用实参 vreg。
-                        // 局限性：若 callee 重新赋值参数（STORE_LOCAL slot_p），后续 LOAD_LOCAL
-                        // 仍会读取 caller 槽位（错误）。当前仅支持参数只读的常见场景。
-                        std::unordered_map<uint32_t, uint32_t> paramDestRemap;
-                        auto resolveVReg = [&](uint32_t v) -> uint32_t {
-                            auto rit = paramDestRemap.find(v);
-                            return rit != paramDestRemap.end() ? rit->second : v;
-                        };
-
-                        size_t calleeOps = 0;
-                        for (const auto& cInstr : callee->blocks[0].instructions) {
-                            if (cInstr.op == IROp::LABEL)
-                                continue;
-                            if (cInstr.op == IROp::RETURN_NULL) {
-                                // L17 fix: 隐式/显式 `return;` → CALL 的 dest 必须收到 null。
-                                // 原实现直接跳过，dest vreg 无定义，lowering 后读脏寄存器
-                                // （复现：`fun foo(){return;} var x=foo();` 内联后 x 为闭包脏值）。
-                                uint32_t destVReg = instr.operands[0].index;
-                                newInstrs.emplace_back(IROp::LOAD_NULL,
-                                                       std::vector<IROperand>{IROperand::vreg(destVReg)}, cInstr.line);
-                                // L17 fix2: 首个终结指令后的代码不可达，停止复制——
-                                // 否则 `return 7;` 后的尾随隐式 RETURN_NULL 会把 dest 覆盖为 null。
-                                break;
-                            }
-                            if (cInstr.op == IROp::RETURN) {
-                                // return src → 将 src 赋值给 CALL 的 dest
-                                if (!cInstr.operands.empty() && cInstr.operands[0].kind == IROperandKind::VIRTUAL) {
-                                    uint32_t retVal = resolveVReg(remapVReg(cInstr.operands[0].index));
-                                    uint32_t destVReg = instr.operands[0].index;
-                                    newInstrs.emplace_back(
-                                        IROp::DUP,
-                                        std::vector<IROperand>{IROperand::vreg(destVReg), IROperand::vreg(retVal)},
-                                        cInstr.line);
+                            // P2-10 fix: 常量池/名称池重映射——callee 的 CONSTANT/FUNC_NAME/
+                            // GLOBAL_NAME/FIELD_NAME 操作数索引指向 callee 自己的 constants/
+                            // globalNames 数组，内联到 caller 后必须重映射到 caller 的对应数组，
+                            // 否则 LOAD_CONST 读到错误常量、CALL 调用错误函数名。
+                            std::unordered_map<uint32_t, uint32_t> constRemap;
+                            std::unordered_map<uint32_t, uint32_t> nameRemap;
+                            auto remapConst = [&](uint32_t idx) -> uint32_t {
+                                auto it = constRemap.find(idx);
+                                if (it != constRemap.end())
+                                    return it->second;
+                                if (idx < callee->constants.size()) {
+                                    uint32_t newIdx = caller->addConstant(callee->constants[idx]);
+                                    constRemap[idx] = newIdx;
+                                    return newIdx;
                                 }
-                                // L17 fix2: 同上，首个 RETURN 之后的指令不可达，停止复制。
-                                break;
-                            }
+                                return idx;
+                            };
+                            auto remapName = [&](uint32_t idx) -> uint32_t {
+                                auto it = nameRemap.find(idx);
+                                if (it != nameRemap.end())
+                                    return it->second;
+                                if (idx < callee->globalNames.size()) {
+                                    uint32_t newIdx = caller->addGlobal(callee->globalNames[idx]);
+                                    nameRemap[idx] = newIdx;
+                                    return newIdx;
+                                }
+                                return idx;
+                            };
 
-                            // 参数 LOAD_LOCAL：跳过，记录 dest → 实参 vreg 映射
-                            if (cInstr.op == IROp::LOAD_LOCAL && cInstr.operands.size() >= 2 &&
-                                cInstr.operands[1].kind == IROperandKind::LOCAL_SLOT) {
-                                uint32_t slot = cInstr.operands[1].index;
-                                if (slot < static_cast<uint32_t>(callee->arity)) {
-                                    auto pit = paramSlotToArgVReg.find(slot);
-                                    if (pit != paramSlotToArgVReg.end()) {
-                                        uint32_t remappedDest = remapVReg(cInstr.operands[0].index);
-                                        paramDestRemap[remappedDest] = pit->second;
-                                        continue; // 跳过 LOAD_LOCAL，后续引用改用实参 vreg
+                            // P2-10 fix: 参数映射——callee 的 LOAD_LOCAL slot_p (p < arity) 读取的是
+                            // callee 自己的参数槽位，但内联到 caller 后这些槽位属于 caller 的局部变量，
+                            // 语义错误（会读到无关变量）。正确做法：将 callee 参数的 LOAD_LOCAL 替换为
+                            // 对 CALL 指令中对应实参 vreg 的引用（DUP 语义）。
+                            // CALL operands: [dest, name_idx, arg_count, arg1, arg2, ...]
+                            // arg_{p+1} 对应 callee 的 slot_p（参数 p）。
+                            std::unordered_map<uint32_t, uint32_t> paramSlotToArgVReg;
+                            if (instr.operands.size() >= 3 + static_cast<size_t>(callee->arity)) {
+                                for (int p = 0; p < callee->arity; ++p) {
+                                    uint32_t argVReg = instr.operands[3 + p].index;
+                                    paramSlotToArgVReg[static_cast<uint32_t>(p)] = argVReg;
+                                }
+                            }
+                            // paramDestRemap: callee 内 LOAD_LOCAL slot_p 的 dest vreg（已重映射）
+                            // → 对应实参 vreg。后续引用此 dest 的指令直接用实参 vreg。
+                            // 局限性：若 callee 重新赋值参数（STORE_LOCAL slot_p），后续 LOAD_LOCAL
+                            // 仍会读取 caller 槽位（错误）。当前仅支持参数只读的常见场景。
+                            std::unordered_map<uint32_t, uint32_t> paramDestRemap;
+                            auto resolveVReg = [&](uint32_t v) -> uint32_t {
+                                auto rit = paramDestRemap.find(v);
+                                return rit != paramDestRemap.end() ? rit->second : v;
+                            };
+
+                            size_t calleeOps = 0;
+                            for (const auto& cInstr : callee->blocks[0].instructions) {
+                                if (cInstr.op == IROp::LABEL)
+                                    continue;
+                                if (cInstr.op == IROp::RETURN_NULL) {
+                                    // L17 fix: 隐式/显式 `return;` → CALL 的 dest 必须收到 null。
+                                    // 原实现直接跳过，dest vreg 无定义，lowering 后读脏寄存器
+                                    // （复现：`fun foo(){return;} var x=foo();` 内联后 x 为闭包脏值）。
+                                    uint32_t destVReg = instr.operands[0].index;
+                                    newInstrs.emplace_back(IROp::LOAD_NULL,
+                                                           IROperandList{IROperand::vreg(destVReg)}, cInstr.line);
+                                    // L17 fix2: 首个终结指令后的代码不可达，停止复制——
+                                    // 否则 `return 7;` 后的尾随隐式 RETURN_NULL 会把 dest 覆盖为 null。
+                                    break;
+                                }
+                                if (cInstr.op == IROp::RETURN) {
+                                    // return src → 将 src 赋值给 CALL 的 dest
+                                    if (!cInstr.operands.empty() && cInstr.operands[0].kind == IROperandKind::VIRTUAL) {
+                                        uint32_t retVal = resolveVReg(remapVReg(cInstr.operands[0].index));
+                                        uint32_t destVReg = instr.operands[0].index;
+                                        newInstrs.emplace_back(
+                                            IROp::DUP,
+                                            IROperandList{IROperand::vreg(destVReg), IROperand::vreg(retVal)},
+                                            cInstr.line);
+                                    }
+                                    // L17 fix2: 同上，首个 RETURN 之后的指令不可达，停止复制。
+                                    break;
+                                }
+
+                                // 参数 LOAD_LOCAL：跳过，记录 dest → 实参 vreg 映射
+                                if (cInstr.op == IROp::LOAD_LOCAL && cInstr.operands.size() >= 2 &&
+                                    cInstr.operands[1].kind == IROperandKind::LOCAL_SLOT) {
+                                    uint32_t slot = cInstr.operands[1].index;
+                                    if (slot < static_cast<uint32_t>(callee->arity)) {
+                                        auto pit = paramSlotToArgVReg.find(slot);
+                                        if (pit != paramSlotToArgVReg.end()) {
+                                            uint32_t remappedDest = remapVReg(cInstr.operands[0].index);
+                                            paramDestRemap[remappedDest] = pit->second;
+                                            continue; // 跳过 LOAD_LOCAL，后续引用改用实参 vreg
+                                        }
                                     }
                                 }
-                            }
 
-                            // 复制指令，重映射 vreg + 常量池/名称池 + 参数 dest 替换
-                            std::vector<IROperand> newOps;
-                            newOps.reserve(cInstr.operands.size());
+                                // 复制指令，重映射 vreg + 常量池/名称池 + 参数 dest 替换
+                                IROperandList newOps;
+                                newOps.reserve(cInstr.operands.size());
 
-                            // D9 fix: DEFINE_CLASS 类元数据操作数重映射（IMM_UINT kind 承载的池索引）。
-                            // 通用重映射只处理 CONSTANT/FUNC_NAME/GLOBAL_NAME/FIELD_NAME kind，而
-                            // DEFINE_CLASS 的字段默认值常量索引（[3+i*3+1]）与父类名索引（[1]）是 IMM_UINT
-                            // kind，原样复制会指向 callee 自己的池 → 内联后索引越界/错位
-                            // （复现：`fun make(){ class L { var x=42; } return L; }` 内联后
-                            // RegisterBytecodeBackend 报"DEFINE_CLASS 字段默认值常量索引越界"）。
-                            // 操作数布局：[0]className(FUNC_NAME) [1]parentName(IMM_UINT/UINT32_MAX)
-                            //   [2]fieldCount [3+i*3]fieldName(FIELD_NAME)
-                            //   [3+i*3+1]defaultConstIdx(IMM_UINT/UINT32_MAX)
-                            //   [3+i*3+2]exprLocalSlot(IMM_UINT/UINT32_MAX，含非字面量默认值的函数
-                            //   因 STORE_LOCAL 已被 isInlineable 拒绝内联，此处防御性保留)
-                            //   [3+3F]methodCount [方法对...]
-                            const uint32_t d9FieldCount =
-                                (cInstr.op == IROp::DEFINE_CLASS && cInstr.operands.size() >= 3)
-                                    ? cInstr.operands[2].index
-                                    : 0;
-                            for (size_t oi = 0; oi < cInstr.operands.size(); ++oi) {
-                                const auto& op = cInstr.operands[oi];
-                                if (op.kind == IROperandKind::VIRTUAL) {
-                                    newOps.push_back(IROperand::vreg(resolveVReg(remapVReg(op.index))));
-                                } else if (op.kind == IROperandKind::CONSTANT) {
-                                    newOps.push_back(IROperand::constant(remapConst(op.index)));
-                                } else if (op.kind == IROperandKind::FUNC_NAME ||
-                                           op.kind == IROperandKind::GLOBAL_NAME ||
-                                           op.kind == IROperandKind::FIELD_NAME) {
-                                    newOps.push_back(IROperand{op.kind, remapName(op.index)});
-                                } else if (op.kind == IROperandKind::IMM_UINT && cInstr.op == IROp::DEFINE_CLASS) {
-                                    // DEFINE_CLASS 的 IMM_UINT 池索引特判（D9 fix）
-                                    if (oi == 1 && op.index != UINT32_MAX) {
-                                        newOps.push_back(IROperand::imm(remapName(op.index))); // 父类名
-                                    } else if (oi >= 3 && oi < 3 + d9FieldCount * 3 && (oi - 3) % 3 == 1 &&
-                                               op.index != UINT32_MAX) {
-                                        newOps.push_back(IROperand::imm(remapConst(op.index))); // 字段默认值
+                                // D9 fix: DEFINE_CLASS 类元数据操作数重映射（IMM_UINT kind 承载的池索引）。
+                                // 通用重映射只处理 CONSTANT/FUNC_NAME/GLOBAL_NAME/FIELD_NAME kind，而
+                                // DEFINE_CLASS 的字段默认值常量索引（[3+i*3+1]）与父类名索引（[1]）是 IMM_UINT
+                                // kind，原样复制会指向 callee 自己的池 → 内联后索引越界/错位
+                                // （复现：`fun make(){ class L { var x=42; } return L; }` 内联后
+                                // RegisterBytecodeBackend 报"DEFINE_CLASS 字段默认值常量索引越界"）。
+                                // 操作数布局：[0]className(FUNC_NAME) [1]parentName(IMM_UINT/UINT32_MAX)
+                                //   [2]fieldCount [3+i*3]fieldName(FIELD_NAME)
+                                //   [3+i*3+1]defaultConstIdx(IMM_UINT/UINT32_MAX)
+                                //   [3+i*3+2]exprLocalSlot(IMM_UINT/UINT32_MAX，含非字面量默认值的函数
+                                //   因 STORE_LOCAL 已被 isInlineable 拒绝内联，此处防御性保留)
+                                //   [3+3F]methodCount [方法对...]
+                                const uint32_t d9FieldCount =
+                                    (cInstr.op == IROp::DEFINE_CLASS && cInstr.operands.size() >= 3)
+                                        ? cInstr.operands[2].index
+                                        : 0;
+                                for (size_t oi = 0; oi < cInstr.operands.size(); ++oi) {
+                                    const auto& op = cInstr.operands[oi];
+                                    if (op.kind == IROperandKind::VIRTUAL) {
+                                        newOps.push_back(IROperand::vreg(resolveVReg(remapVReg(op.index))));
+                                    } else if (op.kind == IROperandKind::CONSTANT) {
+                                        newOps.push_back(IROperand::constant(remapConst(op.index)));
+                                    } else if (op.kind == IROperandKind::FUNC_NAME ||
+                                               op.kind == IROperandKind::GLOBAL_NAME ||
+                                               op.kind == IROperandKind::FIELD_NAME) {
+                                        newOps.push_back(IROperand{op.kind, remapName(op.index)});
+                                    } else if (op.kind == IROperandKind::IMM_UINT && cInstr.op == IROp::DEFINE_CLASS) {
+                                        // DEFINE_CLASS 的 IMM_UINT 池索引特判（D9 fix）
+                                        if (oi == 1 && op.index != UINT32_MAX) {
+                                            newOps.push_back(IROperand::imm(remapName(op.index))); // 父类名
+                                        } else if (oi >= 3 && oi < 3 + d9FieldCount * 3 && (oi - 3) % 3 == 1 &&
+                                                   op.index != UINT32_MAX) {
+                                            newOps.push_back(IROperand::imm(remapConst(op.index))); // 字段默认值
+                                        } else {
+                                            newOps.push_back(op);
+                                        }
                                     } else {
                                         newOps.push_back(op);
                                     }
-                                } else {
-                                    newOps.push_back(op);
                                 }
+                                newInstrs.emplace_back(cInstr.op, std::move(newOps), cInstr.line);
+                                ++calleeOps;
                             }
-                            newInstrs.emplace_back(cInstr.op, std::move(newOps), cInstr.line);
-                            ++calleeOps;
-                        }
                         totalInlinedOps += static_cast<int>(calleeOps);
-                        modified = true;
+                        blockModified = true;
                         continue; // 跳过原 CALL 指令
                     }
                 }
             }
 
-            newInstrs.push_back(instr);
-        }
+                newInstrs.push_back(instr);
+            }
 
-        if (modified) {
-            instrs = std::move(newInstrs);
-        }
-    }
+            // 仅在本块发生内联时回写（原实现用全局 modified 判断，未修改的块
+            // 也会被无谓搬移一遍）
+            if (blockModified) {
+                instrs = std::move(newInstrs);
+                roundModified = true;
+            }
+            } // blockIdx
+        } // caller
+
+        modified = modified || roundModified;
+        if (!roundModified)
+            break; // 收敛
+    } // round
 
     if (modified) {
         LOG_DEBUG("inlinePass: 函数内联完成", "IR-SSA");

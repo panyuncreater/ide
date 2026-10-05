@@ -164,14 +164,14 @@ Result<Value> executeSharedDictHas(const Value& dict, const std::string& method,
         return Result<Value>::err(method + " 期望 1 个参数(键)", line, column);
     }
     // L4 fix: 字典键支持 string/int/bool/float
-    auto dk = Value::dictKeyFromValue(args[0]);
-    if (!dk) {
+    // PERF: 透明查找，string 键免 DictKey 构造的字符串深拷贝
+    if (!Value::dictKeyIsValid(args[0])) {
         return Result<Value>::err(ErrorMessages::kDictKeyInvalidType, line, column);
     }
     // Perf-Finding: 缓存 find 迭代器，避免 dictVal() 二次调用与同键二次 hash 查找
     const auto& entries = dict.dictVal();
-    auto it = entries.find(*dk);
-    return Result<Value>::ok(Value(it != entries.end()));
+    const Value* found = Value::dictFindValue(entries, args[0]);
+    return Result<Value>::ok(Value(found != nullptr));
 }
 
 // ============================================================
@@ -407,14 +407,14 @@ Result<Value> executeSharedDictGet(const Value& dict, const Value* args, size_t 
                                   line, column);
     }
     // L4 fix: 字典键支持 string/int/bool/float
-    auto dk = Value::dictKeyFromValue(args[0]);
-    if (!dk) {
+    // PERF: 透明查找，string 键免 DictKey 构造的字符串深拷贝
+    if (!Value::dictKeyIsValid(args[0])) {
         return Result<Value>::err(ErrorMessages::kDictKeyInvalidType, line, column);
     }
     const auto& entries = dict.dictVal();
-    auto it = entries.find(*dk);
-    if (it != entries.end()) {
-        return Result<Value>::ok(it->second);
+    const Value* found = Value::dictFindValue(entries, args[0]);
+    if (found) {
+        return Result<Value>::ok(*found);
     } else if (argCount == 2) {
         return Result<Value>::ok(args[1]);
     } else {
@@ -904,20 +904,18 @@ Result<Value> executeBuiltinQmarkUnwrap(const Value* args, size_t argCount, int 
             "? 运算符要求 Result/Option 值（std/result 的 Ok/Err/Some/None），实际为 " + v.typeName(), line, column);
     }
     const auto& entries = v.dictVal();
-    auto tagKey = Value::dictKeyFromValue(Value(std::string("tag")));
-    auto tagIt = tagKey ? entries.find(*tagKey) : entries.end();
+    // PERF: 字符串字面量键走 string_view 透明查找，免构造临时 Value + DictKey
+    auto tagIt = entries.find(std::string_view("tag"));
     if (tagIt == entries.end() || !tagIt->second.isString()) {
         return Result<Value>::err("? 运算符要求 Result/Option 值（缺少 tag 字段）", line, column);
     }
     const std::string& tag = tagIt->second.stringVal();
     if (tag == "ok" || tag == "some") {
-        auto valKey = Value::dictKeyFromValue(Value(std::string("value")));
-        auto vIt = valKey ? entries.find(*valKey) : entries.end();
+        auto vIt = entries.find(std::string_view("value"));
         return Result<Value>::ok(vIt != entries.end() ? vIt->second : Value::nullValue());
     }
     if (tag == "err") {
-        auto errKey = Value::dictKeyFromValue(Value(std::string("error")));
-        auto eIt = errKey ? entries.find(*errKey) : entries.end();
+        auto eIt = entries.find(std::string_view("error"));
         std::string msg = (eIt != entries.end()) ? eIt->second.toString() : "unknown";
         return Result<Value>::err("? 传播 Err: " + msg, line, column);
     }
@@ -1556,20 +1554,27 @@ BuiltinMethodResult BuiltinMethods::handleDictMethod(const std::string& method, 
         if (args.size() != 1)
             throw RuntimeError("remove 期望 1 个参数(键)", line, col, DiagCodes::kArityMismatch);
         // L4 fix: 字典键支持 string/int/bool/float
-        auto dk = Value::dictKeyFromValue(args[0]);
-        if (!dk)
+        // PERF: 透明查找 + 迭代器删除，string 键免字符串深拷贝
+        if (!Value::dictKeyIsValid(args[0]))
             throw RuntimeError(ErrorMessages::kDictKeyInvalidType, line, col, DiagCodes::kTypeMismatch);
-        obj.dictVal().erase(*dk);
+        auto& entries = obj.dictVal();
+        if (args[0].isString()) {
+            auto it = entries.find(std::string_view(args[0].stringVal()));
+            if (it != entries.end())
+                entries.erase(it);
+        } else {
+            entries.erase(Value::dictKeyFromValue(args[0]).value());
+        }
         return BuiltinMethodResult(Value::nullValue(), /*objectModified=*/true);
     }
     if (method == "set") {
         if (args.size() != 2)
             throw RuntimeError("set 期望 2 个参数(键, 值)", line, col, DiagCodes::kArityMismatch);
         // L4 fix: 字典键支持 string/int/bool/float
-        auto dk = Value::dictKeyFromValue(args[0]);
-        if (!dk)
+        // PERF: 透明写路径，string 键命中时免字符串深拷贝
+        if (!Value::dictKeyIsValid(args[0]))
             throw RuntimeError(ErrorMessages::kDictKeyInvalidType, line, col, DiagCodes::kTypeMismatch);
-        obj.dictVal()[*dk] = args[1];
+        Value::dictGetOrInsertRef(obj.dictVal(), args[0]) = args[1];
         return BuiltinMethodResult(Value::nullValue(), /*objectModified=*/true);
     }
 

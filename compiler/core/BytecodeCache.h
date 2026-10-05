@@ -66,8 +66,10 @@
 #include "compiler/core/Bytecode.h"
 #include "compiler/backend-reg/RegisterBytecode.h" // L11: RegisterCompileResult 序列化
 #include <cstdint>
+#include <mutex>
 #include <optional>
 #include <string>
+#include <vector>
 
 class BytecodeCache {
 public:
@@ -147,6 +149,20 @@ public:
     /// 清空缓存目录下所有 .mbc 文件
     void clear();
 
+    // ---- PERF: 进程内 memo（2026-10-03 优化审计）----
+    // 磁盘缓存的上一级：命中免全文件读取 + FNV-32 校验 + 全量反序列化
+    // （常量池/行号表/字节码逐项重建），仅需一次结果深拷贝。键与磁盘缓存同源
+    // （fnv1a64(source)）并折叠 compilerMode/optFlags/mtime（磁盘靠文件头部
+    // 校验区分这些字段，memo 无头部须并入 hash）。源码变化 → hash 变化 →
+    // 自然失效。LRU 近似淘汰（move-to-front），条目数上限 kMemoCapacity。
+    // 命中返回条目副本（memo 内条目保留，供后续命中）。
+    std::optional<CompileResult> tryMemo(const CacheKey& key);
+    void storeMemo(const CacheKey& key, const CompileResult& result);
+    std::optional<RegisterCompileResult> tryMemoRegister(const CacheKey& key);
+    void storeMemoRegister(const CacheKey& key, const RegisterCompileResult& result);
+    /// 清空进程内 memo（clear() 会同步调用，供测试隔离）
+    void clearMemo();
+
     /// 设置缓存目录(默认 <temp>/minilang_bytecache)
     void setCacheDir(const std::string& dir) { cacheDir_ = dir; }
     const std::string& cacheDir() const { return cacheDir_; }
@@ -156,4 +172,17 @@ public:
 
 private:
     std::string cacheDir_;
+
+    // ---- 进程内 memo 状态（见 tryMemo 注释）----
+    static constexpr size_t kMemoCapacity = 8;
+    struct MemoEntry {
+        uint64_t keyHash = 0;
+        std::optional<CompileResult> stackResult;          // StackVM 路径（与 regResult 二选一）
+        std::optional<RegisterCompileResult> regResult;    // RegisterVM 路径
+    };
+    std::vector<MemoEntry> memo_; // 前端 = 最近使用
+    std::mutex memoMutex_;
+
+    // memo 命中后前移到队首（LRU 近似）
+    void moveToFront(size_t idx);
 };

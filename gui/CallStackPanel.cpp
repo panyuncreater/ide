@@ -132,7 +132,19 @@ CallStackPanel::CallStackPanel(QWidget* parent) : QWidget(parent) {
     // OPT-1: 500ms→2000ms。状态变更由 vmStateChanged 监听器即时触发刷新，
     // QTimer 降级为安全网（覆盖监听器未触达的边角场景），2s 间隔足以兜底且省 CPU。
     autoTimer_->setInterval(2000);
-    connect(autoTimer_, &QTimer::timeout, this, &CallStackPanel::onRefresh);
+    connect(autoTimer_, &QTimer::timeout, this, [this]() {
+        // PERF: 安全网轮询纪元门控——VM 状态纪元未变时跳过 refreshLive
+        // （clear/rebuild + getVmStack/getVmGlobals 状态快照全量深拷贝）。
+        // 状态变更由 OPT-1 vmStateChanged 观察者即时推送，本定时器仅兜底
+        // 监听器未触达的边角场景；用户手动刷新（onRefresh）不受门控影响。
+        if (controller_) {
+            const std::uint64_t epoch = controller_->vmStateEpoch();
+            if (epoch == lastAutoRefreshEpoch_)
+                return;
+            lastAutoRefreshEpoch_ = epoch;
+        }
+        onRefresh();
+    });
 
     populateScenarios();
 }

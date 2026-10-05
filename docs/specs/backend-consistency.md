@@ -27,6 +27,7 @@
 | catch 变量重声明 | catch 块内 `var` 重声明 catch 变量名：块内可见、全局原值不受污染、重声明后可再 throw | `AuditBatch6CatchRedecl.*` |
 | super 非方法上下文 | 顶层/嵌套普通函数中 `super` 为**运行时错误**（"未定义的变量: this"），不崩溃不静默 | `AuditBatch1Super.TopLevelSuperRuntimeError`、`ConsistencyDiff.H7b` |
 | 无限循环防护 | 循环回边注入迭代计数，超限报错（对齐 Interpreter） | R166、`compiler/jit/JIT.cpp` OP_LOOP safepoint |
+| 生成器挂起语义 | `MINILANG_CORO_FIBER=1` 平台三执行后端真挂起（副作用只执行一次），`=0` 统一重放；yield 表达式恢复值 = 自身 yield 值，最终 yield 即 done | 单边启用禁令、快照相对化/returnIp 重定基/嵌套上下文 checklist、`CoroutineSuspension.*` 锁定测试——见 §9 与 [ADR-007](../adr/ADR-007-coroutine-suspension.md) |
 
 > 表中每项的新增/修改都必须在三后端同步实现（含 IR 双出口），并以一致性测试锁定（§5）。
 
@@ -67,9 +68,23 @@
   - 未登记效应（PHI 等）→ **拒绝 lowering**。
 - **peek 型语义易错点**：`STORE_LOCAL`/`STORE_UPVALUE`/`JUMP_IF_FALSE`/`TYPE_CHECK` 不消费栈顶（值留栈，由后续显式 POP 消费）；六条 `WRITEBACK_*` 零操作数栈效应；catch 入口栈高 = TRY_BEGIN 时高 + 1（异常值）。
 - **诊断**：`MINILANG_IR_STACK_DEBUG=1` 输出逐指令栈深轨迹。
+- **字节码截断校验（2026-10-04 上移）**：两 VM 的字节码截断检查在 `initExecution` 加载期一次性预扫描完成——`VM::initExecution` 校验主 chunk 与全部 `functionChunks_`（`validateChunkInstructionBoundaries`），`RegisterVM::initExecution` 同构（`validateRegChunkInstructionBoundaries`，基于 `RegBytecodeChunk::instructionSizeAt`）。主循环 release 不再逐指令做 `instructionSize`/`instructionSizeAt` 越界检查，debug 保留逐指令校验双保险。**不变量**：新增变长指令时，预扫描的展开逻辑（栈式 VM 内联 OP_CLOSURE 展开 / 寄存器 VM `instructionSizeAt`）与主循环消费的长度必须保持同一事实源，否则加载期校验与运行时推进错位。
 - 该校验器落地即捕获一处真实缺陷（顶层 super 写回多发 POP，见 CHANGELOG 2026-10-03）。
 
 ## 8. JIT 语义判定补充（2026-10-03 复核）
 
 - JIT 硬编码 NaN-boxing tag 常量与 `NaNBox.h` 编码的一致性由 `verifyNanBoxConstants()` 在 `JITBackend::execute` debug 入口校验（含 `JitContext` 30 个字段偏移的 static_assert 编译期护栏）。
 - JIT 遇不支持场景为 **fail-fast**（整体编译失败显式报错，无静默降级继续执行）；`genericXXX` 路径为运行时类型分发兜底，与审计报告 D4 中"FIXME/TODO 标记"无关（该说法为 `XXX` 子串误扫，勘误见报告内注）。
+
+## 9. 协程真挂起一致性（2026-10-05 落地，ADR-007）
+
+生成器 `.next()` / `await` 的执行模型由重放模式升级为真挂起模式（yield 保存执行位置切回调用方，下次恢复），**三执行后端由同一宏 `MINILANG_CORO_FIBER`（[interpreter/CoroutineFiber.h](../../interpreter/CoroutineFiber.h)）门控同步启用**——设计依据与实现细节见 [ADR-007](../adr/ADR-007-coroutine-suspension.md)，本节只写 checklist。
+
+- **单边启用禁令**：真挂起/重放是平台级整体开关，禁止单后端先行切换（副作用执行次数会成为跨后端分歧点）。新增第四执行路径（如未来 WASM 后端）时必须同步实现挂起或显式回退重放。
+- **双路径核对义务**：`MINILANG_CORO_FIBER=0` 平台的构建中重放路径与挂起路径并存于 `callCoroutineNext`/`visitYieldExpr`/`executeCoroutineOps` 的 `#if` 双分支。修改协程相关代码时必须双路径核对语义等价（挂起路径的语义基线见 ADR-007"语义选择"表）。
+- **快照字段相对化**：帧/try 处理器/upvalue 上的一切绝对索引（StackVM `basePointer`/`stackBase`/`stackSlot`，RegisterVM 寄存器 upvalue 编号，两 VM 的 `frameIndex`）入快照必须转为相对偏移、恢复时按新入口基线转回。**新增帧字段或 try 处理器字段时，若引入新的绝对索引，必须同步纳入快照相对化**，否则调用方深度变化后读写错位。
+- **最外层生成器帧 `returnIp` 重定基**：自然完成可发生在任意一次 `.next()` 中，恢复时必须把最外层生成器帧的 `returnIp` 重定基到本次调用点；漏做 = 自然完成后调用方从历史调用点重执行。
+- **嵌套挂起上下文**：`callCoroutineNext` 可嵌套（await drain、生成器调用生成器），登记自身上下文前保存外层值、全部退出路径恢复。
+- **语义基线（挂起 = 重放的逐点对齐，唯一差异为副作用执行一次）**：yield 表达式恢复值 = 自身 yield 值；最终 yield（`currentYieldId >= yieldCount`）即 done、尾部不执行；动态 yieldCount（`kDynamicYieldCount`）仅在函数体自然结束时 done；错误封送重抛、done 不置位、下次 `.next()` 全新重建。
+- **GC 根义务**（Interpreter fiber）：挂起时快照环境链根 + callStack 后缀（帧持 env）；新增随挂起存活的解释器成员引用时必须纳入快照。
+- **锁定测试**：`CoroutineSuspension.*` 5 项（副作用一次/恢复值/状态连续/try 跨挂起/长序列）为四后端一致性断言；`CoroutineTest` 22 项 + `AsyncAwait` 11 项在双模式下均须通过。

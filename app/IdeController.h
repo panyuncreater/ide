@@ -22,6 +22,7 @@
 #include <QObject>
 #include <QSet>
 #include <QString>
+#include <cstdint>
 #include <functional>
 #include <list> // R117: watchAstCache LRU 实现
 #include <memory>
@@ -89,6 +90,9 @@ public:
     // B6 fix: 语义化的 VM 调试状态快照接口（GUI 仅通过这些方法读取 VM 状态）
     // A1 fix: 栈式 VM 返回操作数栈；RegisterVM 返回寄存器窗口（同形 vector<Value>）
     std::vector<Value> getVmStack() const { return vmStepper_.getStack(); }
+    /// PERF: VM 状态纪元转发（见 VmStepper::stateEpoch）——调试面板安全网轮询
+    /// 据此跳过无变化的刷新。
+    std::uint64_t vmStateEpoch() const { return vmStepper_.stateEpoch(); }
     std::unordered_map<std::string, Value> getVmGlobals() const { return vmStepper_.getGlobals(); }
     std::unordered_map<std::string, Value> getReplGlobals() const {
         if (interpreter_) {

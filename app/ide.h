@@ -503,7 +503,15 @@ private:
     // ---- 防抖定时器 ----
     QTimer* completionTimer_ = nullptr;   // 补全词刷新（500ms）
     QTimer* syntaxCheckTimer_ = nullptr;  // 语法检查（300ms）
+    // PERF: 语法检查完成时的文档 revision——updateCompletionWords 据此判定
+    // 管线 token 流与当前编辑器文本一致，免全文比对直接复用 token 流。
+    int lastSyntaxCheckDocRevision_ = -1;
     QTimer* splitterSaveTimer_ = nullptr; // 布局保存防抖（500ms）
+    // PERF: 输出合批——appendOutput 仅攒批到 pendingOutputHtml_，由 30ms 单发定时器
+    // 统一刷新（flushPendingOutput）。密集 print 的程序不再每行投递一个跨线程事件 +
+    // 触发一次 HTML 解析与重绘，避免淹没主线程事件队列。
+    QTimer* outputFlushTimer_ = nullptr;
+    QStringList pendingOutputHtml_;
     // ROUND-75 fix: 跟踪折叠教学区/隐藏编辑器栏的延迟回调。
     // 原 QTimer::singleShot 创建临时 QTimer，事件队列独立，
     // closeEvent 无法取消，showTeachingPanel 也无法在用户切换意图后撤销折叠。
@@ -713,6 +721,8 @@ private:
 
     // ---- 输出/错误 ----
     void appendOutput(const QString& text, OutputLevel level = OutputLevel::Plain);
+    /// PERF: 刷新输出合批缓冲（outputFlushTimer_ 30ms 单发触发），一次重绘落盘全部攒批行。
+    void flushPendingOutput();
     void appendError(const QString& text, int line = 0, int column = 0, DiagLevel level = DiagLevel::Error,
                      const std::string& diagCode = std::string());
     void clearOutput();

@@ -1483,12 +1483,19 @@ bool RegisterVM::callDictBuiltinMethod(Value& obj, BuiltinMethod method, const s
             runtimeError("remove 期望 1 个参数(键)", DiagCodes::kArityMismatch);
             return true;
         }
-        auto dk = Value::dictKeyFromValue(args[0]);
-        if (!dk) {
+        // PERF: 透明查找 + 迭代器删除，string 键免字符串深拷贝
+        if (!Value::dictKeyIsValid(args[0])) {
             runtimeError(ErrorMessages::kDictKeyInvalidType, DiagCodes::kTypeMismatch);
             return true;
         }
-        obj.dictVal().erase(*dk);
+        auto& dictEntries = obj.dictVal();
+        if (args[0].isString()) {
+            auto it = dictEntries.find(std::string_view(args[0].stringVal()));
+            if (it != dictEntries.end())
+                dictEntries.erase(it);
+        } else {
+            dictEntries.erase(Value::dictKeyFromValue(args[0]).value());
+        }
         result = Value::nullValue();
         return true;
     }
@@ -1497,12 +1504,12 @@ bool RegisterVM::callDictBuiltinMethod(Value& obj, BuiltinMethod method, const s
             runtimeError("set 期望 2 个参数(键, 值)", DiagCodes::kArityMismatch);
             return true;
         }
-        auto dk = Value::dictKeyFromValue(args[0]);
-        if (!dk) {
+        // PERF: 透明写路径，string 键命中时免字符串深拷贝
+        if (!Value::dictKeyIsValid(args[0])) {
             runtimeError(ErrorMessages::kDictKeyInvalidType, DiagCodes::kTypeMismatch);
             return true;
         }
-        obj.dictVal()[*dk] = args[1];
+        Value::dictGetOrInsertRef(obj.dictVal(), args[0]) = args[1];
         result = Value::nullValue();
         return true;
     }
@@ -1728,6 +1735,40 @@ Value RegisterVM::callCoroutineNext(Value& coroVal) {
     size_t savedFrameCount = frames_.size();
     int savedTargetYieldId = currentCoroutineTargetYieldId_;
     int savedYieldExecCount = currentYieldExecutionCount_;
+#if MINILANG_CORO_FIBER
+    if (cd->vmSuspension) {
+        // —— 真挂起恢复：帧链（寄存器随帧）回位 + try 栈/开放 upvalue 重挂
+        // （相对→绝对重定基到本次入口帧深），从挂起点 ip 继续执行。
+        auto *sus = static_cast<RegVMCoroutineSuspension *>(cd->vmSuspension.get());
+        for (auto &f : sus->frames) {
+            // RegCallFrame 无绝对栈引用（寄存器自含）；upvalue 通道在下方重挂
+            frames_.push_back(std::move(f));
+        }
+        for (auto &t : sus->tryStack) {
+            t.frameIndex += savedFrameCount;
+            tryStack_.push_back(t);
+        }
+        const size_t regBase = savedFrameCount * RegCallFrame::MAX_REGISTERS;
+        for (auto &entry : sus->openUpvalues) {
+            openUpvalues_.emplace(entry.first + regBase, entry.second);
+            if (auto uv = entry.second.lock()) {
+                uv->stackSlot += regBase;
+                uv->owningFrameIdx += savedFrameCount;
+            }
+        }
+        frames_.back().ip = sus->resumeIp;
+        // 最外层生成器帧的 returnIp 指向首次 .next() 的调用点；挂起模式下自然
+        // 完成（REG_RETURN 以 returnIp 恢复调用方 ip，再由 dispatch 的 ip +=
+        // instrLen 推进）可能发生在任意一次 .next() 中——重定基到本次调用点
+        // （调用方帧即恢复前的栈顶）。帧链内部帧的 returnIp 指向生成器体内
+        // 调用点，与调用方无关，保持不变。
+        frames_[savedFrameCount].returnIp = frames_[savedFrameCount - 1].ip;
+        savedFrameCount = sus->baseFrames;
+        cd->vmSuspension.reset();
+        currentCoroutineTargetYieldId_ = cd->currentYieldId; // 过 REG_YIELD 防御检查（挂起模式不做目标比较）
+    } else
+#endif
+    {
     RegCallFrame newFrame;
     newFrame.chunk = genChunk;
     newFrame.ip = 0;
@@ -1767,6 +1808,20 @@ Value RegisterVM::callCoroutineNext(Value& coroVal) {
     frames_.push_back(std::move(newFrame));
     currentCoroutineTargetYieldId_ = cd->currentYieldId;
     currentYieldExecutionCount_ = 0;
+    }
+#if MINILANG_CORO_FIBER
+    // 嵌套 .next()（await drain / 生成器体内再调 .next()）：登记前保存外层挂起
+    // 上下文，全部退出路径恢复——外层执行体随后的 REG_YIELD 仍需以外层身份挂起。
+    void *outerSuspendingCoro = currentSuspendingCoro_;
+    size_t outerSuspendBaseFrames = coroSuspendBaseFrames_;
+    auto restoreOuterCoroCtx = [&]() {
+        currentSuspendingCoro_ = outerSuspendingCoro;
+        coroSuspendBaseFrames_ = outerSuspendBaseFrames;
+    };
+    // 真挂起上下文登记：REG_YIELD 据此进入快照路径（全新启动与恢复两种进入方式共用执行循环）
+    currentSuspendingCoro_ = cd;
+    coroSuspendBaseFrames_ = savedFrameCount;
+#endif
     // AUDIT-R7 F2 fix: 快照 tryStack_ 检测异常穿透（生成器体内未捕获 throw 被外层
     // catch 捕获时，hasError_ 为 false 且帧数回落，原实现误入 normalReturn 分支：
     // 读取陈旧的 coroutineReturnValue_ 邮箱并误置 done=true）。
@@ -1796,6 +1851,9 @@ Value RegisterVM::callCoroutineNext(Value& coroVal) {
             // 会返回 VM_EXCEPTION_THROW 让主循环继续 catch 块。
             currentCoroutineTargetYieldId_ = savedTargetYieldId;
             currentYieldExecutionCount_ = savedYieldExecCount;
+#if MINILANG_CORO_FIBER
+            restoreOuterCoroCtx();
+#endif
             return Value::nullValue();
         } else {
             result = std::move(coroutineReturnValue_);
@@ -1807,6 +1865,26 @@ Value RegisterVM::callCoroutineNext(Value& coroVal) {
         cd->currentValueBox.clear();
         cd->currentValueBox.push_back(result);
         cd->currentYieldId++;
+#if MINILANG_CORO_FIBER
+        if (currentSuspendingCoro_) {
+            // 真挂起：帧链已在 REG_YIELD 处快照进 cd->vmSuspension。最终 yield 后
+            // done——快照弃用（尾部语句不执行，逐点对齐重放 done 语义）。清理 live
+            // 状态：帧/try 出栈；不 closeUpvaluesFrom——生成器区开放 upvalue 已随
+            // 快照摘除保存，恢复时重挂。
+            if (cd->currentYieldId >= cd->yieldCount) {
+                cd->done = true;
+                cd->vmSuspension.reset();
+            }
+            while (frames_.size() > savedFrameCount)
+                frames_.pop_back();
+            while (!tryStack_.empty() && tryStack_.back().frameIndex >= savedFrameCount)
+                tryStack_.pop_back();
+            restoreOuterCoroCtx();
+            currentCoroutineTargetYieldId_ = savedTargetYieldId;
+            currentYieldExecutionCount_ = savedYieldExecCount;
+            return result;
+        }
+#endif
         if (cd->currentYieldId >= cd->yieldCount)
             cd->done = true;
         needCleanup = true;
@@ -1825,5 +1903,8 @@ Value RegisterVM::callCoroutineNext(Value& coroVal) {
     }
     currentCoroutineTargetYieldId_ = savedTargetYieldId;
     currentYieldExecutionCount_ = savedYieldExecCount;
+#if MINILANG_CORO_FIBER
+    restoreOuterCoroCtx();
+#endif
     return result;
 }

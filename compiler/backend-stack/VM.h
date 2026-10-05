@@ -41,6 +41,7 @@
 #include "compiler/core/Bytecode.h"
 #include "debug/DebugTypes.h"           // R161: WriteTarget 共享类型（Watchpoint peekWriteTarget 返回值）
 #include "interpreter/BuiltinMethods.h" // #20 fix: BuiltinMethod 枚举 + classifyBuiltinMethod
+#include "interpreter/CoroutineFiber.h" // MINILANG_CORO_FIBER：协程真挂起平台门控（第四轮架构优化）
 #include "interpreter/Value.h"
 #include <array> // C3: opcode profiling 计数数组
 #include <cassert>
@@ -568,6 +569,21 @@ private:
     // 每次 .next() 重放开始时重置为 0（对齐 Interpreter::currentYieldExecutionCount_）。
     int currentYieldExecutionCount_ = 0;
 
+#if MINILANG_CORO_FIBER
+    // —— 协程真挂起（第四轮架构优化；与 Interpreter fiber 同门控，见
+    // interpreter/CoroutineFiber.h）——快照结构 VMCoroutineSuspension 定义于
+    // VMCalls.cpp，经 CoroutineData::vmSuspension（shared_ptr<void>）持有。
+    // .next() 执行期间指向挂起目标（OP_YIELD 据此进入快照路径；CoroutineData
+    // 为 Value 私有嵌套类型，经 void* 不透明传递），退出路径一律清空。
+    void *currentSuspendingCoro_ = nullptr;
+    // 本次 .next() 入口时的栈/帧基线（OP_YIELD 快照边界；挂起快照按此基线
+    // 存相对偏移，恢复时以新入口基线重定基——两次 .next() 的调用方栈深可不同）
+    size_t coroSuspendBaseStack_ = 0;
+    size_t coroSuspendBaseFrames_ = 0;
+    /// 挂起快照（定义于 VMCalls.cpp；CoroutineData::vmSuspension 以 shared_ptr<void> 持有）
+    struct VMCoroutineSuspension;
+#endif
+
 #ifdef MINILANG_VM_PROFILING
     // C3: opcode 执行计数数组，索引 = static_cast<uint8_t>(OpCode)
     // 256 项覆盖所有可能的 opcode（uint8_t 范围），未使用 opcode 计数为 0。
@@ -766,13 +782,13 @@ private:
     MINILANG_FORCE_INLINE VMResult executeConstantOps(OpCode op, size_t& ip);
     MINILANG_FORCE_INLINE VMResult executeArithOps(OpCode op, size_t& ip);
     MINILANG_FORCE_INLINE VMResult executeCompareOps(OpCode op, size_t& ip);
-    VMResult executeVarOps(OpCode op, size_t& ip);
-    VMResult executeCallOps(OpCode op, size_t& ip);
-    VMResult executeContainerOps(OpCode op, size_t& ip);
-    VMResult executeWritebackOps(OpCode op, size_t& ip);
-    VMResult executeMiscOps(OpCode op, size_t& ip);
+    MINILANG_FORCE_INLINE VMResult executeVarOps(OpCode op, size_t& ip);
+    MINILANG_FORCE_INLINE VMResult executeCallOps(OpCode op, size_t& ip);
+    MINILANG_FORCE_INLINE VMResult executeContainerOps(OpCode op, size_t& ip);
+    MINILANG_FORCE_INLINE VMResult executeWritebackOps(OpCode op, size_t& ip);
+    MINILANG_FORCE_INLINE VMResult executeMiscOps(OpCode op, size_t& ip);
     /// R164 协程/生成器：OP_YIELD 指令执行（重放模式）
-    VMResult executeCoroutineOps(OpCode op, size_t& ip);
+    MINILANG_FORCE_INLINE VMResult executeCoroutineOps(OpCode op, size_t& ip);
 
     // ---- R132-D fix: executeWritebackOps 200 行拆为 thin dispatcher + 3 helper ----
     // 按"写回目标"分组：全局变量/栈槽/upvalue 各一个 helper，每 helper 处理 MEMBER+INDEX 两种 op。
@@ -829,12 +845,12 @@ private:
     /// globals_）
     VMResult executeVarNameOps(OpCode op, size_t& ip);
     /// 整数槽全局变量指令：OP_GET_GLOBAL / OP_SET_GLOBAL / OP_DEFINE_GLOBAL / OP_DELETE_GLOBAL
-    VMResult executeGlobalSlotOps(OpCode op, size_t& ip);
+    MINILANG_FORCE_INLINE VMResult executeGlobalSlotOps(OpCode op, size_t& ip);
     /// 局部变量指令：OP_GET_LOCAL / OP_SET_LOCAL（含 fieldsModified 标记同步）
     MINILANG_FORCE_INLINE VMResult executeLocalOps(OpCode op, size_t& ip);
     /// Upvalue 闭包指令：OP_GET_UPVALUE / OP_SET_UPVALUE / OP_CLOSE_UPVALUE（含 open/closed 双路径 + owningFrameIdx
     /// 字段同步）
-    VMResult executeUpvalueOps(OpCode op, size_t& ip);
+    MINILANG_FORCE_INLINE VMResult executeUpvalueOps(OpCode op, size_t& ip);
 
     // ---- S1 fix: executeCallOps 拆分为 8 个独立方法（原 978 行 → 每个方法 < 200 行）----
     /// OP_RETURN 执行：方法调用返回、字段同步、栈帧弹出

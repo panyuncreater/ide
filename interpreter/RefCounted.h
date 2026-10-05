@@ -90,14 +90,16 @@ struct RefCounted {
     /// 增加引用计数（relaxed 内存序， sufficient for refcounting）
     void addRef() const { refCount.fetch_add(1, std::memory_order_relaxed); }
 
-    /// 内存序说明：fetch_sub 使用 acq_rel——release 半序保证本线程对该对象内容的所有
-    /// 写操作在引用计数递减"发布"前完成；acquire 半序保证当最后一个引用被释放、即将
-    /// delete 本对象时，其他线程此前对该对象已"发布"的写操作对当前线程可见，
-    /// 从而 delete（在另一线程/本线程）读到一致状态。纯单线程标量场景 relaxed 已足够，
-    /// 但 Value 可能被跨线程共享（如 IDE 后台执行），故选 acq_rel 确保析构安全。
+    /// 内存序说明：fetch_sub 使用 release——release 半序保证本线程对该对象内容的所有
+    /// 写操作在引用计数递减"发布"前完成。归零路径（即将 delete 本对象）在 delete 前
+    /// 插入 acquire 全线程栅栏，保证其他线程此前对该对象已"发布"的写操作对当前线程
+    /// 可见，从而 delete（在另一线程/本线程）读到一致状态。这是 shared_ptr 同款惯用法：
+    /// 非归零路径（绝大多数 decrement）只需 release 半序，省去 acq_rel 的 acquire 半序，
+    /// 堆值密集代码（字符串拼接/容器元素搬运/字段赋值）每条指令减少 1 次强同步。
     /// 减少引用计数，若降为 0 则自删除
     void release() const {
-        if (refCount.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+        if (refCount.fetch_sub(1, std::memory_order_release) == 1) {
+            std::atomic_thread_fence(std::memory_order_acquire);
             delete this;
         }
     }

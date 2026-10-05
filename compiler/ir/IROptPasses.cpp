@@ -436,6 +436,164 @@ bool deadCodeEliminationPass(IRFunction& ir) {
     return modified;
 }
 
+// ---- 分支折叠 ----
+// 设计与安全性论证见 IR.h branchFoldingPass 声明处。实现为 3 个独立 sweep
+// （常量分支折叠 / 跳转线程化与紧邻消除 / 不可达代码删除），每轮 sweep 重建
+// 位置表（删除指令会使同块后续位置失效，分 sweep 隔离失效范围），迭代至不动点。
+bool branchFoldingPass(IRFunction& ir) {
+    bool modified = false;
+
+    // 位置表重建 helper：labelIdx → (blockIdx, instrIdx)（LABEL 指令位置）
+    auto buildLabelPos = [&ir](std::unordered_map<uint32_t, std::pair<size_t, size_t>>& labelPos) {
+        for (size_t bi = 0; bi < ir.blocks.size(); ++bi) {
+            const auto& instrs = ir.blocks[bi].instructions;
+            for (size_t ii = 0; ii < instrs.size(); ++ii) {
+                if (instrs[ii].op == IROp::LABEL && instrs[ii].operands.size() == 1 &&
+                    instrs[ii].operands[0].kind == IROperandKind::LABEL) {
+                    labelPos[instrs[ii].operands[0].index] = {bi, ii};
+                }
+            }
+        }
+    };
+
+    for (int iter = 0; iter < 4; ++iter) {
+        bool iterModified = false;
+
+        // Sweep 1: 常量条件分支折叠
+        {
+            std::unordered_map<uint32_t, std::pair<size_t, size_t>> labelPos;
+            buildLabelPos(labelPos);
+            // 条件 vreg 定义表：仅接受"恰好一个 VIRTUAL dest 定义"的 vreg（多定义保守跳过）
+            std::unordered_map<uint32_t, std::pair<size_t, size_t>> vregDefs;
+            std::unordered_set<uint32_t> multiDef;
+            for (size_t bi = 0; bi < ir.blocks.size(); ++bi) {
+                const auto& instrs = ir.blocks[bi].instructions;
+                for (size_t ii = 0; ii < instrs.size(); ++ii) {
+                    const auto& instr = instrs[ii];
+                    if (instr.op == IROp::JUMP_IF_FALSE || instr.op == IROp::JUMP || instr.op == IROp::LABEL)
+                        continue; // 跳转/标签的 VIRTUAL 首操作数不是定义（JUMP_IF_FALSE 首操作数是 src）
+                    if (!instr.operands.empty() && instr.operands[0].kind == IROperandKind::VIRTUAL) {
+                        auto ins = vregDefs.emplace(instr.operands[0].index, std::make_pair(bi, ii));
+                        if (!ins.second)
+                            multiDef.insert(instr.operands[0].index);
+                    }
+                }
+            }
+
+            for (size_t bi = 0; bi < ir.blocks.size(); ++bi) {
+                auto& instrs = ir.blocks[bi].instructions;
+                for (size_t ii = 0; ii < instrs.size(); ++ii) {
+                    auto& instr = instrs[ii];
+                    if (instr.op != IROp::JUMP_IF_FALSE || instr.operands.size() != 2 ||
+                        instr.operands[0].kind != IROperandKind::VIRTUAL ||
+                        instr.operands[1].kind != IROperandKind::LABEL)
+                        continue;
+                    uint32_t condVreg = instr.operands[0].index;
+                    if (multiDef.count(condVreg))
+                        continue;
+                    auto defIt = vregDefs.find(condVreg);
+                    if (defIt == vregDefs.end())
+                        continue;
+                    const auto& defInstr = ir.blocks[defIt->second.first].instructions[defIt->second.second];
+                    Value condVal;
+                    if (!isConstLoad(defInstr, ir, condVal) || !condVal.isBool())
+                        continue;
+                    auto labelIt = labelPos.find(instr.operands[1].index);
+                    if (labelIt == labelPos.end())
+                        continue; // 目标标签缺失（防御），保守不折叠
+
+                    if (condVal.boolVal()) {
+                        // 条件恒真：分支永不执行。JUMP_IF_FALSE 是 peek（零栈效应），
+                        // 直接删除——fall-through 路径本身已消费条件值（POP/STORE）。
+                        instrs.erase(instrs.begin() + static_cast<std::ptrdiff_t>(ii));
+                        --ii;
+                    } else {
+                        // 条件恒假：必跳转。替换为 JUMP（零栈效应，目标路径期望
+                        // 条件值留在栈上，如 LABEL 后的 POP cond / STORE cond）。
+                        instr.op = IROp::JUMP;
+                        instr.operands = {IROperand::label(instr.operands[1].index)};
+                    }
+                    iterModified = true;
+                }
+            }
+        }
+
+        // Sweep 2: 跳转线程化 + 跳转到紧邻 LABEL 消除
+        {
+            std::unordered_map<uint32_t, std::pair<size_t, size_t>> labelPos;
+            buildLabelPos(labelPos);
+
+            for (size_t bi = 0; bi < ir.blocks.size(); ++bi) {
+                auto& instrs = ir.blocks[bi].instructions;
+                for (size_t ii = 0; ii < instrs.size(); ++ii) {
+                    auto& instr = instrs[ii];
+                    if (instr.op != IROp::JUMP || instr.operands.size() != 1 ||
+                        instr.operands[0].kind != IROperandKind::LABEL)
+                        continue;
+                    uint32_t target = instr.operands[0].index;
+                    // 线程化：目标 LABEL 紧跟另一条 JUMP 时重定向（链式跟随，防环）
+                    std::unordered_set<uint32_t> visited{target};
+                    bool hopped = false;
+                    while (true) {
+                        auto t = labelPos.find(target);
+                        if (t == labelPos.end())
+                            break;
+                        const auto& [tb, ti] = t->second;
+                        const auto& tInstrs = ir.blocks[tb].instructions;
+                        if (ti + 1 >= tInstrs.size())
+                            break;
+                        const auto& nxt = tInstrs[ti + 1];
+                        if (nxt.op != IROp::JUMP || nxt.operands.size() != 1 ||
+                            nxt.operands[0].kind != IROperandKind::LABEL)
+                            break;
+                        uint32_t l2 = nxt.operands[0].index;
+                        if (l2 == target || !visited.insert(l2).second)
+                            break;
+                        target = l2;
+                        hopped = true;
+                    }
+                    if (hopped) {
+                        instr.operands[0] = IROperand::label(target);
+                        iterModified = true;
+                    }
+                    // 跳转到紧邻 LABEL：fall-through 等价，删除 JUMP
+                    auto t = labelPos.find(instr.operands[0].index);
+                    if (t != labelPos.end() && t->second.first == bi && t->second.second == ii + 1) {
+                        instrs.erase(instrs.begin() + static_cast<std::ptrdiff_t>(ii));
+                        --ii;
+                        iterModified = true;
+                    }
+                }
+            }
+        }
+
+        // Sweep 3: 不可达代码删除（无条件转移后到下一 LABEL 之间）
+        for (auto& block : ir.blocks) {
+            auto& instrs = block.instructions;
+            size_t ii = 0;
+            while (ii < instrs.size()) {
+                IROp op = instrs[ii].op;
+                if (op == IROp::JUMP || op == IROp::RETURN || op == IROp::RETURN_NULL || op == IROp::THROW) {
+                    size_t j = ii + 1;
+                    while (j < instrs.size() && instrs[j].op != IROp::LABEL)
+                        ++j;
+                    if (j > ii + 1) {
+                        instrs.erase(instrs.begin() + static_cast<std::ptrdiff_t>(ii + 1),
+                                     instrs.begin() + static_cast<std::ptrdiff_t>(j));
+                        iterModified = true;
+                    }
+                }
+                ++ii;
+            }
+        }
+
+        modified = modified || iterModified;
+        if (!iterModified)
+            break;
+    }
+    return modified;
+}
+
 // ---- 复制传播 ----
 // PERF-15: 寄存器式 lowering 已启用，复制传播可以安全使用。
 // 规则：
@@ -832,10 +990,10 @@ void emitUnrolledLoopBody(std::vector<IRInstruction>& newInstrs, const std::vect
     // 补 i=0 初始化
     uint32_t zeroConst = ir.addConstant(Value(static_cast<int64_t>(0)));
     newInstrs.emplace_back(IROp::LOAD_CONST,
-                           std::vector<IROperand>{IROperand::vreg(ir.nextVReg++), IROperand::constant(zeroConst)},
+                           IROperandList{IROperand::vreg(ir.nextVReg++), IROperand::constant(zeroConst)},
                            instrs[pattern.startIndex].line);
     newInstrs.emplace_back(IROp::STORE_LOCAL,
-                           std::vector<IROperand>{IROperand::local(counterSlot), IROperand::vreg(ir.nextVReg - 1)},
+                           IROperandList{IROperand::local(counterSlot), IROperand::vreg(ir.nextVReg - 1)},
                            instrs[pattern.startIndex].line);
     // 收集 body 内定义的 vreg（dest 为 VIRTUAL 的指令：纯计算 / LOAD_LOCAL / LOAD_CONST 等）
     std::unordered_set<uint32_t> bodyDefinedVRegs;
@@ -880,16 +1038,16 @@ void emitUnrolledLoopBody(std::vector<IRInstruction>& newInstrs, const std::vect
         uint32_t oneReg = ir.nextVReg++;
         uint32_t sumReg = ir.nextVReg++;
         newInstrs.emplace_back(IROp::LOAD_LOCAL,
-                               std::vector<IROperand>{IROperand::vreg(iReg), IROperand::local(counterSlot)},
+                               IROperandList{IROperand::vreg(iReg), IROperand::local(counterSlot)},
                                instrs[bodyEnd].line);
         newInstrs.emplace_back(IROp::LOAD_CONST,
-                               std::vector<IROperand>{IROperand::vreg(oneReg), IROperand::constant(oneConst)},
+                               IROperandList{IROperand::vreg(oneReg), IROperand::constant(oneConst)},
                                instrs[bodyEnd].line);
         newInstrs.emplace_back(
-            IROp::ADD, std::vector<IROperand>{IROperand::vreg(sumReg), IROperand::vreg(iReg), IROperand::vreg(oneReg)},
+            IROp::ADD, IROperandList{IROperand::vreg(sumReg), IROperand::vreg(iReg), IROperand::vreg(oneReg)},
             instrs[bodyEnd].line);
         newInstrs.emplace_back(IROp::STORE_LOCAL,
-                               std::vector<IROperand>{IROperand::local(counterSlot), IROperand::vreg(sumReg)},
+                               IROperandList{IROperand::local(counterSlot), IROperand::vreg(sumReg)},
                                instrs[bodyEnd].line);
     }
 }
@@ -979,6 +1137,12 @@ bool optimizeIR(IRFunction& ir, bool enableCopyPropagation, bool enableDCE, bool
         // BUG-IR-OPT-AUDIT-2: 每个 pass 修改时发射 LOG_DEBUG（原 4/5 pass 静默）
         if (m1)
             LOG_DEBUG("optimizeIR: round " + std::to_string(round) + " 常量折叠 修改", "IR-Opt");
+        // 分支折叠无条件启用（对栈式/寄存器式 lowering 均安全，见 IR.h 安全性说明）；
+        // 置于常量折叠之后——消费折叠出的 bool 常量条件；置于 DCE 之前——
+        // 不可达代码删除为 DCE 暴露更多可消除的纯计算指令。
+        bool m1b = branchFoldingPass(ir);
+        if (m1b)
+            LOG_DEBUG("optimizeIR: round " + std::to_string(round) + " 分支折叠 修改", "IR-Opt");
         bool m2 = enableCopyPropagation ? copyPropagationPass(ir) : false;
         if (m2)
             LOG_DEBUG("optimizeIR: round " + std::to_string(round) + " 复制传播 修改", "IR-Opt");
@@ -993,9 +1157,9 @@ bool optimizeIR(IRFunction& ir, bool enableCopyPropagation, bool enableDCE, bool
         bool m5 = enableDCE ? deadCodeEliminationPass(ir) : false;
         if (m5)
             LOG_DEBUG("optimizeIR: round " + std::to_string(round) + " DCE 修改", "IR-Opt");
-        modified = modified || m1 || m2 || m3 || m4 || m5;
+        modified = modified || m1 || m1b || m2 || m3 || m4 || m5;
         ++totalRounds;
-        if (!m1 && !m2 && !m3 && !m4 && !m5)
+        if (!m1 && !m1b && !m2 && !m3 && !m4 && !m5)
             break; // 收敛
     }
     // BUG-IR-OPT-AUDIT-3/4: 汇总日志统一术语 + 报告迭代轮数与最终规模

@@ -18,7 +18,7 @@ MiniLang 采用可选的三段式编译管线（外加 JIT 热路径分层编译
 |------|------|------|
 | 词法分析 | `lexer/Lexer` | 源码 → Token 流，支持插值字符串词法拆分 |
 | 语法分析 | `parser/Parser` | Token 流 → AST，递归下降 |
-| 中间表示 | `compiler/ir/IR` | AST → IR 三地址码（可选），支持常量折叠/死代码消除/复制传播 |
+| 中间表示 | `compiler/ir/IR` | AST → IR 三地址码（可选），支持常量折叠/分支折叠/死代码消除/复制传播 |
 | 字节码编译 | `compiler/core/Compiler` | AST → 栈式 VM 字节码 |
 | 寄存器编译 | `compiler/backend-reg/RegisterBytecodeBackend` | IR → 寄存器式字节码 |
 | 栈式 VM | `compiler/backend-stack/VM` | 执行栈式字节码 |
@@ -69,6 +69,8 @@ MiniLang 维护四个执行后端并存策略：
 三解释后端（Interpreter / StackVM / RegisterVM）必须保持语义一致性。IR 层作为可选中间表示，启用后在 lowering 前执行优化 pass。JIT 后端与 StackVM 共享 `BytecodeChunk` 输入，定位为"StackVM 的硬件加速器"，语义必须与三后端对齐。
 
 IR → StackVM 字节码的 lowering 由栈平衡校验器护航（`compiler/ir/BytecodeIRBackendStackCheck.cpp`，2026-10-03）：效应数据表 `kFixedStackEffect` + 公式型分支为每条 IROp 的 (pops, pushes) 单一事实源，编译期 `static_assert(tableIsComplete())` 强制枚举完备；debug 构建逐指令模拟操作数栈深度，负深度与未登记 op 拒绝 lowering，合并点冲突报告（AUDIT-R6 break-discard 合法豁免）。细则见 [backend-consistency.md](specs/backend-consistency.md) §7。
+
+**IR 优化管线（2026-10-04 现状）**：`optimizeIR` 每轮序列为「常量折叠 → 分支折叠 → [复制传播（默认禁）] → [CSE] → [循环展开] → DCE」，最多 3 轮至收敛。分支折叠（`branchFoldingPass`，无条件启用）消费常量折叠产出的 bool 常量条件：恒真删分支、恒假替换为 JUMP（`JUMP_IF_FALSE` 为 peek 零栈效应，变换不改栈平衡），另含跳转链线程化、跳转到紧邻 LABEL 消除、无条件转移后不可达代码删除。`inlinePass` 扫描 caller 全部块并内部迭代到不动点（最多 3 轮，指令预算跨轮共享），含控制流的 caller 与 a→b→c 传递内联均已生效。两个 VM 的字节码截断校验在 `initExecution` 加载期一次性预扫描（`validateChunkInstructionBoundaries`，变长 OP_CLOSURE 展开逻辑与逐指令检查逐点等价），release 主循环零逐指令检查、debug 保留双保险。
 
 ### JIT 后端
 

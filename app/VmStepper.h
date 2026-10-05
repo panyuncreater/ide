@@ -26,6 +26,7 @@
 #include <QThread> // AUDIT-R4 BUG-14: assertMainThread 线程亲和性断言
 #include <QTimer>
 #include <atomic>
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
@@ -460,6 +461,7 @@ public:
         if (vmRunTimer_)
             vmRunTimer_->stop();
         isVmRunning_ = false;
+        ++stateEpoch_; // PERF: 状态纪元递增（安全网轮询门控）
         // A1 fix: 双后端都重置，确保切换后端时状态干净
         vm_.resetState();
         regVm_.resetState();
@@ -489,6 +491,11 @@ public:
     }
 
     bool isRunning() const { return isVmRunning_; }
+    /// PERF: VM 状态纪元——每次步进（stepOnceActive）/重置（reset）/停止（stop）
+    /// 递增。调试面板的安全网轮询据此跳过无变化的 refreshLive（clear/rebuild +
+    /// getStack/getGlobals 状态快照全量深拷贝）；状态变更的即时刷新仍由
+    /// vmStateChanged 观察者推送，纪元仅作兜底轮询的门控。
+    std::uint64_t stateEpoch() const { return stateEpoch_; }
     bool isInitialized() const {
         assertMainThread(); // AUDIT-R4 BUG-14
         return isVmInitialized_;
@@ -666,6 +673,9 @@ private:
     // 与 stepCallback 禁用机制兼容——recorder 是主动采集，不依赖信号回调。
     bool recordingEnabled_ = false;
     TraceBackend recorderBackend_ = TraceBackend::StackVM;
+
+    // ---- PERF: VM 状态纪元（见 stateEpoch() 说明）----
+    std::uint64_t stateEpoch_ = 0;
 
     // ---- A1 fix: 单步执行分派辅助 ----
     // 两个 VM 的 stepOnce 均返回 VMResult，无需 vtable，直接 if 分派更高效

@@ -880,7 +880,7 @@ TEST(AuditBatch1IRBalance, BackwardJumpConflictReportedNotRejected) {
 // 本测试从测试侧独立复核：除 PHI（SSA 中间产物，不可 lower）外，全部 IROp
 // 枚举值在给最小合法操作数时都能给出栈效应；PHI 返回 false 且 lowering 拒绝。
 // 公式型操作（pops 依赖操作数）需按其布局给足操作数。
-static std::vector<IROperand> minimalOperandsFor(IROp op) {
+static IROperandList minimalOperandsFor(IROp op) {
     switch (op) {
     case IROp::CALL:
     case IROp::TAIL_CALL:

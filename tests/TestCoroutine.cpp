@@ -534,3 +534,121 @@ print(g.done());
     // 预期：10, 20, 30, true
     EXPECT_ALL_BACKENDS(src, "102030true");
 }
+
+// ============================================================
+// 真挂起模式语义锁定（第四轮架构优化，MINILANG_CORO_FIBER=1 平台）
+// ------------------------------------------------------------
+// 重放模式下生成器体前缀副作用在每次 .next() 重复执行（O(n²)）；真挂起
+// 模式下副作用只执行一次（O(n)）。以下测试锁定挂起模式的可观察语义，
+// 并要求四后端一致（同一宏门控下三执行后端同步启用挂起）。
+// ============================================================
+#if MINILANG_CORO_FIBER
+#include "interpreter/CoroutineFiber.h"
+
+// 副作用只执行一次：循环体含 log 追加，n 次 .next() 恰好 n 次进入循环体
+TEST(CoroutineSuspension, SideEffectsExecuteOnce) {
+    std::string src = R"(
+fun* gen() {
+    var i = 0;
+    while (i < 3) {
+        log = log + "b";
+        yield i;
+        i = i + 1;
+    }
+}
+var log = "";
+var g = gen();
+g.next();
+g.next();
+g.next();
+print(log);
+print(g.done());
+)";
+    // 挂起：每次 .next() 恰好经过循环体一次（重放模式会得到 "bbbbbb"）；
+    // 动态 yieldCount（循环内 yield）→ done 仅在循环退出后为 true
+    EXPECT_ALL_BACKENDS(src, "bbbfalse");
+}
+
+// yield 表达式值语义：恢复后 yield 表达式求值为其自身 yield 值（对齐重放 skip）
+TEST(CoroutineSuspension, YieldExpressionValueOnResume) {
+    std::string src = R"(
+fun* gen() {
+    var y = yield 5;
+    yield y;
+}
+var g = gen();
+print(g.next());
+print(g.next());
+print(g.done());
+)";
+    // 恢复后 y = 5（yield 表达式值 = 自身 yield 值），第二个 yield 返回 5
+    EXPECT_ALL_BACKENDS(src, "55true");
+}
+
+// 跨挂起点的局部变量状态连续性
+TEST(CoroutineSuspension, LocalStatePersistsAcrossSuspensions) {
+    std::string src = R"(
+fun* gen() {
+    var a = 1;
+    yield a;
+    a = a + 10;
+    yield a;
+    a = a + 100;
+    yield a;
+}
+var g = gen();
+print(g.next());
+print(g.next());
+print(g.next());
+print(g.done());
+)";
+    EXPECT_ALL_BACKENDS(src, "111111true");
+}
+
+// try/catch 内 yield 跨挂起点（异常处理状态随快照恢复）
+TEST(CoroutineSuspension, TryCatchAcrossSuspension) {
+    std::string src = R"(
+fun* gen() {
+    try {
+        yield 1;
+        throw "e";
+    } catch (e) {
+        yield 2;
+    }
+    yield 3;
+}
+var g = gen();
+print(g.next());
+print(g.next());
+print(g.next());
+print(g.done());
+)";
+    // yield 1 → throw → catch → yield 2 → yield 3 → done
+    EXPECT_ALL_BACKENDS(src, "123true");
+}
+
+// O(n) 行为代理锁定：300 次 .next() 序列正确（重放模式下此程序为 O(n²) 步数，
+// 挂起模式下线性；值序列一致即锁挂起语义不回退）
+TEST(CoroutineSuspension, LongSequenceValues) {
+    std::string src = R"(
+fun* gen() {
+    var i = 0;
+    while (i < 300) {
+        yield i;
+        i = i + 1;
+    }
+}
+var g = gen();
+var sum = 0;
+var k = 0;
+while (k < 300) {
+    sum = sum + g.next();
+    k = k + 1;
+}
+print(sum);
+print(g.done());
+)";
+    // 0+1+...+299 = 44850；300 次 yield 后循环未退出，done 仍 false
+    EXPECT_ALL_BACKENDS(src, "44850false");
+}
+#endif // MINILANG_CORO_FIBER

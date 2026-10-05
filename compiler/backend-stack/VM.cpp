@@ -1254,18 +1254,25 @@ VMResult VM::dispatchDictBuiltin(const Value& obj, BuiltinMethod method, const s
             return runtimeError("remove 期望 1 个参数(键)", DiagCodes::kArityMismatch);
         // L4 fix: 字典键支持 string/int/bool/float
         // P2-9 fix: 使用 getMutableDictRef 统一 COW 变异模式
-        auto dk = Value::dictKeyFromValue(args[0]);
-        if (!dk)
+        // PERF: 透明查找 + 迭代器删除，string 键免字符串深拷贝
+        if (!Value::dictKeyIsValid(args[0]))
             return runtimeError(ErrorMessages::kDictKeyInvalidType, DiagCodes::kTypeMismatch);
-        getMutableDictRef(mutableObj).erase(*dk);
+        auto& dictEntries = getMutableDictRef(mutableObj);
+        if (args[0].isString()) {
+            auto it = dictEntries.find(std::string_view(args[0].stringVal()));
+            if (it != dictEntries.end())
+                dictEntries.erase(it);
+        } else {
+            dictEntries.erase(Value::dictKeyFromValue(args[0]).value());
+        }
     } else if (method == BuiltinMethod::DICT_SET) {
         if (args.size() != 2)
             return runtimeError("set 期望 2 个参数(键, 值)", DiagCodes::kArityMismatch);
         // L4 fix: 字典键支持 string/int/bool/float
-        auto dk = Value::dictKeyFromValue(args[0]);
-        if (!dk)
+        // PERF: 透明写路径，string 键命中时免字符串深拷贝
+        if (!Value::dictKeyIsValid(args[0]))
             return runtimeError(ErrorMessages::kDictKeyInvalidType, DiagCodes::kTypeMismatch);
-        getMutableDictRef(mutableObj)[*dk] = args[1];
+        Value::dictGetOrInsertRef(getMutableDictRef(mutableObj), args[0]) = args[1];
     } else {
         return runtimeError("字典没有方法 " + methodName, "undefined-function");
     }
@@ -1401,6 +1408,27 @@ VMResult VM::dispatchSyncObjectBuiltin(const Value& obj, const std::string& meth
 // 初始化 / 单步 / 状态查询
 // ============================================================
 
+// 字节码截断预扫描（M-新2 上移）：加载期对 chunk 线性走一遍指令边界，校验每条
+// 指令完整落在 code 范围内。变长 OP_CLOSURE 的展开逻辑与原主循环逐指令检查完全一致
+// （instructionSizeAt 对截断返回 1 会漏报，不能复用）。校验通过后主循环 release
+// 不再逐指令做 instructionSize 越界检查（debug 主循环保留校验作双保险）。
+static bool validateChunkInstructionBoundaries(const BytecodeChunk& chunk) {
+    const size_t size = chunk.code.size();
+    size_t ip = 0;
+    while (ip < size) {
+        OpCode op = static_cast<OpCode>(chunk.code[ip]);
+        size_t instrSize = BytecodeChunk::instructionSize(op);
+        if (op == OpCode::OP_CLOSURE && ip + 3 < size) [[unlikely]] {
+            uint8_t uvCount = chunk.code[ip + 3];
+            instrSize = 4 + static_cast<size_t>(uvCount) * 2;
+        }
+        if (ip + instrSize > size)
+            return false;
+        ip += instrSize;
+    }
+    return true;
+}
+
 void VM::initExecution(const CompileResult& result) {
     stack_.clear();
     // PERF-13: VMStack 使用定长数组，无需 reserve
@@ -1460,6 +1488,19 @@ void VM::initExecution(const CompileResult& result) {
         globalNameToSlot_[result.globalSlotNames[i]] = i;
     }
     mainChunk_ = result.mainChunk; // 持有主 chunk 副本，避免悬垂指针
+
+    // 字节码截断预扫描：加载期一次性校验主 chunk 与全部函数 chunk 的指令边界。
+    // 校验失败属内部不变量破坏（编译器不会产出截断字节码），置 hasError_ 后
+    // 由 executeOneInstruction 入口的 hasError_ 短路返回 VM_RUNTIME_ERROR。
+    if (!validateChunkInstructionBoundaries(mainChunk_)) {
+        runtimeError("字节码截断: 主 chunk 指令不完整");
+    }
+    for (const auto& [funcName, funcChunk] : functionChunks_) {
+        if (!validateChunkInstructionBoundaries(funcChunk)) {
+            runtimeError("字节码截断: 函数 '" + funcName + "' 指令不完整");
+            break;
+        }
+    }
 
     // 设置主帧
     VMCallFrame mainFrame;
@@ -1782,8 +1823,8 @@ VMResult VM::execute(const CompileResult& result) {
 
 VMResult VM::executeOneInstruction() {
     // 单条指令执行的核心分派点，execute() 与 stepOnce() 共用此函数。
-    // 执行流程：① 判空帧/hasError_ 短路；② 取 opcode；③ 计算完整指令长度并做
-    // 字节码截断边界检查（OP_CLOSURE 为变长，需单独按 upvalue 计数展开）；
+    // 执行流程：① 判空帧/hasError_ 短路；② 取 opcode；③ (仅 debug) 计算完整指令
+    // 长度并做字节码截断边界检查——release 由 initExecution 的加载期预扫描覆盖；
     // ④ 两级转发——先按指令类别 switch 到 executeXxxOps，再由各方法按具体 opcode 处理。
     // 两级拆分仅为可维护性（每类方法 < 200 行），不改变执行语义。
     if (hasError_) [[unlikely]]
@@ -1799,7 +1840,10 @@ VMResult VM::executeOneInstruction() {
     ++opProfileCounts_[static_cast<uint8_t>(op)];
 #endif
 
-    // M-新2 fix: OP_CLOSURE 是变长指令，需要计算完整长度再做边界检查
+#ifndef NDEBUG
+    // M-新2 fix: OP_CLOSURE 是变长指令，需要计算完整长度再做边界检查。
+    // 截断校验已上移至 initExecution 的加载期预扫描，release 主循环不再逐指令
+    // 查表+比较；debug 保留逐指令校验作为双保险。
     size_t instrSize = BytecodeChunk::instructionSize(op);
     if (op == OpCode::OP_CLOSURE && ip + 3 < chunk.code.size()) [[unlikely]] {
         uint8_t uvCount = chunk.code[ip + 3];
@@ -1808,6 +1852,7 @@ VMResult VM::executeOneInstruction() {
     if (ip + instrSize > chunk.code.size()) [[unlikely]] {
         return runtimeError("字节码截断: 指令不完整");
     }
+#endif
 
     switch (op) {
     // 常量加载类

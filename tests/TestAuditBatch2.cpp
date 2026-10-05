@@ -484,45 +484,45 @@ TEST(AuditBatch2IRopt, LoopUnrollVregRenamingCorrectness) {
     //（LABEL 之前最近的 "LOAD_CONST 0 → STORE_LOCAL counterSlot" 序列），
     // 与真实 lowering 的 "var i = 0;" 产物对齐；缺失则拒绝展开。
     uint32_t vInit = ir.nextVReg++;
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{ IROperand::vreg(vInit), IROperand::constant(3) }, 1);
-    block.instructions.emplace_back(IROp::STORE_LOCAL, std::vector<IROperand>{ IROperand::local(counterSlot), IROperand::vreg(vInit) }, 1);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{ IROperand::vreg(vInit), IROperand::constant(3) }, 1);
+    block.instructions.emplace_back(IROp::STORE_LOCAL, IROperandList{ IROperand::local(counterSlot), IROperand::vreg(vInit) }, 1);
 
-    block.instructions.emplace_back(IROp::LABEL, std::vector<IROperand>{ IROperand::label(startLabelIdx) }, 1);
+    block.instructions.emplace_back(IROp::LABEL, IROperandList{ IROperand::label(startLabelIdx) }, 1);
     // LOAD_LOCAL slot=0 → vreg v0
     uint32_t v0 = ir.nextVReg++;
-    block.instructions.emplace_back(IROp::LOAD_LOCAL, std::vector<IROperand>{ IROperand::vreg(v0), IROperand::local(counterSlot) }, 2);
+    block.instructions.emplace_back(IROp::LOAD_LOCAL, IROperandList{ IROperand::vreg(v0), IROperand::local(counterSlot) }, 2);
     // LOAD_CONST 3 → vreg v1
     uint32_t v1 = ir.nextVReg++;
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{ IROperand::vreg(v1), IROperand::constant(0) }, 3);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{ IROperand::vreg(v1), IROperand::constant(0) }, 3);
     // LT v2, v0, v1
     uint32_t v2 = ir.nextVReg++;
-    block.instructions.emplace_back(IROp::LT, std::vector<IROperand>{ IROperand::vreg(v2), IROperand::vreg(v0), IROperand::vreg(v1) }, 4);
+    block.instructions.emplace_back(IROp::LT, IROperandList{ IROperand::vreg(v2), IROperand::vreg(v0), IROperand::vreg(v1) }, 4);
     // JUMP_IF_FALSE v2, exitLabel
-    block.instructions.emplace_back(IROp::JUMP_IF_FALSE, std::vector<IROperand>{ IROperand::vreg(v2), IROperand::label(exitLabelIdx) }, 5);
+    block.instructions.emplace_back(IROp::JUMP_IF_FALSE, IROperandList{ IROperand::vreg(v2), IROperand::label(exitLabelIdx) }, 5);
     // POP v2
-    block.instructions.emplace_back(IROp::POP, std::vector<IROperand>{ IROperand::vreg(v2) }, 6);
+    block.instructions.emplace_back(IROp::POP, IROperandList{ IROperand::vreg(v2) }, 6);
     // body: LOAD_LOCAL i; LOAD_CONST 2; MUL; STORE_LOCAL local
     uint32_t v3 = ir.nextVReg++;
-    block.instructions.emplace_back(IROp::LOAD_LOCAL, std::vector<IROperand>{ IROperand::vreg(v3), IROperand::local(counterSlot) }, 7);
+    block.instructions.emplace_back(IROp::LOAD_LOCAL, IROperandList{ IROperand::vreg(v3), IROperand::local(counterSlot) }, 7);
     uint32_t v4 = ir.nextVReg++;
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{ IROperand::vreg(v4), IROperand::constant(1) }, 8);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{ IROperand::vreg(v4), IROperand::constant(1) }, 8);
     uint32_t v5 = ir.nextVReg++;
-    block.instructions.emplace_back(IROp::MUL, std::vector<IROperand>{ IROperand::vreg(v5), IROperand::vreg(v3), IROperand::vreg(v4) }, 9);
-    block.instructions.emplace_back(IROp::STORE_LOCAL, std::vector<IROperand>{ IROperand::local(localSlot), IROperand::vreg(v5) }, 10);
+    block.instructions.emplace_back(IROp::MUL, IROperandList{ IROperand::vreg(v5), IROperand::vreg(v3), IROperand::vreg(v4) }, 9);
+    block.instructions.emplace_back(IROp::STORE_LOCAL, IROperandList{ IROperand::local(localSlot), IROperand::vreg(v5) }, 10);
     // counter update: LOAD_LOCAL i; LOAD_CONST 1; ADD; STORE_LOCAL i
     uint32_t v6 = ir.nextVReg++;
-    block.instructions.emplace_back(IROp::LOAD_LOCAL, std::vector<IROperand>{ IROperand::vreg(v6), IROperand::local(counterSlot) }, 11);
+    block.instructions.emplace_back(IROp::LOAD_LOCAL, IROperandList{ IROperand::vreg(v6), IROperand::local(counterSlot) }, 11);
     uint32_t v7 = ir.nextVReg++;
-    block.instructions.emplace_back(IROp::LOAD_CONST, std::vector<IROperand>{ IROperand::vreg(v7), IROperand::constant(2) }, 12);
+    block.instructions.emplace_back(IROp::LOAD_CONST, IROperandList{ IROperand::vreg(v7), IROperand::constant(2) }, 12);
     uint32_t v8 = ir.nextVReg++;
-    block.instructions.emplace_back(IROp::ADD, std::vector<IROperand>{ IROperand::vreg(v8), IROperand::vreg(v6), IROperand::vreg(v7) }, 13);
-    block.instructions.emplace_back(IROp::STORE_LOCAL, std::vector<IROperand>{ IROperand::local(counterSlot), IROperand::vreg(v8) }, 14);
+    block.instructions.emplace_back(IROp::ADD, IROperandList{ IROperand::vreg(v8), IROperand::vreg(v6), IROperand::vreg(v7) }, 13);
+    block.instructions.emplace_back(IROp::STORE_LOCAL, IROperandList{ IROperand::local(counterSlot), IROperand::vreg(v8) }, 14);
     // JUMP L1
-    block.instructions.emplace_back(IROp::JUMP, std::vector<IROperand>{ IROperand::label(startLabelIdx) }, 15);
+    block.instructions.emplace_back(IROp::JUMP, IROperandList{ IROperand::label(startLabelIdx) }, 15);
     // LABEL L_exit
-    block.instructions.emplace_back(IROp::LABEL, std::vector<IROperand>{ IROperand::label(exitLabelIdx) }, 16);
+    block.instructions.emplace_back(IROp::LABEL, IROperandList{ IROperand::label(exitLabelIdx) }, 16);
     // POP v0
-    block.instructions.emplace_back(IROp::POP, std::vector<IROperand>{ IROperand::vreg(v0) }, 17);
+    block.instructions.emplace_back(IROp::POP, IROperandList{ IROperand::vreg(v0) }, 17);
 
     ir.blocks.push_back(std::move(block));
 

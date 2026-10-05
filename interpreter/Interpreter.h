@@ -536,6 +536,24 @@ private:
     // currentYieldExecutionCount_ 与 currentCoroutineTargetYieldId_ 决定是否抛出 YieldSignal。
     int currentYieldExecutionCount_ = 0;
 
+    // —— 协程真挂起（第四轮架构优化，平台支持见 interpreter/CoroutineFiber.h）——
+    // MINILANG_CORO_FIBER=1（Windows fiber）时 .next() 走挂起/恢复路径；
+    // =0 时以下成员/方法恒不使用（visitYieldExpr 的挂起分支以 activeCoroutineFiber_
+    // 非空判定，重放路径不受影响）。状态结构对头文件不透明（定义于
+    // InterpreterCoroutine.cpp）；CoroutineData::interpreterFiber 以 shared_ptr<void> 持有。
+    struct CoroutineFiberState;
+    /// 当前正在执行生成器体的 fiber 状态（nullptr = 不在挂起模式的生成器执行中）
+    CoroutineFiberState *activeCoroutineFiber_ = nullptr;
+    /// visitYieldExpr 挂起点：保存 yield 值与解释器上下文后切回调用方；被下一次
+    /// .next() 恢复后本函数才返回（yield 表达式值 = 自身 yield 值，对齐重放 skip 语义）
+    void coroutineSuspend(Value yieldValue);
+    /// fiber 主过程（static 蹦床进入）：建立生成器执行上下文并执行函数体，
+    /// 自然结束/ReturnException 置 done，错误逃逸封送 exception_ptr 后切回调用方
+    void coroutineFiberBody();
+    /// fiber 蹦床（平台 fiber 入口要求的裸函数指针；经状态块的 interp 指标转入
+    /// coroutineFiberBody 成员函数以获得私有访问）
+    static void coroutineFiberTrampoline(void *arg);
+
     // ARCH-12 fix: REPL 状态暂存聚合为 ReplState 结构体（原为 10 个散布的 saved* 字段）。
     // 将 REPL 状态管理的完整边界集中在一处，便于理解和未来进一步提取为独立类。
     // 语义：saveReplState() 将当前 REPL 状态 move 到 ReplState，restoreReplState() 反向 move 回。
