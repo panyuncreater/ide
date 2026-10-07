@@ -411,10 +411,16 @@ bool BytecodeIRBackend::checkStackBalance(const IRInstruction& instr) {
     // 逐指令栈深模拟轨迹（函数名 + IROp + 处理前深度 + 操作数索引），
     // 用于排查校验器报告的合并点冲突。未设置时零开销（static 初始化只读一次环境变量）。
     static const bool traceDepth = [] {
+#ifdef _WIN32
+        // MSVC：getenv 触发 C4996 弃用（/WX 下即错），用 secure CRT 版本
         char buf[8] = {};
         size_t sz = 0;
         getenv_s(&sz, buf, sizeof(buf), "MINILANG_IR_STACK_DEBUG");
         return sz > 0;
+#else
+        // GCC/clang：无 getenv_s（MSVC 专属 CRT），用标准 getenv
+        return std::getenv("MINILANG_IR_STACK_DEBUG") != nullptr;
+#endif
     }();
     if (traceDepth) {
         fprintf(stderr, "[stackdbg:%s] %-22s depth=%d ops=[", traceName_.c_str(), irOpName(instr.op), simStackDepth_);

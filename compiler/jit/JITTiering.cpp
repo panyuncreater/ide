@@ -303,7 +303,7 @@ JitEntryFn JITBackend::compileChunkSpecialized(const CompileResult& result, size
     }
 
     // R153: 持久化特化入口映射，下次 execute() 重新应用
-    specializedMethodEntries_[targetChunkName] = targetBlock;
+    specializedMethodEntries_[targetChunkName] = reinterpret_cast<void*>(targetBlock); // 函数指针→void*：GCC 需显式转换（MSVC 静默放行）
     // 所有权登记（AUDIT-R4 BUG-12: 旧块退休+新块登记，恰好一次）
     registerSpecializedOwnership(targetChunkName, targetBlock);
     // 记录已特化的 chunk 名称
@@ -371,7 +371,7 @@ JitEntryFn JITBackend::compileChunkSpecializedFloat(const CompileResult& result,
         return nullptr;
     }
 
-    specializedMethodEntries_[targetChunkName] = targetBlock;
+    specializedMethodEntries_[targetChunkName] = reinterpret_cast<void*>(targetBlock); // 函数指针→void*：GCC 需显式转换（MSVC 静默放行）
     registerSpecializedOwnership(targetChunkName, targetBlock);
     specializedChunks_.push_back(targetChunkName);
     if (specializedEntries_.size() <= chunkIdx) {
@@ -556,7 +556,7 @@ JitEntryFn JITBackend::compileChunkSpecializedWithOsr(const CompileResult& resul
     // osrEntryLabelGenerated_ 保持 true（仅 osrEntryGenMode_ 会消费该标志，
     // 下次 OSR 编译前由触发方显式清零）
 
-    specializedMethodEntries_[targetChunkName] = targetBlock;
+    specializedMethodEntries_[targetChunkName] = reinterpret_cast<void*>(targetBlock); // 函数指针→void*：GCC 需显式转换（MSVC 静默放行）
     registerSpecializedOwnership(targetChunkName, targetBlock);
     specializedChunks_.push_back(targetChunkName);
     if (specializedEntries_.size() <= chunkIdx) {
@@ -611,7 +611,7 @@ JitEntryFn JITBackend::compileChunkSpecializedFloatWithOsr(const CompileResult& 
         return nullptr;
     }
 
-    specializedMethodEntries_[targetChunkName] = targetBlock;
+    specializedMethodEntries_[targetChunkName] = reinterpret_cast<void*>(targetBlock); // 函数指针→void*：GCC 需显式转换（MSVC 静默放行）
     registerSpecializedOwnership(targetChunkName, targetBlock);
     specializedChunks_.push_back(targetChunkName);
     if (specializedEntries_.size() <= chunkIdx) {
