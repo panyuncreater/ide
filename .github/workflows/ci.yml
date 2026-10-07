@@ -1182,6 +1182,15 @@ jobs:
         working-directory: out/build/release
         run: ctest -C Release -j 1 --output-on-failure -I 1,400
 
+      # perf 族单独训练：minilang_perf_test 的 pgd 只在其二进制运行时创建，
+      # 不训练则 Pass 2 /USEPROFILE 链接该目标时 LNK1266（2026-10-07 实测，
+      # test_harness/plugin 等无 pgd 目标在 WERROR=OFF 下仅为可容忍告警，
+      # 唯 perf_test 为硬错误）。perf 测试只输出 JSON 无 pass/fail 断言，
+      # 插桩减速不影响通过；其热循环（三后端解释循环）恰为 PGO 核心优化目标
+      - name: "PGO Pass 1: perf 族训练"
+        working-directory: out/build/release
+        run: ctest -C Release -j 1 --output-on-failure -R PerfBenchmark
+
       # Pass 2: PGO 优化构建 + 性能验证
       # WERROR=OFF：/USEPROFILE 对未被训练目标（test_harness 工具/plugin 等
       # ctest 不运行的可执行文件）因无 profile 数据发告警，release preset 的
