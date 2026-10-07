@@ -1,5 +1,5 @@
 {
-  "lastUpdate": 1791355398963,
+  "lastUpdate": 1791366103699,
   "repoUrl": "https://github.com/panyuncreater/ide",
   "entries": {
     "MiniLang Performance Benchmark": [
@@ -1954,6 +1954,216 @@
           {
             "name": "JIT::closure_counter",
             "value": 9.57725,
+            "unit": "ms",
+            "extra": "[object Object]"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "1265110878@qq.com",
+            "name": "panyuncreater",
+            "username": "panyuncreater"
+          },
+          "committer": {
+            "email": "1265110878@qq.com",
+            "name": "panyuncreater",
+            "username": "panyuncreater"
+          },
+          "distinct": true,
+          "id": "00e5819e9b546236266a461443bea9f88a72a670",
+          "message": "fix(ci): 三个门禁 job 首跑修正（asan-msvc 构建目标 / linux-asan vptr / docs 写权限）\n\n① sanitize-asan-msvc：构建步骤仍显式构建 minilang_perf_test，而 MINILANG_BUILD_PERF_TESTS=OFF 守卫（6294770）使目标不注册——报 ninja unknown target。删除该行，-E PerfBenchmark 保留为防御性排除。② sanitize-asan（Linux）：UBSan vptr 检查对多态类型的成员访问注入 typeinfo 引用，minilang_core（BackendExecutionService 经 app 层头访问 VmStepper/PipelineRunner/IdeController 等）按分层约定不链接 app 定义 TU——三测试目标链接期 undefined typeinfo 全断（首跑实测）。全局追加 -DCMAKE_CXX_FLAGS=-fno-sanitize=vptr：vptr 是该 job 唯一 C++ 语义检查（MSVC 侧本无 UBSan），ASan 与其余 UBSan 检查不受影响；core→app 分层越界根治记录为后续方向。③ docs：GITHUB_TOKEN 缺省无 contents 写权限，gh-pages 推送 403——job 级显式 permissions: contents: write。",
+          "timestamp": "2026-10-07T17:39:22+08:00",
+          "tree_id": "52611b8d683b41c0c7932a2322b7bdde2cb3aac7",
+          "url": "https://github.com/panyuncreater/ide/commit/00e5819e9b546236266a461443bea9f88a72a670"
+        },
+        "date": 1791366103698,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Interpreter::fibonacci",
+            "value": 881.76,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "StackVM::fibonacci",
+            "value": 57.7441,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "RegisterVM::fibonacci",
+            "value": 61.7314,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Interpreter::large_loop",
+            "value": 43.4184,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "StackVM::large_loop",
+            "value": 40.8408,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "RegisterVM::large_loop",
+            "value": 32.3336,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Interpreter::string_concat",
+            "value": 3.50258,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "StackVM::string_concat",
+            "value": 2.85968,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "RegisterVM::string_concat",
+            "value": 2.36046,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Interpreter::array_alloc",
+            "value": 116.068,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "StackVM::array_alloc",
+            "value": 22.9891,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "RegisterVM::array_alloc",
+            "value": 21.2005,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Interpreter::tak",
+            "value": 340.192,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "StackVM::tak",
+            "value": 21.8253,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "RegisterVM::tak",
+            "value": 24.3332,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Interpreter::ackermann",
+            "value": 1.19872,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "StackVM::ackermann",
+            "value": 0.100928,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "RegisterVM::ackermann",
+            "value": 0.083276,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Interpreter::bubble_sort",
+            "value": 1.8274,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "StackVM::bubble_sort",
+            "value": 1.32518,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "RegisterVM::bubble_sort",
+            "value": 0.013585,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Interpreter::closure_counter",
+            "value": 53.1041,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "StackVM::closure_counter",
+            "value": 9.0998,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "RegisterVM::closure_counter",
+            "value": 7.05065,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "JIT::fibonacci",
+            "value": 3.83973,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "JIT::large_loop",
+            "value": 1.3887,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "JIT::string_concat",
+            "value": 0.02149,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "JIT::tak",
+            "value": 1.57399,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "JIT::ackermann",
+            "value": 0.068237,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "JIT::bubble_sort",
+            "value": 0.043601,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "JIT::closure_counter",
+            "value": 9.69435,
             "unit": "ms",
             "extra": "[object Object]"
           }
