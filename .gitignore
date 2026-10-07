@@ -128,3 +128,7 @@ nul
 /minilang_demo/minilang_demo.mp4
 /ppt/MiniLang.pptx
 /samples/mini/untitled.mini
+
+# ZCode 会话运行产物（工作流/后台任务日志/会话计划）
+/.zwork/
+/.zcode/
