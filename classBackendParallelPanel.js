@@ -1,0 +1,28 @@
+var classBackendParallelPanel =
+[
+    [ "BackendExecResult", "structBackendParallelPanel_1_1BackendExecResult.html", "structBackendParallelPanel_1_1BackendExecResult" ],
+    [ "BackendParallelPanel", "classBackendParallelPanel.html#abc4b56bb3d1a750d7809110b471519ef", null ],
+    [ "loadSampleRequested", "classBackendParallelPanel.html#a3f67f4d07bacc64050a3779f4b0ac649", null ],
+    [ "onLoadSample", "classBackendParallelPanel.html#a0ca9f5f5759a0890205ec8711efe9236", null ],
+    [ "onRunAllBackends", "classBackendParallelPanel.html#a67ebc006a0cd677c1eb091169292225d", null ],
+    [ "onSelectSample", "classBackendParallelPanel.html#aade8d59cb79d99b98f6bb4b4553e2c6a", null ],
+    [ "renderConsistency", "classBackendParallelPanel.html#a509bdd461d3bf640156899c6086d071d", null ],
+    [ "renderResult", "classBackendParallelPanel.html#a929cb77e9d9b50890abc1872fb988e6d", null ],
+    [ "runInterpreter", "classBackendParallelPanel.html#a0296bb01407cbcfcfe46b43a6f67d17c", null ],
+    [ "runRegVM_IR", "classBackendParallelPanel.html#a651accc876b298dc87f8cb4f187964a2", null ],
+    [ "runStackVM_IR", "classBackendParallelPanel.html#a44e45ee84b31de0371430b904e3475f1", null ],
+    [ "samples", "classBackendParallelPanel.html#a439be9aaf02492080358e8d2f1d840bc", null ],
+    [ "setController", "classBackendParallelPanel.html#acbbf240f75a8853c1d913a14d71ce708", null ],
+    [ "consistencyLabel_", "classBackendParallelPanel.html#a8d7eedce3b28c69109e58df2d37fd5d4", null ],
+    [ "controller_", "classBackendParallelPanel.html#aa0e82c7e68b97769046efc95a6e65d23", null ],
+    [ "interpTrace_", "classBackendParallelPanel.html#a412900115178e29f1c47cea06c4a789c", null ],
+    [ "loadSampleBtn_", "classBackendParallelPanel.html#a8127561edef1b8d992cc6d8c8c73e0b1", null ],
+    [ "regVmTrace_", "classBackendParallelPanel.html#a4f8f929880467007ce55adbe99c6bcd3", null ],
+    [ "resultTable_", "classBackendParallelPanel.html#af7850c9c151a86e6e6fc39c792f99735", null ],
+    [ "runBtn_", "classBackendParallelPanel.html#a485c88835217fb0a1c8de94c7ead2dbd", null ],
+    [ "sample1Btn_", "classBackendParallelPanel.html#a72dfb30c9873401346df9f8052410c3d", null ],
+    [ "sample2Btn_", "classBackendParallelPanel.html#a2b24c04fedfe2f647d5aa97d150c62a8", null ],
+    [ "sample3Btn_", "classBackendParallelPanel.html#a298fda27108c00bb872e11bdde3116a4", null ],
+    [ "sourceEdit_", "classBackendParallelPanel.html#a8616b2ff3a706e6640bab554ad1d6234", null ],
+    [ "stackVmTrace_", "classBackendParallelPanel.html#a034238f2daaf70d22d409a577b694143", null ]
+];

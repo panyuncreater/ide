@@ -1,0 +1,27 @@
+var classDiagnosticBag =
+[
+    [ "add", "classDiagnosticBag.html#a73bd957ed88fd8c10cebbb2b9fb21b4c", null ],
+    [ "addError", "classDiagnosticBag.html#a2a5b6e882f6a96ae89ae93e465b47bea", null ],
+    [ "addError", "classDiagnosticBag.html#aa562a7ef2ffd9c7b8cb95f95de8fd329", null ],
+    [ "addErrorFatal", "classDiagnosticBag.html#afbc7a1532e3b2822a35a0eb840d32f56", null ],
+    [ "addInfo", "classDiagnosticBag.html#a1761779425792660b0bc4e0391e97516", null ],
+    [ "addInfo", "classDiagnosticBag.html#a28054c1b7ea8614f5fe433f6d6cb569e", null ],
+    [ "addWarning", "classDiagnosticBag.html#a701643936815adf6250d86c3d30fe59b", null ],
+    [ "addWarning", "classDiagnosticBag.html#a6ab904a1c3d7e92ecab538f0fe16c3ba", null ],
+    [ "all", "classDiagnosticBag.html#ae88e0ecc489e150dc1a5927bfe58a5cb", null ],
+    [ "clear", "classDiagnosticBag.html#abebf4b5e825179de535452e4589c0a2f", null ],
+    [ "empty", "classDiagnosticBag.html#ae775985ef3458461ed50aebe78a9d3aa", null ],
+    [ "errorCount", "classDiagnosticBag.html#a65ddc91d9f54bc3f792e9d0c25659395", null ],
+    [ "errorLines", "classDiagnosticBag.html#a45efa579bb316244bfb8558179de6bba", null ],
+    [ "hasErrors", "classDiagnosticBag.html#a5cf778b894f022001b338bd75752b8cc", null ],
+    [ "hasFatalErrors", "classDiagnosticBag.html#a545d5e70e49ba06ee41efb82698445be", null ],
+    [ "hasWarnings", "classDiagnosticBag.html#a2044e0f2992908b94e5c34e37d6bba52", null ],
+    [ "size", "classDiagnosticBag.html#ad99f60bbaee993e51291a7b8c3c5a4c0", null ],
+    [ "sortByLocation", "classDiagnosticBag.html#aa4ddeee3076693903fb94ba164136600", null ],
+    [ "summary", "classDiagnosticBag.html#a68b4a56d8d38a04e5b4113142a16d11c", null ],
+    [ "warningCount", "classDiagnosticBag.html#aa312fc6721fc5d4d4aaba067b2430ed9", null ],
+    [ "diagnostics_", "classDiagnosticBag.html#ac4ada2ed2474211d68917d11291035e0", null ],
+    [ "errorCount_", "classDiagnosticBag.html#a5b5f707f63e0bb37c057090a1feb5e39", null ],
+    [ "fatalErrorCount_", "classDiagnosticBag.html#a71c6e0e9ad5eb3232079b8ec2ebbc30b", null ],
+    [ "warningCount_", "classDiagnosticBag.html#a6ff973b98b800da6fbd3e45c43e2534b", null ]
+];

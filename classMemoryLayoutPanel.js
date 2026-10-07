@@ -1,0 +1,28 @@
+var classMemoryLayoutPanel =
+[
+    [ "MemoryLayoutPanel", "classMemoryLayoutPanel.html#a8206d7b86ee27ddda2909955a728581b", null ],
+    [ "analyzeValue", "classMemoryLayoutPanel.html#ad1340f7ddd7ec28458c209029303be9f", null ],
+    [ "buildSimulatorPage", "classMemoryLayoutPanel.html#aab6ba5be3220abef253032508c4a174a", null ],
+    [ "buildTheoryPage", "classMemoryLayoutPanel.html#ae824509ab975bcf29216979acd6361e6", null ],
+    [ "loadSampleRequested", "classMemoryLayoutPanel.html#adcb4c80f8937872bb0acda5df477dd1f", null ],
+    [ "onAnalyze", "classMemoryLayoutPanel.html#a7df9d537625253b7b00c9c84a7f06f7b", null ],
+    [ "onLoadSample", "classMemoryLayoutPanel.html#a12bfc924f44c11c7843409d94f9c8035", null ],
+    [ "onPageSwitch", "classMemoryLayoutPanel.html#a4de8cd8860799f0730c7fec8d8ae731c", null ],
+    [ "onSelectPreset", "classMemoryLayoutPanel.html#a5001b896163084342f5ef4ec92f87e90", null ],
+    [ "populatePresets", "classMemoryLayoutPanel.html#a70b6cfbd6a642c3e520cf5e238b7f63b", null ],
+    [ "populateTheory", "classMemoryLayoutPanel.html#a0faaaa5a3404d45fdc88ff6d470e3faa", null ],
+    [ "renderAnalysis", "classMemoryLayoutPanel.html#ab8e6c1e2674f6b704f5935e85bfb9c36", null ],
+    [ "setController", "classMemoryLayoutPanel.html#a003b96c4c1c2c9e281a5f60b68a8f2e6", null ],
+    [ "analyzeBtn_", "classMemoryLayoutPanel.html#a4103576acdfee6f04cded8307101c0ad", null ],
+    [ "controller_", "classMemoryLayoutPanel.html#a8fba0be5c0c9c2ad30f0d52779cbe046", null ],
+    [ "cowTable_", "classMemoryLayoutPanel.html#ab404d6a835617b1aad0c8d25ad912a44", null ],
+    [ "fieldTable_", "classMemoryLayoutPanel.html#abfe95bd18dfbe9579b360570e33269d3", null ],
+    [ "layoutBrowser_", "classMemoryLayoutPanel.html#a0938b91d58b691dfa055d6a8861bc2a1", null ],
+    [ "presetCombo_", "classMemoryLayoutPanel.html#a97b04963840a2b3fa8b7a6d92e16388f", null ],
+    [ "stack_", "classMemoryLayoutPanel.html#ac4438aedc9f76085094011bddae1940d", null ],
+    [ "subPageBar_", "classMemoryLayoutPanel.html#a486cfaf3bbe737ab2978cc281439d534", null ],
+    [ "theoryBrowser_", "classMemoryLayoutPanel.html#a06d773bf1e29315432b5f703571e6e3f", null ],
+    [ "typeTable_", "classMemoryLayoutPanel.html#a8d76648edd4694b4787abc6f8f01cedf", null ],
+    [ "upvalueTable_", "classMemoryLayoutPanel.html#ad13c9c0d6837194c9aeccccd7f5bc81a", null ],
+    [ "valueEdit_", "classMemoryLayoutPanel.html#aab9be43d0d1abd4e0d9283279ad06dd0", null ]
+];

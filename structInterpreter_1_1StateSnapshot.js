@@ -1,0 +1,25 @@
+var structInterpreter_1_1StateSnapshot =
+[
+    [ "callStack", "structInterpreter_1_1StateSnapshot.html#a2ef7da56c761a075cf7c5038ff5f896b", null ],
+    [ "classContextStack", "structInterpreter_1_1StateSnapshot.html#a9655f7666b776da055b12f16786b1934", null ],
+    [ "classRegistry", "structInterpreter_1_1StateSnapshot.html#afacd2fd920ec464defea1ed12c6a9724", null ],
+    [ "classRegistryGen", "structInterpreter_1_1StateSnapshot.html#a7d7487e0cf6ae384c2ec0eb6bdf4b0c1", null ],
+    [ "currentCoroutineTargetYieldId", "structInterpreter_1_1StateSnapshot.html#abbbb73e81673c741f96c49cb76e7f96a", null ],
+    [ "currentEnv", "structInterpreter_1_1StateSnapshot.html#af648ca781eb37ba56ae9bf16340a4a7b", null ],
+    [ "currentFunctionReturnType", "structInterpreter_1_1StateSnapshot.html#a6fb328843d883412c2fd6775aa5b865a", null ],
+    [ "currentTypeParams", "structInterpreter_1_1StateSnapshot.html#a1318bc28dbfd7d0742e0a99e9913b910", null ],
+    [ "currentYieldExecutionCount", "structInterpreter_1_1StateSnapshot.html#a68284f41bdf77462978780b20560ee79", null ],
+    [ "enumRegistry", "structInterpreter_1_1StateSnapshot.html#afd480922eeebbda4784ba0810bbbfd17", null ],
+    [ "envChainVars", "structInterpreter_1_1StateSnapshot.html#a948ebc84feac06f64a5db01e83224765", null ],
+    [ "exportedNames", "structInterpreter_1_1StateSnapshot.html#ae2ad6d7df8ae139f688f892f58ae05cf", null ],
+    [ "funRegistry", "structInterpreter_1_1StateSnapshot.html#a3411e3fe6b0f0a0ee085931d6dba01f0", null ],
+    [ "funRegistryGen", "structInterpreter_1_1StateSnapshot.html#a9664d6bcac4fa1c9843804cfd4e1de14", null ],
+    [ "globalEnv", "structInterpreter_1_1StateSnapshot.html#a073ffdbd2c6fde62eeea4bcd1c00bfb6", null ],
+    [ "loopFlow", "structInterpreter_1_1StateSnapshot.html#a17a4de4526e3a37288f62c82f37252f1", null ],
+    [ "moduleCache", "structInterpreter_1_1StateSnapshot.html#ad76f2a7a033df6b8c9cac3ead3a975a2", null ],
+    [ "moduleExports", "structInterpreter_1_1StateSnapshot.html#a483246362749925f0c491707e8a92b4a", null ],
+    [ "moduleLoadingSet", "structInterpreter_1_1StateSnapshot.html#a952b6a9bd201da78561a2c1a82f9dcf2", null ],
+    [ "moduleLoadingStack", "structInterpreter_1_1StateSnapshot.html#a3b74527e62234a98558b5c2d44142304", null ],
+    [ "moduleMtimes", "structInterpreter_1_1StateSnapshot.html#aa4c6f1fa6426ae9406b20c561c03fdcb", null ],
+    [ "recursionDepth", "structInterpreter_1_1StateSnapshot.html#ab6b3733f8f2982d8ef3dea78d6ab807a", null ]
+];

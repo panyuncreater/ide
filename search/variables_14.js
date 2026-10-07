@@ -1,0 +1,22 @@
+var searchData=
+[
+  ['undobtn_5f_0',['undoBtn_',['../classVmStackSandboxPanel.html#a5739ca42261e75bf5b5b7e6e9c63fa34',1,'VmStackSandboxPanel']]],
+  ['unroll2_1',['unroll2',['../structUnrollCompareRow.html#a6b8b282dcedf6f0741f5e43fc157fdbe',1,'UnrollCompareRow']]],
+  ['unroll4_2',['unroll4',['../structUnrollCompareRow.html#ab683481b1c87a26d8737f0918c77fd8e',1,'UnrollCompareRow']]],
+  ['unroll8_3',['unroll8',['../structUnrollCompareRow.html#afe3bd1ea22d925a4578d8e2ce1115fd6',1,'UnrollCompareRow']]],
+  ['untitledcount_5f_4',['untitledCount_',['../classIde.html#a1eda1397bbd198ebdc99e2553b72b8ad',1,'Ide']]],
+  ['update_5',['update',['../classForStmt.html#aa08275762a15650f18070599119539e5',1,'ForStmt']]],
+  ['updatestart_6',['updateStart',['../structCompiler_1_1LoopContext.html#a8a9fd46ce471035324b4bcccf66d285d',1,'Compiler::LoopContext']]],
+  ['updatingvariables_5f_7',['updatingVariables_',['../classDebugPanel.html#a4e51acf2eb54e2ae91f466f55067f558',1,'DebugPanel']]],
+  ['upvalueopenseq_5f_8',['upvalueOpenSeq_',['../classRegisterVM.html#af4a8e0aa14c1b49081317b845bcdb46d',1,'RegisterVM']]],
+  ['upvalues_9',['upvalues',['../structVMCallFrame.html#a09fe3a095fa667e21e1e7cb65eef60d0',1,'VMCallFrame::upvalues'],['../structIRFunction.html#ac235824370701fc5ffe8af9cffe43bf4',1,'IRFunction::upvalues'],['../structBytecodeChunk.html#a3e6ab18e3b34be518e63421487afbdb9',1,'BytecodeChunk::upvalues'],['../structRegCallFrame.html#aee5cee78a690dd0a27d29d7174585c4d',1,'RegCallFrame::upvalues'],['../structRegBytecodeChunk.html#a24efcba7f91e368479e5d2ba67785dee',1,'RegBytecodeChunk::upvalues'],['../structVMClosureData.html#aba548dc2536ce05fc045220a6ccb81b1',1,'VMClosureData::upvalues']]],
+  ['upvalueseqfloor_10',['upvalueSeqFloor',['../structRegisterVM_1_1RegTryHandler.html#aba5e0a357eccad020025b39b3421a96a',1,'RegisterVM::RegTryHandler']]],
+  ['upvaluetable_5f_11',['upvalueTable_',['../classMemoryLayoutPanel.html#ad13c9c0d6837194c9aeccccd7f5bc81a',1,'MemoryLayoutPanel']]],
+  ['useheap_5f_12',['useHeap_',['../classSmallMap.html#a9d4103de69706b107d0662a5648a45de',1,'SmallMap']]],
+  ['useir_5f_13',['useIR_',['../classCompiler.html#a7768eaf74239b7e01a7216fb03071e45',1,'Compiler']]],
+  ['userdata_14',['userdata',['../structminilang_1_1HostFunctionRegistry_1_1Entry.html#a000a135edc3988e58fce61bdc0b3358a',1,'minilang::HostFunctionRegistry::Entry']]],
+  ['useregister_5f_15',['useRegister_',['../classVmStepper.html#aaa27c41a132cc31a531a0d417be6997d',1,'VmStepper']]],
+  ['useregistervm_5f_16',['useRegisterVM_',['../classCompiler.html#a425509dac94fd71f690f939fc39932da',1,'Compiler']]],
+  ['usetabs_17',['useTabs',['../structFormatOptions.html#a3ad2b5ffff2690516ff0b50a60c38105',1,'FormatOptions']]],
+  ['uv_18',['uv',['../structRegisterVM_1_1OpenUpvalueEntry.html#a1e44379851fee3621ddb02e961e4bd65',1,'RegisterVM::OpenUpvalueEntry']]]
+];

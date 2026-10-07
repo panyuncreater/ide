@@ -1,0 +1,28 @@
+var classCoroutineVisualizerPanel =
+[
+    [ "BackendExecResult", "structCoroutineVisualizerPanel_1_1BackendExecResult.html", "structCoroutineVisualizerPanel_1_1BackendExecResult" ],
+    [ "CoroutineVisualizerPanel", "classCoroutineVisualizerPanel.html#a347338c275c4cefb584c453ba1e878d0", null ],
+    [ "createGuidedTour", "classCoroutineVisualizerPanel.html#acfc5837a9681a133372314d3f9ed2623", null ],
+    [ "extractCoroutineState", "classCoroutineVisualizerPanel.html#ae3b1edee40c4e453c12919f100a00ee9", null ],
+    [ "loadSampleRequested", "classCoroutineVisualizerPanel.html#aa37060072d054030ee32bc0a83728223", null ],
+    [ "onLoadSample", "classCoroutineVisualizerPanel.html#a97d9385272049faa8426330d5749a42f", null ],
+    [ "onRunAllBackends", "classCoroutineVisualizerPanel.html#ac73eabc8f5dae3e3ea79bb608c2f4d23", null ],
+    [ "onSelectSample", "classCoroutineVisualizerPanel.html#abde91468f43e663a90ec1dc0f2b2c52e", null ],
+    [ "renderConsistency", "classCoroutineVisualizerPanel.html#af2390c5e87e733d765f3947eac44d057", null ],
+    [ "renderResult", "classCoroutineVisualizerPanel.html#a7a4c299604f736cfe02e314ae6dc1407", null ],
+    [ "runInterpreter", "classCoroutineVisualizerPanel.html#a8877ffcd8c5829821404f95badbf45d3", null ],
+    [ "runRegVM_IR", "classCoroutineVisualizerPanel.html#a35703bed6074ceda32a7d2159d012084", null ],
+    [ "runStackVM_IR", "classCoroutineVisualizerPanel.html#a49f4a22786907ea7ac52091f16bbeeb3", null ],
+    [ "samples", "classCoroutineVisualizerPanel.html#aa599f15e300220238e962153227e6923", null ],
+    [ "setController", "classCoroutineVisualizerPanel.html#a1c7512060a743382894cda4d45cc740c", null ],
+    [ "consistencyLabel_", "classCoroutineVisualizerPanel.html#a15c2f2eeb22106474d43a29f39ffc175", null ],
+    [ "controller_", "classCoroutineVisualizerPanel.html#a6162bc569aa3e8889fd4da0834a12202", null ],
+    [ "interpTrace_", "classCoroutineVisualizerPanel.html#a4702fe8c40857732c5e4cca4763538b7", null ],
+    [ "loadSampleBtn_", "classCoroutineVisualizerPanel.html#a873d3e786df1d43683068c8b00d14c7e", null ],
+    [ "regVmTrace_", "classCoroutineVisualizerPanel.html#a391c9921155ef66b5e0fb12c10d7e6d7", null ],
+    [ "resultTable_", "classCoroutineVisualizerPanel.html#af06b31803d64f0c350afc308d2caec06", null ],
+    [ "runBtn_", "classCoroutineVisualizerPanel.html#af32253e5cca39ab52fe3615eb9a8a4a3", null ],
+    [ "sampleCombo_", "classCoroutineVisualizerPanel.html#a309face36346c8b1c52d63143c161c91", null ],
+    [ "sourceEdit_", "classCoroutineVisualizerPanel.html#a12c80654630fff0aa51ab5f7c4c03faf", null ],
+    [ "stackVmTrace_", "classCoroutineVisualizerPanel.html#add570d53afc8ec48c08c475314b46bf7", null ]
+];

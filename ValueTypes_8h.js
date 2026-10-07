@@ -1,0 +1,38 @@
+var ValueTypes_8h =
+[
+    [ "VMClosureData", "structVMClosureData.html", "structVMClosureData" ],
+    [ "ValueType", "ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1", [
+      [ "VAL_NULL", "ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a49bc648630dcb0b5ed14bcf4238917fe", null ],
+      [ "VAL_INT", "ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1afd01a941902f3027b30e52c84d99d264", null ],
+      [ "VAL_FLOAT", "ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1af66c5892fa2832de24d950fb4aee9507", null ],
+      [ "VAL_BOOL", "ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1ab2e13960c4ba8ad7723640a78b0e4a41", null ],
+      [ "VAL_STRING", "ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1adc3d719712033cea5159a2b74a4a5731", null ],
+      [ "VAL_ARRAY", "ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a9b2b2e22c3887afddd7fb28e7a35cc2e", null ],
+      [ "VAL_DICT", "ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a33fee84dbed14401d9ddf2537ca74c54", null ],
+      [ "VAL_INSTANCE", "ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a0481304f4d8763213007faf705c793ce", null ],
+      [ "VAL_CLOSURE", "ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a22e4ac0f2aabbadf638442d15dadf924", null ],
+      [ "VAL_TUPLE", "ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a93a8f176a9cd2f49d4384b4d69a5c9ac", null ],
+      [ "VAL_ENUM_VARIANT", "ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1aed2791324ac3a65d3f0284b6aec373ae", null ],
+      [ "VAL_CHANNEL", "ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a77652c7e1f5e3af21effe2f5f8999b23", null ],
+      [ "VAL_MUTEX", "ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a9d6b31436ec23c765868aae07d3f6f7b", null ],
+      [ "VAL_RWLOCK", "ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a577a33a67b94f9c1658d28ba8d206cd0", null ],
+      [ "VAL_THREAD", "ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1ac0d742dbdce7c3b838e245eecca560e1", null ],
+      [ "VAL_COROUTINE", "ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1aa38e27cffdf2f1c1f8250ac5b7eab515", null ]
+    ] ],
+    [ "ARRAY", "ValueTypes_8h.html#ae63e2264fb1694dfad9fdea3efb79bf2", null ],
+    [ "BOOL", "ValueTypes_8h.html#adf1a8db225412d0cac51cbe7a850c4f2", null ],
+    [ "CHANNEL", "ValueTypes_8h.html#a54635672ff04b8816dd6ae808b78314e", null ],
+    [ "CLOSURE", "ValueTypes_8h.html#ab082d98b80c1fc664d00ecd5b67beb67", null ],
+    [ "COROUTINE", "ValueTypes_8h.html#ad6507915ff274a7c2fddbd6a496c6179", null ],
+    [ "DICT", "ValueTypes_8h.html#a4fe475653fef6659277e17b1d61e9786", null ],
+    [ "ENUM", "ValueTypes_8h.html#a9a04be5549e33f701a28fc9f886a16fc", null ],
+    [ "FLOAT", "ValueTypes_8h.html#ac868322db9d4f13cb254edd31428c36d", null ],
+    [ "INSTANCE", "ValueTypes_8h.html#af18a44dcc56c90edc5ee5d69ec3a86bc", null ],
+    [ "INT", "ValueTypes_8h.html#aea326bd051d8857a1675a206970802f5", null ],
+    [ "MUTEX", "ValueTypes_8h.html#a25413bac424595b2d6017f7ccb14520a", null ],
+    [ "NULL_T", "ValueTypes_8h.html#ace67b0c75361170b304d2c2bdca8cb58", null ],
+    [ "RWLOCK", "ValueTypes_8h.html#aa297099bdb999e869cb296fc419b15e9", null ],
+    [ "STRING", "ValueTypes_8h.html#afdbda37630017933791e64e81e041498", null ],
+    [ "THREAD", "ValueTypes_8h.html#a73627b12cb6ba348f8436672ded75566", null ],
+    [ "TUPLE", "ValueTypes_8h.html#ad7304c140df61ce2490da009842a2ec3", null ]
+];

@@ -1,0 +1,28 @@
+var structCompiler_1_1CompileContext =
+[
+    [ "chunk", "structCompiler_1_1CompileContext.html#a977d850ee39b55f1454fa0978bdd5930", null ],
+    [ "currentFunctionDecl", "structCompiler_1_1CompileContext.html#a7cfa62a9501dec1fdf83eb28cfba88cd", null ],
+    [ "currentFunctionEntryIp", "structCompiler_1_1CompileContext.html#a5b30239e3860b40190ebb0cb284a9fbc", null ],
+    [ "currentFunctionName", "structCompiler_1_1CompileContext.html#a789399e4bd328d1e9fc15544e22c2897", null ],
+    [ "currentFunctionReturnType", "structCompiler_1_1CompileContext.html#aaff627b7ae3f7059083bc241ac4304f5", null ],
+    [ "currentLocals", "structCompiler_1_1CompileContext.html#a9a687a18ae2681e0c6b71bcca8e0b1b4", null ],
+    [ "currentTypeParams", "structCompiler_1_1CompileContext.html#a75d22d009473f99a41613bf92feeca09", null ],
+    [ "currentUpvalueNames", "structCompiler_1_1CompileContext.html#a1d4262d9e9f6f4e9b04c40f25d8a4e5c", null ],
+    [ "currentUpvalues", "structCompiler_1_1CompileContext.html#a2b0947c537cdcbca9e0a7c1f83de6226", null ],
+    [ "inFunction", "structCompiler_1_1CompileContext.html#aec345b173a5b30868510ddd16581af19", null ],
+    [ "innerFunctions", "structCompiler_1_1CompileContext.html#aa8333749f2c4a1e5933ccf8f30f4be88", null ],
+    [ "innerFunctionSlots", "structCompiler_1_1CompileContext.html#a47927114b449706227b87c29aa770737", null ],
+    [ "localSlotNames", "structCompiler_1_1CompileContext.html#ae58bfebbb4a3c1673393a3d765cdf0f1", null ],
+    [ "loopStack", "structCompiler_1_1CompileContext.html#a095f00866df073b608d3dd30fb2ebbe0", null ],
+    [ "outerFunctions", "structCompiler_1_1CompileContext.html#af1daac9d9b68262919ef9f00f8d54e95", null ],
+    [ "outerLocals", "structCompiler_1_1CompileContext.html#a1677286bbc85a8050c1ad02922ab2666", null ],
+    [ "outerUpvalueNames", "structCompiler_1_1CompileContext.html#a660929a5a98777f073d4e8b79f539229", null ],
+    [ "outerUpvalues", "structCompiler_1_1CompileContext.html#aa45601b0de8116c1f08a60c7d4994da1", null ],
+    [ "peakLocals", "structCompiler_1_1CompileContext.html#a6f80fe1e0fb2556906229d30bc64ae5e", null ],
+    [ "slotNameRanges", "structCompiler_1_1CompileContext.html#a2031779d7bb33f1660cc79a142f7569d", null ],
+    [ "stringConstIndex", "structCompiler_1_1CompileContext.html#afae0230c656d0a0865a5356679ac1d57", null ],
+    [ "tryDepth", "structCompiler_1_1CompileContext.html#a021a10cea46a5a93363d5c9d518eda92", null ],
+    [ "tryFinallyStack", "structCompiler_1_1CompileContext.html#a7d7fd64470f3933984e58d0a0f1c4c15", null ],
+    [ "varIndex", "structCompiler_1_1CompileContext.html#a6cf0dc047086605d84afb149e5bd6f61", null ],
+    [ "varTypes", "structCompiler_1_1CompileContext.html#aa68f6c5ac66e1b2b598136f97b710033", null ]
+];
