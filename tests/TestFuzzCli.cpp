@@ -19,6 +19,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -30,9 +31,11 @@ using namespace minilang_fuzz;
 namespace {
 /// 创建临时文件并写入内容，返回路径
 std::string makeTempFile(const std::string& content, const std::string& suffix = ".ml") {
+    // 时间戳基值保证跨进程唯一（ctest 单测一进程并行，固定名会被并行进程互删，Linux CI 实测竞态）
+    static const std::string base = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
     static std::atomic<int> counter{0};
     int id = counter.fetch_add(1) + 1;
-    auto path = fs::temp_directory_path() / ("minilang_fuzz_test_" + std::to_string(id) + suffix);
+    auto path = fs::temp_directory_path() / ("minilang_fuzz_test_" + base + "_" + std::to_string(id) + suffix);
     std::ofstream ofs(path);
     ofs << content;
     ofs.close();
@@ -234,7 +237,7 @@ TEST(FuzzCliRunBatch, SeedReproducibility) {
 TEST(FuzzCliRunBatch, SummarySeedSet) {
     FuzzOptions opts;
     opts.seed = 12345;
-    opts.seedSpecified = true;  // Bug #67 fix: 必须显式标记种子已指定
+    opts.seedSpecified = true; // Bug #67 fix: 必须显式标记种子已指定
     opts.iterations = 3;
     opts.quiet = true;
     opts.dumpCrashes = false;

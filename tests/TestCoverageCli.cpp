@@ -18,6 +18,7 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -27,9 +28,12 @@ namespace fs = std::filesystem;
 namespace {
 /// 创建临时文件并写入内容，返回路径（仿 TestFmtCli.cpp 的原子计数器模式）
 std::string makeTempFile(const std::string& content, const std::string& suffix = ".ml") {
+    // 时间戳基值保证跨进程唯一：ctest 单测一进程并行，各进程的计数器都从 0 起，
+    // 固定文件名会被并行进程同时创建/截断/删除（Linux CI 实测竞态；同 TestPrecompiledModules 的 TempDir 先例）
+    static const std::string base = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
     static std::atomic<int> counter{0};
     int id = counter.fetch_add(1) + 1;
-    auto path = fs::temp_directory_path() / ("minilang_coverage_test_" + std::to_string(id) + suffix);
+    auto path = fs::temp_directory_path() / ("minilang_coverage_test_" + base + "_" + std::to_string(id) + suffix);
     std::ofstream ofs(path);
     ofs << content;
     ofs.close();
@@ -703,8 +707,8 @@ TEST(CoverageCliVersion, VersionString) {
 namespace {
 /// 分支测试共用源码：if/else 两向 + 仅真向的 if
 const char* kBranchSource = "var i = 0;\n"
-                            "while (i < 4) {\n"        // 分支：真 4 次 + 假 1 次（退出）
-                            "  if (i < 2) {\n"          // 分支：真 2 次 + 假 2 次
+                            "while (i < 4) {\n" // 分支：真 4 次 + 假 1 次（退出）
+                            "  if (i < 2) {\n"  // 分支：真 2 次 + 假 2 次
                             "    print(\"lo\");\n"
                             "  } else {\n"
                             "    print(\"hi\");\n"

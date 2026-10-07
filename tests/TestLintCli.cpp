@@ -15,6 +15,7 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -27,9 +28,11 @@ using namespace minilang::lint;
 namespace {
 /// 创建临时文件并写入内容，返回路径
 std::string makeTempFile(const std::string& content, const std::string& suffix = ".ml") {
+    // 时间戳基值保证跨进程唯一（ctest 单测一进程并行，固定名会被并行进程互删，Linux CI 实测竞态）
+    static const std::string base = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
     static std::atomic<int> counter{0};
     int id = counter.fetch_add(1) + 1;
-    auto path = fs::temp_directory_path() / ("minilang_lint_test_" + std::to_string(id) + suffix);
+    auto path = fs::temp_directory_path() / ("minilang_lint_test_" + base + "_" + std::to_string(id) + suffix);
     std::ofstream ofs(path);
     ofs << content;
     ofs.close();
