@@ -860,16 +860,19 @@ jobs:
 
       - name: 配置 CMake (ASan+UBSan Preset)
         # WERROR=OFF：sanitizer 插桩可能引入 maybe-uninitialized 等新告警
-        # （沿用原 sanitizers 作业经验），告警门禁由 build-test 作业把关；
-        # -fno-sanitize=vptr（全局追加）：UBSan vptr 检查对多态类型的成员访问
-        # 注入 typeinfo 引用，而 minilang_core（common/BackendExecutionService
-        # 等）按分层约定经 app 层头文件（VmStepper/PipelineRunner/IdeController
-        # 等）访问但不链接其定义 TU（app/ 编排层仅入 IDE 主程序与 app_tests）
-        # ——链接期 undefined typeinfo 断链（2026-10-07 首跑实测，minilang_tests/
-        # app_tests/gui_smoke 三目标同炸）。vptr 是本 job 唯一的 C++ 语义检查
-        # （MSVC 侧本无 UBSan），禁用后 ASan 与其余 UBSan 检查（UAF/越界/空
-        # 引用/溢出）不受影响；core→app 分层越界的根治记录为后续方向
-        run: cmake --preset linux-gcc-asan -DMINILANG_USE_CCACHE=ON -DMINILANG_WERROR=OFF -DCMAKE_CXX_FLAGS=-fno-sanitize=vptr
+        # （沿用原 sanitizers 作业经验），告警门禁由 build-test 作业把关。
+        # vptr 排除说明见根 CMakeLists.txt MINILANG_SANITIZE=both 分支：
+        # UBSan vptr 检查对多态类型的成员访问注入 typeinfo 引用，而
+        # minilang_core（common/BackendExecutionService 等经 app 层头文件
+        # 访问 VmStepper/PipelineRunner/IdeController 等）按分层约定不链接
+        # app 定义 TU——链接期 undefined typeinfo 断链（2026-10-07 首跑实测，
+        # 三测试目标同炸）。排除须置于根 CMakeLists 的组别名之后：全局
+        # CMAKE_CXX_FLAGS 在命令行序上先于本组别名，会被重新启用
+        # （00e5819 的 -DCMAKE_CXX_FLAGS 方案实测无效）。vptr 是本 job 唯一
+        # 的 C++ 语义检查（MSVC 侧本无 UBSan），ASan 与其余 UBSan 检查
+        # （UAF/越界/空引用/溢出）不受影响；core→app 分层越界的根治记录为
+        # 后续方向
+        run: cmake --preset linux-gcc-asan -DMINILANG_USE_CCACHE=ON -DMINILANG_WERROR=OFF
 
       - name: 构建项目
         run: cmake --build out/build/linux-asan --parallel

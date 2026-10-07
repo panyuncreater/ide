@@ -527,8 +527,15 @@ if(MINILANG_SANITIZE)
             target_compile_options(minilang_compile_options INTERFACE /fsanitize=address)
             target_link_options(minilang_compile_options INTERFACE /fsanitize=address)
         else()
+            # -fno-sanitize=vptr：vptr 检查对多态类型的成员访问注入 typeinfo 引用，
+            # 而 minilang_core（common/BackendExecutionService 等经 app 层头文件访问
+            # VmStepper/PipelineRunner/IdeController）按分层约定不链接 app 定义 TU，
+            # 链接期 undefined typeinfo 断链（2026-10-07 CI 首跑实测）。该排除必须
+            # 置于本分支（组别名之后）：放全局 CMAKE_CXX_FLAGS 会被本组别名按
+            # 命令行顺序重新启用。ASan 与其余 UBSan 检查不受影响；core→app 分层
+            # 越界的根治记录为后续方向
             target_compile_options(minilang_compile_options INTERFACE
-                -fsanitize=address,undefined -fno-omit-frame-pointer)
+                -fsanitize=address,undefined -fno-sanitize=vptr -fno-omit-frame-pointer)
             target_link_options(minilang_compile_options INTERFACE -fsanitize=address,undefined)
         endif()
     else()
