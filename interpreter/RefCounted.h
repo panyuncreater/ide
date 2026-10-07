@@ -55,21 +55,31 @@
 
 #include "interpreter/ValueTypes.h" // ValueType 枚举
 #include <atomic>
+#include <cstddef>
 
 // Bug2 fix: 前向声明 GcManager（析构钩子需要调用其静态方法）
 class GcManager;
+
+// GC 登记表非法槽位下标（未注册对象 / 已注销后）。2026-10-06 slot-index 重构：
+// GcManager 以 slots_ 槽位表取代原 tracked_ vector + aliveSet_ unordered_set，
+// 对象直接持有自己的槽位下标，注册/注销/sweep 均不再有哈希操作。
+inline constexpr size_t kInvalidGcSlot = static_cast<size_t>(-1);
 
 struct RefCounted {
     mutable std::atomic<int> refCount{1};
     const ValueType type;
     // Bug2 fix: GcManager 跟踪标志。构造时为 false，registerTracked 设为 true。
-    // 析构时若为 true，通知 GcManager 从 aliveSet_ 移除，避免 collectCycle
-    // 迭代 tracked_ 时访问已释放的对象（UAF）。
+    // 析构时若为 true，通知 GcManager 回收本对象的槽位，避免 collectCycle
+    // 迭代 slots_ 登记表时访问已释放的对象（UAF）。
     // AUDIT-R4 BUG-13 fix: 改为 atomic<bool>——写入点 registerTracked 在锁内，
     // 但析构线程在 ~RefCounted 中锁外读取，跨线程裸 bool 读写构成 TOCTOU
-    // 数据竞争（可能导致 aliveSet_ 残留悬垂条目）。relaxed 序足够：
+    // 数据竞争（可能导致登记表残留悬垂条目）。relaxed 序足够：
     // release() 的 acq_rel 已保证注册线程写入对析构线程可见。
     mutable std::atomic<bool> gcTracked_{false};
+    // 2026-10-06 slot-index 重构：本对象在 GcManager::slots_ 中的槽位下标。
+    // 仅当 gcTracked_ 为 true 时有效；写入点（registerTracked / Phase 3 压缩回写）
+    // 与读取点（onDestroyed）均在 GcManager 全局锁内，普通字段即可。
+    size_t gcSlot_ = kInvalidGcSlot;
 
     explicit RefCounted(ValueType t) : type(t) {}
 
@@ -81,7 +91,7 @@ struct RefCounted {
     RefCounted& operator=(const RefCounted&) = delete;
     RefCounted& operator=(RefCounted&&) = delete;
 
-    // Bug2 fix: 析构时通知 GcManager 从 aliveSet_ 移除本指针。
+    // Bug2 fix: 析构时通知 GcManager 回收本对象在 slots_ 登记表中的槽位。
     // 仅在 gcTracked_ 为 true 时调用，非跟踪对象零开销。
     // 安全性：单线程 collectCycle 期间不会并发；this 在析构函数内仍有效
     // （派生类析构已执行，RefCounted 部分仍可访问 gcTracked_）。

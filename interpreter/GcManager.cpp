@@ -14,7 +14,7 @@
 // 静态析构阶段。然而 thread_local Value（如 VM.cpp 的 nullSentinel、Value.h 的
 // tlsCloned）以及文件作用域 static 容器可能在 GcManager 之后析构，触发
 // ~RefCounted() → GcManager::instance().onDestroyed(this)——此时单例已销毁，
-// 访问其 mutex_/aliveSet_ 成员导致"读取访问权限冲突"（this 为已释放地址）。
+// 访问其 mutex_/slots_ 成员导致"读取访问权限冲突"（this 为已释放地址）。
 //
 // 修复：用 trivially-destructible 的 atomic<bool> 标记单例存活状态。
 // std::atomic<bool> 无用户定义析构，不参与静态析构排序，进程退出时其存储
@@ -36,7 +36,7 @@ GcManager::~GcManager() {
 // 仅当 gcTracked_ 为 true 时通知 GcManager，非跟踪对象零开销。
 RefCounted::~RefCounted() {
     // SHUTDOWN-UAF fix: 进程退出时 GcManager 单例可能已析构。
-    // 此时 aliveSet_/tracked_ 随进程消亡，无需（也不能）安全移除。
+    // 此时 slots_/freeSlots_ 随进程消亡，无需（也不能）安全移除。
     // 检查 g_gcManagerAlive 避免对已销毁单例的 UAF 访问。
     if (gcTracked_ && g_gcManagerAlive.load(std::memory_order_acquire)) {
         GcManager::instance().onDestroyed(this);
@@ -46,28 +46,31 @@ RefCounted::~RefCounted() {
 void GcManager::registerTracked(RefCounted* obj) {
     if (!obj)
         return;
-    // P0-1 fix: 全程持锁，保护 tracked_/aliveSet_/计数器/checkIncrementalGc 读写的状态。
+    // P0-1 fix: 全程持锁，保护 slots_/freeSlots_/计数器/触发状态。
     // checkIncrementalGc 可能触发 gcTriggerCallback_→collectCycle，collectCycle 会重入
     // 同一把锁（recursive_mutex 安全），且 collectCycle 内 GcOnly delete 也会重入 onDestroyed。
     std::lock_guard<std::recursive_mutex> lock(mutex_);
-    // R135 GC 模式分流：RefCountOnly 模式跳过注册，纯引用计数管理生命周期。
+    // R135 GC 模式分流：RefCountOnly 模式跳过登记，纯引用计数管理生命周期。
     // 循环引用会泄漏（已知限制，用于基线对比与教学演示）。
     if (gcMode_ == GcMode::RefCountOnly) {
         return;
     }
-    tracked_.push_back(obj);
-    // AUDIT-P2-CORRECT fix: aliveSet_.insert 可能抛 bad_alloc（rehash），
-    // 此时 tracked_ 已含 obj 但 aliveSet_ 不含，破坏不变量
-    // （aliveSet_ = tracked_ 中仍存活的对象集合）。
-    // 后果：collectCycle Phase 2 将 obj 误判为"已销毁"跳过 sweep，
-    // 循环引用容器永久泄漏。用 try/catch 回滚 push_back 维持原子性。
-    try {
-        aliveSet_.insert(obj);
-    } catch (...) {
-        tracked_.pop_back();
-        throw;
+    // 2026-10-06 slot-index 重构：优先复用死亡槽位（freeSlots_ 命中时零堆分配、
+    // 无哈希节点分配）；freeSlots_ 耗尽才扩容 slots_。
+    // AUDIT-P2-CORRECT 的回滚问题随之消失：唯一可抛异常点（push_back 扩容）位于
+    // 任何状态变更之前，抛出时登记表未被修改，不变量自然保持。
+    size_t slot;
+    if (!freeSlots_.empty()) {
+        slot = freeSlots_.back();
+        freeSlots_.pop_back();
+        slots_[slot] = obj;
+    } else {
+        slots_.push_back(obj);
+        slot = slots_.size() - 1;
     }
+    obj->gcSlot_ = slot;
     obj->gcTracked_ = true;
+    ++liveTrackedCount_;
     // BUG-003 fix: 增量分配计数 + 阈值触发，避免长时间运行函数中循环引用累积
     // 导致的内存峰值。
     // P0 fix: 不再直接调用 checkIncrementalGc()——容器构造函数体内调用
@@ -119,14 +122,21 @@ void GcManager::checkPendingGc() {
 }
 
 void GcManager::onDestroyed(RefCounted* obj) {
-    // P0-1 fix: 加锁保护 aliveSet_.erase。任何线程上的 RefCounted 析构都会触及此路径，
-    // 与 registerTracked/collectCycle 并发时 aliveSet_ 无锁修改会破坏哈希表内部结构。
-    // collectCycle 持锁期间 delete 触发本方法时通过 recursive_mutex 安全重入。
+    // P0-1 fix: 加锁保护槽位回收。任何线程上的 RefCounted 析构都会触及此路径，
+    // 与 registerTracked/collectCycle 并发时无锁写 slots_/freeSlots_ 会破坏登记表
+    // 内部结构。collectCycle 持锁期间 delete 触发本方法时通过 recursive_mutex 安全重入。
     std::lock_guard<std::recursive_mutex> lock(mutex_);
-    // 从 aliveSet_ 移除（tracked_ 中的悬垂指针在 collectCycle 中通过
-    // aliveSet_.find 检查跳过，无需立即清理 vector）。
-    // 仅用 obj 作为 key 做哈希查找/删除，不 dereference obj 内容。
-    aliveSet_.erase(obj);
+    // 指针身份卫兵：仅当槽位仍被本对象占用时才回收。覆盖三类陈旧场景
+    // （等价于旧 aliveSet_.erase 对已注销指针的 no-op 语义，且天然 ABA 免疫）：
+    //   1. 本轮 sweep/Phase 3 已回收本对象的槽位（sweep 清空子元素后 refCount
+    //      归零晚于 Phase 3 压缩）；
+    //   2. reset() 已清空登记表（gcSlot_ 越界）；
+    //   3. 槽位已被新对象复用（slots_[gcSlot_] 指向他人，身份不符）。
+    if (obj->gcSlot_ < slots_.size() && slots_[obj->gcSlot_] == obj) {
+        slots_[obj->gcSlot_] = nullptr;
+        freeSlots_.push_back(obj->gcSlot_);
+        --liveTrackedCount_;
+    }
 }
 
 void GcManager::markValue(const Value& v, std::unordered_set<const void*>& marked,
@@ -247,13 +257,14 @@ void GcManager::collectCycle(const std::vector<const void*>& roots) {
     if (gcMode_ == GcMode::RefCountOnly) {
         return;
     }
-    if (tracked_.empty())
+    // 快速退出：无存活被跟踪对象时无事可做（登记表可能仍保有墓碑槽位容量）。
+    if (liveTrackedCount_ == 0)
         return;
 
     // R113 C 项：Phase 1: Mark - 从 roots 出发标记所有可达的容器节点
     currentPhase_ = GcPhase::Marking;
     std::unordered_set<const void*> marked;
-    marked.reserve(tracked_.size() * 2);
+    marked.reserve(liveTrackedCount_ * 2);
     // PERF-GC: 整个 mark 阶段共享一个 worklist（1 次分配），传引用给所有 markValue 调用。
     std::vector<const Value*> markWorklist;
     for (const void* rootPtr : roots) {
@@ -324,32 +335,36 @@ void GcManager::collectCycle(const std::vector<const void*>& roots) {
     // R113 C 项：Phase 1 结束，记录可达节点数
     lastMarkedCount_ = marked.size();
 
-    // Phase 2: Sweep - 遍历 tracked 列表，对 aliveSet_ 中存在但 marked 中不存在的
-    // 节点（不可达的循环孤岛）执行回收。
+    // Phase 2: Sweep - 遍历 slots_ 登记表，对槽位被占用（非 null 墓碑）但 marked
+    // 中不存在的对象（不可达的循环孤岛）执行回收。
+    //
+    // 2026-10-06 slot-index 重构：原实现逐对象 aliveSet_.find（哈希查找）区分
+    // 存活与已析构；现登记表本身即真相源——非空槽位在锁内必为存活对象，
+    // nullptr 墓碑直接跳过。迭代安全性与旧设计等价并更强：
+    //   - 清空孤岛子元素触发的级联析构（~RefCounted→onDestroyed）只会把
+    //     其他槽位置空 + push freeSlots_，从不改变 slots_.size()，
+    //     因此按下标迭代 slots_ 不受迭代器/扩容失效影响（旧实现依赖
+    //     "级联析构不向 tracked_ push_back"这一偶然性质保证 range-for 安全）。
     //
     // R135 GC 模式分流：
     //   RefCountWithCycleGc (默认): 清空子元素打破循环，让 refCount 降至 0 自然释放
     //   GcOnly: 收集到 toDelete 列表，迭代结束后统一 delete
     //
     // 安全性说明：
-    //   - aliveSet_.find(obj) 用 obj 作为 key 哈希查找，不 dereference obj 内容，
-    //     即使 obj 已被释放，也是安全的（key 比较只比较指针值）。
-    //   - RefCountWithCycleGc 清空 obj 的子元素会触发级联析构，其他 tracked_ 条目
-    //     的析构会调用 onDestroyed 从 aliveSet_ 移除，故后续遍历到那些条目时
-    //     aliveSet_.find 返回 not found → 安全跳过。
-    //   - GcOnly 模式不在迭代中 delete（避免级联析构修改 aliveSet_ 破坏迭代不变量），
+    //   - 非 null 槽位即存活（全局锁内不变量），无需哈希查找即可安全 dereference。
+    //   - RefCountWithCycleGc 清空 obj 的子元素会触发级联析构，其他槽位随之置空，
+    //     故后续迭代到那些槽位时 nullptr → 安全跳过。
+    //   - GcOnly 模式不在迭代中 delete（避免级联析构破坏迭代不变量），
     //     而是收集到 toDelete，迭代结束后统一 delete。delete 触发 ~RefCounted →
-    //     onDestroyed → aliveSet_.erase，安全。
+    //     onDestroyed → 槽位回收，安全。
     // R113 C 项：Phase 2 开始
     currentPhase_ = GcPhase::Sweeping;
     size_t collectedCount = 0;
     std::vector<RefCounted*> toDelete; // R135 GcOnly 模式：延迟 delete 列表
-    for (RefCounted* obj : tracked_) {
+    for (size_t i = 0; i < slots_.size(); ++i) {
+        RefCounted* obj = slots_[i];
         if (!obj)
-            continue;
-        // 跳过已释放的悬垂指针（不在 aliveSet_ 中）
-        if (aliveSet_.find(obj) == aliveSet_.end())
-            continue;
+            continue; // 已析构墓碑（旧 aliveSet_.find 失败的等价路径）
         // 跳过从根集可达的对象
         if (marked.find(obj) != marked.end())
             continue;
@@ -365,7 +380,7 @@ void GcManager::collectCycle(const std::vector<const void*>& roots) {
         // （如 a.append(a)）在 clear() 期间级联析构重入 vector 析构器导致 use-after-free。
         // move 后 obj->elements/entries/fields 为空，级联析构 obj 时其析构器看到空容器，安全。
         // R135 GcOnly 路径：std::move 析构 tmp 时若触发级联 delete obj（仅当 refCount 来自循环引用），
-        // onDestroyed 会从 aliveSet_ 移除 obj，后续通过 aliveSet_.find 检查跳过 toDelete.push_back
+        // onDestroyed 会回收 obj 的槽位（置空），后续通过槽位检查跳过 toDelete.push_back
         // 避免 double-free。
         switch (obj->type) {
         case ValueType::VAL_ARRAY: {
@@ -401,10 +416,10 @@ void GcManager::collectCycle(const std::vector<const void*>& roots) {
 
         if (gcMode_ == GcMode::GcOnly) {
             // R135 GcOnly 模式：std::move 清空子元素后，若 obj 仅被循环引用持有，
-            // 级联析构已 delete obj 并从 aliveSet_ 移除，跳过 toDelete.push_back 避免 double-free。
-            // 若 obj 还被循环外引用（refCount > 0），aliveSet_ 仍含 obj，需 push 到 toDelete
+            // 级联析构已 delete obj 并回收其槽位（置空），跳过 toDelete.push_back 避免 double-free。
+            // 若 obj 还被循环外引用（refCount > 0），槽位仍被 obj 占用，需 push 到 toDelete
             // 在迭代结束后显式 delete（GcOnly 语义：GC 主导生命周期，强制回收不可达对象）。
-            if (aliveSet_.find(obj) != aliveSet_.end()) {
+            if (slots_[i] == obj) {
                 toDelete.push_back(obj);
             }
         }
@@ -415,11 +430,13 @@ void GcManager::collectCycle(const std::vector<const void*>& roots) {
     // toDelete 仅包含 std::move 清空子元素后仍存活的对象（refCount > 0，
     // 即被循环外引用持有）。仅被循环引用持有的对象已在 std::move tmp 析构时
     // 通过 RefCounted release 机制自然 delete，不进入 toDelete。
-    // delete 触发 ~RefCounted → onDestroyed → aliveSet_.erase + tracked_ 条目悬垂。
-    // Phase 3 重建 tracked_ 时会过滤掉悬垂指针（aliveSet_ 中不存在）。
+    // delete 触发 ~RefCounted → onDestroyed → 槽位回收（置空 + 进 freeSlots_）。
+    // Phase 3 压缩登记表时会收缩掉死亡槽位。
     if (gcMode_ == GcMode::GcOnly && !toDelete.empty()) {
         for (RefCounted* obj : toDelete) {
-            // 安全性：obj 在 push 时确认仍在 aliveSet_ 中（未被级联析构释放）。
+            // 安全性：obj 在 push 时确认槽位仍被其占用（未被级联析构释放）。
+            // 且所有 toDelete 条目的子元素已在 sweep 中 move 清空，delete 不会级联
+            // 析构其他条目（与旧设计相同的 R135 保证），无悬挂风险。
             // GcOnly 语义：GC 主导生命周期，强制回收不可达对象，无视 refCount > 0。
             // 调用方需保证无其他强引用（GcOnly 不与 COW 共享引用共存）。
             delete obj;
@@ -428,36 +445,43 @@ void GcManager::collectCycle(const std::vector<const void*>& roots) {
     // R113 C 项：Phase 2 结束，记录回收孤岛数
     lastCollectedCount_ = collectedCount;
 
-    // Phase 3: 重建跟踪结构。
-    // BUG-INTR-AUDIT-1 fix: 原实现无条件 tracked_.clear()，导致上一轮 marked 为可达
-    // 而存活的循环引用容器（如 a.push(a)）从 tracked_ 中移除，且不会在下一轮 execute
-    // 中重新 registerTracked（registerTracked 仅在容器构造时调用）。当这些容器后来
-    // 变为不可达时，sweep 阶段不会检查它们（不在 tracked_ 中），无法打破循环，导致
-    // 永久泄漏。修复：保留仍存活（在 aliveSet_ 中）且被标记为可达（在 marked 中）的
-    // 容器条目，仅清除已释放的悬垂指针和已被回收的孤岛。
+    // Phase 3: 压缩登记表（原地）。
+    // BUG-INTR-AUDIT-1 fix（语义保留）：原实现无条件 tracked_.clear()，导致上一轮
+    // marked 为可达而存活的循环引用容器（如 a.push(a)）从跟踪结构中移除，且不会在
+    // 下一轮 execute 中重新 registerTracked（registerTracked 仅在容器构造时调用）。
+    // 当这些容器后来变为不可达时，sweep 阶段不会检查它们，无法打破循环，导致永久泄漏。
+    // 修复语义：仅保留本轮被标记为可达的存活容器，清除已析构墓碑与已回收的孤岛。
+    // 2026-10-06 slot-index 重构：以单趟原地压缩取代旧「survivors 重建 tracked_ +
+    // 清空重灌 aliveSet_」的双结构哈希风暴——存活对象前移并回写 gcSlot_，死亡槽位
+    // 置空并回收进 freeSlots_（仅回收本轮仍被占用的槽位；早已是墓碑的槽位下标
+    // 已在 freeSlots_ 中，不重复入栈，避免复用冲突）。
     // R113 C 项：Phase 3 开始
     currentPhase_ = GcPhase::Finalizing;
-    std::vector<RefCounted*> survivors;
-    survivors.reserve(tracked_.size());
-    for (RefCounted* obj : tracked_) {
+    size_t w = 0;
+    for (size_t i = 0; i < slots_.size(); ++i) {
+        RefCounted* obj = slots_[i];
         if (!obj)
-            continue;
-        // 仅保留仍存活且本轮被标记为可达的容器（下一轮可能变为不可达，需要再次检查）
-        if (aliveSet_.find(obj) != aliveSet_.end() && marked.find(obj) != marked.end()) {
-            survivors.push_back(obj);
+            continue; // 墓碑槽位：压缩时直接收缩掉
+        // 仅保留本轮被标记为可达的容器（下一轮可能变为不可达，需要再次检查）
+        if (marked.find(obj) != marked.end()) {
+            if (w != i) {
+                slots_[w] = obj;
+                obj->gcSlot_ = w; // 回写新下标（对象存活且持锁，安全）
+            }
+            ++w;
         }
     }
-    tracked_ = std::move(survivors);
-    // AUDIT-P1-CORRECT fix: 用 survivors 重建 aliveSet_，维持不变量
-    // （aliveSet_ = tracked_ 中仍存活的对象集合）。原实现仅 clear 未重建，
-    // 导致下一轮 collectCycle 的 Phase 2 将 survivors 误判为“已销毁”而跳过 sweep，
-    // survivors 变为不可达循环孤岛时无法被回收 → 永久内存泄漏。
-    aliveSet_.clear();
-    // PERF: 预分配桶数，避免重建时频繁 rehash（tracked_ 通常 1000+ 元素）。
-    aliveSet_.reserve(tracked_.size());
-    for (RefCounted* obj : tracked_) {
-        aliveSet_.insert(obj);
+    // 尾部死亡槽位：置空 + 回收（跳过已是墓碑的槽位，其下标已在 freeSlots_ 中）
+    for (size_t i = w; i < slots_.size(); ++i) {
+        if (slots_[i]) {
+            slots_[i] = nullptr;
+            freeSlots_.push_back(i);
+        }
     }
+    liveTrackedCount_ = w;
+    // 容量策略：slots_.size() 保持历史峰值不缩容，死亡槽位经 freeSlots_ 复用，
+    // 与旧 tracked_ 的高水位行为一致（旧 Phase 3 由 survivors 重置低水位，但
+    // 下次增长重新扩容；新设计以 O(1) 复用取代重复扩容）。
 
     if (collectedCount > 0) {
         LOG_INFO("GcManager: 回收 " + std::to_string(collectedCount) + " 个循环引用孤岛", "GC");
@@ -472,8 +496,9 @@ void GcManager::collectCycle(const std::vector<const void*>& roots) {
 void GcManager::reset() {
     // P0-1 fix: 加锁保护，与 worker 线程的 registerTracked/onDestroyed/collectCycle 互斥。
     std::lock_guard<std::recursive_mutex> lock(mutex_);
-    tracked_.clear();
-    aliveSet_.clear();
+    slots_.clear();
+    freeSlots_.clear();
+    liveTrackedCount_ = 0;
     // BUG-003 fix: 同步重置分配计数，避免 reset 后立即触发误增量 GC
     allocationsSinceLastGc_ = 0;
     gcInProgress_ = false;
@@ -489,7 +514,7 @@ void GcManager::reset() {
     currentPhase_ = GcPhase::Idle;
     // R157 fix: 清除 gcTriggerCallback_，防御性修复。
     // 根因：reset() 语义为"完全重置"，原实现遗漏 gcTriggerCallback_，
-    // 导致测试隔离时虽重置 tracked_/统计，但悬垂的回调仍指向已析构的 Interpreter。
+    // 导致测试隔离时虽重置 slots_ 登记表/统计，但悬垂的回调仍指向已析构的 Interpreter。
     // 后续后端执行触发 checkIncrementalGc 时调用悬垂回调 → UAF。
     // 配合 Interpreter 析构函数的清除（根因修复）双重保护。
     gcTriggerCallback_ = nullptr;
@@ -497,9 +522,11 @@ void GcManager::reset() {
 }
 
 // P0-1 fix: 以下访问器全部加锁，消除 UI 线程读取与 worker 线程写入的数据竞争。
+// 2026-10-06 slot-index 重构：原返回 tracked_.size()（含已析构未压缩的墓碑条目），
+// 现返回 liveTrackedCount_（精确存活数）——GUI 面板/测试读数更准确，且 O(1)。
 size_t GcManager::trackedCount() const {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
-    return tracked_.size();
+    return liveTrackedCount_;
 }
 
 void GcManager::setGcTriggerCallback(std::function<void()> cb, const void* owner) {

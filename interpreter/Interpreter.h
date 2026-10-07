@@ -752,7 +752,8 @@ private:
 
     /// BUG-003 fix: 增量 GC 触发器。收集当前 callStack_ / globalEnv_ / classRegistry_
     /// 中的堆对象指针作为根集，调用 GcManager::collectCycle。由 GcManager 在分配
-    /// 阈值达到时回调。无堆对象时仍调用 collectCycle（其内部 tracked_.empty() 提前返回）。
+    /// 阈值达到时回调。无堆对象时仍调用 collectCycle（其内部以 liveTrackedCount_==0
+    /// 提前返回）。
     void triggerIncrementalGc();
 
     // ---- P1 重构：visitFunCall 分派器辅助方法 ----

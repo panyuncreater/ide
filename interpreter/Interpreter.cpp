@@ -117,10 +117,10 @@ Value Interpreter::execute(Block& program) {
     exportedNames_.clear();
 
     // Bug2 fix: 在 resetState 之后、runStatements 之前触发 GcManager mark-sweep。
-    // 此时上一轮残留的循环引用容器 refCount>0 仍存活（aliveSet_ 中），
-    // 而非循环容器已在上述 clear() 中被自然释放（析构时从 aliveSet_ 移除）。
+    // 此时上一轮残留的循环引用容器 refCount>0 仍存活（登记表中槽位被占用），
+    // 而非循环容器已在上述 clear() 中被自然释放（析构时回收其槽位）。
     // BUG-INT-1 fix: 若 REPL 状态已保存（saveReplState），其 savedGlobalEnv 中的
-    // 循环引用容器仍在 aliveSet_ 中存活。传入空根集会误清空这些容器的子元素，
+    // 循环引用容器仍登记在册。传入空根集会误清空这些容器的子元素，
     // 导致 restoreReplState 后 REPL 变量损坏。必须将 savedGlobalEnv 中的容器作为根集传入。
     // AUDIT-P1 fix: 原 GC roots 仅遍历 savedGlobalEnv，遗漏 savedClassRegistry.fields
     // 和 savedModuleCache。类字段默认值（如 var data = [1,2,3]）和模块顶层变量
@@ -129,9 +129,9 @@ Value Interpreter::execute(Block& program) {
     std::vector<const void*> gcRoots;
     // AUDIT-P2-CORRECT fix: 无论 REPL 是否激活，都应将 globalEnv_ 顶层变量纳入 GC roots。
     // 原实现仅 REPL 模式收集 roots，非 REPL 模式传入空根集。若 Interpreter 被复用
-    // （如测试场景），上一轮残留的循环引用容器在 tracked_ 中，空根集会导致 Phase 2
+    // （如测试场景），上一轮残留的循环引用容器仍在登记表中，空根集会导致 Phase 2
     // 误判所有 tracked 容器为不可达孤岛并清空子元素。即使 IdeController 每次 Run
-    // 创建新 Interpreter（tracked_ 为空，collectCycle 提前返回），此处防御性收集
+    // 创建新 Interpreter（登记表为空，collectCycle 提前返回），此处防御性收集
     // 可保证复用场景的正确性。
     if (!replState_.active) {
         if (globalEnv_) {

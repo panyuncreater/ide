@@ -50,8 +50,8 @@ struct Value;
 enum class GcPhase : uint8_t {
     Idle,       // 未在 GC 中（或上次 GC 已结束）
     Marking,    // Phase 1: 从 roots 出发 mark 所有可达容器节点
-    Sweeping,   // Phase 2: 清扫 marked 中不存在但 aliveSet_ 中存在的循环孤岛
-    Finalizing, // Phase 3: 重建 tracked_ / aliveSet_，重置 marked 标志
+    Sweeping,   // Phase 2: 清扫 marked 未命中且槽位仍被占用的循环孤岛（slots_ 登记表）
+    Finalizing, // Phase 3: 原地压缩 slots_ 登记表并回收死亡槽位，重置 marked 标志
 };
 
 /// R135 GC 模式枚举——三种内存管理策略可切换，用于教学对比与性能基准。

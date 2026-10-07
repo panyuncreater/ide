@@ -229,12 +229,12 @@ const std::vector<GcPhaseInfo>& MemoryModelLibrary::gcPhases() {
         {"📝 1. 注册（registerTracked）",
          "📝 所有新建的 ArrayData / DictData / InstanceData 在构造函数中调用 "
          "GcManager::instance().registerTracked(this)，"
-         "加入 tracked_ 列表与 aliveSet_。StringData/ClosureData 不注册（无循环引用风险）。"
-         "注册为 O(1) 操作（vector::push_back + unordered_set::insert）。"
+         "登记进 slots_ 槽位表并在对象内记录槽位下标（gcSlot_）。StringData/ClosureData 不注册（无循环引用风险）。"
+         "注册为 O(1) 操作（优先复用已析构对象腾出的空闲槽位，无哈希、无额外堆分配）。"
          " **类比：** "
          "就像去派出所「上户口」，新建的容器都要登记在册；只读的字符串和闭包没有互相牵绊的风险，不必登记。"},
         {"⏰ 2. 触发时机", "⏰ Interpreter::execute() 在 resetState 之后、runStatements 之前调用 collectCycle(空根集)。"
-                           "此时上一轮残留的循环容器 refCount 大于 0 仍 aliveSet_，本轮新建容器尚未注册，安全。"
+                           "此时上一轮残留的循环容器 refCount 大于 0 仍登记在册（槽位被占用），本轮新建容器尚未注册，安全。"
                            "执行期间不再触发（性能权衡：mark-sweep 开销 O(节点数+边数)，仅起点触发）。"
                            " **类比：** 就像每天开门营业前先扫一次地，营业中不再反复打扫，避免影响运行效率。"},
         {"🟢 3. Mark 阶段",
@@ -244,15 +244,15 @@ const std::vector<GcPhaseInfo>& MemoryModelLibrary::gcPhases() {
          " **类比：** 像警察挨家挨户「查户口」，从已知活人（根集）出发，顺着人际关系找到的所有人都标记「在世」；"
          "找不到的空房子就是无人认领的孤岛。"},
         {"🧹 4. Sweep 阶段",
-         "🧹 迭代 tracked_ 列表，对 aliveSet_ 仍在但 marked 未标记的节点（即不可达的循环孤岛）执行："
-         "清空其子元素打破循环 → refCount 自然降为 0 → 节点析构 → onDestroyed 从 aliveSet_ 移除。"
+         "🧹 迭代 slots_ 登记表，对槽位仍被占用但 marked 未标记的节点（即不可达的循环孤岛）执行："
+         "清空其子元素打破循环 → refCount 自然降为 0 → 节点析构 → onDestroyed 回收其槽位。"
          "存活节点重置 marked=false，为下一轮收集做准备。"
          " **类比：** "
          "查完户口后，凡是没有被标记「在世」的空房子，直接拆除并断开水电（清空子元素），让其自然退租销毁。"},
         {"🛡️ 5. UAF 防护",
-         "🛡️ tracked_ 列表中的 RefCounted* 可能在 collectCycle 期间被析构（如 sweep 清空子元素后 refCount→0）。"
-         "通过 aliveSet_ 区分存活对象与已释放的悬垂指针，避免迭代时访问已释放内存。"
-         "析构钩子 onDestroyed 同步从 aliveSet_ 移除本指针，保证 aliveSet_ 与实际存活状态一致。"
+         "🛡️ slots_ 登记表中的对象可能在 collectCycle 期间被析构（如 sweep 清空子元素后 refCount→0）。"
+         "析构钩子 onDestroyed 在全局锁内将本对象的槽位置空为 nullptr 墓碑，"
+         "保证锁内登记表不含悬垂指针、与实际存活状态一致（对象还持有自己的槽位下标，回收时按指针身份核对）。"
          " **类比：** 拆除时要先核对「还在册名单」，避免误闯已经拆掉的危房（悬垂指针），保证施工安全。"},
         {"⚠️ 6. 已知限制",
          "⚠️ 环形容器泄漏：a.append(a) 形成自环，refCount ≥ 2 永不归零。"
@@ -282,14 +282,14 @@ const std::vector<MemoryAnimPhase>& MemoryAnimLibrary::gcAnimPhases() {
         },
         {
             "sweep",
-            "🧹 Sweep 阶段：迭代 tracked_ 列表，对 aliveSet_ 仍在但 marked 未标记的节点"
+            "🧹 Sweep 阶段：迭代 slots_ 登记表，对槽位仍被占用但 marked 未标记的节点"
             "（即不可达的循环孤岛）清空其子元素打破循环，refCount 自然降为 0 触发析构。"
             "存活节点重置 marked=false 为下一轮做准备。",
             "#C03030" // 红色：回收中
         },
         {
             "reset",
-            "🔄 Reset 阶段：存活节点的 marked 标志复位为 false，aliveSet_ 与 tracked_ 保持一致。"
+            "🔄 Reset 阶段：存活节点的 marked 标志复位为 false，slots_ 登记表压缩后仅保留存活对象。"
             "新一轮 collectCycle 触发前，所有节点状态干净，避免上一轮残留影响。",
             "#709030" // 绿色：复位
         },

@@ -29,6 +29,7 @@
   - GC 触发点是增量式的（阈值驱动），**不得假设 GC 只在特定时机运行**——持引用跨 GC 边界的代码必须自行保住引用计数。
   - **根集收集零拷贝（2026-10-04 起）**：`Interpreter::triggerIncrementalGc` 与 execute 入口兜底 GC 只读遍历 `Environment::localVariables()`（`collectEnvLocalGcRoots`）取 `gcRootPtr()`，并按 `visitedEnvs` 对重叠环境链去重——**禁止改回 `snapshotLocalVariables()` 深拷贝模式**（每次触发 O(可见变量数) 次堆分配 + 2N 原子操作）。
   - **统计字段为 `std::atomic`（2026-10-04 起）**：`allocationsSinceLastGc_`/`currentPhase_`/`lastMarkedCount_`/`lastCollectedCount_`/`totalGcCount_`/`gcAllocationThreshold_`/`pendingIncrementalGc_` 均为 atomic，写入点在锁内、只读访问（GUI 轮询）无锁；`checkPendingGc` 走无锁快速路径（relaxed 读 + 慢路径锁内复查）。新增统计字段沿用此模式。
+  - **登记表为 slots_ 槽位表（2026-10-06 起）**：GcManager 以单一 `slots_` 槽位表取代原 `tracked_` vector + `aliveSet_` unordered_set 双结构——不变量（全局 `recursive_mutex` 内）：非空槽位 ⟺ 槽位被 `gcSlot_==i` 的存活对象占用，nullptr 为已析构墓碑，锁内无悬垂指针；死亡槽位经 `freeSlots_` 复用（LIFO），`trackedCount()` 为 O(1) 精确存活数。对象侧 `RefCounted::gcSlot_` 仅在锁内读写（registerTracked 回写 / Phase 3 压缩回写 / onDestroyed 读取）。**约定**：新增跟踪类型照常「构造函数 `registerTracked` + 基类析构钩子注销」配对，禁止绕过 `onDestroyed` 手工操作槽位（onDestroyed 以 `slots_[gcSlot_]==obj` 指针身份卫兵回收，手工绕过会破坏身份不变量导致槽位复用冲突）；全局锁纪律（分配/析构/collectCycle 全程持锁）不变——分配路径的 thread_local 批量登记去锁化已评估为需 TSan 通道专验，未实施（见优化积压记录）。
   - mark 阶段整个 `collectCycle` 共享一个 worklist（按引用传入 `markValue`），不得在每个根元素内新建。
 
 ## 4. Copy-On-Write（COW）

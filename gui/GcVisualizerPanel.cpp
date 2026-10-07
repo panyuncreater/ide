@@ -87,9 +87,9 @@ const std::vector<GcPhaseRow>& GcVisualizerLibrary::phaseRows() {
     static const std::vector<GcPhaseRow> kRows = {
         {"Idle", "currentPhase_ = Idle", "空闲状态等待 GC 触发", "无操作"},
         {"Marking", "currentPhase_ = Marking", "从根集出发标记所有可达容器节点", "traverse roots → mark alive"},
-        {"Sweeping", "currentPhase_ = Sweeping", "遍历 tracked_ 清理不可达的孤岛",
+        {"Sweeping", "currentPhase_ = Sweeping", "遍历 slots_ 登记表清理不可达的孤岛",
          "refCount==0 && !marked → finalize+free"},
-        {"Finalizing", "currentPhase_ = Finalizing", "调用析构钩子清理子引用", "onDestroyed → removeFromAliveSet"},
+        {"Finalizing", "currentPhase_ = Finalizing", "压缩登记表并回收死亡槽位", "onDestroyed → 回收槽位"},
     };
     return kRows;
 }
@@ -146,7 +146,7 @@ const std::vector<GcScenarioInfo>& GcVisualizerLibrary::scenarios() {
          "// 预期：lastCollectedCount == 0, trackedCount >= 1"},
         {"增量 GC",
          "多次分配 + GC，观察 trackedCount 变化趋势。"
-         "验证 Finalizing 阶段重建 tracked_ 不会无限增长。",
+         "验证 Finalizing 阶段压缩 slots_ 登记表不会无限增长。",
          "for (i = 0; i < 5; i++) {\n"
          "    Value a = [];\n"
          "    a.push(a);  // 自循环\n"
@@ -263,11 +263,11 @@ void GcVisualizerPanel::populateTheory() {
                                   "<li><b>Phase 1 - Marking</b>：从 roots 出发深度优先 mark 所有可达容器节点。"
                                   "markValue 递归遍历 array / dict / instance / tuple / enum variant / closure 内嵌的"
                                   " Value，marked 集合记录可达对象指针。</li>"
-                                  "<li><b>Phase 2 - Sweeping</b>：遍历 tracked_，对 aliveSet_ 仍在但 marked 未命中的"
+                                  "<li><b>Phase 2 - Sweeping</b>：遍历 slots_ 登记表，对槽位仍被占用但 marked 未命中的"
                                   "对象（即不可达循环孤岛）执行回收。RefCountWithCycleGc 模式清空其子元素打破循环"
                                   "（由后续 refCount 归零释放）；GcOnly 模式直接 delete。</li>"
-                                  "<li><b>Phase 3 - Finalizing</b>：重建 tracked_ / aliveSet_，重置 marked 标志，"
-                                  "过滤悬垂指针（已析构但尚未 compact 的节点）。</li>"
+                                  "<li><b>Phase 3 - Finalizing</b>：原地压缩 slots_ 登记表——存活对象前移并回写"
+                                  " gcSlot_，死亡槽位置空回收进 freeSlots_ 复用；无悬垂指针残留。</li>"
                                   "</ul>"
                                   "<p>collectCycle 结束后 currentPhase_ 回归 Idle；UI 在 animTimer 周期内观察到的常态"
                                   "即 Idle，lastMarkedCount / lastCollectedCount 反映上次 GC 结果。</p>"
@@ -587,8 +587,8 @@ GcSimResult GcVisualizerPanel::runScenario(int idx) {
         result.expectationMet = (finalTracked <= 1);
         result.summary = result.expectationMet
                              ? "✅ 期望达成：5 轮 collectCycle 后 trackedCount 稳定（≤1），"
-                               "Finalizing 阶段重建 tracked_ 仅保留存活节点，无悬垂指针残留。"
-                             : "❌ 期望未达成：trackedCount 异常增长，Finalizing 阶段未正确清理悬垂指针。";
+                               "Finalizing 阶段压缩 slots_ 登记表仅保留存活节点，无悬垂指针残留。"
+                             : "❌ 期望未达成：trackedCount 异常增长，Finalizing 阶段未正确压缩登记表。";
         break;
     }
     default:
@@ -652,7 +652,7 @@ void GcVisualizerPanel::renderScenarioResult(const GcSimResult& result) {
 
 void GcVisualizerPanel::onRunSimulation() {
     // AUDIT-R5 R7 fix (BUG-2): 模拟器 runScenario 会 reset() 全局 GcManager 单例。
-    // 若此时 Worker 线程正在执行用户程序，reset 会清空 tracked_/aliveSet_，
+    // 若此时 Worker 线程正在执行用户程序，reset 会清空 slots_ 登记表，
     // 破坏其 collectCycle 的存活判定（可能提前回收 UAF 或统计崩坏）。
     // 运行期拒绝模拟（与 BackendExecutionService 的 AUDIT-R2 P1-5 防护策略对齐）。
     if (controller_ && (controller_->isRunning() || controller_->isVmRunning())) {

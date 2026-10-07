@@ -6,7 +6,7 @@
 // 内存持续增长（T-4 fix）。
 //
 // 根因：
-//   1. GcManager 是进程级单例，其 tracked_ vector 在非
+//   1. GcManager 是进程级单例，其 slots_ 登记表在非
 //      Interpreter 后端（VM/RegVM）运行后不被自动清理
 //   2. StringIntern 池永不释放
 //   3. MSVC Debug CRT 默认保留已释放内存块用于泄漏检测

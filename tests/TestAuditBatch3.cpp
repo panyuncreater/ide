@@ -489,21 +489,21 @@ TEST(AuditBatch3TypeCheckerCoverage, ExportFunBodyVarDeclTypeMismatchWarning) {
 // ============================================================
 // BUG-INTR-AUDIT-1: GcManager 循环引用容器跨 collectCycle 周期泄漏（P2）
 // ============================================================
-// 直接测试 GcManager 的 collectCycle 行为：存活的循环容器应在 tracked_ 中保留，
+// 直接测试 GcManager 的 collectCycle 行为：存活的循环容器应在 slots_ 登记表中保留，
 // 以便下一轮 collectCycle 能检查到它是否变为不可达。
 // ----------------------------------------------------------------
 
-// ---- 第一次 collectCycle（标记为可达）：存活的循环容器应保留在 tracked_ 中 ----
+// ---- 第一次 collectCycle（标记为可达）：存活的循环容器应保留在 slots_ 登记表中 ----
 TEST(AuditBatch3GcLeak, CyclicContainerRetainedInTrackedWhenReachable) {
     GcManager::instance().reset();
     // 创建一个自引用数组：a = [a]
     Value arr(std::vector<Value>{});
     // 通过 push 自身形成循环引用
     arr.arrayVal().push_back(arr);  // arr.refCount 现在为 2（arr 自身 + 数组内的引用）
-    // arr 是 GcManager tracked_ 中的存活对象
+    // arr 是 GcManager 登记表中的存活对象
 
     size_t trackedBefore = GcManager::instance().trackedCount();
-    EXPECT_GE(trackedBefore, 1u) << "循环数组应在 tracked_ 中";
+    EXPECT_GE(trackedBefore, 1u) << "循环数组应在登记表中";
 
     // 第一次 collectCycle：以 arr 为根，标记 arr 为可达
     const void* root = arr.gcRootPtr();
@@ -577,6 +577,54 @@ TEST(AuditBatch3GcLeak, TrackedCountStableAcrossMultipleCycles) {
     // tracked_ 不应无限增长（每轮的循环容器都应被回收）
     EXPECT_LE(afterRuns, baseline + 1)
         << "多次 collectCycle 后 tracked_ 不应无限增长";
+
+    GcManager::instance().reset();
+}
+
+// ---- slot 登记表（2026-10-06 重构）：槽位复用、精确存活计数与身份卫兵 ----
+// 锁定三个新不变量（旧 tracked_+aliveSet_ 双结构无法精确断言）：
+//   1. trackedCount() 为精确存活登记数（析构即时回收，非"待压缩墓碑条目数"）；
+//   2. Phase 3 压缩回收死亡槽位，死亡槽位被新登记复用不产生冲突；
+//   3. 晚期析构（sweep/压缩之后才销毁的对象）经指针身份卫兵安全跳过，无 UAF。
+TEST(AuditBatch3GcLeak, SlotRegistryReuseAndExactLiveCount) {
+    GcManager::instance().reset();
+    size_t baseline = GcManager::instance().trackedCount();
+    {
+        // 两个循环孤岛 + 一个可达容器
+        Value island1(std::vector<Value>{});
+        island1.arrayVal().push_back(island1);
+        Value island2(std::vector<Value>{});
+        island2.arrayVal().push_back(island2);
+        Value reachable(std::vector<Value>{});
+
+        EXPECT_EQ(GcManager::instance().trackedCount(), baseline + 3)
+            << "三个容器登记后应为精确存活计数";
+
+        // 第一轮 GC：仅 reachable 为根 → 存活；两个孤岛未标记 → sweep 打破循环、
+        // 其槽位在 Phase 3 压缩中回收（孤岛对象仍被局部引用持有，属"已注销仍存活"）
+        const void* root = reachable.gcRootPtr();
+        ASSERT_NE(root, nullptr);
+        std::vector<const void*> roots = {root};
+        GcManager::instance().collectCycle(roots);
+        EXPECT_EQ(GcManager::instance().trackedCount(), baseline + 1)
+            << "孤岛槽位应在 Phase 3 压缩中回收，仅可达容器保留";
+    }
+    // 局部引用全部释放：reachable 槽位即时回收（新语义），两个孤岛晚期析构
+    // 走身份卫兵 no-op 路径（槽位已在压缩中回收，不得错误回收他人槽位）
+    EXPECT_EQ(GcManager::instance().trackedCount(), baseline)
+        << "析构钩子应即时回收槽位，trackedCount 为精确存活数";
+
+    // 槽位复用：压缩腾出的槽位被新登记复用，且跨 GC 轮次后计数仍精确
+    {
+        Value fresh(std::vector<Value>{});
+        fresh.arrayVal().push_back(fresh);
+        EXPECT_EQ(GcManager::instance().trackedCount(), baseline + 1);
+        std::vector<const void*> emptyRoots;
+        GcManager::instance().collectCycle(emptyRoots);
+        EXPECT_EQ(GcManager::instance().trackedCount(), baseline)
+            << "空根集 GC 后新孤岛槽位应被压缩回收";
+    }
+    EXPECT_EQ(GcManager::instance().trackedCount(), baseline);
 
     GcManager::instance().reset();
 }

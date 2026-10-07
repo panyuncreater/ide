@@ -1370,7 +1370,7 @@ public:
         // （如 a.append(a) 后被闭包捕获）。原实现仅遍历 savedGlobalEnv 顶层变量，
         // 但 gcRootPtr() 对闭包返回 nullptr，导致闭包内部的 capturedVars 不会被 mark，
         // GcManager 误判为不可达循环孤岛并清空其 elements，破坏 REPL 状态。
-        // ClosureData 本身不在 tracked_（GcManager.h 注释），不会被 sweep，
+        // ClosureData 本身不登记进 slots_（GcManager.h 注释），不会被 sweep，
         // 但作为根可让 collectCycle 的 markPhase 进入 capturedVars 标记可达容器。
         if (isClosure())
             return static_cast<const void*>(box_.asPtr<ClosureData>());

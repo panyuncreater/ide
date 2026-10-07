@@ -89,6 +89,26 @@ fun tak(x, y, z) {
 print(tak(12, 6, 0));
 )";
 
+// 2026-10-06 新增基准：容器分配（memory）
+// 测试堆分配 + GcManager 登记/注销路径（每次迭代构造 2 个数组：inner + 外层，
+// 迭代结束时两者析构注销；总登记 4 万次，跨过 8192 阈值触发多次增量 GC，
+// 同时覆盖 registerTracked / onDestroyed / sweep / Phase 3 压缩全链路）。
+// 预期输出：20000
+const std::string kArrayAllocSource = R"(
+fun make_pair(i) {
+    var inner = [i, i + 1];
+    return [i, inner];
+}
+var i = 0;
+var count = 0;
+while (i < 20000) {
+    var p = make_pair(i);
+    count = count + 1;
+    i = i + 1;
+}
+print(count);
+)";
+
 // R117 新增基准 2：Ackermann 深递归
 // 测试调用栈压力与深度递归
 // 预期输出：13（ack(2, 8) = 13）
@@ -168,7 +188,7 @@ struct BenchmarkSpec {
 // 注意：保持顺序与下面 TEST() 一致，便于 ZZZ_PrintResults 汇总
 const std::vector<BenchmarkSpec> kBenchmarkSpecs = {
     {"fibonacci", "recursion", kFibonacciSource},          {"large_loop", "compute", kLargeLoopSource},
-    {"string_concat", "memory", kStringConcatSource},      {"tak", "recursion", kTakSource},
+    {"string_concat", "memory", kStringConcatSource},      {"array_alloc", "memory", kArrayAllocSource},      {"tak", "recursion", kTakSource},
     {"ackermann", "recursion", kAckermannSource},          {"bubble_sort", "container", kBubbleSortSource},
     {"closure_counter", "closure", kClosureCounterSource},
 };
@@ -448,6 +468,17 @@ TEST(PerfBenchmark, StringConcat_StackVM) {
 }
 TEST(PerfBenchmark, StringConcat_RegisterVM) {
     g_allResults.push_back(runRegisterVMBenchmark(kStringConcatSource, "string_concat"));
+}
+
+// --- 2026-10-06 新增：容器分配基准（memory，GC 登记路径）---
+TEST(PerfBenchmark, ArrayAlloc_Interpreter) {
+    g_allResults.push_back(runInterpreterBenchmark(kArrayAllocSource, "array_alloc"));
+}
+TEST(PerfBenchmark, ArrayAlloc_StackVM) {
+    g_allResults.push_back(runStackVMBenchmark(kArrayAllocSource, "array_alloc"));
+}
+TEST(PerfBenchmark, ArrayAlloc_RegisterVM) {
+    g_allResults.push_back(runRegisterVMBenchmark(kArrayAllocSource, "array_alloc"));
 }
 
 // --- R117 新增：Tak 互递归基准（recursion）---

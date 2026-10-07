@@ -9,27 +9,38 @@
 //
 // 工作流程：
 //   1. registerTracked(obj): 所有新建的 ArrayData/DictData/InstanceData
-//      通过此方法注册到 tracked 列表，并加入 aliveSet_。
-//   2. RefCounted 析构时调用 onDestroyed(this)，从 aliveSet_ 移除。
-//      这样 collectCycle 迭代 tracked_ 时可通过 aliveSet_ 区分
-//      存活对象与已释放的悬垂指针，避免 UAF。
+//      通过此方法登记到 slots_ 槽位表，并回写 obj->gcSlot_。
+//   2. RefCounted 析构时调用 onDestroyed(this)，将本对象的槽位置空并
+//      回收进 freeSlots_。这样 collectCycle 迭代 slots_ 时以 nullptr
+//      墓碑区分存活对象与已释放对象，避免 UAF。
 //   3. collectCycle(roots): 从 roots 出发 mark 所有可达容器节点，
-//      然后 sweep tracked 列表中 aliveSet_ 仍在但 marked 未标记的
-//      节点（即不可达的循环孤岛）——清空其子元素打破循环。
+//      然后 sweep slots_ 中非空但未被标记的槽位（即不可达的循环孤岛）
+//      ——清空其子元素打破循环；Phase 3 压缩登记表，死亡对象的槽位
+//      回收复用。
 //
 // 触发时机（BUG-003 fix: 双触发机制）：
 //   - 兜底触发：Interpreter::execute() 在 resetState 之后、runStatements 之前
 //     调用 collectCycle(空根集)。此时上一轮残留的循环容器 refCount>0
-//     仍 aliveSet_，本轮新建容器尚未注册，安全。
+//     仍登记在册，本轮新建容器尚未注册，安全。
 //   - 增量触发：registerTracked 累计 allocationsSinceLastGc_ 达到
 //     GC_ALLOCATION_THRESHOLD 时，调用 gcTriggerCallback_（由 Interpreter
 //     注册），Interpreter 收集当前 callStack/globalEnv 中的根集后调用
 //     collectCycle。这解决了长时间运行函数内累积循环引用的内存峰值问题。
 //
+// 登记表数据结构（2026-10-06 slot-index 重构）：
+//   - 单一 slots_ 槽位表取代原 tracked_ vector + aliveSet_ unordered_set
+//     双结构。不变量（全局锁内）：slots_[i] 非空 ⟺ 槽位被 gcSlot_==i 的
+//     存活对象占用；nullptr 为已析构墓碑。锁内无悬垂指针。
+//   - 分配路径：freeSlots_ 命中时零堆分配（vector 下标写）+ 无哈希；未命中
+//     才 push_back 扩容。析构路径：槽位置空 + freeSlots_ 回收，无哈希删除。
+//   - sweep/Phase 3 均为连续内存顺序扫描 + 原地压缩，取代原先每对象一次
+//     unordered_set::find 与 Phase 3 全量重建 aliveSet_ 的哈希风暴。
+//   - 对象侧新增 size_t gcSlot_（RefCounted），注册/压缩回写/注销均持全局锁。
+//
 // 性能权衡：
 //   - mark-sweep 的开销是 O(节点数 + 边数)，仅在 execute 起点或分配阈值触发
 //   - RefCounted 析构增加一个 bool 检查（非跟踪对象零开销）
-//   - tracked_ 用 vector，aliveSet_ 用 unordered_set，注册/注销均 O(1)
+//   - 注册/注销均 O(1) 且无哈希节点分配；trackedCount() O(1) 精确读
 // ============================================================
 
 #include "common/MemoryInspectionAPI.h" // GcMode, GcPhase 枚举（ARCH-10 单一真相源）
@@ -37,7 +48,6 @@
 #include <atomic>
 #include <functional>
 #include <mutex>
-#include <unordered_set>
 #include <vector>
 
 struct RefCounted;
@@ -59,13 +69,14 @@ public:
         return gc;
     }
 
-    // 注册容器节点到 tracked 列表 + aliveSet_
-    // 仅注册 ArrayData/DictData/InstanceData（可能形成循环的类型）
-    // StringData/ClosureData 不注册（StringData 无子引用，ClosureData 已用 weak_ptr 打破循环）
-    // P0-1 fix: 加锁保护 tracked_/aliveSet_/计数器，消除多线程分配容器的数据竞争。
+    // 登记容器节点到 slots_ 槽位表（分配槽位 + 回写 obj->gcSlot_）
+    // 仅登记 ArrayData/DictData/InstanceData/TupleData/EnumVariantData
+    // （可能形成循环的类型）
+    // StringData/ClosureData 不登记（StringData 无子引用，ClosureData 已用 weak_ptr 打破循环）
+    // P0-1 fix: 加锁保护 slots_/freeSlots_/计数器，消除多线程分配容器的数据竞争。
     void registerTracked(RefCounted* obj);
 
-    // RefCounted 析构钩子：从 aliveSet_ 移除本指针
+    // RefCounted 析构钩子：回收本对象占用的槽位（置空 + 进 freeSlots_）
     // 安全性：collectCycle 持有同一把锁时通过 recursive_mutex 安全重入
     void onDestroyed(RefCounted* obj);
 
@@ -75,11 +86,11 @@ public:
     // P0-1 fix: 全程持锁；GcOnly 模式 delete 触发 ~RefCounted→onDestroyed 通过 recursive_mutex 重入
     void collectCycle(const std::vector<const void*>& roots);
 
-    // 清空 tracked 列表 + aliveSet_（VM/Interpreter 完全重置时调用）
+    // 清空槽位表（VM/Interpreter 完全重置时调用）
     // 注意：不释放节点（节点由 refCount 管理），仅清空跟踪结构
     void reset();
 
-    // 调试：当前 tracked 节点数
+    // 调试：当前存活被跟踪节点数（O(1) 精确读，不含已析构墓碑）
     size_t trackedCount() const;
 
     // BUG-003 fix: 设置增量 GC 触发回调（由 Interpreter 在构造时注册）
@@ -124,7 +135,7 @@ public:
     // RefCountOnly: 跳过 registerTracked，循环引用会泄漏（基线对比）
     // GcOnly: sweep 阶段直接 delete 不可达对象（实验性，存在 COW/VM root 限制）
     // 切换时机：仅在 Interpreter/VM 完全重置后（reset() 后）切换，避免运行中
-    // 切换导致 tracked_/aliveSet_ 状态不一致。
+    // 切换导致 slots_ 登记表状态不一致。
     GcMode gcMode() const;
     void setGcMode(GcMode mode);
 
@@ -167,13 +178,19 @@ private:
     // BUG-003 fix: 检查分配阈值，达到则调用 gcTriggerCallback_ 进行增量回收
     void checkIncrementalGc();
 
-    // tracked 节点列表（弱引用，对象由 refCount 管理生命周期）
-    // collectCycle 期间可能有 nullptr 墓碑（对象已析构但还未 compact）
-    std::vector<RefCounted*> tracked_;
+    // 登记表（2026-10-06 slot-index 重构）：slots_[i] 非空 ⟺ 槽位被 gcSlot_==i
+    // 的存活对象占用，nullptr 为已析构墓碑。全局锁内保证无悬垂指针——取代原
+    // tracked_ vector + aliveSet_ unordered_set 双结构（注册/注销/sweep 的哈希
+    // 节点分配与查找全部消除）。
+    // slots_.size() 为历史峰值槽位数（只增不减），死亡槽位经 freeSlots_ 复用。
+    std::vector<RefCounted*> slots_;
 
-    // 当前存活的 tracked 对象集合（析构时移除）
-    // 用于在 collectCycle 迭代 tracked_ 时区分存活对象与悬垂指针
-    std::unordered_set<RefCounted*> aliveSet_;
+    // 已析构对象腾出的可复用槽位下标（LIFO 复用；与 slots_ 尾部回收去重见
+    // collectCycle Phase 3 的压缩逻辑——仅回收本轮仍被占用的槽位，不重复入栈）
+    std::vector<size_t> freeSlots_;
+
+    // 非 null 槽位数 = 当前存活被跟踪对象数（trackedCount() O(1) 精确读）
+    size_t liveTrackedCount_ = 0;
 
     // BUG-003 fix: 增量触发相关状态
     // PERF-GC: 统计/标志字段改 std::atomic——写入点（registerTracked/collectCycle/
@@ -201,7 +218,7 @@ private:
     // 默认 RefCountWithCycleGc 保持向后兼容。
     GcMode gcMode_ = GcMode::RefCountWithCycleGc;
 
-    // P0-1 fix: 全局锁，保护 tracked_/aliveSet_/回调/模式字段。
+    // P0-1 fix: 全局锁，保护 slots_/freeSlots_/回调/模式字段。
     // 使用 recursive_mutex 是因为 collectCycle 在 GcOnly 模式下 delete 对象会触发
     // ~RefCounted→onDestroyed 重入同一把锁；registerTracked→checkIncrementalGc→
     // gcTriggerCallback_→collectCycle 也是同线程重入。recursive_mutex 保证这些
