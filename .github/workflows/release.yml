@@ -330,7 +330,7 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
 
       - name: 下载所有平台构建产物
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           path: release-assets
           pattern: minilang-ide-*
