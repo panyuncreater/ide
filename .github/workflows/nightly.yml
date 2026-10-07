@@ -129,7 +129,7 @@ jobs:
 
       - name: 上传崩溃/分歧用例（发现问题时）
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: fuzz-crash-cases-${{ github.run_id }}
           path: out/build/linux-release/cli/crash-*.ml
@@ -273,7 +273,7 @@ jobs:
 
       - name: 上传命中用例与报告（发现问题时）
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: pipeline-findings-${{ github.run_id }}
           path: out/build/linux-release/testing_artifacts_pipeline/
@@ -347,7 +347,7 @@ jobs:
 
       - name: 上传 sanitizer 命中用例与报告（发现问题时）
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: pipeline-sanitizer-findings-${{ github.run_id }}
           path: out/build/linux-asan/testing_artifacts_san/
@@ -561,7 +561,7 @@ jobs:
           cat perf-baseline.json
 
       - name: 上传刷新后的基线 artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: perf-baseline-refreshed-${{ github.run_id }}
           path: perf-baseline.json
