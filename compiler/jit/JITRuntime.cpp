@@ -1658,9 +1658,14 @@ extern "C" void jitMemberGet(JitContext* ctx, const char* fieldName) {
 /// cache 未命中时走原 jitMemberGet 慢速路径，并更新 cache。
 ///
 /// @param callSiteId 编译期分配的 per-call-site ID（索引 JITBackend::memberGetIC_）
-/// @param backendPtr JITBackend* this 指针（用于访问 memberGetIC_/icHitCount_/icMissCount_）
-extern "C" void jitMemberGetWithIC(JitContext* ctx, const char* fieldName, uint64_t callSiteId, void* backendPtr) {
-    if (!ctx || !ctx->stackTop || !fieldName || !backendPtr) {
+/// @param backendPtr 编译期烘焙的 JITBackend* this——仅作 ABI 占位，不再用于解析：
+///        进程内块缓存（ADR-008 阶段 2）命中时，缓存的生成代码携带创建实例的
+///        烘焙指针（C 类内嵌地址），经它访问即命中已析构实例（stack-use-after-return，
+///        2026-10-07 Linux ASan 首抓）。后端实例一律经 ctx->backendPtr（每执行实例
+///        在 execute() 设置）解析，烘焙参数保留以维持 helper ABI 不变
+extern "C" void jitMemberGetWithIC(JitContext* ctx, const char* fieldName, uint64_t callSiteId,
+                                   [[maybe_unused]] void* backendPtr) {
+    if (!ctx || !ctx->stackTop || !fieldName || !ctx->backendPtr) {
         return;
     }
     int64_t* sp = ctx->stackTop;
@@ -1672,7 +1677,7 @@ extern "C" void jitMemberGetWithIC(JitContext* ctx, const char* fieldName, uint6
         // 注意：必须使用 const 版本 fields() 避免 ensureUnique COW 复制，
         // 否则 obj 析构后 COW 副本被释放，cache 指针悬垂。
         const void* instPtr = static_cast<const void*>(obj.gcRootPtr());
-        auto* backend = static_cast<JITBackend*>(backendPtr);
+        auto* backend = static_cast<JITBackend*>(ctx->backendPtr);
         if (callSiteId < backend->memberGetIC_.size()) {
             auto& entry = backend->memberGetIC_[callSiteId];
 
@@ -1926,8 +1931,13 @@ extern "C" int64_t jitMethodReturn(JitContext* ctx, JitFrame* framePtr, int64_t 
 ///        - bit 17: isSuperCall（1=super 调用，需 superClassName）
 /// @param receiverSlotPtr 接收者 slot 指针（null=无 writeBack，如临时表达式）
 /// @param superClassName 父类名（仅 isSuperCall=1 时有效，null=非 super 调用）
+/// @param backendPtr 编译期烘焙的 JITBackend* this——仅作 ABI 占位，不再用于解析：
+///        进程内块缓存（ADR-008 阶段 2）命中时生成代码携带创建实例的烘焙指针
+///        （C 类内嵌地址），经它访问 methodCallIC_/triggerLazyCompile 即命中已
+///        析构实例（stack-use-after-return，2026-10-07 Linux ASan 首抓）。后端
+///        实例一律经 ctx->backendPtr（每执行实例在 execute() 设置）解析
 extern "C" void jitMethodCall(JitContext* ctx, const char* methodName, int64_t packedArgs, int64_t* receiverSlotPtr,
-                              const char* superClassName, uint64_t callSiteId, void* backendPtr) {
+                              const char* superClassName, uint64_t callSiteId, [[maybe_unused]] void* backendPtr) {
     if (!ctx || !ctx->stackTop || !methodName) {
         return;
     }
@@ -1994,8 +2004,10 @@ extern "C" void jitMethodCall(JitContext* ctx, const char* methodName, int64_t p
     }
 
     // 3. 方法调用 IC：缓存 (className) → JitMethodInfo* 避免继承链遍历
-    //    仅对非 super 调用启用（super 调用需从父类开始查找，语义不同）
-    auto* backend = backendPtr ? static_cast<JITBackend*>(backendPtr) : nullptr;
+    //    仅对非 super 调用启用（super 调用需从父类开始查找，语义不同）。
+    //    后端实例经 ctx->backendPtr 解析（每执行实例），不得使用生成代码携带的
+    //    烘焙 backendPtr 参数——块缓存命中时它是已析构的创建实例（ADR-008 C 类）
+    auto* backend = ctx ? static_cast<JITBackend*>(ctx->backendPtr) : nullptr;
     const JitMethodInfo* foundMethod = nullptr;
 
     if (!isSuperCall && backend && callSiteId < backend->methodCallIC_.size()) {

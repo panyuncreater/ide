@@ -1183,12 +1183,18 @@ jobs:
         run: ctest -C Release -j 1 --output-on-failure -I 1,400
 
       # Pass 2: PGO 优化构建 + 性能验证
+      # WERROR=OFF：/USEPROFILE 对未被训练目标（test_harness 工具/plugin 等
+      # ctest 不运行的可执行文件）因无 profile 数据发告警，release preset 的
+      # WERROR 默认 ON 会把它抬成 C2220 → LNK1257（2026-10-07 首跑实测；
+      # 该组合自 2026-07-24 WERROR 默认化以来未有机会暴露——checkout 此前
+      # 一直被子模块指针阻断）。与 Pass 1 及两个 sanitizer job 同理
       - name: "PGO Pass 2: 重新配置 (Use)"
         run: >
           cmake --preset windows-msvc-release
           -DMINILANG_PGO_USE=ON
           -DMINILANG_PGO_GENERATE=OFF
           -DMINILANG_USE_CCACHE=OFF
+          -DMINILANG_WERROR=OFF
 
       - name: "PGO Pass 2: 构建"
         run: cmake --build out/build/release --parallel
