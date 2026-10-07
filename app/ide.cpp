@@ -26,6 +26,7 @@
 #include <QActionGroup>
 #include <QApplication>
 #include <QClipboard>
+#include <QCloseEvent>
 #include <QColor>
 #include <QComboBox>
 #include <QDateTime>
@@ -40,6 +41,7 @@
 #include <QFileSystemWatcher>
 #include <QFrame>
 #include <QGraphicsDropShadowEffect>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QHash>
 #include <QHeaderView>
@@ -48,6 +50,8 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
+#include <QMainWindow>
+#include <QMap>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
@@ -81,7 +85,10 @@
 #include <QVariantAnimation>
 #include <algorithm>
 #include <functional>
+#include <memory>
 #include <sstream>
+#include <string>
+#include <vector>
 
 #ifdef Q_OS_WIN
 // WIN32_LEAN_AND_MEAN + NOMINMAX 减少 windows.h 宏污染
@@ -109,6 +116,7 @@
 #include "DockWidgetTab.h"
 
 // QFluentKit Theme
+#include "FluentGlobal.h"
 #include "Theme.h"
 
 // QFluentKit components (sixth-round UI refactor → twelfth-round unified title bar)
@@ -134,6 +142,60 @@
 // 功能 1b：3 分钟 Hello World 引导（GuidedTour）
 #include "gui/GuidedTour.h"
 #include "gui/MarkdownRenderer.h" // UX-R fix: 通用兜底引导的帮助文案 Markdown 渲染
+
+// 教学面板完整定义（原经 ide.h 透传，现按需包含——ide.h 仅保留前置声明）
+#include "gui/AstBuilderToyPanel.h"
+#include "gui/AstViewer.h"
+#include "gui/AstVisualizerPanel.h"
+#include "gui/BackendComparePanel.h"
+#include "gui/BackendParallelPanel.h"
+#include "gui/BreakpointConditionPanel.h"
+#include "gui/BugHuntPanel.h"
+#include "gui/BytecodeTracePanel.h"
+#include "gui/CallStackPanel.h"
+#include "gui/ClosureInspectorPanel.h"
+#include "gui/CodeEditor.h"
+#include "gui/CodeJourneyInfoPanel.h"
+#include "gui/CoroutineVisualizerPanel.h"
+#include "gui/CourseSystemPanel.h"
+#include "gui/DebugPanel.h"
+#include "gui/EscapeAnalysisPanel.h"
+#include "gui/ExceptionFlowPanel.h"
+#include "gui/ExecutionTimelinePanel.h" // R114: 可回放执行时间轴
+#include "gui/ExerciseGraderPanel.h"
+#include "gui/FindReplacePanel.h"
+#include "gui/FuzzPlaygroundPanel.h"
+#include "gui/GcVisualizerPanel.h"
+#include "gui/GlossaryPanel.h"
+#include "gui/InlineCachePanel.h"
+#include "gui/IrViewer.h"
+#include "gui/IRTransformPanel.h"
+#include "gui/JitVisualizerPanel.h"
+#include "gui/LabManualPanel.h"
+#include "gui/LearningPathPanel.h"
+#include "gui/LintExplorerPanel.h"
+#include "gui/LoopUnrollingPanel.h"
+#include "gui/MemoryLayoutPanel.h"
+#include "gui/MemoryModelPanel.h"
+#include "gui/ModuleSystemVisualizerPanel.h"
+#include "gui/PanelCatalog.h" // P2-1 fix: 替代废弃的 LearningHubDialog
+#include "gui/PerformanceRacePanel.h"
+#include "gui/PipelineViewer.h"
+#include "gui/ProfileDashboardPanel.h"
+#include "gui/RegisterAllocatorPanel.h"
+#include "gui/ReplPanel.h"
+#include "gui/ReverseDebugTimelinePanel.h" // 反向调试时间轴（AUDIT-P1: 补工厂注册）
+#include "gui/StepExplainerPanel.h"
+#include "gui/SyntaxExplorerPanel.h"
+#include "gui/SyntaxHighlighter.h"
+#include "gui/TeachingPanelHeader.h"
+#include "gui/TeachingTreePanel.h"
+#include "gui/TokenPuzzlePanel.h"
+#include "gui/VariableInspectorPanel.h"
+#include "gui/VmStackPanel.h"
+#include "gui/VmStackSandboxPanel.h"
+#include "gui/WatchPanel.h"      // R117: 观察表达式面板
+#include "gui/WatchpointPanel.h" // R161: 数据断点（Watchpoint）面板
 
 // ============================================================
 // ide.cpp — MiniLang IDE 主窗口实现

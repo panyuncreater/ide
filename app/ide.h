@@ -1,99 +1,119 @@
 #pragma once
 
-#include <QAction>
-#include <QCloseEvent>
-#include <QGridLayout>
-#include <QListWidget>
+// ============================================================
+// include 策略：本头文件仅以指针/引用形式使用全部面板与 Qt 控件类型，
+// 故只包含按值使用所需的少量头文件，其余一律前置声明（定义由 ide.cpp
+// 按需包含）。45 个 gui 面板头不再经此透传，面板头变更不再连带重编
+// 全部包含 ide.h 的编译单元。
+// ============================================================
+
 #include <QMainWindow>
+
+#include <QByteArray>
+#include <QList>
 #include <QMap>
+#include <QPoint>
 #include <QSet>
-#include <QSplitter>
-#include <QStackedWidget>
-#include <QTabWidget>
-#include <QTableWidget>
-#include <QTextEdit>
-#include <QTimer>
-#include <QToolBar>
-#include <QToolButton>
-#include <QTreeWidget>
-#include <QVariantAnimation>
+#include <QStringList>
+
+#include <cstddef>
 #include <functional>
-#include <memory>
+#include <string>
+#include <utility>
 #include <vector>
 
-#include <QSettings>
+#include "Diagnostic.h"   // DiagLevel 按值形参（默认实参）+ DiagnosticBag const&
+#include "IdeController.h" // IdeController::VmStepResult 按值形参
 
-// ADS 停靠框架
-#include "DockManager.h"
-#include "DockWidget.h"
-
-// QFluentKit 主题
-#include "FluentGlobal.h"
-#include "ToolButton.h" // TransparentToolButton（主题切换按钮）
-
-#include "Diagnostic.h"
-#include "IdeController.h"
-#include "gui/ActivityBar.h"
-#include "gui/AstBuilderToyPanel.h"
-#include "gui/AstViewer.h"
-#include "gui/AstVisualizerPanel.h"
-#include "gui/BackendComparePanel.h"
-#include "gui/BackendParallelPanel.h"
-#include "gui/BreakpointConditionPanel.h"
-#include "gui/BugHuntPanel.h"
-#include "gui/BytecodeTracePanel.h"
-#include "gui/CallStackPanel.h"
-#include "gui/ClosureInspectorPanel.h"
-#include "gui/CodeEditor.h"
-#include "gui/CodeJourneyInfoPanel.h"
-#include "gui/CoroutineVisualizerPanel.h"
-#include "gui/CourseSystemPanel.h"
-#include "gui/DebugPanel.h"
-#include "gui/EscapeAnalysisPanel.h"
-#include "gui/ExceptionFlowPanel.h"
-#include "gui/ExecutionTimelinePanel.h" // R114: 可回放执行时间轴
-#include "gui/ExerciseGraderPanel.h"
-#include "gui/FindReplacePanel.h"
-#include "gui/FuzzPlaygroundPanel.h"
-#include "gui/GcVisualizerPanel.h"
-#include "gui/GlossaryPanel.h"
-#include "gui/IRTransformPanel.h"
-#include "gui/InlineCachePanel.h"
-#include "gui/IrViewer.h"
-#include "gui/JitVisualizerPanel.h"
-#include "gui/LabManualPanel.h"
-#include "gui/LearningPathPanel.h"
-#include "gui/LintExplorerPanel.h"
-#include "gui/LoopUnrollingPanel.h"
-#include "gui/MemoryLayoutPanel.h"
-#include "gui/MemoryModelPanel.h"
-#include "gui/ModuleSystemVisualizerPanel.h"
-#include "gui/PanelCatalog.h" // P2-1 fix: 替代废弃的 LearningHubDialog
-#include "gui/PerformanceRacePanel.h"
-#include "gui/PipelineViewer.h"
-#include "gui/ProfileDashboardPanel.h"
-#include "gui/RegisterAllocatorPanel.h"
-#include "gui/ReplPanel.h"
-#include "gui/ReverseDebugTimelinePanel.h" // 反向调试时间轴（AUDIT-P1: 补工厂注册）
-#include "gui/StepExplainerPanel.h"
-#include "gui/SyntaxExplorerPanel.h"
-#include "gui/SyntaxHighlighter.h"
-#include "gui/TeachingPanelHeader.h"
-#include "gui/TeachingTreePanel.h"
-#include "gui/TokenPuzzlePanel.h"
-#include "gui/VariableInspectorPanel.h"
-#include "gui/VmStackPanel.h"
-#include "gui/VmStackSandboxPanel.h"
-#include "gui/WatchPanel.h"      // R117: 观察表达式面板
-#include "gui/WatchpointPanel.h" // R161: 数据断点（Watchpoint）面板
-
-class Pivot;
+// ---- Qt 前置声明（指针成员/形参）----
+class QAction;
+class QCloseEvent;
+class QDialog;
+class QDragEnterEvent;
+class QDropEvent;
+class QEvent;
+class QFileSystemWatcher; // 文件外部修改监听
+class QGridLayout;
+class QHBoxLayout;
 class QLabel;
 class QLineEdit;
-class ComboBox;           // QFluentKit ComboBox
-class GuidedTour;         // 新手引导组件
-class QFileSystemWatcher; // 文件外部修改监听
-class RoundMenu;          // QFluentKit RoundMenu（系统菜单/上下文菜单）
+class QListWidget;
+class QShowEvent;
+class QSplitter;
+class QStackedWidget;
+class QTabWidget;
+class QTableWidget;
+class QTextEdit;
+class QTimer;
+class QToolButton;
+class QToolBar;
+class QTreeWidget;
+class QTreeWidgetItem;
+class QVariantAnimation;
+class QVBoxLayout;
+
+// ---- QFluentKit / ADS 前置声明 ----
+class ComboBox;  // QFluentKit ComboBox
+class GuidedTour; // 新手引导组件
+class Pivot;      // QFluentKit Pivot（底部/右侧标签切换）
+class RoundMenu;  // QFluentKit RoundMenu（系统菜单/上下文菜单）
+namespace ads {
+class CDockManager;
+class CDockWidget;
+}
+
+// ---- gui/ 面板与组件前置声明（成员/EditorTabData 指针）----
+class ActivityBar;
+class AstBuilderToyPanel;
+class AstViewer;
+class AstVisualizerPanel;
+class BackendComparePanel;
+class BackendParallelPanel;
+class BreakpointConditionPanel;
+class BugHuntPanel;
+class BytecodeTracePanel;
+class CallStackPanel;
+class ClosureInspectorPanel;
+class CodeEditor;
+class CodeJourneyInfoPanel;
+class CoroutineVisualizerPanel;
+class CourseSystemPanel;
+class DebugPanel;
+class EscapeAnalysisPanel;
+class ExceptionFlowPanel;
+class ExecutionTimelinePanel; // R114: 可回放执行时间轴
+class ExerciseGraderPanel;
+class FindReplacePanel;
+class FuzzPlaygroundPanel;
+class GcVisualizerPanel;
+class GlossaryPanel;
+class InlineCachePanel;
+class IRTransformPanel;
+class IrViewer;
+class JitVisualizerPanel;
+class LabManualPanel;
+class LearningPathPanel;
+class LintExplorerPanel;
+class LoopUnrollingPanel;
+class MemoryLayoutPanel;
+class MemoryModelPanel;
+class ModuleSystemVisualizerPanel;
+class PerformanceRacePanel;
+class PipelineViewer;
+class ProfileDashboardPanel;
+class RegisterAllocatorPanel;
+class ReplPanel;
+class ReverseDebugTimelinePanel; // 反向调试时间轴（AUDIT-P1: 补工厂注册）
+class StepExplainerPanel;
+class SyntaxExplorerPanel;
+class SyntaxHighlighter;
+class TeachingTreePanel;
+class TokenPuzzlePanel;
+class VariableInspectorPanel;
+class VmStackPanel;
+class VmStackSandboxPanel;
+class WatchPanel;      // R117: 观察表达式面板
+class WatchpointPanel; // R161: 数据断点（Watchpoint）面板
 
 // ============================================================
 // Ide — MiniLang IDE 主窗口
