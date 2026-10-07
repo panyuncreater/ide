@@ -1,10 +1,23 @@
 # 提案：MSVC ASan 内存错误门禁（CI job）
 
-> 状态：**提案（待合入 CI）** | 日期：2026-10-03 | 作者：审计改进计划第 ③ 项
+> 状态：**已合入（2026-10-06，`.github/workflows/ci.yml` `sanitize-asan-msvc` job，经维护者授权的一次性只读范围修改）** | 日期：2026-10-03 | 作者：审计改进计划第 ③ 项
 >
-> 为什么以提案形式交付：`.github/workflows/` 与 CI 配置属于 AGENTS.md §2 声明的**只读范围**
-> （禁止操作含「修改 CI 配置」），本提案给出可直接粘贴合入的 job 定义；合入动作需由具有
-> CI 变更权限的维护者执行。
+> 合入时与 §2 的差异（按 ci.yml 实况适配，详见 ci.yml job 头注释）：
+>  - **配置必须用本提案的全局 `CMAKE_CXX_FLAGS` 注入，不可改用 `windows-msvc-asan` preset**：
+>    preset 经 `minilang_compile_options` INTERFACE 只插桩项目目标，第三方 gtest 保持未插桩，
+>    MSVC 14.51 链接期 `annotate_optional` 严格检查报 `LNK2038/LNK1319`（2026-10-06 本地实测）；
+>    全局 flags 连同 gtest/asmjit 一起插桩，为本提案 §4 已端到端验证的配方；
+>  - 额外传 `-DCMAKE_PREFIX_PATH="${{ env.QT_ROOT_DIR }}"`（直调 cmake 时 Qt 的注入路径，
+>    preset 场景由 `$env{QTDIR}` 链承担）、`-DMINILANG_BUILD_PERF_TESTS=OFF`（ctest 要求全部
+>    已注册测试可执行文件存在，AGENTS §6；perf 测试"未构建即不注册"，故无需 `-LE "perf"`）、
+>    `-DMINILANG_WERROR=OFF`（对齐 Linux asan job）；
+>  - 注意事项 1 的调试 CRT PATH 步骤经核实**不需要**：runner 自带 VS 调试运行库（System32），
+>    coverage 作业同为 Debug 构建直跑测试可执行文件已长期验证；
+>  - 构建 minilang_tests / minilang_app_tests / minilang_gui_smoke 三个目标跑全量 ctest
+>    （app/gui 测试亦为提案本地验证覆盖范围）。
+>
+> 原提案背景：`.github/workflows/` 与 CI 配置属于 AGENTS.md §2 声明的**只读范围**
+> （禁止操作含「修改 CI 配置」），故先以提案形式交付；合入动作由维护者授权后执行。
 
 ## 1. 动机
 
@@ -76,6 +89,32 @@
    `detect_leaks=0`。
 4. 若全量 4109 用例耗时过长，可先以 `--suite` 或标签过滤三后端一致性 + fuzz + 审计批次
    作为第一道门禁，后续再扩全量。
+5. **MSVC preset（`MINILANG_SANITIZE=address`）路径不可用于本门禁（2026-10-06 实测）**：
+   preset 经 `minilang_compile_options` INTERFACE 只插桩项目目标，树内预编译的 gtest 未插桩，
+   MSVC 14.51 的链接期 `annotate_optional` 严格检查报
+   `gtest.lib(gtest-all.cc.obj): error LNK2038: 检测到"annotate_optional"的不匹配项` →
+   `LNK1319`。CMakeLists 属只读范围无法给第三方目标补编译选项，故合入版采用本 §2 的全局
+   flags 注入（§4 已端到端验证）。Linux GCC 侧无此问题（GCC asan 无对应 ABI 标记检查）。
+6. **测试目标须顺序构建（2026-10-06 实测）**：`minilang_app_tests` 与 `minilang_gui_smoke`
+   的 windeployqt POST_BUILD 部署均写 `tests/` 目录（Qt 插件 + 调试 CRT），单次
+   `cmake --build --target A --target B` 下 ninja 并行使两部署重叠，同名 DLL 同时拷贝
+   一方报 `Cannot copy ... Destination file exists` 且 windeployqt 以非零码退出 → 构建失败。
+   合入版按 minilang_tests → minilang_app_tests → minilang_gui_smoke → minilang_perf_test
+   顺序逐目标构建。增量构建树（DLL 已存在、拷贝为 no-op）不复现，CI 全新构建必现。
+7. **`MINILANG_BUILD_PERF_TESTS=OFF` 为无效选项（2026-10-06 实测，待修的文档/实现偏差）**：
+   根 [CMakeLists.txt](../CMakeLists.txt) 性能测试节注释宣称"选项同时包裹 add_executable 与
+   gtest_discover_tests，保证'未构建即不注册'的不变量"，但 [tests/CMakeLists.txt](../tests/CMakeLists.txt)
+   中 `minilang_perf_test` 的目标定义与测试注册**无任何选项守卫**（该 flag 全仓零消费）。
+   DISCOVERY_MODE PRE_TEST 在二进制缺失时注册 `minilang_perf_test_NOT_BUILT` 占位 →
+   ctest 以非零码结束。合入版的处置：四个测试目标全量构建 + `ctest -E PerfBenchmark`
+   按名称排除性能用例（flag 保留：未来若实现守卫则自动回到"不注册"路径，两种状态下
+   job 均正确）。根因修复（实现守卫或修正注释）需改 CMakeLists（只读范围），记录待办。
+   **2026-10-07 后记：守卫已落地**——tests/CMakeLists.txt 的 minilang_perf_test 目标
+   定义、测试注册与 Qt 部署已由 `if(MINILANG_BUILD_PERF_TESTS)` 包裹（经维护者授权的
+   一次性修改），"未构建即不注册"不变量成立，OFF 路径经 `ctest -N` 验证不再注册
+   _NOT_BUILT 占位。ASan job 命令保持四目标全量构建 + `-E PerfBenchmark` 不变：
+   排除的实际理由是 ASan 插桩使时间阈值失真（与守卫无关），且维持与本地排练逐字
+   一致的命令面。
 
 ## 3. 与现有 CI 的关系
 

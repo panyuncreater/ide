@@ -11,6 +11,7 @@
 #   static-analysis    — cppcheck 静态代码分析
 #   clang-tidy         — clang-tidy 静态分析（continue-on-error，信息性）
 #   sanitize-asan      — ASan+UBSan 内存错误门禁（Linux，阻断式）
+#   sanitize-asan-msvc — ASan 内存错误门禁（Windows MSVC，阻断式）
 #   perf-benchmark     — 性能基准回归（与 perf-baseline.json 对比）
 #   docs               — Doxygen 文档构建并部署到 GitHub Pages
 #
@@ -873,6 +874,110 @@ jobs:
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         # ASan 约 2x 减速，降低并行度避免内存峰值打爆 runner
         run: ctest -j 2 --output-on-failure
+
+  # ============================================================
+  # 作业 6b：MSVC ASan 内存错误门禁（Windows，阻断式）
+  # ------------------------------------------------------------
+  # 合入自 docs/ci-msvc-asan-proposal.md（2026-10-03 提案；.github/ 属只读
+  # 范围，本次为经维护者授权的一次性修改）。Linux 已有 sanitize-asan
+  # （ASan+UBSan）；本 job 补齐主力开发平台 Windows 的内存错误覆盖
+  # （MSVC CRT / Win64 ABI 特有的分配器与指针路径）。提案本地验证记录见
+  # 提案 §4——门禁首跑即捕获 JITRuntime jitThrow use-after-pop 真实缺陷。
+  #
+  # 与提案 §2 的差异（按 ci.yml 实况适配）：
+  #   - 配置采用提案的全局 CMAKE_CXX_FLAGS 注入（不使用 windows-msvc-asan
+  #     preset 的 MINILANG_SANITIZE 路径）：preset 经 minilang_compile_options
+  #     INTERFACE 只插桩项目目标，第三方 gtest 保持未插桩，MSVC 14.51 链接期
+  #     annotate_optional 严格检查报 LNK2038/LNK1319（本地实测）；全局 flags
+  #     连同 gtest/asmjit 一起插桩，为提案 §4 已端到端验证的配方；
+  #   - 额外传 CMAKE_PREFIX_PATH（直调 cmake 无 preset 的 Qt 注入链）；
+  #     perf 处理：四个测试目标全量构建、ctest 以 -E PerfBenchmark 按名称
+  #     排除用例（ASan 插桩使时间阈值失真，性能门禁由 benchmark-tracking.yml
+  #     承担）。历史注记：MINILANG_BUILD_PERF_TESTS=OFF 曾是无效选项（守卫
+  #     未实现，PRE_TEST 在二进制缺失时注册 _NOT_BUILT 占位致 ctest 失败，
+  #     2026-10-06 本地实测），守卫已于 2026-10-07 落地 tests/CMakeLists.txt
+  #     （见提案注记 7 后记）；本 job 保留四目标全量构建，维持与本地排练
+  #     逐字一致的命令面；
+  #   - MINILANG_WERROR=OFF：与 Linux sanitize-asan 同理，插桩可能引入新
+  #     告警不阻断本门禁（/W4+/WX 告警基线由 build-test 作业把关）；
+  #   - 无需提案注意事项 1 的调试 CRT PATH 步骤：coverage 作业同为 Debug
+  #     构建直跑测试可执行文件，runner 自带的 VS 调试运行库（System32）
+  #     已覆盖；clang_rt.asan_dynamic-x86_64.dll 由 msvc-dev-cmd 的
+  #     VC bin PATH 提供。
+  # ============================================================
+  sanitize-asan-msvc:
+    name: Sanitizer (ASan, Windows MSVC)
+    runs-on: windows-latest
+    needs: build-test
+
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      # 应用 QFluentKit 本地补丁（详见 build-test 作业同名步骤说明）
+      - name: 应用 QFluentKit 本地补丁
+        shell: bash
+        run: git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+
+      - name: 安装 Qt6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          aqtversion: ${{ env.AQT_VERSION }}
+          cache: true
+
+      - name: 设置 MSVC 开发环境
+        uses: ilammy/msvc-dev-cmd@v1.13.0
+        with:
+          arch: x64
+
+      - name: 设置 QTDIR 环境变量
+        shell: bash
+        run: echo "QTDIR=${{ env.QT_ROOT_DIR }}/.." >> $GITHUB_ENV
+
+      - name: 配置 CMake (MSVC ASan)
+        # 全局 /fsanitize=address 四处 flags：含第三方 gtest 全量插桩，
+        # 规避 MSVC 14.51+ 对插桩/未插桩混链的 annotate_optional LNK2038
+        # （preset 的 INTERFACE 路径仅插桩项目目标，不可用于本门禁）
+        shell: pwsh
+        run: >
+          cmake -S . -B out/build/asan -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_FLAGS="/fsanitize=address"
+          -DCMAKE_C_FLAGS="/fsanitize=address"
+          -DCMAKE_EXE_LINKER_FLAGS="/fsanitize=address"
+          -DCMAKE_SHARED_LINKER_FLAGS="/fsanitize=address"
+          -DCMAKE_PREFIX_PATH="${{ env.QT_ROOT_DIR }}"
+          -DMINILANG_USE_CCACHE=OFF
+          -DMINILANG_USE_JIT=ON
+          -DMINILANG_BUILD_PERF_TESTS=OFF
+          -DMINILANG_WERROR=OFF
+
+      # 四个测试目标顺序构建：多个带 windeployqt POST_BUILD 部署的目标
+      # （app_tests/gui_smoke/perf_test）均写 tests/ 目录（Qt 插件 + 调试
+      # CRT），单次调用下 ninja 并行触发同名 DLL 同时拷贝竞态
+      # （"Destination file exists"，2026-10-06 本地实测）
+      - name: 构建测试目标
+        run: |
+          cmake --build out/build/asan --target minilang_tests --parallel
+          cmake --build out/build/asan --target minilang_app_tests --parallel
+          cmake --build out/build/asan --target minilang_gui_smoke --parallel
+          cmake --build out/build/asan --target minilang_perf_test --parallel
+
+      - name: 运行测试（ASan）
+        working-directory: out/build/asan
+        env:
+          # MSVC ASan 暂不支持 LeakSanitizer，显式关闭避免告警噪音（Linux job 已覆盖 leak 检测）
+          ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
+        # ASan 约 2x 减速，降低并行度避免内存峰值打爆 runner（与 Linux asan job 一致）；
+        # -E PerfBenchmark：性能用例按名称排除（ASan 插桩使时间阈值失真）；
+        # --timeout 600 兜底单用例挂死（提案同值）
+        run: ctest -j 2 --output-on-failure --timeout 600 -E PerfBenchmark
 
   # ============================================================
   # 作业 7：性能基准回归检测（R116）
