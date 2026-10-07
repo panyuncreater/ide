@@ -455,34 +455,40 @@ gtest_discover_tests(minilang_tests
 # ------------------------------------------------------------
 # Phase 3 Task 3.5: 独立于 minilang_tests，避免基准测试拖慢常规单元测试。
 # 输出 JSON 到 stdout，不依赖 pass/fail 断言。
+# 目标定义、测试注册与 Qt 部署统一由 MINILANG_BUILD_PERF_TESTS 守卫，
+# 保证"未构建即不注册"不变量：OFF 时目标完全不注册，PRE_TEST 模式不会
+# 产生 minilang_perf_test_NOT_BUILT 占位导致 ctest 非零退出
+# （2026-10-07 落地；修正记录见 docs/ci-msvc-asan-proposal.md 注记 7 后记）。
 # ============================================================
-add_executable(minilang_perf_test
-    TestPerformanceRegression.cpp
-)
+if(MINILANG_BUILD_PERF_TESTS)
+    add_executable(minilang_perf_test
+        TestPerformanceRegression.cpp
+    )
 
-target_link_libraries(minilang_perf_test PRIVATE
-    minilang_core
-    Qt6::Core
-    Qt6::Gui
-    Qt6::Widgets
-    gtest
-    minilang_compile_options
-)
+    target_link_libraries(minilang_perf_test PRIVATE
+        minilang_core
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Widgets
+        gtest
+        minilang_compile_options
+    )
 
-if(MSVC)
-    target_link_options(minilang_perf_test PRIVATE /STACK:8388608)
-    # R128: CrashHandler 通过 minilang_core 链接进来，需 dbghelp
-    target_link_libraries(minilang_perf_test PRIVATE dbghelp)
+    if(MSVC)
+        target_link_options(minilang_perf_test PRIVATE /STACK:8388608)
+        # R128: CrashHandler 通过 minilang_core 链接进来，需 dbghelp
+        target_link_libraries(minilang_perf_test PRIVATE dbghelp)
+    endif()
+
+    # 注册到 CTest（独立于 minilang_tests 的测试发现）
+    gtest_discover_tests(minilang_perf_test
+        DISCOVERY_MODE PRE_TEST
+        # 同 minilang_tests：发现超时提升至 120s（并行 discovery 启动耗时）
+        DISCOVERY_TIMEOUT 120
+        PROPERTIES
+            TIMEOUT 600
+    )
 endif()
-
-# 注册到 CTest（独立于 minilang_tests 的测试发现）
-gtest_discover_tests(minilang_perf_test
-    DISCOVERY_MODE PRE_TEST
-    # 同 minilang_tests：发现超时提升至 120s（并行 discovery 启动耗时）
-    DISCOVERY_TIMEOUT 120
-    PROPERTIES
-        TIMEOUT 600
-)
 
 # ============================================================
 # Windows 平台自动部署 Qt 运行时依赖到测试可执行文件同目录
@@ -492,7 +498,9 @@ if(NOT COMMAND minilang_deploy_qt_runtime)
     include(${MINILANG_ROOT_DIR}/cmake/windeployqt.cmake)
 endif()
 minilang_deploy_qt_runtime(minilang_tests)
-minilang_deploy_qt_runtime(minilang_perf_test)
+if(MINILANG_BUILD_PERF_TESTS)
+    minilang_deploy_qt_runtime(minilang_perf_test)
+endif()
 
 # ============================================================
 # minilang_app_tests — App 编排层线程安全测试（独立可执行目标）
