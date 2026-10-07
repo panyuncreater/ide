@@ -1,10 +1,10 @@
 ﻿#include "ast/ASTNode.h"
 #include "ast/ModuleIsolation.h" // BUG-AUDIT-MOD-2: IR 模块隔离（非导出顶层名前缀化）
 #include "common/Logger.h"
-#include "common/ModulePath.h"      // AUDIT-R5 R6 fix: 模块路径缓存键规范化单一事实源
-#include "common/RuntimeLimits.h"   // BUG-AUDIT-MOD-3: MAX_RECURSION_DEPTH
-#include "common/TCO.h"             // R109 TCO: isTailRecursiveReturn（与 Compiler.cpp 共享识别逻辑）
-#include "common/TypeChecker.h"     // R163 泛型扩展: isTypeParameter（emitTypeCheckIR 擦除）
+#include "common/ModulePath.h"           // AUDIT-R5 R6 fix: 模块路径缓存键规范化单一事实源
+#include "common/RuntimeLimits.h"        // BUG-AUDIT-MOD-3: MAX_RECURSION_DEPTH
+#include "common/TCO.h"                  // R109 TCO: isTailRecursiveReturn（与 Compiler.cpp 共享识别逻辑）
+#include "common/TypeChecker.h"          // R163 泛型扩展: isTypeParameter（emitTypeCheckIR 擦除）
 #include "compiler/core/BytecodeCache.h" // L11: 预编译模块 .minic 加载
 #include "compiler/core/ExprStmtPop.h"   // AUDIT-R4 BUG-04: 表达式语句 POP 共享谓词
 #include "compiler/ir/IR.h"
@@ -2043,8 +2043,7 @@ void AstIRBuilder::emitFunctionPrologue(FunDecl& node, FunctionEmitCtx& ctx) {
     // 6. 创建初始基本块
     uint32_t entryLabel = ir_->allocLabel();
     currentBlock_ = &ir_->addBlock(entryLabel);
-    currentBlock_->instructions.emplace_back(IROp::LABEL, IROperandList{IROperand::label(entryLabel)},
-                                             node.line);
+    currentBlock_->instructions.emplace_back(IROp::LABEL, IROperandList{IROperand::label(entryLabel)}, node.line);
 
     // R109/L15 TCO: 设置子函数 TCO 状态（currentFunctionIsMethod_ 已在函数入口提前快照）。
     // visitReturnStmt 据此判断 return f(args) / return this.method(args) 是否可优化为

@@ -172,8 +172,7 @@ private:
     // 从单个 Value 出发迭代 mark 所有可达容器。
     // PERF-GC: worklist 由调用方（collectCycle）持有并按引用传入——整个 GC
     // 暂停期仅 1 次分配，取代原先每个根元素各建一个 vector 的模式。
-    void markValue(const Value& v, std::unordered_set<const void*>& marked,
-                   std::vector<const Value*>& worklist);
+    void markValue(const Value& v, std::unordered_set<const void*>& marked, std::vector<const Value*>& worklist);
 
     // BUG-003 fix: 检查分配阈值，达到则调用 gcTriggerCallback_ 进行增量回收
     void checkIncrementalGc();

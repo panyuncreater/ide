@@ -7,8 +7,8 @@
 #include "gui/TeachingTheme.h"
 
 #include <QApplication>
-#include <QSignalBlocker>  // D10 fix: RAII 信号阻塞
 #include <QHBoxLayout>
+#include <QSignalBlocker> // D10 fix: RAII 信号阻塞
 #include <QSplitter>
 #include <QTimer>
 #include <QVBoxLayout>

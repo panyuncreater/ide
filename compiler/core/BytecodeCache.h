@@ -63,8 +63,8 @@
 //   - PipelineRunner.runCompiler 检测 useRegisterVM_，RegisterVM 路径走 register 缓存
 // ============================================================
 
-#include "compiler/core/Bytecode.h"
 #include "compiler/backend-reg/RegisterBytecode.h" // L11: RegisterCompileResult 序列化
+#include "compiler/core/Bytecode.h"
 #include <cstdint>
 #include <mutex>
 #include <optional>
@@ -177,8 +177,8 @@ private:
     static constexpr size_t kMemoCapacity = 8;
     struct MemoEntry {
         uint64_t keyHash = 0;
-        std::optional<CompileResult> stackResult;          // StackVM 路径（与 regResult 二选一）
-        std::optional<RegisterCompileResult> regResult;    // RegisterVM 路径
+        std::optional<CompileResult> stackResult;       // StackVM 路径（与 regResult 二选一）
+        std::optional<RegisterCompileResult> regResult; // RegisterVM 路径
     };
     std::vector<MemoEntry> memo_; // 前端 = 最近使用
     std::mutex memoMutex_;

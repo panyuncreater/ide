@@ -4,14 +4,14 @@
 #include "ast/ASTNode.h"
 #include "common/ModulePath.h" // AUDIT-R5 R6 fix: 模块路径缓存键规范化单一事实源
 #include "common/RuntimeLimits.h"
-#include "common/TCO.h"         // TCO: 共享尾递归识别函数
-#include "common/TypeChecker.h" // A4 fix: TypeChecker stub 接入 pipeline
+#include "common/TCO.h"                            // TCO: 共享尾递归识别函数
+#include "common/TypeChecker.h"                    // A4 fix: TypeChecker stub 接入 pipeline
+#include "compiler/backend-reg/RegisterBytecode.h" // PERF-14: 寄存器式字节码
 #include "compiler/core/Bytecode.h"
 #include "compiler/core/GlobalSlotAllocator.h" // B4: 全局槽位分配器
-#include "compiler/ir/IR.h"                  // ARCH-06: IR 中间层（AstIRBuilder + BytecodeIRBackend）
-#include "compiler/backend-reg/RegisterBytecode.h"    // PERF-14: 寄存器式字节码
-#include "interpreter/Visitor.h"          // 继承 DefaultVisitor，统一 AST 分派为 Visitor 模式
-#include <functional>                     // VM-IMPORT: std::function for moduleLoader_
+#include "compiler/ir/IR.h"                    // ARCH-06: IR 中间层（AstIRBuilder + BytecodeIRBackend）
+#include "interpreter/Visitor.h"               // 继承 DefaultVisitor，统一 AST 分派为 Visitor 模式
+#include <functional>                          // VM-IMPORT: std::function for moduleLoader_
 #include <map>
 #include <memory>
 #include <string>

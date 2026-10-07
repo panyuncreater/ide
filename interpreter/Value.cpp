@@ -7,8 +7,8 @@
 // ============================================================
 
 #include "interpreter/Value.h"
-#include "interpreter/Environment.h" // D2 fix: makeClosure 中调用 Environment::markClosureEnvRef
 #include "common/RuntimeLimits.h"
+#include "interpreter/Environment.h" // D2 fix: makeClosure 中调用 Environment::markClosureEnvRef
 #include "interpreter/NumericUtils.h"
 #include <cmath>
 #include <cstdio>

@@ -16,12 +16,12 @@
 #include "common/BackendExecutionService.h" // ARCH-10: 后端执行服务中间层
 
 #include <QApplication>
-#include <QSignalBlocker>  // D10 fix: RAII 信号阻塞
 #include <QComboBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
 #include <QPlainTextEdit>
+#include <QSignalBlocker> // D10 fix: RAII 信号阻塞
 #include <QSplitter>
 #include <QTableWidget>
 #include <QTableWidgetItem>

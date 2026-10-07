@@ -1595,7 +1595,7 @@ VMResult RegisterVM::executeMisc(RegOp op, size_t& ip) {
 #if MINILANG_CORO_FIBER
 namespace {
 // CoroutineData 为 Value 私有嵌套类型，经公有访问器返回类型推导取得指针类别
-using RegCoroutineDataRawPtr = std::decay_t<decltype(*std::declval<Value &>().coroutineData())> *;
+using RegCoroutineDataRawPtr = std::decay_t<decltype(*std::declval<Value&>().coroutineData())>*;
 } // namespace
 
 // RegisterVM 挂起快照（RegisterVM.h 内前向声明的私有嵌套类型）：寄存器随帧走
@@ -1657,15 +1657,15 @@ VMResult RegisterVM::executeCoroutineOps(RegOp op, size_t& ip) {
         // skip 语义 reg(dst)=yieldValue——恢复后 ip 越过本指令继续消费 dst），
         // 帧链快照（相对化）后抛出 VMYieldSignal。
         reg(dst) = yieldValue;
-        auto *cd = static_cast<RegCoroutineDataRawPtr>(currentSuspendingCoro_);
+        auto* cd = static_cast<RegCoroutineDataRawPtr>(currentSuspendingCoro_);
         auto sus = std::make_shared<RegVMCoroutineSuspension>();
         sus->baseFrames = coroSuspendBaseFrames_;
         sus->frames.reserve(frames_.size() - coroSuspendBaseFrames_);
         for (size_t i = coroSuspendBaseFrames_; i < frames_.size(); ++i)
-            sus->frames.push_back(frames_[i]); // RegCallFrame 值拷贝（寄存器窗口随帧）
+            sus->frames.push_back(frames_[i]);         // RegCallFrame 值拷贝（寄存器窗口随帧）
         sus->frames.back().ip = currentFrame().ip + 3; // REG_YIELD 为 3 字节指令（ip 越过本指令）
-        sus->resumeIp = currentFrame().ip + 3; // 恢复时重设顶层帧 ip（frames 内 ip 会被此值覆盖）
-        for (const auto &t : tryStack_) {
+        sus->resumeIp = currentFrame().ip + 3;         // 恢复时重设顶层帧 ip（frames 内 ip 会被此值覆盖）
+        for (const auto& t : tryStack_) {
             if (t.frameIndex >= coroSuspendBaseFrames_) {
                 sus->tryStack.push_back(t);
                 sus->tryStack.back().frameIndex -= coroSuspendBaseFrames_;

@@ -96,7 +96,6 @@ WatchPanel::WatchPanel(QWidget* parent) : TeachingPanelBase(parent) {
 
     // 从 QSettings 加载持久化的表达式
     loadExpressions();
-
 }
 
 void WatchPanel::applyTheme() {

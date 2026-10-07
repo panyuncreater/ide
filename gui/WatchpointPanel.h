@@ -23,6 +23,7 @@
 //   - TeachingTheme 主题色 + MarkdownRenderer 散文式说明
 // ============================================================
 
+#include "gui/TeachingPanelBase.h"
 #include <QComboBox>
 #include <QLabel>
 #include <QLineEdit>
@@ -32,7 +33,6 @@
 #include <QTableWidget>
 #include <QTextBrowser>
 #include <QTimer>
-#include "gui/TeachingPanelBase.h"
 #include <string>
 #include <vector>
 

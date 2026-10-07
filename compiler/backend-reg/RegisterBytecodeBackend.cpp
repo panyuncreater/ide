@@ -11,7 +11,7 @@
 #include "compiler/backend-reg/RegisterBytecodeBackend.h"
 #include "common/Logger.h"
 #include "common/RuntimeLimits.h" // P3-14: NO_INDEX/NO_SLOT 哨兵常量
-#include "compiler/ir/IRSSA.h"       // P2-10 fix: IRCFG/DominatorTree/NaturalLoopInfo 用于循环感知寄存器分配
+#include "compiler/ir/IRSSA.h"    // P2-10 fix: IRCFG/DominatorTree/NaturalLoopInfo 用于循环感知寄存器分配
 
 RegisterBytecodeBackend::RegisterBytecodeBackend() = default;
 

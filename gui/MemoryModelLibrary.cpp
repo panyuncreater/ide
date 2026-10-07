@@ -233,10 +233,11 @@ const std::vector<GcPhaseInfo>& MemoryModelLibrary::gcPhases() {
          "注册为 O(1) 操作（优先复用已析构对象腾出的空闲槽位，无哈希、无额外堆分配）。"
          " **类比：** "
          "就像去派出所「上户口」，新建的容器都要登记在册；只读的字符串和闭包没有互相牵绊的风险，不必登记。"},
-        {"⏰ 2. 触发时机", "⏰ Interpreter::execute() 在 resetState 之后、runStatements 之前调用 collectCycle(空根集)。"
-                           "此时上一轮残留的循环容器 refCount 大于 0 仍登记在册（槽位被占用），本轮新建容器尚未注册，安全。"
-                           "执行期间不再触发（性能权衡：mark-sweep 开销 O(节点数+边数)，仅起点触发）。"
-                           " **类比：** 就像每天开门营业前先扫一次地，营业中不再反复打扫，避免影响运行效率。"},
+        {"⏰ 2. 触发时机",
+         "⏰ Interpreter::execute() 在 resetState 之后、runStatements 之前调用 collectCycle(空根集)。"
+         "此时上一轮残留的循环容器 refCount 大于 0 仍登记在册（槽位被占用），本轮新建容器尚未注册，安全。"
+         "执行期间不再触发（性能权衡：mark-sweep 开销 O(节点数+边数)，仅起点触发）。"
+         " **类比：** 就像每天开门营业前先扫一次地，营业中不再反复打扫，避免影响运行效率。"},
         {"🟢 3. Mark 阶段",
          "🟢 从 roots（globals / VM 栈 / 调用帧中的 Value）出发，递归 mark 所有可达容器节点。"
          "markValue 检查 Value 类型：ArrayData → 遍历 elements；DictData → 遍历 entries；"

@@ -9,8 +9,8 @@
 // 的 lower() 指令循环（debug 构建启用，Release 零开销）。
 // ============================================================
 
-#include "compiler/ir/IR.h"
 #include "common/Logger.h"
+#include "compiler/ir/IR.h"
 
 #include <cstdio>  // 诊断轨迹 fprintf（MINILANG_IR_STACK_DEBUG）
 #include <cstdlib> // getenv_s
@@ -73,11 +73,11 @@ constexpr FixedStackEffectEntry kFixedStackEffect[] = {
     {IROp::JUMP_IF_FALSE, 1, 1}, // peek 条件不弹（VMContainers.cpp:1180），条件由后续 IR POP 消费
     {IROp::LABEL, 0, 0},         // 不产生字节码；深度锚定由 checkStackBalance 的 LABEL 分支处理
     // ---- 调用/返回/闭包（固定效应部分）----
-    {IROp::RETURN, 1, 1},      // pop 返回值 -> 帧回收（resize 到 bp）-> push 回调用方栈顶
-    {IROp::RETURN_NULL, 0, 0}, // 发射 OP_NULL + OP_RETURN：+1 后被 RETURN 消费，净 0
-    {IROp::YIELD, 1, 1},       // VMCalls.cpp pop + push 回（净 0；yield 信号路径由生成器机制接管）
-    {IROp::AWAIT, 1, 1},       // VMCalls.cpp pop 后 push 最终值（净 0）
-    {IROp::MAKE_CLOSURE, 0, 1},// VMCalls.cpp push(closure)；upvalue 描述符内联在指令流中
+    {IROp::RETURN, 1, 1},       // pop 返回值 -> 帧回收（resize 到 bp）-> push 回调用方栈顶
+    {IROp::RETURN_NULL, 0, 0},  // 发射 OP_NULL + OP_RETURN：+1 后被 RETURN 消费，净 0
+    {IROp::YIELD, 1, 1},        // VMCalls.cpp pop + push 回（净 0；yield 信号路径由生成器机制接管）
+    {IROp::AWAIT, 1, 1},        // VMCalls.cpp pop 后 push 最终值（净 0）
+    {IROp::MAKE_CLOSURE, 0, 1}, // VMCalls.cpp push(closure)；upvalue 描述符内联在指令流中
     // ---- 枚举/容器（固定效应部分，VMContainers.cpp 对应 case）----
     {IROp::ENUM_VARIANT_NAME, 1, 1},  // pop scrutinee、push bool
     {IROp::ENUM_VARIANT_FIELD, 2, 1}, // pop idx + pop scrutinee、push field
@@ -94,11 +94,11 @@ constexpr FixedStackEffectEntry kFixedStackEffect[] = {
                                 // OP_INIT_FIELD -1、OP_DEFINE_CLASS -1
     {IROp::INIT_FIELD, 1, 0},   // pop 值；栈顶实例被 peek 原地修改、保留
     // ---- 异常（VMContainers.cpp / VM.cpp throwException）----
-    {IROp::TRY_BEGIN, 0, 0},      // 记录 {catchIp, stackBase} 到 tryStack_；catch 深度锚定由
-                                  // checkStackBalance 的 TRY_BEGIN 分支处理（tryBase + 1）
-    {IROp::TRY_END, 0, 0},        // 弹 tryStack_ handler（控制栈）
-    {IROp::THROW, 1, 0},          // pop 异常值 -> throwException resize 到 handler.stackBase + push
-    {IROp::LOAD_EXCEPTION, 0, 0}, // 不发射字节码：throwException 已将异常值压在栈顶
+    {IROp::TRY_BEGIN, 0, 0},        // 记录 {catchIp, stackBase} 到 tryStack_；catch 深度锚定由
+                                    // checkStackBalance 的 TRY_BEGIN 分支处理（tryBase + 1）
+    {IROp::TRY_END, 0, 0},          // 弹 tryStack_ handler（控制栈）
+    {IROp::THROW, 1, 0},            // pop 异常值 -> throwException resize 到 handler.stackBase + push
+    {IROp::LOAD_EXCEPTION, 0, 0},   // 不发射字节码：throwException 已将异常值压在栈顶
     {IROp::PUSH_JUMP_TARGET, 0, 0}, // pendingJumpStack_（控制栈）
     {IROp::FINALLY_END, 0, 0},      // pendingJumpStack_（控制栈）
     // ---- 写回：全部不碰操作数栈（消费 VM 成员 lastMutatedReceiver_）----
@@ -168,9 +168,8 @@ constexpr bool tableIsComplete() {
     return true;
 }
 
-static_assert(tableIsComplete(),
-              "kFixedStackEffect 未覆盖全部非公式 IROp（或存在重复登记）——"
-              "新增 IROp 时必须同步补充效应表或 irStackEffect 的公式分支");
+static_assert(tableIsComplete(), "kFixedStackEffect 未覆盖全部非公式 IROp（或存在重复登记）——"
+                                 "新增 IROp 时必须同步补充效应表或 irStackEffect 的公式分支");
 
 } // namespace
 
@@ -179,7 +178,7 @@ bool BytecodeIRBackend::irStackEffect(const IRInstruction& instr, StackEffect& f
     // 参数在调用点划入被调帧（bp=H-argc，VMCalls.cpp setupFunctionCallFrame），
     // 返回时 resize 统一回收，与逐字节码模拟等价 ----
     switch (instr.op) {
-    case IROp::CALL: // [dest, name, argc, ...] -> pops=argc（VMCalls.cpp 各路径 pop argc）
+    case IROp::CALL:      // [dest, name, argc, ...] -> pops=argc（VMCalls.cpp 各路径 pop argc）
     case IROp::TAIL_CALL: // 布局同 CALL；降级路径 = executeCall，净效应同
         if (instr.operands.size() < 3)
             return false;
@@ -239,80 +238,154 @@ bool BytecodeIRBackend::irStackEffect(const IRInstruction& instr, StackEffect& f
 }
 const char* BytecodeIRBackend::irOpName(IROp op) {
     switch (op) {
-    case IROp::LOAD_CONST: return "LOAD_CONST";
-    case IROp::LOAD_NULL: return "LOAD_NULL";
-    case IROp::LOAD_TRUE: return "LOAD_TRUE";
-    case IROp::LOAD_FALSE: return "LOAD_FALSE";
-    case IROp::LOAD_LOCAL: return "LOAD_LOCAL";
-    case IROp::STORE_LOCAL: return "STORE_LOCAL";
-    case IROp::LOAD_GLOBAL: return "LOAD_GLOBAL";
-    case IROp::STORE_GLOBAL: return "STORE_GLOBAL";
-    case IROp::DEFINE_GLOBAL: return "DEFINE_GLOBAL";
-    case IROp::DELETE_VAR: return "DELETE_VAR";
-    case IROp::LOAD_UPVALUE: return "LOAD_UPVALUE";
-    case IROp::STORE_UPVALUE: return "STORE_UPVALUE";
-    case IROp::CLOSE_UPVALUE: return "CLOSE_UPVALUE";
-    case IROp::ADD: return "ADD";
-    case IROp::SUB: return "SUB";
-    case IROp::MUL: return "MUL";
-    case IROp::DIV: return "DIV";
-    case IROp::MOD: return "MOD";
-    case IROp::NEGATE: return "NEGATE";
-    case IROp::NOT: return "NOT";
-    case IROp::EQ: return "EQ";
-    case IROp::NEQ: return "NEQ";
-    case IROp::LT: return "LT";
-    case IROp::GT: return "GT";
-    case IROp::LTE: return "LTE";
-    case IROp::GTE: return "GTE";
-    case IROp::LABEL: return "LABEL";
-    case IROp::JUMP: return "JUMP";
-    case IROp::JUMP_IF_FALSE: return "JUMP_IF_FALSE";
-    case IROp::YIELD: return "YIELD";
-    case IROp::AWAIT: return "AWAIT";
-    case IROp::CALL: return "CALL";
-    case IROp::CALL_EXPR: return "CALL_EXPR";
-    case IROp::TAIL_CALL: return "TAIL_CALL";
-    case IROp::RETURN: return "RETURN";
-    case IROp::RETURN_NULL: return "RETURN_NULL";
-    case IROp::MAKE_CLOSURE: return "MAKE_CLOSURE";
-    case IROp::BUILD_ARRAY: return "BUILD_ARRAY";
-    case IROp::BUILD_DICT: return "BUILD_DICT";
-    case IROp::BUILD_TUPLE: return "BUILD_TUPLE";
-    case IROp::INDEX_GET: return "INDEX_GET";
-    case IROp::INDEX_SET: return "INDEX_SET";
-    case IROp::MEMBER_GET: return "MEMBER_GET";
-    case IROp::MEMBER_SET: return "MEMBER_SET";
-    case IROp::MEMBER_SET_LOCAL: return "MEMBER_SET_LOCAL";
-    case IROp::SUPER_MEMBER_GET: return "SUPER_MEMBER_GET";
-    case IROp::METHOD_CALL: return "METHOD_CALL";
-    case IROp::SUPER_CALL: return "SUPER_CALL";
-    case IROp::BUILD_ENUM_VARIANT: return "BUILD_ENUM_VARIANT";
-    case IROp::ENUM_VARIANT_NAME: return "ENUM_VARIANT_NAME";
-    case IROp::ENUM_VARIANT_FIELD: return "ENUM_VARIANT_FIELD";
-    case IROp::LEN: return "LEN";
-    case IROp::DEFINE_CLASS: return "DEFINE_CLASS";
-    case IROp::CLASS_NEW: return "CLASS_NEW";
-    case IROp::INIT_FIELD: return "INIT_FIELD";
-    case IROp::TRY_BEGIN: return "TRY_BEGIN";
-    case IROp::TRY_END: return "TRY_END";
-    case IROp::THROW: return "THROW";
-    case IROp::LOAD_EXCEPTION: return "LOAD_EXCEPTION";
-    case IROp::PUSH_JUMP_TARGET: return "PUSH_JUMP_TARGET";
-    case IROp::FINALLY_END: return "FINALLY_END";
-    case IROp::WRITEBACK_MEMBER_VAR: return "WRITEBACK_MEMBER_VAR";
-    case IROp::WRITEBACK_MEMBER_LOCAL: return "WRITEBACK_MEMBER_LOCAL";
-    case IROp::WRITEBACK_INDEX_VAR: return "WRITEBACK_INDEX_VAR";
-    case IROp::WRITEBACK_INDEX_LOCAL: return "WRITEBACK_INDEX_LOCAL";
-    case IROp::WRITEBACK_MEMBER_UPVALUE: return "WRITEBACK_MEMBER_UPVALUE";
-    case IROp::WRITEBACK_INDEX_UPVALUE: return "WRITEBACK_INDEX_UPVALUE";
-    case IROp::PRINT: return "PRINT";
-    case IROp::POP: return "POP";
-    case IROp::DUP: return "DUP";
-    case IROp::LOAD_MUTATED: return "LOAD_MUTATED";
-    case IROp::TYPE_CHECK: return "TYPE_CHECK";
-    case IROp::TYPE_TEST: return "TYPE_TEST";
-    default: return "UNKNOWN_IROP";
+    case IROp::LOAD_CONST:
+        return "LOAD_CONST";
+    case IROp::LOAD_NULL:
+        return "LOAD_NULL";
+    case IROp::LOAD_TRUE:
+        return "LOAD_TRUE";
+    case IROp::LOAD_FALSE:
+        return "LOAD_FALSE";
+    case IROp::LOAD_LOCAL:
+        return "LOAD_LOCAL";
+    case IROp::STORE_LOCAL:
+        return "STORE_LOCAL";
+    case IROp::LOAD_GLOBAL:
+        return "LOAD_GLOBAL";
+    case IROp::STORE_GLOBAL:
+        return "STORE_GLOBAL";
+    case IROp::DEFINE_GLOBAL:
+        return "DEFINE_GLOBAL";
+    case IROp::DELETE_VAR:
+        return "DELETE_VAR";
+    case IROp::LOAD_UPVALUE:
+        return "LOAD_UPVALUE";
+    case IROp::STORE_UPVALUE:
+        return "STORE_UPVALUE";
+    case IROp::CLOSE_UPVALUE:
+        return "CLOSE_UPVALUE";
+    case IROp::ADD:
+        return "ADD";
+    case IROp::SUB:
+        return "SUB";
+    case IROp::MUL:
+        return "MUL";
+    case IROp::DIV:
+        return "DIV";
+    case IROp::MOD:
+        return "MOD";
+    case IROp::NEGATE:
+        return "NEGATE";
+    case IROp::NOT:
+        return "NOT";
+    case IROp::EQ:
+        return "EQ";
+    case IROp::NEQ:
+        return "NEQ";
+    case IROp::LT:
+        return "LT";
+    case IROp::GT:
+        return "GT";
+    case IROp::LTE:
+        return "LTE";
+    case IROp::GTE:
+        return "GTE";
+    case IROp::LABEL:
+        return "LABEL";
+    case IROp::JUMP:
+        return "JUMP";
+    case IROp::JUMP_IF_FALSE:
+        return "JUMP_IF_FALSE";
+    case IROp::YIELD:
+        return "YIELD";
+    case IROp::AWAIT:
+        return "AWAIT";
+    case IROp::CALL:
+        return "CALL";
+    case IROp::CALL_EXPR:
+        return "CALL_EXPR";
+    case IROp::TAIL_CALL:
+        return "TAIL_CALL";
+    case IROp::RETURN:
+        return "RETURN";
+    case IROp::RETURN_NULL:
+        return "RETURN_NULL";
+    case IROp::MAKE_CLOSURE:
+        return "MAKE_CLOSURE";
+    case IROp::BUILD_ARRAY:
+        return "BUILD_ARRAY";
+    case IROp::BUILD_DICT:
+        return "BUILD_DICT";
+    case IROp::BUILD_TUPLE:
+        return "BUILD_TUPLE";
+    case IROp::INDEX_GET:
+        return "INDEX_GET";
+    case IROp::INDEX_SET:
+        return "INDEX_SET";
+    case IROp::MEMBER_GET:
+        return "MEMBER_GET";
+    case IROp::MEMBER_SET:
+        return "MEMBER_SET";
+    case IROp::MEMBER_SET_LOCAL:
+        return "MEMBER_SET_LOCAL";
+    case IROp::SUPER_MEMBER_GET:
+        return "SUPER_MEMBER_GET";
+    case IROp::METHOD_CALL:
+        return "METHOD_CALL";
+    case IROp::SUPER_CALL:
+        return "SUPER_CALL";
+    case IROp::BUILD_ENUM_VARIANT:
+        return "BUILD_ENUM_VARIANT";
+    case IROp::ENUM_VARIANT_NAME:
+        return "ENUM_VARIANT_NAME";
+    case IROp::ENUM_VARIANT_FIELD:
+        return "ENUM_VARIANT_FIELD";
+    case IROp::LEN:
+        return "LEN";
+    case IROp::DEFINE_CLASS:
+        return "DEFINE_CLASS";
+    case IROp::CLASS_NEW:
+        return "CLASS_NEW";
+    case IROp::INIT_FIELD:
+        return "INIT_FIELD";
+    case IROp::TRY_BEGIN:
+        return "TRY_BEGIN";
+    case IROp::TRY_END:
+        return "TRY_END";
+    case IROp::THROW:
+        return "THROW";
+    case IROp::LOAD_EXCEPTION:
+        return "LOAD_EXCEPTION";
+    case IROp::PUSH_JUMP_TARGET:
+        return "PUSH_JUMP_TARGET";
+    case IROp::FINALLY_END:
+        return "FINALLY_END";
+    case IROp::WRITEBACK_MEMBER_VAR:
+        return "WRITEBACK_MEMBER_VAR";
+    case IROp::WRITEBACK_MEMBER_LOCAL:
+        return "WRITEBACK_MEMBER_LOCAL";
+    case IROp::WRITEBACK_INDEX_VAR:
+        return "WRITEBACK_INDEX_VAR";
+    case IROp::WRITEBACK_INDEX_LOCAL:
+        return "WRITEBACK_INDEX_LOCAL";
+    case IROp::WRITEBACK_MEMBER_UPVALUE:
+        return "WRITEBACK_MEMBER_UPVALUE";
+    case IROp::WRITEBACK_INDEX_UPVALUE:
+        return "WRITEBACK_INDEX_UPVALUE";
+    case IROp::PRINT:
+        return "PRINT";
+    case IROp::POP:
+        return "POP";
+    case IROp::DUP:
+        return "DUP";
+    case IROp::LOAD_MUTATED:
+        return "LOAD_MUTATED";
+    case IROp::TYPE_CHECK:
+        return "TYPE_CHECK";
+    case IROp::TYPE_TEST:
+        return "TYPE_TEST";
+    default:
+        return "UNKNOWN_IROP";
     }
 }
 
@@ -328,8 +401,7 @@ void BytecodeIRBackend::recordJumpDepth(uint32_t label, int depth) {
         // 合并点深度冲突：报告但不拒绝 lowering（AUDIT-R6 break-discard 模式兼容，
         // 详见 checkStackBalance LABEL 分支注释）
         Logger::Error("IR 栈平衡校验: LABEL #" + std::to_string(label) + " 跳转入边深度冲突（已有 " +
-                          std::to_string(it->second) + "，本次 " + std::to_string(depth) +
-                          "）—— 报告后继续",
+                          std::to_string(it->second) + "，本次 " + std::to_string(depth) + "）—— 报告后继续",
                       "IR");
     }
 }
@@ -399,16 +471,16 @@ bool BytecodeIRBackend::checkStackBalance(const IRInstruction& instr) {
         // 表 + 公式均未覆盖：仅可能是 PHI（不可 lower，lowerInstruction 的
         // default 分支应先行拒绝）或编译期完备性被绕过——D1 第二步起显式
         // 拒绝，不再保守跳过（静默跳过会让新增 IROp 失去校验）
-        Logger::Error("IR 栈平衡校验: " + std::string(irOpName(instr.op)) + " (line=" +
-                          std::to_string(instr.line) + ") 未登记栈效应表 —— 拒绝 lowering",
+        Logger::Error("IR 栈平衡校验: " + std::string(irOpName(instr.op)) + " (line=" + std::to_string(instr.line) +
+                          ") 未登记栈效应表 —— 拒绝 lowering",
                       "IR");
         return false;
     }
     if (simStackDepth_ != kUnknownDepth) {
         if (fx.pops > simStackDepth_) {
-            Logger::Error("IR 栈平衡校验: " + std::string(irOpName(instr.op)) + " (line=" +
-                              std::to_string(instr.line) + ") 需弹出 " + std::to_string(fx.pops) +
-                              " 个操作数，但栈深仅 " + std::to_string(simStackDepth_) + " —— lowering 栈不平衡",
+            Logger::Error("IR 栈平衡校验: " + std::string(irOpName(instr.op)) + " (line=" + std::to_string(instr.line) +
+                              ") 需弹出 " + std::to_string(fx.pops) + " 个操作数，但栈深仅 " +
+                              std::to_string(simStackDepth_) + " —— lowering 栈不平衡",
                           "IR");
             return false;
         }

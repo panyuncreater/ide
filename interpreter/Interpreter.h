@@ -543,7 +543,7 @@ private:
     // InterpreterCoroutine.cpp）；CoroutineData::interpreterFiber 以 shared_ptr<void> 持有。
     struct CoroutineFiberState;
     /// 当前正在执行生成器体的 fiber 状态（nullptr = 不在挂起模式的生成器执行中）
-    CoroutineFiberState *activeCoroutineFiber_ = nullptr;
+    CoroutineFiberState* activeCoroutineFiber_ = nullptr;
     /// visitYieldExpr 挂起点：保存 yield 值与解释器上下文后切回调用方；被下一次
     /// .next() 恢复后本函数才返回（yield 表达式值 = 自身 yield 值，对齐重放 skip 语义）
     void coroutineSuspend(Value yieldValue);
@@ -552,7 +552,7 @@ private:
     void coroutineFiberBody();
     /// fiber 蹦床（平台 fiber 入口要求的裸函数指针；经状态块的 interp 指标转入
     /// coroutineFiberBody 成员函数以获得私有访问）
-    static void coroutineFiberTrampoline(void *arg);
+    static void coroutineFiberTrampoline(void* arg);
 
     // ARCH-12 fix: REPL 状态暂存聚合为 ReplState 结构体（原为 10 个散布的 saved* 字段）。
     // 将 REPL 状态管理的完整边界集中在一处，便于理解和未来进一步提取为独立类。

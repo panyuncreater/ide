@@ -765,7 +765,7 @@ void VmStepper::runBatch() {
 /// 停止 VM 执行：中断运行循环并复位执行状态。
 void VmStepper::stop() {
     assertMainThread(); // AUDIT-R4 BUG-14: 非 atomic 状态字段仅限主线程访问
-    ++stateEpoch_; // PERF: 状态纪元递增（安全网轮询门控，见 stateEpoch()）
+    ++stateEpoch_;      // PERF: 状态纪元递增（安全网轮询门控，见 stateEpoch()）
     // QT-R-01 fix: 停止 RUN 模式定时器
     if (vmRunTimer_)
         vmRunTimer_->stop();

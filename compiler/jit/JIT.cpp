@@ -340,8 +340,7 @@ JitResult JITBackend::execute(const CompileResult& result) {
     // ADR-008 阶段 2: 进程内编译块缓存
     // 门控 = 纯 eager 教学路径（!lazyMode_ && !tieredMode_ && 无自定义阈值）：
     // lazy/tiering/自定义阈值路径的生成代码依赖运行模式与阈值，绕过缓存按需重编译。
-    const bool cacheable =
-        !lazyMode_ && !tieredMode_ && customOsrThresholds_.empty() && customThresholds_.empty();
+    const bool cacheable = !lazyMode_ && !tieredMode_ && customOsrThresholds_.empty() && customThresholds_.empty();
     uint64_t cacheKey = 0;
     bool cacheHit = false;
     if (cacheable) {
@@ -751,7 +750,7 @@ bool JITBackend::tryExecuteFromCache(uint64_t key) {
     chunkNames_ = e.chunkNames;
     initPerChunkState();
     // IC 数组：缓存代码的 callSiteId 编号 [0,N) 与新实例分配严格对齐
-    //（缓存组覆盖全部 chunk，编号即全量编号）
+    // （缓存组覆盖全部 chunk，编号即全量编号）
     memberGetIC_.assign(e.memberIcCount > 0 ? e.memberIcCount : 1, MemberGetInlineCacheEntry{});
     methodCallIC_.assign(e.methodIcCount, MethodCallICEntry{});
     nextCallSiteId_ = e.memberIcCount;
@@ -787,10 +786,9 @@ bool JITBackend::tryExecuteFromCache(uint64_t key) {
     // main 块派生地址（错误退出桩目标 + 闭包同步跳板）
     if (!e.blocks.empty() && e.blocks.front().isMain) {
         const auto& main = e.blocks.front();
-        jitContext_.errorExit = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(main.entry) +
-                                                        main.epilogueOffset);
-        closureTrampoline_ = reinterpret_cast<JitTrampolineFn>(reinterpret_cast<uintptr_t>(main.entry) +
-                                                               main.trampolineOffset);
+        jitContext_.errorExit = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(main.entry) + main.epilogueOffset);
+        closureTrampoline_ =
+            reinterpret_cast<JitTrampolineFn>(reinterpret_cast<uintptr_t>(main.entry) + main.trampolineOffset);
     }
     // 教学汇编捕获：仅实例显式启用时才呈现缓存文本（getCapturedAsm 契约 =
     // setAsmCapture(true) + execute 后有效，未启用时保持为空）
@@ -852,6 +850,5 @@ void JITBackend::storeBlocksToCache(uint64_t key) {
     map[key] = entry;
     cacheStoresCounter().fetch_add(1, std::memory_order_relaxed);
 }
-
 
 #endif // MINILANG_USE_JIT

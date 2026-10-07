@@ -56,7 +56,6 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
     memberGetIC_.assign(nextCallSiteId_ > 0 ? nextCallSiteId_ : 1, MemberGetInlineCacheEntry{});
     nextCallSiteId_ = 0; // 重置，编译时按顺序分配
 
-
     // ---- C++ 辅助函数调用代码生成 lambda 已提取为成员函数 ----
     // 详见 JITCodeGenHelpers.cpp：emitCallBinaryHelper / emitCallUnaryHelper /
     // emitCallOrderedCompare / emitBuildArray / emitIndexGet / emitIndexSetLocal /
@@ -94,7 +93,6 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
         }
         funcTable.emplace(name, std::move(info));
     }
-
 
     // R149: 编译期扫描所有 chunk 的 OP_DEFINE_CLASS 指令，收集类名到 classNameSet_
     // 用途：OP_CALL handler 中 funcTable 找不到时检查此集合，命中则走 emitClassNew 路径
@@ -146,9 +144,9 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
         std::unique_ptr<CodeHolder> code;
         std::unique_ptr<x86::Assembler> a;
         std::unique_ptr<StringLogger> logger; // 教学捕获（须活到 runtime_.add，见下注）
-        Label entryLabel{};      // chunk 入口（main 块不绑定，入口即块基址）
-        Label epilogueLabel{};   // main 块绑真实 epilogue，非 main 块绑错误退出桩
-        Label trampolineLabel{}; // 仅 main 块（闭包同步调用跳板）
+        Label entryLabel{};                   // chunk 入口（main 块不绑定，入口即块基址）
+        Label epilogueLabel{};                // main 块绑真实 epilogue，非 main 块绑错误退出桩
+        Label trampolineLabel{};              // 仅 main 块（闭包同步调用跳板）
         bool isMain = false;
         size_t chunkIdx = 0;
         std::string chunkName;
@@ -327,12 +325,12 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
             // 重编译（lazy/特化/OSR）会覆盖为新块中的跳板；旧代码块按既有
             // 所有权机制（ownedLazyEntries_/retiredSpecializedEntries_）延迟到
             // 安全点释放，故覆盖时旧跳板地址仍有效。
-            closureTrampoline_ = reinterpret_cast<JitTrampolineFn>(
-                reinterpret_cast<uintptr_t>(blockEntries[i]) +
-                pending[i].code->label_offset_from_base(pending[i].trampolineLabel));
+            closureTrampoline_ =
+                reinterpret_cast<JitTrampolineFn>(reinterpret_cast<uintptr_t>(blockEntries[i]) +
+                                                  pending[i].code->label_offset_from_base(pending[i].trampolineLabel));
             // 非 main 块错误退出桩目标 = main 块 epilogue
-            jitContext_.errorExit = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(blockEntries[i]) +
-                                                            mainEpilogueOffset);
+            jitContext_.errorExit =
+                reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(blockEntries[i]) + mainEpilogueOffset);
         }
         // R158: OSR 入口点地址计算（osrEntryGenMode_ 仅对 osrTargetChunkIdx_ 对应
         // 块生成入口 Label；该 Label 归属本块 CodeHolder）
@@ -453,8 +451,7 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
 // 调用方中止本次编译（发射期未 runtime_.add，无可执行内存泄漏）。
 // ============================================================
 bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& chunk, size_t chunkIdx,
-                               asmjit::Label epilogue,
-                               const std::unordered_map<std::string, JitFuncInfo>& funcTable) {
+                               asmjit::Label epilogue, const std::unordered_map<std::string, JitFuncInfo>& funcTable) {
     using namespace asmjit;
 
     const bool isMain = (chunkIdx == 0);
@@ -578,8 +575,7 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
                 compileError("OP_INT 操作数越界");
                 return false;
             }
-            uint16_t idx =
-                static_cast<uint16_t>(bytecodes[ip + 1]) | (static_cast<uint16_t>(bytecodes[ip + 2]) << 8);
+            uint16_t idx = static_cast<uint16_t>(bytecodes[ip + 1]) | (static_cast<uint16_t>(bytecodes[ip + 2]) << 8);
             if (idx >= chunk.constants.size()) {
                 compileError("OP_INT 常量池索引越界: " + std::to_string(idx));
                 return false;
@@ -604,8 +600,7 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
                 compileError("OP_FLOAT 操作数越界");
                 return false;
             }
-            uint16_t idx =
-                static_cast<uint16_t>(bytecodes[ip + 1]) | (static_cast<uint16_t>(bytecodes[ip + 2]) << 8);
+            uint16_t idx = static_cast<uint16_t>(bytecodes[ip + 1]) | (static_cast<uint16_t>(bytecodes[ip + 2]) << 8);
             if (idx >= chunk.constants.size()) {
                 compileError("OP_FLOAT 常量池索引越界: " + std::to_string(idx));
                 return false;
@@ -626,8 +621,7 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
                 compileError("OP_STRING 操作数越界");
                 return false;
             }
-            uint16_t idx =
-                static_cast<uint16_t>(bytecodes[ip + 1]) | (static_cast<uint16_t>(bytecodes[ip + 2]) << 8);
+            uint16_t idx = static_cast<uint16_t>(bytecodes[ip + 1]) | (static_cast<uint16_t>(bytecodes[ip + 2]) << 8);
             if (idx >= chunk.constants.size()) {
                 compileError("OP_STRING 常量池索引越界: " + std::to_string(idx));
                 return false;
@@ -1535,8 +1529,7 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
                 compileError("OP_GET_GLOBAL 操作数越界");
                 return false;
             }
-            uint16_t slot =
-                static_cast<uint16_t>(bytecodes[ip + 1]) | (static_cast<uint16_t>(bytecodes[ip + 2]) << 8);
+            uint16_t slot = static_cast<uint16_t>(bytecodes[ip + 1]) | (static_cast<uint16_t>(bytecodes[ip + 2]) << 8);
             a.mov(x86::rcx, x86::qword_ptr(x86::r12, jit_offset::globalSlots));
             a.mov(x86::rax, x86::qword_ptr(x86::rcx, static_cast<int32_t>(slot) * 8));
             a.sub(x86::r15, 8);
@@ -1550,8 +1543,7 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
                 compileError("OP_SET_GLOBAL 操作数越界");
                 return false;
             }
-            uint16_t slot =
-                static_cast<uint16_t>(bytecodes[ip + 1]) | (static_cast<uint16_t>(bytecodes[ip + 2]) << 8);
+            uint16_t slot = static_cast<uint16_t>(bytecodes[ip + 1]) | (static_cast<uint16_t>(bytecodes[ip + 2]) << 8);
             a.mov(x86::rax, x86::qword_ptr(x86::r15));
             a.add(x86::r15, 8);
             a.mov(x86::rcx, x86::qword_ptr(x86::r12, jit_offset::globalSlots));
@@ -1566,8 +1558,7 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
                 compileError("OP_DEFINE_GLOBAL 操作数越界");
                 return false;
             }
-            uint16_t slot =
-                static_cast<uint16_t>(bytecodes[ip + 1]) | (static_cast<uint16_t>(bytecodes[ip + 2]) << 8);
+            uint16_t slot = static_cast<uint16_t>(bytecodes[ip + 1]) | (static_cast<uint16_t>(bytecodes[ip + 2]) << 8);
             a.mov(x86::rax, x86::qword_ptr(x86::r15));
             a.add(x86::r15, 8);
             a.mov(x86::rcx, x86::qword_ptr(x86::r12, jit_offset::globalSlots));
@@ -2405,8 +2396,7 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
 
         default:
             // P2-9: 当前 JIT 不支持的指令。
-            compileError("JIT 不支持的 OpCode: " + std::string(opCodeName(op)) + " (ip=" + std::to_string(ip) +
-                         ")");
+            compileError("JIT 不支持的 OpCode: " + std::string(opCodeName(op)) + " (ip=" + std::to_string(ip) + ")");
             return false;
         }
     }
@@ -2418,4 +2408,3 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
 // ============================================================
 
 #endif // MINILANG_USE_JIT
-

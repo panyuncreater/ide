@@ -52,42 +52,48 @@ Value Interpreter::makeCoroutineValue(std::shared_ptr<FunDecl> generatorDecl, st
 
 // —— Windows Fiber API 包装（仅本 TU 使用；见 CoroutineFiber.h 的隔离说明）——
 namespace minilang_fiber {
-using FiberHandle = void *;
+using FiberHandle = void*;
 // 幂等转换：已是 fiber（同线程二次转换）时 ConvertThreadToFiberEx 返回 NULL
 // 并置 ERROR_ALREADY_FIBER——复用当前 fiber。
 inline FiberHandle convertThreadToFiber() {
-    void *primary = ConvertThreadToFiberEx(nullptr, FIBER_FLAG_FLOAT_SWITCH);
+    void* primary = ConvertThreadToFiberEx(nullptr, FIBER_FLAG_FLOAT_SWITCH);
     return primary ? primary : GetCurrentFiber();
 }
 // reserve 4MB（虚拟预留，按需 commit）：生成器体内深度递归的 C++ 栈安全余量
 // （递归深度受 MAX_RECURSION_DEPTH 保护）
-inline FiberHandle createFiber(void (*proc)(void *), void *arg) {
-    return CreateFiberEx(0, 4 * 1024 * 1024, FIBER_FLAG_FLOAT_SWITCH,
-                         reinterpret_cast<LPFIBER_START_ROUTINE>(proc), arg);
+inline FiberHandle createFiber(void (*proc)(void*), void* arg) {
+    return CreateFiberEx(0, 4 * 1024 * 1024, FIBER_FLAG_FLOAT_SWITCH, reinterpret_cast<LPFIBER_START_ROUTINE>(proc),
+                         arg);
 }
-inline void switchToFiber(FiberHandle target) { SwitchToFiber(target); }
-inline void deleteFiber(FiberHandle fiber) { DeleteFiber(fiber); }
-inline FiberHandle currentFiber() { return GetCurrentFiber(); }
+inline void switchToFiber(FiberHandle target) {
+    SwitchToFiber(target);
+}
+inline void deleteFiber(FiberHandle fiber) {
+    DeleteFiber(fiber);
+}
+inline FiberHandle currentFiber() {
+    return GetCurrentFiber();
+}
 } // namespace minilang_fiber
 
 namespace {
 // CoroutineData 为 Value 私有嵌套类型，经公有访问器 coroutineData() 的返回类型
 // 推导取得指针类别（避免在 Value 之外命名该类型）
-using CoroutineDataRawPtr = std::decay_t<decltype(*std::declval<Value &>().coroutineData())> *;
+using CoroutineDataRawPtr = std::decay_t<decltype(*std::declval<Value&>().coroutineData())>*;
 } // namespace
 
 // 挂起状态定义（Interpreter.h 内前向声明的嵌套类型；对 Value.h 不透明，
 // CoroutineData::interpreterFiber 以 shared_ptr<void> 持有，deleter 在本 TU
 // 完成类型完整的平台资源释放）
 struct Interpreter::CoroutineFiberState {
-    Interpreter *interp = nullptr;
+    Interpreter* interp = nullptr;
     CoroutineDataRawPtr cd = nullptr; // 仅 fiber 活跃期间由 .next() 调用方的 coroVal 引用计数保持存活
     minilang_fiber::FiberHandle fiber = nullptr;
     minilang_fiber::FiberHandle resumer = nullptr;
-    bool completed = false;  // 生成器体执行终结（自然结束/显式 return/错误逃逸）
-    bool failed = false;     // 错误逃逸（fiber 不可复用；.next() 重抛后丢弃重建，对齐重放语义）
+    bool completed = false; // 生成器体执行终结（自然结束/显式 return/错误逃逸）
+    bool failed = false;    // 错误逃逸（fiber 不可复用；.next() 重抛后丢弃重建，对齐重放语义）
     std::exception_ptr pendingError;
-    Value handoffValue; // yield 值交接（挂起→恢复）
+    Value handoffValue;           // yield 值交接（挂起→恢复）
     size_t resumerStackDepth = 0; // .next() 入口时 callStack_ 深度（挂起截断基线，=守卫 savedStackDepth）
     // 挂起期间的解释器上下文快照（env/帧持 GC 根：防 suspendedEnv 被 envPool 复用
     // 或仅由 fiber C++ 栈持有的环境链在 mark-sweep 中失根）
@@ -104,13 +110,13 @@ struct Interpreter::CoroutineFiberState {
     }
 };
 
-void Interpreter::coroutineFiberTrampoline(void *arg) {
-    static_cast<CoroutineFiberState *>(arg)->interp->coroutineFiberBody();
+void Interpreter::coroutineFiberTrampoline(void* arg) {
+    static_cast<CoroutineFiberState*>(arg)->interp->coroutineFiberBody();
 }
 
 void Interpreter::coroutineFiberBody() {
-    auto *fs = static_cast<CoroutineFiberState *>(activeCoroutineFiber_);
-    auto *cd = fs->cd;
+    auto* fs = static_cast<CoroutineFiberState*>(activeCoroutineFiber_);
+    auto* cd = fs->cd;
     try {
         // S2 对齐：fiber 生命周期内持有递归深度一层（恶意嵌套生成器耗尽栈防护）
         if (recursionDepth_ + 1 >= MAX_RECURSION_DEPTH) {
@@ -129,13 +135,13 @@ void Interpreter::coroutineFiberBody() {
         currentFunctionReturnType_ = cd->generatorDecl->returnType;
         // B1 TCO: 生成器执行非蹦床，禁用尾调用上下文（信号不可穿透 .next() 边界）
         TcoScopeGuard tcoGuard{*this, nullptr, std::string(), /*isMethod=*/false, /*enabled=*/false};
-        executeFunctionBody(static_cast<Block &>(*cd->generatorDecl->body));
+        executeFunctionBody(static_cast<Block&>(*cd->generatorDecl->body));
         // 函数体自然结束（无 return、无未耗尽 yield）：协程耗尽，最终值为 null（对齐重放）
         cd->done = true;
         cd->currentValueBox.clear();
         cd->currentValueBox.push_back(Value::nullValue());
         funEnv->closeCapturedVariables();
-    } catch (const ReturnException &e) {
+    } catch (const ReturnException& e) {
         // 生成器函数显式 return：协程耗尽，返回 return 值
         cd->done = true;
         cd->currentValueBox.clear();
@@ -156,8 +162,8 @@ void Interpreter::coroutineFiberBody() {
 }
 
 void Interpreter::coroutineSuspend(Value yieldValue) {
-    auto *fs = static_cast<CoroutineFiberState *>(activeCoroutineFiber_);
-    auto *cd = fs->cd;
+    auto* fs = static_cast<CoroutineFiberState*>(activeCoroutineFiber_);
+    auto* cd = fs->cd;
     fs->handoffValue = yieldValue;
     // currentValueBox / currentYieldId / done 判定逐点对齐重放 catch 分支：
     // 最终 yield（currentYieldId 达到 yieldCount）后协程耗尽，尾部语句不执行
@@ -243,13 +249,13 @@ Value Interpreter::callCoroutineNext(Value& coroVal) {
     // 成功返回/失败重抛均经守卫析构恢复调用方上下文（prevEnv/target/计数/returnType
     // + 调用栈收缩；挂起路径的调用栈已由 coroutineSuspend 截断，收缩为 no-op）。
     {
-        auto *fs = static_cast<CoroutineFiberState *>(cd->interpreterFiber.get());
+        auto* fs = static_cast<CoroutineFiberState*>(cd->interpreterFiber.get());
         if (!fs) {
             minilang_fiber::convertThreadToFiber(); // 幂等：已转换线程复用当前 fiber
             fs = new CoroutineFiberState();
             fs->interp = this;
             fs->cd = cd;
-            cd->interpreterFiber = {fs, [](void *p) { delete static_cast<CoroutineFiberState *>(p); }};
+            cd->interpreterFiber = {fs, [](void* p) { delete static_cast<CoroutineFiberState*>(p); }};
             fs->fiber = minilang_fiber::createFiber(&coroutineFiberTrampoline, fs);
         }
         if (activeCoroutineFiber_ == fs) {
@@ -257,7 +263,7 @@ Value Interpreter::callCoroutineNext(Value& coroVal) {
         }
         int prevRecursion = recursionDepth_;
         fs->resumerStackDepth = callStack_.size();
-        CoroutineFiberState *prevActive = activeCoroutineFiber_;
+        CoroutineFiberState* prevActive = activeCoroutineFiber_;
         activeCoroutineFiber_ = fs; // visitYieldExpr 据此进入挂起分支（含生成器体内嵌套函数的 yield）
         fs->resumer = minilang_fiber::currentFiber();
         minilang_fiber::switchToFiber(fs->fiber);

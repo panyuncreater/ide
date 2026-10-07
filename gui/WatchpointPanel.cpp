@@ -141,7 +141,6 @@ WatchpointPanel::WatchpointPanel(QWidget* parent) : TeachingPanelBase(parent) {
     refreshTimer_ = new QTimer(this);
     refreshTimer_->setInterval(2000);
     connect(refreshTimer_, &QTimer::timeout, this, &WatchpointPanel::refreshLive);
-
 }
 
 void WatchpointPanel::applyTheme() {

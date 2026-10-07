@@ -133,8 +133,7 @@ public:
     ///               step 采样开销（每条指令一次回调），与无 detail 的计时口径
     ///               不完全可比。
     /// @return 执行结果（含输出/错误/耗时/指令数）
-    static BackendExecResult execute(const std::string& src, BackendType backend,
-                                     BackendExecDetail* detail = nullptr);
+    static BackendExecResult execute(const std::string& src, BackendType backend, BackendExecDetail* detail = nullptr);
 
     /// 扩展执行入口：返回详细执行信息（含生成器 chunk / opcode 计数 / GC 峰值）。
     /// 用于 CoroutineVisualizerPanel（生成器 chunk 信息）和

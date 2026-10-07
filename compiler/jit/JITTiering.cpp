@@ -222,8 +222,7 @@ JitEntryFn JITBackend::compileSingleChunkBlock(const CompileResult& result, cons
     }
 
     // 仅更新目标 chunk 的映射条目（不 clear/重建映射——外层其他块条目原样保留）
-    const uintptr_t entryAddr = reinterpret_cast<uintptr_t>(blockEntry) +
-                                code.label_offset_from_base(entryLabel);
+    const uintptr_t entryAddr = reinterpret_cast<uintptr_t>(blockEntry) + code.label_offset_from_base(entryLabel);
     if (chunkName.find('.') != std::string::npos) {
         auto it = methodEntries_.find(chunkName);
         if (it != methodEntries_.end()) {
@@ -316,7 +315,6 @@ JitEntryFn JITBackend::compileChunkSpecialized(const CompileResult& result, size
     specializedEntries_[chunkIdx] = targetBlock;
     return targetBlock;
 }
-
 
 // ============================================================
 // AUDIT-R4 BUG-12 fix: 特化块所有权登记与退休释放
@@ -570,7 +568,6 @@ JitEntryFn JITBackend::compileChunkSpecializedWithOsr(const CompileResult& resul
     return targetBlock;
 }
 
-
 // ============================================================
 // R158: compileChunkSpecializedFloatWithOsr — FLOAT 特化重编译（含 OSR 入口点，
 //       ADR-008 阶段 1b 真单 chunk 编译）
@@ -625,7 +622,6 @@ JitEntryFn JITBackend::compileChunkSpecializedFloatWithOsr(const CompileResult& 
     // OSR 入口点地址已由 compileSingleChunkBlock 写入 *osrEntryPointPtr
     return targetBlock;
 }
-
 
 // ============================================================
 // R158: triggerOsrMigration — 真正 OSR 栈帧迁移触发器

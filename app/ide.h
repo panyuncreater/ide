@@ -22,7 +22,7 @@
 #include <utility>
 #include <vector>
 
-#include "Diagnostic.h"   // DiagLevel 按值形参（默认实参）+ DiagnosticBag const&
+#include "Diagnostic.h"    // DiagLevel 按值形参（默认实参）+ DiagnosticBag const&
 #include "IdeController.h" // IdeController::VmStepResult 按值形参
 
 // ---- Qt 前置声明（指针成员/形参）----
@@ -53,14 +53,14 @@ class QVariantAnimation;
 class QVBoxLayout;
 
 // ---- QFluentKit / ADS 前置声明 ----
-class ComboBox;  // QFluentKit ComboBox
+class ComboBox;   // QFluentKit ComboBox
 class GuidedTour; // 新手引导组件
 class Pivot;      // QFluentKit Pivot（底部/右侧标签切换）
 class RoundMenu;  // QFluentKit RoundMenu（系统菜单/上下文菜单）
 namespace ads {
 class CDockManager;
 class CDockWidget;
-}
+} // namespace ads
 
 // ---- gui/ 面板与组件前置声明（成员/EditorTabData 指针）----
 class ActivityBar;
@@ -521,8 +521,8 @@ private:
     bool selfSaving_ = false; // 标识 IDE 自身保存触发 fileChanged，跳过外部修改弹框
 
     // ---- 防抖定时器 ----
-    QTimer* completionTimer_ = nullptr;   // 补全词刷新（500ms）
-    QTimer* syntaxCheckTimer_ = nullptr;  // 语法检查（300ms）
+    QTimer* completionTimer_ = nullptr;  // 补全词刷新（500ms）
+    QTimer* syntaxCheckTimer_ = nullptr; // 语法检查（300ms）
     // PERF: 语法检查完成时的文档 revision——updateCompletionWords 据此判定
     // 管线 token 流与当前编辑器文本一致，免全文比对直接复用 token 流。
     int lastSyntaxCheckDocRevision_ = -1;

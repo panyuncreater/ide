@@ -1,11 +1,11 @@
 #pragma once
 
 #include "debug/DebugController.h"
+#include "gui/TeachingPanelBase.h"
 #include <QLabel>
 #include <QListWidget>
 #include <QTreeWidget>
 #include <QVBoxLayout>
-#include "gui/TeachingPanelBase.h"
 #include <functional>
 #include <tuple>
 #include <vector>

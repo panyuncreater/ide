@@ -1,9 +1,9 @@
 ﻿#include "ast/ASTNode.h"
 #include "ast/ModuleIsolation.h" // BUG-AUDIT-MOD-2: IR 模块隔离（非导出顶层名前缀化）
 #include "common/Logger.h"
-#include "common/RuntimeLimits.h"   // BUG-AUDIT-MOD-3: MAX_RECURSION_DEPTH
-#include "common/TCO.h"             // R109 TCO: isTailRecursiveReturn（与 Compiler.cpp 共享识别逻辑）
-#include "common/TypeChecker.h"     // R163 泛型扩展: isTypeParameter（emitTypeCheckIR 擦除）
+#include "common/RuntimeLimits.h"        // BUG-AUDIT-MOD-3: MAX_RECURSION_DEPTH
+#include "common/TCO.h"                  // R109 TCO: isTailRecursiveReturn（与 Compiler.cpp 共享识别逻辑）
+#include "common/TypeChecker.h"          // R163 泛型扩展: isTypeParameter（emitTypeCheckIR 擦除）
 #include "compiler/core/BytecodeCache.h" // L11: 预编译模块 .minic 加载
 #include "compiler/ir/IR.h"
 #include "interpreter/NumericUtils.h" // #14: OverflowCheck
@@ -1037,17 +1037,14 @@ void emitUnrolledLoopBody(std::vector<IRInstruction>& newInstrs, const std::vect
         uint32_t iReg = ir.nextVReg++;
         uint32_t oneReg = ir.nextVReg++;
         uint32_t sumReg = ir.nextVReg++;
-        newInstrs.emplace_back(IROp::LOAD_LOCAL,
-                               IROperandList{IROperand::vreg(iReg), IROperand::local(counterSlot)},
+        newInstrs.emplace_back(IROp::LOAD_LOCAL, IROperandList{IROperand::vreg(iReg), IROperand::local(counterSlot)},
                                instrs[bodyEnd].line);
-        newInstrs.emplace_back(IROp::LOAD_CONST,
-                               IROperandList{IROperand::vreg(oneReg), IROperand::constant(oneConst)},
+        newInstrs.emplace_back(IROp::LOAD_CONST, IROperandList{IROperand::vreg(oneReg), IROperand::constant(oneConst)},
                                instrs[bodyEnd].line);
-        newInstrs.emplace_back(
-            IROp::ADD, IROperandList{IROperand::vreg(sumReg), IROperand::vreg(iReg), IROperand::vreg(oneReg)},
-            instrs[bodyEnd].line);
-        newInstrs.emplace_back(IROp::STORE_LOCAL,
-                               IROperandList{IROperand::local(counterSlot), IROperand::vreg(sumReg)},
+        newInstrs.emplace_back(IROp::ADD,
+                               IROperandList{IROperand::vreg(sumReg), IROperand::vreg(iReg), IROperand::vreg(oneReg)},
+                               instrs[bodyEnd].line);
+        newInstrs.emplace_back(IROp::STORE_LOCAL, IROperandList{IROperand::local(counterSlot), IROperand::vreg(sumReg)},
                                instrs[bodyEnd].line);
     }
 }

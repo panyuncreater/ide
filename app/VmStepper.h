@@ -34,10 +34,10 @@
 #include <vector>
 
 #include "common/IDebugController.h" // P1-4: 调试控制器统一接口
-#include "compiler/core/Bytecode.h"
 #include "compiler/backend-reg/RegisterBytecode.h"
 #include "compiler/backend-reg/RegisterVM.h" // A1 fix: 寄存器式 VM 后端
 #include "compiler/backend-stack/VM.h"
+#include "compiler/core/Bytecode.h"
 #include "debug/DebugTypes.h"             // BUG-DBG-6 fix: CallStackEntry 用于 VM 调用栈显示
 #include "debug/ExecutionTraceRecorder.h" // R114: 可回放执行时间轴 recorder
 #include "interpreter/Value.h"

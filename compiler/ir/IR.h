@@ -64,8 +64,8 @@
 //   - IRBuilder/IRBackend 为抽象接口，便于未来添加新前端和新后端
 // ============================================================
 
-#include "ast/ASTNode.h"                  // VM-IMPORT: Block 完整定义（moduleAsts_ 需要 unique_ptr<Block> 析构）
-#include "common/Diagnostic.h"            // P2-12: AstIRBuilder 用 DiagnosticBag 替代私有三元组
+#include "ast/ASTNode.h"                       // VM-IMPORT: Block 完整定义（moduleAsts_ 需要 unique_ptr<Block> 析构）
+#include "common/Diagnostic.h"                 // P2-12: AstIRBuilder 用 DiagnosticBag 替代私有三元组
 #include "compiler/core/Bytecode.h"            // IRBackend lowering 到 BytecodeChunk + UpvalueDesc
 #include "compiler/core/GlobalSlotAllocator.h" // B4: 全局槽位分配器
 #include <cstdint>

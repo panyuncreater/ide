@@ -1750,7 +1750,7 @@ VMResult VM::invokeClosureSync(const Value& closure, const Value* args, size_t a
 #if MINILANG_CORO_FIBER
 namespace {
 // CoroutineData 为 Value 私有嵌套类型，经公有访问器返回类型推导取得指针类别
-using VmCoroutineDataRawPtr = std::decay_t<decltype(*std::declval<Value &>().coroutineData())> *;
+using VmCoroutineDataRawPtr = std::decay_t<decltype(*std::declval<Value&>().coroutineData())>*;
 } // namespace
 
 // StackVM 挂起快照（VM.h 内前向声明的私有嵌套类型）：恢复 = 帧链回位 + 栈切片
@@ -1758,10 +1758,10 @@ using VmCoroutineDataRawPtr = std::decay_t<decltype(*std::declval<Value &>().cor
 // stackSlot/owningFrameIdx 均为绝对索引，快照时按 .next() 入口基线转相对存储，
 // 恢复时以新入口基线重定基（两次 .next() 的调用方栈深/帧深可不同）。
 struct VM::VMCoroutineSuspension {
-    std::vector<Value> stackSuffix; // stack_[baseStack..]（含 args/局部槽/操作数栈）
+    std::vector<Value> stackSuffix;  // stack_[baseStack..]（含 args/局部槽/操作数栈）
     std::vector<VMCallFrame> frames; // frames_[baseFrames..]（含生成器帧与体内嵌套调用帧）
     std::vector<TryHandler> tryStack;
-    size_t resumeIp = 0; // 触发 yield 的帧（顶层）恢复 ip（越过 OP_YIELD 1 字节）
+    size_t resumeIp = 0;  // 触发 yield 的帧（顶层）恢复 ip（越过 OP_YIELD 1 字节）
     size_t baseStack = 0; // 快照时的栈基线（相对化参照）
     size_t baseFrames = 0;
     std::vector<std::pair<size_t, std::weak_ptr<VMUpvalue>>> openUpvalues;
@@ -1827,7 +1827,7 @@ VMResult VM::executeCoroutineOps(OpCode op, size_t& ip) {
         // 下次 .next() 恢复。
         Value exprResult = yieldValue; // 栈上表达式结果与 .next() 返回值各自独立持有
         push(std::move(exprResult));
-        auto *cd = static_cast<VmCoroutineDataRawPtr>(currentSuspendingCoro_);
+        auto* cd = static_cast<VmCoroutineDataRawPtr>(currentSuspendingCoro_);
         auto sus = std::make_shared<VMCoroutineSuspension>();
         sus->baseStack = coroSuspendBaseStack_;
         sus->baseFrames = coroSuspendBaseFrames_;
@@ -1839,7 +1839,7 @@ VMResult VM::executeCoroutineOps(OpCode op, size_t& ip) {
             sus->frames.push_back(std::move(frames_[i]));
             sus->frames.back().basePointer -= coroSuspendBaseStack_; // 绝对→相对
         }
-        for (const auto &t : tryStack_) {
+        for (const auto& t : tryStack_) {
             if (t.frameIndex >= coroSuspendBaseFrames_) {
                 sus->tryStack.push_back(t);
                 sus->tryStack.back().stackBase -= coroSuspendBaseStack_;
@@ -2018,19 +2018,19 @@ Value VM::callCoroutineNext(Value& coroVal) {
     if (cd->vmSuspension) {
         // —— 真挂起恢复：帧链/栈切片/try 栈/开放 upvalue 回位（相对→绝对重定基），
         // 从挂起点 ip 继续执行。快照消费后清空（再次挂起时产生新快照）。
-        auto *sus = static_cast<VMCoroutineSuspension *>(cd->vmSuspension.get());
-        for (auto &v : sus->stackSuffix)
+        auto* sus = static_cast<VMCoroutineSuspension*>(cd->vmSuspension.get());
+        for (auto& v : sus->stackSuffix)
             stack_.push_back(std::move(v));
-        for (auto &f : sus->frames) {
+        for (auto& f : sus->frames) {
             f.basePointer += savedStackSize; // 相对→绝对（重定基到本次入口深度）
             frames_.push_back(std::move(f));
         }
-        for (auto &t : sus->tryStack) {
+        for (auto& t : sus->tryStack) {
             t.stackBase += savedStackSize;
             t.frameIndex += savedFrameCount;
             tryStack_.push_back(t);
         }
-        for (auto &entry : sus->openUpvalues) {
+        for (auto& entry : sus->openUpvalues) {
             openUpvalues_.emplace(entry.first + savedStackSize, entry.second);
             if (auto uv = entry.second.lock()) {
                 uv->stackSlot += savedStackSize;
@@ -2054,65 +2054,65 @@ Value VM::callCoroutineNext(Value& coroVal) {
         // 压入参数（左到右，arg0 在栈低位）
         uint8_t argCount =
             static_cast<uint8_t>(std::min(cd->args.size(), static_cast<size_t>(std::numeric_limits<uint8_t>::max())));
-        for (const auto &arg : cd->args) {
+        for (const auto& arg : cd->args) {
             push(arg);
         }
 
-    // 填充默认参数
-    uint8_t effectiveArgCount = argCount;
-    if (argCount < static_cast<uint8_t>(genChunk->arity)) {
-        int missingCount = genChunk->arity - argCount;
-        int defaultStartIdx = static_cast<int>(genChunk->defaultConstIndices.size()) - missingCount;
-        if (defaultStartIdx >= 0) {
-            for (int i = defaultStartIdx; i < defaultStartIdx + missingCount; ++i) {
-                uint16_t constIdx = genChunk->defaultConstIndices[i];
-                if (constIdx != RuntimeLimits::NO_INDEX && constIdx < genChunk->constants.size()) {
-                    push(genChunk->constants[constIdx]);
-                    ++effectiveArgCount;
+        // 填充默认参数
+        uint8_t effectiveArgCount = argCount;
+        if (argCount < static_cast<uint8_t>(genChunk->arity)) {
+            int missingCount = genChunk->arity - argCount;
+            int defaultStartIdx = static_cast<int>(genChunk->defaultConstIndices.size()) - missingCount;
+            if (defaultStartIdx >= 0) {
+                for (int i = defaultStartIdx; i < defaultStartIdx + missingCount; ++i) {
+                    uint16_t constIdx = genChunk->defaultConstIndices[i];
+                    if (constIdx != RuntimeLimits::NO_INDEX && constIdx < genChunk->constants.size()) {
+                        push(genChunk->constants[constIdx]);
+                        ++effectiveArgCount;
+                    }
                 }
             }
         }
-    }
 
-    // 预分配局部变量槽
-    int extraSlots = genChunk->localCount - static_cast<int>(effectiveArgCount);
-    if (extraSlots < 0) {
-        // 帧布局损坏，清理并报错
-        stack_.resize(savedStackSize);
-        runtimeError("生成器 " + genChunk->name + " 帧布局损坏");
-        return Value::nullValue();
-    }
-    for (int i = 0; i < extraSlots; ++i) {
-        push(Value::nullValue());
-    }
-
-    // 构造调用帧
-    VMCallFrame newFrame;
-    newFrame.chunk = genChunk;
-    newFrame.returnIp = currentFrame().ip;
-    newFrame.basePointer = stack_.size() - genChunk->localCount;
-    newFrame.functionName = genChunk->name;
-    newFrame.ip = 0;
-    // 绑定闭包 upvalues
-    // R164 fixup: vmClosure 改为单元素容器（绕开 Value 不完整类型 C2079），
-    // 访问时取首元素再调用 Value::vmClosure() 取 shared_ptr<VMClosureData>
-    if (!cd->vmClosureBox.empty()) {
-        auto& closureVal = cd->vmClosureBox.front();
-        if (closureVal.isClosure() && closureVal.vmClosure()) {
-            newFrame.upvalues = closureVal.vmClosure()->upvalues;
+        // 预分配局部变量槽
+        int extraSlots = genChunk->localCount - static_cast<int>(effectiveArgCount);
+        if (extraSlots < 0) {
+            // 帧布局损坏，清理并报错
+            stack_.resize(savedStackSize);
+            runtimeError("生成器 " + genChunk->name + " 帧布局损坏");
+            return Value::nullValue();
         }
-    }
-    frames_.push_back(std::move(newFrame));
+        for (int i = 0; i < extraSlots; ++i) {
+            push(Value::nullValue());
+        }
 
-    // 设置协程重放上下文
-    currentCoroutineTargetYieldId_ = cd->currentYieldId;
-    currentYieldExecutionCount_ = 0;
+        // 构造调用帧
+        VMCallFrame newFrame;
+        newFrame.chunk = genChunk;
+        newFrame.returnIp = currentFrame().ip;
+        newFrame.basePointer = stack_.size() - genChunk->localCount;
+        newFrame.functionName = genChunk->name;
+        newFrame.ip = 0;
+        // 绑定闭包 upvalues
+        // R164 fixup: vmClosure 改为单元素容器（绕开 Value 不完整类型 C2079），
+        // 访问时取首元素再调用 Value::vmClosure() 取 shared_ptr<VMClosureData>
+        if (!cd->vmClosureBox.empty()) {
+            auto& closureVal = cd->vmClosureBox.front();
+            if (closureVal.isClosure() && closureVal.vmClosure()) {
+                newFrame.upvalues = closureVal.vmClosure()->upvalues;
+            }
+        }
+        frames_.push_back(std::move(newFrame));
+
+        // 设置协程重放上下文
+        currentCoroutineTargetYieldId_ = cd->currentYieldId;
+        currentYieldExecutionCount_ = 0;
     }
 
 #if MINILANG_CORO_FIBER
     // 嵌套 .next()（await drain / 生成器体内再调 .next()）：登记前保存外层挂起
     // 上下文，全部退出路径恢复——外层执行体随后的 OP_YIELD 仍需以外层身份挂起。
-    void *outerSuspendingCoro = currentSuspendingCoro_;
+    void* outerSuspendingCoro = currentSuspendingCoro_;
     size_t outerSuspendBaseStack = coroSuspendBaseStack_;
     size_t outerSuspendBaseFrames = coroSuspendBaseFrames_;
     auto restoreOuterCoroCtx = [&]() {

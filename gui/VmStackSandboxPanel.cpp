@@ -11,9 +11,9 @@
 #include "gui/TeachingTheme.h"
 // P1-3 fix (F14): 引入真实 Lexer + Parser + Compiler + StackVM 用于对照验证
 #include "app/IdeController.h"
-#include "compiler/core/Compiler.h"
 #include "compiler/backend-reg/RegisterBytecode.h" // RegBytecodeChunk / regOpName
 #include "compiler/backend-stack/VM.h"
+#include "compiler/core/Compiler.h"
 #include "gui/BytecodeTracePanel.h" // BytecodeTraceLibrary::opCodeDocs()
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"

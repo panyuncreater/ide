@@ -49,9 +49,9 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
-#include <QMenu>
 #include <QMainWindow>
 #include <QMap>
+#include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
@@ -105,7 +105,6 @@
 #undef WARNING
 #endif
 #endif
-
 
 #include "lexer/Token.h" // updateCompletionWords reuses the pipeline token stream (explicit dep)
 // ADS headers
@@ -167,9 +166,9 @@
 #include "gui/FuzzPlaygroundPanel.h"
 #include "gui/GcVisualizerPanel.h"
 #include "gui/GlossaryPanel.h"
+#include "gui/IRTransformPanel.h"
 #include "gui/InlineCachePanel.h"
 #include "gui/IrViewer.h"
-#include "gui/IRTransformPanel.h"
 #include "gui/JitVisualizerPanel.h"
 #include "gui/LabManualPanel.h"
 #include "gui/LearningPathPanel.h"
@@ -8171,9 +8170,8 @@ void Ide::updateCompletionWords() {
     // last syntax check; otherwise fall back to the legacy regex path. The
     // token stream may lag the last keystroke by one debounce cycle (word
     // list is 500ms-debounced anyway - imperceptible).
-    const bool tokensUsable =
-        controller_ && lastSyntaxCheckDocRevision_ >= 0 &&
-        codeEditor_->document() && codeEditor_->document()->revision() == lastSyntaxCheckDocRevision_;
+    const bool tokensUsable = controller_ && lastSyntaxCheckDocRevision_ >= 0 && codeEditor_->document() &&
+                              codeEditor_->document()->revision() == lastSyntaxCheckDocRevision_;
 
     if (tokensUsable) {
         // declaration pattern: keyword var|fun|class followed by identifier

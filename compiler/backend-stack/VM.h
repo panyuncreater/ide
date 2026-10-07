@@ -575,7 +575,7 @@ private:
     // VMCalls.cpp，经 CoroutineData::vmSuspension（shared_ptr<void>）持有。
     // .next() 执行期间指向挂起目标（OP_YIELD 据此进入快照路径；CoroutineData
     // 为 Value 私有嵌套类型，经 void* 不透明传递），退出路径一律清空。
-    void *currentSuspendingCoro_ = nullptr;
+    void* currentSuspendingCoro_ = nullptr;
     // 本次 .next() 入口时的栈/帧基线（OP_YIELD 快照边界；挂起快照按此基线
     // 存相对偏移，恢复时以新入口基线重定基——两次 .next() 的调用方栈深可不同）
     size_t coroSuspendBaseStack_ = 0;

@@ -664,7 +664,8 @@ QStringList AstVisualizerPanel::extractChildDescriptions(ASTNode* node) {
             childrenDesc
                 << QStringLiteral("update: %1").arg(QString::fromStdString(f2->update->nodeName()).toHtmlEscaped());
         if (f2->body)
-            childrenDesc << QStringLiteral("body: %1").arg(QString::fromStdString(f2->body->nodeName()).toHtmlEscaped());
+            childrenDesc
+                << QStringLiteral("body: %1").arg(QString::fromStdString(f2->body->nodeName()).toHtmlEscaped());
     } else if (auto* r = dynamic_cast<ReturnStmt*>(node)) {
         if (r->value)
             childrenDesc

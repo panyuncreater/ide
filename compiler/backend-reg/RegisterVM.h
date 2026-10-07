@@ -352,7 +352,7 @@ private:
     // 语义同 StackVM：REG_YIELD 处快照帧链（寄存器在帧内，无独立值栈），
     // .next() 恢复时按新入口帧深重定基。currentSuspendingCoro_ 为 CoroutineData*
     // （Value 私有嵌套类型，经 void* 不透明传递），退出路径一律清空。
-    void *currentSuspendingCoro_ = nullptr;
+    void* currentSuspendingCoro_ = nullptr;
     size_t coroSuspendBaseFrames_ = 0; // 本次 .next() 入口时的帧基线（快照相对化参照）
     /// 挂起快照（定义于 RegisterVMExec.cpp；CoroutineData::vmSuspension 以 shared_ptr<void> 持有）
     struct RegVMCoroutineSuspension;

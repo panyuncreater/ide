@@ -7,8 +7,8 @@
 // 与 BytecodeIRBackend（栈式）并存，通过 setUseRegisterVM(true) 启用。
 // ============================================================
 
-#include "compiler/ir/IR.h"
 #include "compiler/backend-reg/RegisterBytecode.h"
+#include "compiler/ir/IR.h"
 #include <map>
 #include <memory>
 #include <unordered_map>

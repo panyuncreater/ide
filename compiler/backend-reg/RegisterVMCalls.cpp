@@ -1739,17 +1739,17 @@ Value RegisterVM::callCoroutineNext(Value& coroVal) {
     if (cd->vmSuspension) {
         // —— 真挂起恢复：帧链（寄存器随帧）回位 + try 栈/开放 upvalue 重挂
         // （相对→绝对重定基到本次入口帧深），从挂起点 ip 继续执行。
-        auto *sus = static_cast<RegVMCoroutineSuspension *>(cd->vmSuspension.get());
-        for (auto &f : sus->frames) {
+        auto* sus = static_cast<RegVMCoroutineSuspension*>(cd->vmSuspension.get());
+        for (auto& f : sus->frames) {
             // RegCallFrame 无绝对栈引用（寄存器自含）；upvalue 通道在下方重挂
             frames_.push_back(std::move(f));
         }
-        for (auto &t : sus->tryStack) {
+        for (auto& t : sus->tryStack) {
             t.frameIndex += savedFrameCount;
             tryStack_.push_back(t);
         }
         const size_t regBase = savedFrameCount * RegCallFrame::MAX_REGISTERS;
-        for (auto &entry : sus->openUpvalues) {
+        for (auto& entry : sus->openUpvalues) {
             openUpvalues_.emplace(entry.first + regBase, entry.second);
             if (auto uv = entry.second.lock()) {
                 uv->stackSlot += regBase;
@@ -1769,50 +1769,50 @@ Value RegisterVM::callCoroutineNext(Value& coroVal) {
     } else
 #endif
     {
-    RegCallFrame newFrame;
-    newFrame.chunk = genChunk;
-    newFrame.ip = 0;
-    newFrame.returnIp = currentFrame().ip;
-    newFrame.returnReg = -1;
-    newFrame.registerCount =
-        static_cast<uint8_t>(genChunk->registerCount <= static_cast<int>(RegCallFrame::MAX_REGISTERS)
-                                 ? genChunk->registerCount
-                                 : static_cast<int>(RegCallFrame::MAX_REGISTERS));
-    uint8_t argCount =
-        static_cast<uint8_t>(std::min(cd->args.size(), static_cast<size_t>(std::numeric_limits<uint8_t>::max())));
-    for (uint8_t i = 0; i < argCount && i < newFrame.registerCount; ++i)
-        newFrame.registers[i] = cd->args[i];
-    if (argCount < static_cast<uint8_t>(genChunk->arity)) {
-        int missingCount = genChunk->arity - argCount;
-        int defaultStartIdx = static_cast<int>(genChunk->defaultConstIndices.size()) - missingCount;
-        if (defaultStartIdx >= 0) {
-            for (int i = defaultStartIdx; i < defaultStartIdx + missingCount; ++i) {
-                uint8_t regIdx = static_cast<uint8_t>(argCount + (i - defaultStartIdx));
-                if (regIdx >= newFrame.registerCount)
-                    break;
-                uint16_t constIdx = genChunk->defaultConstIndices[i];
-                if (constIdx != RuntimeLimits::NO_INDEX && constIdx < genChunk->constants.size())
-                    newFrame.registers[regIdx] = genChunk->constants[constIdx];
+        RegCallFrame newFrame;
+        newFrame.chunk = genChunk;
+        newFrame.ip = 0;
+        newFrame.returnIp = currentFrame().ip;
+        newFrame.returnReg = -1;
+        newFrame.registerCount =
+            static_cast<uint8_t>(genChunk->registerCount <= static_cast<int>(RegCallFrame::MAX_REGISTERS)
+                                     ? genChunk->registerCount
+                                     : static_cast<int>(RegCallFrame::MAX_REGISTERS));
+        uint8_t argCount =
+            static_cast<uint8_t>(std::min(cd->args.size(), static_cast<size_t>(std::numeric_limits<uint8_t>::max())));
+        for (uint8_t i = 0; i < argCount && i < newFrame.registerCount; ++i)
+            newFrame.registers[i] = cd->args[i];
+        if (argCount < static_cast<uint8_t>(genChunk->arity)) {
+            int missingCount = genChunk->arity - argCount;
+            int defaultStartIdx = static_cast<int>(genChunk->defaultConstIndices.size()) - missingCount;
+            if (defaultStartIdx >= 0) {
+                for (int i = defaultStartIdx; i < defaultStartIdx + missingCount; ++i) {
+                    uint8_t regIdx = static_cast<uint8_t>(argCount + (i - defaultStartIdx));
+                    if (regIdx >= newFrame.registerCount)
+                        break;
+                    uint16_t constIdx = genChunk->defaultConstIndices[i];
+                    if (constIdx != RuntimeLimits::NO_INDEX && constIdx < genChunk->constants.size())
+                        newFrame.registers[regIdx] = genChunk->constants[constIdx];
+                }
             }
         }
-    }
-    for (uint8_t i = argCount; i < newFrame.registerCount; ++i) {
-        if (i >= genChunk->arity)
-            newFrame.registers[i] = Value::nullValue();
-    }
-    if (!cd->vmClosureBox.empty()) {
-        auto& closureVal = cd->vmClosureBox.front();
-        if (closureVal.isClosure() && closureVal.vmClosure())
-            newFrame.upvalues = closureVal.vmClosure()->upvalues;
-    }
-    frames_.push_back(std::move(newFrame));
-    currentCoroutineTargetYieldId_ = cd->currentYieldId;
-    currentYieldExecutionCount_ = 0;
+        for (uint8_t i = argCount; i < newFrame.registerCount; ++i) {
+            if (i >= genChunk->arity)
+                newFrame.registers[i] = Value::nullValue();
+        }
+        if (!cd->vmClosureBox.empty()) {
+            auto& closureVal = cd->vmClosureBox.front();
+            if (closureVal.isClosure() && closureVal.vmClosure())
+                newFrame.upvalues = closureVal.vmClosure()->upvalues;
+        }
+        frames_.push_back(std::move(newFrame));
+        currentCoroutineTargetYieldId_ = cd->currentYieldId;
+        currentYieldExecutionCount_ = 0;
     }
 #if MINILANG_CORO_FIBER
     // 嵌套 .next()（await drain / 生成器体内再调 .next()）：登记前保存外层挂起
     // 上下文，全部退出路径恢复——外层执行体随后的 REG_YIELD 仍需以外层身份挂起。
-    void *outerSuspendingCoro = currentSuspendingCoro_;
+    void* outerSuspendingCoro = currentSuspendingCoro_;
     size_t outerSuspendBaseFrames = coroSuspendBaseFrames_;
     auto restoreOuterCoroCtx = [&]() {
         currentSuspendingCoro_ = outerSuspendingCoro;

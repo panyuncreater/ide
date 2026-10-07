@@ -239,21 +239,22 @@ const std::vector<BugHuntItem>& BugHuntLibrary::items() {
             "📖 根因：IR 路径里，语句上下文得用 visitStatement 这个统一包装器来发 POP，不能图省事直接调 visitNode。"
             "修复点：compiler/ir/IR.cpp visitIfStmt() + visitWhileStmt() + visitForStmt()。",
             BugHuntDifficulty::EXPERT},
-        BugHuntItem{"BUG-MOD-1",
-                    "🚀 模块路径：'C:foo' 漏网",
-                    "P2",
-                    "模块路径安全",
-                    "🔍 normalizeModulePath 仅检测 'C:/' 形式未拒绝 'C:foo'（Windows 驱动器相对路径），"
-                    "反斜杠在更早处已统一转为正斜杠使原反斜杠分支成为死代码。",
-                    "// 触发路径遍历尝试（应被拒绝）\nimport { x } from \"C:etc/passwd\";",
-                    "✅ 修复后：拒绝所有 'X:' 开头形式。",
-                    "⚠️ Bug 触发时：可能加载到非预期文件。",
-                    {"💡 提示1：检查 normalizeModulePath 的 'X:' 检测分支——只检测 'X:/' 还是所有 'X:' 开头？",
-                     "💡 提示2：反斜杠在何处被转为正斜杠？若已转，原反斜杠分支是死代码。",
-                     "💡 提示3：修复需拒绝所有 path.size() >= 2 && path[1] == ':' 形式。"},
-                    "📖 根因：路径安全校验不能只盯着 'X:/'，凡是以 'X:' 开头的形式都得挡回去。"
-                    "修复点：compiler/core/Compiler.cpp normalizeModulePath() + InterpreterModules.cpp + IR.cpp 三处同步。",
-                    BugHuntDifficulty::EXPERT},
+        BugHuntItem{
+            "BUG-MOD-1",
+            "🚀 模块路径：'C:foo' 漏网",
+            "P2",
+            "模块路径安全",
+            "🔍 normalizeModulePath 仅检测 'C:/' 形式未拒绝 'C:foo'（Windows 驱动器相对路径），"
+            "反斜杠在更早处已统一转为正斜杠使原反斜杠分支成为死代码。",
+            "// 触发路径遍历尝试（应被拒绝）\nimport { x } from \"C:etc/passwd\";",
+            "✅ 修复后：拒绝所有 'X:' 开头形式。",
+            "⚠️ Bug 触发时：可能加载到非预期文件。",
+            {"💡 提示1：检查 normalizeModulePath 的 'X:' 检测分支——只检测 'X:/' 还是所有 'X:' 开头？",
+             "💡 提示2：反斜杠在何处被转为正斜杠？若已转，原反斜杠分支是死代码。",
+             "💡 提示3：修复需拒绝所有 path.size() >= 2 && path[1] == ':' 形式。"},
+            "📖 根因：路径安全校验不能只盯着 'X:/'，凡是以 'X:' 开头的形式都得挡回去。"
+            "修复点：compiler/core/Compiler.cpp normalizeModulePath() + InterpreterModules.cpp + IR.cpp 三处同步。",
+            BugHuntDifficulty::EXPERT},
         BugHuntItem{"BUG-DBG-1",
                     "🚀 调用栈顶帧行号：调用点 vs 当前行",
                     "P1",

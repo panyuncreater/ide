@@ -945,9 +945,9 @@ private:
         JitEntryFn entry = nullptr; ///< 块基址（runtime_.add 返回，asmjit 释放句柄）
         size_t chunkIdx = 0;        ///< 对应 allChunks 索引（main=0）
         std::string chunkName;
-        uint64_t entryOffset = 0; ///< chunk 入口相对块基址偏移（main 块恒 0，入口即块基址）
-        bool isMain = false;      ///< main 块含 prologue/epilogue/闭包跳板，其余块为函数块
-        bool owned = true;        ///< false = 缓存共享块（生命周期归进程级块缓存，实例不释放）
+        uint64_t entryOffset = 0;      ///< chunk 入口相对块基址偏移（main 块恒 0，入口即块基址）
+        bool isMain = false;           ///< main 块含 prologue/epilogue/闭包跳板，其余块为函数块
+        bool owned = true;             ///< false = 缓存共享块（生命周期归进程级块缓存，实例不释放）
         uint64_t epilogueOffset = 0;   ///< 仅 main 块（errorExit 桩目标 = 基址 + 此偏移）
         uint64_t trampolineOffset = 0; ///< 仅 main 块（闭包同步跳板偏移）
     };
@@ -978,7 +978,7 @@ private:
         struct SharedBlock {
             JitEntryFn entry = nullptr; ///< 可执行基址（共享 JitRuntime 分配，缓存持有）
             std::string chunkName;
-            uint64_t entryOffset = 0;   ///< 非 main 块恒 0（块首即入口）
+            uint64_t entryOffset = 0; ///< 非 main 块恒 0（块首即入口）
             bool isMain = false;
             uint64_t epilogueOffset = 0;   ///< 仅 main 块
             uint64_t trampolineOffset = 0; ///< 仅 main 块
@@ -1010,7 +1010,7 @@ private:
     /// ADR-008 阶段 2: 缓存命中的 CompileResult 快照持有（currentResult_ 指向它，
     /// tiering 单 chunk 重编译从同一快照读取 chunk 数据）
     std::shared_ptr<const CompileResult> cachedResult_;
-    DiagnosticBag diagnostics_;         ///< 诊断包
+    DiagnosticBag diagnostics_;                                    ///< 诊断包
     std::function<void(const std::string&)> outputCallback_;       ///< print 输出回调
     std::function<std::string(const std::string&)> inputCallback_; ///< input 输入回调
 
