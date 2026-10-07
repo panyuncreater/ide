@@ -76,9 +76,12 @@ IR → StackVM 字节码的 lowering 由栈平衡校验器护航（`compiler/ir/
 
 JIT 后端将 `BytecodeChunk` 编译为 x86-64 本地机器码直接在 CPU 上执行，消除 dispatch loop 开销。实现 V8 风格的分层编译（Tier 0 Interpreter → Tier 1 Baseline → Tier 2 Specialized），含热点检测、类型反馈、INT/FLOAT 特化重编译、lazy compilation、OSR 栈帧迁移、反优化等现代 JIT 核心机制。JIT 代码通过 `JitContext` 邮箱模式与 C++ 运行时交互（`r12` 寄存器持有上下文指针，字段偏移经 `jit_offset` 命名常量 + `static_assert(offsetof)` 编译期校验）。
 
+**per-chunk 编译架构（[ADR-008](adr/ADR-008-jit-per-chunk.md)，2026-10-10）**：每个 chunk 编译为独立 CodeHolder/代码块（替代原"整程序单 CodeHolder 单入口"单体布局），跨块调用经 `JitContext.callImportSlots` 导入槽间接跳转，非 main 块错误退出经 `ctx->errorExit` 指向 main 块 epilogue；tiering/lazy/特化/OSR 重编译为真单 chunk 编译（不再"编译全部→提取一个"）。进程内编译块缓存（键 = fnv1a64(字节码内容) ^ kJitCodegenVersion，共享存活设计）使同源码重复运行免重编译；lazy/分层/自定义阈值路径绕过缓存按需重编译。
+
 详见 [ADR-002: 三后端策略](adr/ADR-002-triple-backend.md)
 详见 [ADR-003: IR 中间层](adr/ADR-003-ir-layer.md)
 详见 [ADR-006: JIT 后端](adr/ADR-006-jit-backend.md)
+详见 [ADR-008: per-chunk 编译架构](adr/ADR-008-jit-per-chunk.md)
 
 ---
 

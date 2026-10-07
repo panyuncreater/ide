@@ -48,14 +48,22 @@
 
 using namespace jit_internal;
 
-JITBackend::JITBackend() = default;
+JITBackend::JITBackend() {
+    activeRuntime_ = &runtime_;
+}
 JITBackend::~JITBackend() {
-    // R151: 析构时释放 JIT 已分配的可执行内存，避免内存泄漏
-    // （asmjit::JitRuntime 不会自动释放通过 runtime_.add 分配的内存块）
-    if (currentEntry_ != nullptr) {
-        runtime_.release(currentEntry_);
-        currentEntry_ = nullptr;
+    // R151/ADR-008: 析构时释放 JIT 已分配的可执行内存，避免内存泄漏
+    // （asmjit::JitRuntime 不会自动释放通过 runtime_.add 分配的内存块）。
+    // per-chunk 架构下所有权权威为 codeBlocks_（main 块也登记其中，
+    // currentEntry_ 仅镜像入口地址，不再单独释放以防双重释放）。
+    // owned=false 的缓存共享块生命周期归进程级块缓存，实例不释放。
+    for (const auto& blk : codeBlocks_) {
+        if (blk.owned && blk.entry != nullptr) {
+            runtime_.release(blk.entry);
+        }
     }
+    codeBlocks_.clear();
+    currentEntry_ = nullptr;
     // R152: 释放特化版本 CodeHolder 内存
     for (JitEntryFn entry : ownedSpecializedEntries_) {
         if (entry != nullptr) {
@@ -299,12 +307,21 @@ JitResult JITBackend::execute(const CompileResult& result) {
     jitContext_.hasError = &hasError_;
     jitContext_.errorBuffer = &lastError_;
 
-    // R151: 释放上一次 execute() 分配的 JIT 可执行内存（支持多次 execute 调用）
-    // asmjit::JitRuntime::release 释放 runtime_.add 返回的内存块，避免重复 execute 泄漏
-    if (currentEntry_ != nullptr) {
-        runtime_.release(currentEntry_);
-        currentEntry_ = nullptr;
+    // R151/ADR-008: 释放上一次 execute() 分配的全部 JIT 代码块（支持多次 execute 调用）
+    // asmjit::JitRuntime::release 释放 runtime_.add 返回的内存块，避免重复 execute 泄漏。
+    // per-chunk 架构下每 chunk 独立可执行内存，按块粒度释放；currentEntry_ 仅镜像。
+    // owned=false 的缓存共享块跳过（生命周期归进程级块缓存）。
+    for (const auto& blk : codeBlocks_) {
+        if (blk.owned && blk.entry != nullptr) {
+            runtime_.release(blk.entry);
+        }
     }
+    codeBlocks_.clear();
+    currentEntry_ = nullptr;
+    // ADR-008: 导入槽表随全部代码块一并作废（槽位按编译代在表中追加分配、
+    // 跨代合并共存，见 compileAllChunks 注记），新一次 execute 从 0 重新编号
+    callImportSlots_.clear();
+    callImportPatches_.clear();
     // AUDIT-R4 BUG-12 fix: execute() 入口无 JIT 代码运行，是释放被替换
     // 特化块的安全点（旧块在上一轮执行中可能仍在本机调用栈上，
     // 不能在替换点立即释放）。
@@ -320,12 +337,39 @@ JitResult JITBackend::execute(const CompileResult& result) {
     ownedLazyEntries_.clear();
     lazyCompiledChunksList_.clear();
 
-    // R141: 编译 mainChunk + functionChunks 到一个 CodeHolder
-    JitEntryFn entry = compileAllChunks(result);
-    if (!entry) {
-        return JitResult::CompileError;
+    // ADR-008 阶段 2: 进程内编译块缓存
+    // 门控 = 纯 eager 教学路径（!lazyMode_ && !tieredMode_ && 无自定义阈值）：
+    // lazy/tiering/自定义阈值路径的生成代码依赖运行模式与阈值，绕过缓存按需重编译。
+    const bool cacheable =
+        !lazyMode_ && !tieredMode_ && customOsrThresholds_.empty() && customThresholds_.empty();
+    uint64_t cacheKey = 0;
+    bool cacheHit = false;
+    if (cacheable) {
+        cacheKey = computeBlockCacheKey(result);
+        cacheHit = tryExecuteFromCache(cacheKey);
     }
-    currentEntry_ = entry; // R151: 保存入口以便下次 execute 或析构时释放
+    if (!cacheHit) {
+        if (cacheable) {
+            // 深拷贝快照作为编译宿主：块内嵌指针（常量池/chunk 地址）指向缓存
+            // 持有的副本，命中实例直接引用同一批块与副本，零重绑定（ADR-008）。
+            cachedResult_ = std::make_shared<const CompileResult>(result);
+            currentResult_ = cachedResult_.get();
+            activeRuntime_ = &sharedCacheRuntime();
+        }
+        // R141: 编译 mainChunk + functionChunks（per-chunk 独立代码块）
+        JitEntryFn entry = compileAllChunks(cacheable ? *cachedResult_ : result);
+        if (!entry) {
+            activeRuntime_ = &runtime_;
+            cachedResult_.reset();
+            return JitResult::CompileError;
+        }
+        currentEntry_ = entry; // R151: 保存入口以便下次 execute 或析构时释放
+        if (cacheable) {
+            activeRuntime_ = &runtime_;
+            storeBlocksToCache(cacheKey);
+            cachedResult_.reset(); // 快照所有权已移交缓存条目
+        }
+    }
 
     // R160: compileAllChunks 已 resize memberGetIC_，此时设置指针并清空 cache 条目
     // （支持多次 execute，避免上次 cache 残留指向已释放对象）
@@ -370,7 +414,7 @@ JitResult JITBackend::execute(const CompileResult& result) {
         GcManager::CallbackSuppressor gcSuppressor;
         // Suppressor 抑制回调后，我们重新设置一个轻量回调仅设置标志
         GcManager::instance().setGcTriggerCallback([this]() { gcNeededFlag_.store(1, std::memory_order_release); });
-        int64_t ret = entry(&jitContext_);
+        int64_t ret = currentEntry_(&jitContext_);
         (void)ret;
     }
     // gcSuppressor 析构恢复原回调
@@ -514,5 +558,300 @@ static_assert(offsetof(JitContext, syncMethodHandled) == 264,
     assert(zeroFloat.rawBits() == expectedZeroBits && "JIT float 编码与 NaNBox.h 不一致");
 }
 } // namespace
+
+// ============================================================
+// ADR-008 阶段 2: 进程内编译块缓存（共享存活设计）
+// ------------------------------------------------------------
+// 键 = fnv1a64(字节码内容) ^ kJitCodegenVersion。未命中：深拷贝 CompileResult
+// 作为编译宿主（块内嵌指针指向副本），代码块从共享 runtime 分配，副本+块+映射
+// 元数据入缓存。命中：新实例引用共享块与元数据（owned=false，实例不释放），
+// 重建映射/统计/导入槽后直接执行——同源码重复运行免重编译。
+// 门控：execute() 内 !lazyMode_ && !tieredMode_ && 无自定义阈值（纯 eager 路径）。
+// 单执行线程假设：淘汰不做与执行的跨线程互斥（注册表互斥仅保护容器结构）。
+// ============================================================
+namespace {
+std::atomic<uint64_t>& cacheHitsCounter() {
+    static std::atomic<uint64_t> c{0};
+    return c;
+}
+std::atomic<uint64_t>& cacheStoresCounter() {
+    static std::atomic<uint64_t> c{0};
+    return c;
+}
+} // namespace
+
+asmjit::JitRuntime& JITBackend::sharedCacheRuntime() {
+    static asmjit::JitRuntime rt;
+    return rt;
+}
+
+std::mutex& JITBackend::blockCacheMutex() {
+    static std::mutex m;
+    return m;
+}
+
+std::unordered_map<uint64_t, std::shared_ptr<JITBackend::JitBlockCacheEntry>>& JITBackend::blockCacheMap() {
+    static std::unordered_map<uint64_t, std::shared_ptr<JitBlockCacheEntry>> m;
+    return m;
+}
+
+std::list<std::pair<uint64_t, std::shared_ptr<JITBackend::JitBlockCacheEntry>>>& JITBackend::blockCacheLru() {
+    static std::list<std::pair<uint64_t, std::shared_ptr<JitBlockCacheEntry>>> l;
+    return l;
+}
+
+uint64_t JITBackend::blockCacheHits() {
+    return cacheHitsCounter().load(std::memory_order_relaxed);
+}
+
+uint64_t JITBackend::blockCacheStores() {
+    return cacheStoresCounter().load(std::memory_order_relaxed);
+}
+
+uint64_t JITBackend::computeBlockCacheKey(const CompileResult& result) {
+    uint64_t h = 1469598103934665603ull; // FNV-1a 64 offset basis
+    auto mix = [&h](const void* data, size_t n) {
+        const auto* p = static_cast<const uint8_t*>(data);
+        for (size_t i = 0; i < n; ++i) {
+            h ^= p[i];
+            h *= 1099511628211ull;
+        }
+    };
+    auto mixU64 = [&mix](uint64_t v) { mix(&v, sizeof(v)); };
+    auto mixStr = [&mix, &mixU64](const std::string& s) {
+        mixU64(s.size());
+        mix(s.data(), s.size());
+    };
+    auto mixChunk = [&](const BytecodeChunk& c) {
+        mixStr(c.name);
+        mixU64(static_cast<uint64_t>(c.arity));
+        mixU64(static_cast<uint64_t>(c.requiredArity));
+        mixU64(static_cast<uint64_t>(c.localCount));
+        mixU64(c.code.size());
+        mix(c.code.data(), c.code.size());
+        mixU64(c.constants.size());
+        for (const auto& v : c.constants) {
+            if (v.isString()) {
+                // 字符串常量按内容指纹：raw bits 是堆指针（每次编译分配新地址，
+                // 会导致同源码键不稳定——见 BlockCache 回归测试）
+                mixU64(0x535452); // "STR" 类型标记
+                mixStr(v.stringVal());
+            } else {
+                mixU64(Value::bitsOf(v)); // 标量按 NaN-boxing 原位编码（保守：内容不同必不同键）
+            }
+        }
+        mixU64(c.defaultConstIndices.size());
+        for (int idx : c.defaultConstIndices) {
+            mixU64(static_cast<uint64_t>(idx));
+        }
+        mixU64(c.fieldOrder.size());
+        for (const auto& f : c.fieldOrder) {
+            mixStr(f);
+        }
+        mixU64(c.upvalues.size());
+        for (const auto& u : c.upvalues) {
+            mix(&u, sizeof(u)); // UpvalueDesc 为 POD，按内存布局指纹
+        }
+        mixU64(c.isGenerator ? 1 : 0);
+        mixU64(static_cast<uint64_t>(c.yieldCount));
+    };
+    mixChunk(result.mainChunk);
+    mixU64(result.functionChunks.size());
+    for (const auto& [name, c] : result.functionChunks) {
+        (void)name; // 名称随 chunk.name 入键
+        mixChunk(c);
+    }
+    mixU64(result.globalSlotCount);
+    mixU64(result.globalSlotNames.size());
+    for (const auto& n : result.globalSlotNames) {
+        mixStr(n);
+    }
+    mixU64(result.enumInfos.size());
+    for (const auto& e : result.enumInfos) {
+        mixStr(e.name);
+    }
+    mixU64(kJitCodegenVersion);
+    return h;
+}
+
+void JITBackend::initPerChunkState() {
+    const size_t n = chunkNames_.size();
+    // R150: per-chunk 调用计数数组（热点检测用）
+    chunkCallCounts_.assign(n, 0);
+    jitContext_.chunkCallCounts = chunkCallCounts_.data();
+    // R151: 热点阈值——默认仅方法 chunk（name 含 '.'）启用；customThresholds_ 覆盖
+    hotThresholds_.assign(n, 0);
+    for (size_t i = 0; i < n; ++i) {
+        if (chunkNames_[i].find('.') != std::string::npos) {
+            hotThresholds_[i] = minilang::kDefaultHotThreshold;
+        }
+        auto it = customThresholds_.find(chunkNames_[i]);
+        if (it != customThresholds_.end()) {
+            hotThresholds_[i] = it->second;
+        }
+    }
+    recompiledFlags_.assign(n, 0);
+    jitContext_.hotThresholds = hotThresholds_.data();
+    jitContext_.recompiledFlags = recompiledFlags_.data();
+    // R152: 类型反馈计数器数组
+    typeFeedback_.assign(n, minilang::TypeFeedback{});
+    jitContext_.typeFeedback = typeFeedback_.data();
+    jitContext_.backendPtr = this;
+    // R154: lastMutatedReceiver_（嵌套左值赋值链中转邮箱）
+    lastMutatedReceiver_ = static_cast<int64_t>(JIT_NULL_BITS);
+    jitContext_.lastMutatedReceiverPtr = &lastMutatedReceiver_;
+    // R157: OSR 回边计数/阈值/标志数组
+    osrLoopCounts_.assign(n, 0);
+    osrLoopThresholds_.assign(n, 0);
+    for (size_t i = 0; i < n; ++i) {
+        auto osrIt = customOsrThresholds_.find(chunkNames_[i]);
+        if (osrIt != customOsrThresholds_.end()) {
+            osrLoopThresholds_[i] = osrIt->second;
+        }
+    }
+    osrRecompiledFlags_.assign(n, 0);
+    jitContext_.osrLoopCountsPtr = osrLoopCounts_.data();
+    jitContext_.osrLoopThresholdsPtr = osrLoopThresholds_.data();
+    jitContext_.osrRecompiledFlagsPtr = osrRecompiledFlags_.data();
+    // R166 fix: 循环迭代上限数组（无限循环防护）
+    loopIterations_.assign(n, 0);
+    jitContext_.loopIterationsPtr = loopIterations_.data();
+}
+
+bool JITBackend::tryExecuteFromCache(uint64_t key) {
+    std::lock_guard<std::mutex> lock(blockCacheMutex());
+    auto& map = blockCacheMap();
+    auto it = map.find(key);
+    if (it == map.end()) {
+        return false;
+    }
+    JitBlockCacheEntry& e = *it->second;
+
+    // 共享块引用（owned=false：生命周期归缓存，实例的释放循环跳过）
+    for (const auto& sb : e.blocks) {
+        JitCodeBlock blk;
+        blk.entry = sb.entry;
+        blk.chunkName = sb.chunkName;
+        blk.isMain = sb.isMain;
+        blk.entryOffset = sb.entryOffset;
+        blk.epilogueOffset = sb.epilogueOffset;
+        blk.trampolineOffset = sb.trampolineOffset;
+        blk.owned = false;
+        codeBlocks_.push_back(std::move(blk));
+    }
+    currentEntry_ = e.blocks.empty() ? nullptr : e.blocks.front().entry;
+    methodEntries_.clear();
+    for (const auto& [n, info] : e.methodEntries) {
+        methodEntries_.emplace(n, info);
+    }
+    funcEntries_.clear();
+    for (const auto& [n, info] : e.funcEntries) {
+        funcEntries_.emplace(n, info);
+    }
+    chunkNames_ = e.chunkNames;
+    initPerChunkState();
+    // IC 数组：缓存代码的 callSiteId 编号 [0,N) 与新实例分配严格对齐
+    //（缓存组覆盖全部 chunk，编号即全量编号）
+    memberGetIC_.assign(e.memberIcCount > 0 ? e.memberIcCount : 1, MemberGetInlineCacheEntry{});
+    methodCallIC_.assign(e.methodIcCount, MethodCallICEntry{});
+    nextCallSiteId_ = e.memberIcCount;
+    nextMethodCallSiteId_ = e.methodIcCount;
+    // 导入槽：同索引重填（槽位在缓存代码中按相同编号发射）
+    callImportSlots_.assign(e.importPatches.size(), nullptr);
+    callImportPatches_ = e.importPatches;
+    for (const auto& patchInfo : callImportPatches_) {
+        void* target = nullptr;
+        if (patchInfo.isMethod) {
+            auto mit = methodEntries_.find(patchInfo.calleeName);
+            if (mit != methodEntries_.end()) {
+                target = mit->second.entryPtr;
+            }
+        } else {
+            auto fit = funcEntries_.find(patchInfo.calleeName);
+            if (fit != funcEntries_.end()) {
+                target = fit->second.entryPtr;
+            }
+        }
+        if (target == nullptr) {
+            // 缓存元数据损坏（不应发生）：按未命中处理
+            codeBlocks_.clear();
+            methodEntries_.clear();
+            funcEntries_.clear();
+            callImportSlots_.clear();
+            callImportPatches_.clear();
+            return false;
+        }
+        callImportSlots_[patchInfo.slotIdx] = target;
+    }
+    jitContext_.callImportSlots = callImportSlots_.data();
+    // main 块派生地址（错误退出桩目标 + 闭包同步跳板）
+    if (!e.blocks.empty() && e.blocks.front().isMain) {
+        const auto& main = e.blocks.front();
+        jitContext_.errorExit = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(main.entry) +
+                                                        main.epilogueOffset);
+        closureTrampoline_ = reinterpret_cast<JitTrampolineFn>(reinterpret_cast<uintptr_t>(main.entry) +
+                                                               main.trampolineOffset);
+    }
+    // 教学汇编捕获：仅实例显式启用时才呈现缓存文本（getCapturedAsm 契约 =
+    // setAsmCapture(true) + execute 后有效，未启用时保持为空）
+    capturedAsm_ = asmCaptureEnabled_ ? e.capturedAsm : std::string();
+    cachedResult_ = e.result;
+    currentResult_ = cachedResult_.get();
+    // LRU 触碰（移到队首）
+    auto& lru = blockCacheLru();
+    for (auto lit = lru.begin(); lit != lru.end(); ++lit) {
+        if (lit->first == key) {
+            lru.splice(lru.begin(), lru, lit);
+            break;
+        }
+    }
+    cacheHitsCounter().fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+
+void JITBackend::storeBlocksToCache(uint64_t key) {
+    auto entry = std::make_shared<JitBlockCacheEntry>();
+    for (const auto& blk : codeBlocks_) {
+        JitBlockCacheEntry::SharedBlock sb;
+        sb.entry = blk.entry;
+        sb.chunkName = blk.chunkName;
+        sb.isMain = blk.isMain;
+        sb.entryOffset = blk.entryOffset;
+        sb.epilogueOffset = blk.epilogueOffset;
+        sb.trampolineOffset = blk.trampolineOffset;
+        entry->blocks.push_back(std::move(sb));
+    }
+    for (const auto& [n, info] : methodEntries_) {
+        entry->methodEntries.emplace_back(n, info);
+    }
+    for (const auto& [n, info] : funcEntries_) {
+        entry->funcEntries.emplace_back(n, info);
+    }
+    entry->importPatches = callImportPatches_;
+    entry->chunkNames = chunkNames_;
+    entry->memberIcCount = memberGetIC_.size();
+    entry->methodIcCount = methodCallIC_.size();
+    entry->capturedAsm = capturedAsm_;
+    entry->result = cachedResult_; // 快照所有权移交缓存（块内嵌指针宿主）
+
+    std::lock_guard<std::mutex> lock(blockCacheMutex());
+    auto& map = blockCacheMap();
+    auto& lru = blockCacheLru();
+    // 淘汰：FIFO（容量 kBlockCacheCapacity），被淘汰条目的共享块经共享 runtime 释放
+    while (lru.size() >= kBlockCacheCapacity) {
+        auto victim = lru.back();
+        map.erase(victim.first);
+        for (const auto& sb : victim.second->blocks) {
+            if (sb.entry != nullptr) {
+                sharedCacheRuntime().release(sb.entry);
+            }
+        }
+        lru.pop_back();
+    }
+    lru.emplace_front(key, entry);
+    map[key] = entry;
+    cacheStoresCounter().fetch_add(1, std::memory_order_relaxed);
+}
+
 
 #endif // MINILANG_USE_JIT

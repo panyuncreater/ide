@@ -142,8 +142,10 @@
 #include <atomic>
 #include <cstddef> // offsetof
 #include <functional>
+#include <list>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -297,6 +299,18 @@ struct JitContext {
     // JIT 代码在 OP_LOOP 回边递增并与此上限比较，超限调用 jitLoopLimitExceeded 报错。
     uint64_t* loopIterationsPtr = nullptr; // offset 272: per-chunk 循环回边计数数组指针
     int64_t maxLoopIterations = 0;         // offset 280: 迭代上限（execute() 时从 RuntimeConfig 读取）
+    // ADR-008 per-chunk 架构（阶段 1a）：跨块函数调用导入槽表指针。
+    // 元素 = 被调 chunk 入口绝对地址；JIT 代码经 [r12+callImportSlots] 加载表基址、
+    // 再按发射期分配的槽位下标取入口并 jmp。槽位表由 JITBackend::callImportSlots_
+    // 持有，全部代码块 runtime_.add 之后按被调 chunk 名回填。lazy 模式不走
+    // fast path，表保持为空。
+    void** callImportSlots = nullptr; // offset 288
+    // ADR-008: 非 main 块错误退出桩目标地址（main 块 epilogue）。
+    // 非 main 块内所有 hasError 检查（jnz epilogue）跳块内本地 epilogue 标签，
+    // 该标签绑定为退出桩：mov rax,[ctx+errorExit]; jmp rax —— rbp 自 main 块
+    // prologue 后全程不变（函数块只用 r13/r15），跨块跳转等价原单体布局的
+    // 同块 jmp epilogue。由 commit 阶段在全部块 add 成功后写入。
+    void* errorExit = nullptr; // offset 296
 };
 
 // ============================================================
@@ -336,6 +350,8 @@ constexpr int enumRegistryPtr = 256;   // enum 元信息注册表指针
 constexpr int syncMethodHandled = 264; // 同步对象方法内联处理标志（邮箱）
 constexpr int loopIterationsPtr = 272; // R166 fix: per-chunk 循环迭代计数数组指针
 constexpr int maxLoopIterations = 280; // R166 fix: 循环迭代上限
+constexpr int callImportSlots = 288;   // ADR-008: 跨块调用导入槽表指针
+constexpr int errorExit = 296;         // ADR-008: 非 main 块错误退出桩目标
 } // namespace jit_offset
 static_assert(offsetof(JitContext, hasError) == jit_offset::hasError, "hasError offset");
 static_assert(offsetof(JitContext, globalSlots) == jit_offset::globalSlots, "globalSlots offset");
@@ -368,6 +384,8 @@ static_assert(offsetof(JitContext, enumRegistryPtr) == jit_offset::enumRegistryP
 static_assert(offsetof(JitContext, syncMethodHandled) == jit_offset::syncMethodHandled, "syncMethodHandled offset");
 static_assert(offsetof(JitContext, loopIterationsPtr) == jit_offset::loopIterationsPtr, "loopIterationsPtr offset");
 static_assert(offsetof(JitContext, maxLoopIterations) == jit_offset::maxLoopIterations, "maxLoopIterations offset");
+static_assert(offsetof(JitContext, callImportSlots) == jit_offset::callImportSlots, "callImportSlots offset");
+static_assert(offsetof(JitContext, errorExit) == jit_offset::errorExit, "errorExit offset");
 
 // Prologue 栈布局常量
 // 48 = 5 个 callee-saved 寄存器 (r12/r13/r14/r15/rbx) × 8B + 8B 对齐填充
@@ -622,6 +640,10 @@ public:
     };
     ICStats getInlineCacheStats() const { return {icHitCount_, icMissCount_, icMegamorphicCount_}; }
 
+    /// ADR-008 阶段 2: 进程内编译块缓存命中/写入计数（测试与教学观测用，进程级累计）
+    static uint64_t blockCacheHits();
+    static uint64_t blockCacheStores();
+
     /// R160: 重置 inline cache 统计（测试用，在 execute 前调用）
     void resetInlineCacheStats() {
         icHitCount_ = 0;
@@ -689,6 +711,37 @@ private:
     /// @param result 编译结果（含 mainChunk 和 functionChunks）
     /// @return 入口函数指针（mainChunk 入口），失败返回 nullptr
     JitEntryFn compileAllChunks(const CompileResult& result);
+    /// ADR-008 阶段 1b: 真单 chunk 编译——仅发射目标 chunk 的独立代码块并更新
+    /// 其映射条目，不触碰 per-chunk 统计/chunkTiers_/errorExit/闭包跳板等全局状态。
+    /// 返回块基址（非 main 块块首即入口 Label，entryPtr == 块基址），所有权由调用方
+    /// 恰好登记一次（ownedLazyEntries_ 或 registerSpecializedOwnership）。
+    /// 特化/OSR 模式由成员标志（specializeIntMode_/specializeFloatMode_/osrEntryGenMode_）
+    /// 在调用前置位；OSR 入口点经 osrEntryPointOut_ 邮箱返回。
+    JitEntryFn compileSingleChunkBlock(const CompileResult& result, const std::string& chunkName);
+
+    // ---- ADR-008 阶段 2: 进程内编译块缓存 ----
+    /// 字节码内容键：fnv1a64 遍历全部 chunk（名称/代码字节/常量位/元数据）+
+    /// globalSlotNames/enumInfos，最后折叠 kJitCodegenVersion。任何影响 codegen
+    /// 的字节码差异（或 codegen 版本递增）都会改变键值。
+    uint64_t computeBlockCacheKey(const CompileResult& result);
+    /// per-chunk 统计数组/名称/ctx 指针初始化（依赖已填充的 chunkNames_；
+    /// 全量编译与缓存命中两条路径共用）
+    void initPerChunkState();
+    /// 命中：引用共享块与元数据，重建实例侧映射/统计/导入槽。成功返回 true。
+    bool tryExecuteFromCache(uint64_t key);
+    /// 未命中：把本次 eager 编译产物（activeRuntime_ = 共享 runtime 分配的块）
+    /// 连同 CompileResult 快照存入进程级缓存。
+    void storeBlocksToCache(uint64_t key);
+    /// 进程级共享 runtime（缓存路径的块从这里分配，淘汰时经它释放）
+    static asmjit::JitRuntime& sharedCacheRuntime();
+    /// 缓存注册表（key → 条目）与互斥（条目以 shared_ptr 持有，命中实例
+    /// 复制 shared_ptr 保活）；LRU 容量 kBlockCacheCapacity。
+    /// JitBlockCacheEntry 定义在本类后段（与 JitCodeBlock 相邻），此处前置声明。
+    struct JitBlockCacheEntry; // 前置声明（定义见下方 per-chunk 代码块区段）
+    static std::mutex& blockCacheMutex();
+    static std::unordered_map<uint64_t, std::shared_ptr<JitBlockCacheEntry>>& blockCacheMap();
+    static std::list<std::pair<uint64_t, std::shared_ptr<JitBlockCacheEntry>>>& blockCacheLru();
+    static constexpr size_t kBlockCacheCapacity = 8;
 
     /// R152: 特化重编译单个 chunk（INT 特化版本）
     /// 在 execute() 返回后对 recompiledFlags 标记的 chunk 调用，根据类型反馈决定是否特化：
@@ -750,7 +803,9 @@ private:
     // 含入口 Label（OP_CALL jmp 目标）+ 元信息（localCount/arity/hasInnerClosures）。
     // ============================================================
     struct JitFuncInfo {
-        asmjit::Label entryLabel;
+        // ADR-008: 入口 Label 已随 per-chunk 代码块下放（同块递归经
+        // currentBlockEntryLabel_ 直连），此处仅保留元数据与块归属。
+        size_t chunkId = static_cast<size_t>(-1);
         int localCount = 0;
         int arity = 0;
         int requiredArity = 0;                ///< R149: 必需参数个数（默认参数支持）
@@ -828,11 +883,19 @@ private:
     // 需要编译期上下文（funcTable/jumpLabels/chunkIdx）的 helper 通过参数传入。
     // ============================================================
     ///@{
+    /// ADR-008（阶段 1a）: 单个 chunk 的机器码发射（自 compileAllChunks 的
+    /// per-chunk 发射循环体提取）。发射进调用方提供的 Assembler（每 chunk 一个
+    /// 独立 CodeHolder/代码块）。返回 false 表示 compileError 已记录（操作数
+    /// 越界/不支持 OpCode 等），调用方中止本次编译（发射期未 runtime_.add，
+    /// 无可执行内存泄漏）。
+    bool emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& chunk, size_t chunkIdx, asmjit::Label epilogue,
+                       const std::unordered_map<std::string, JitFuncInfo>& funcTable);
     /// OP_CALL 代码生成（含 fast path / mailbox path 双路径分派）
     /// @param funcIt funcTable 中命中的条目（调用前已验证非 end）
     /// @param argCount 实参个数
     /// @return true 走快速路径（ip += 4 由调用方处理），false 走 mailbox 路径
-    bool emitCallDispatch(asmjit::x86::Assembler& a, asmjit::Label epilogue, const JitFuncInfo& info, uint8_t argCount);
+    bool emitCallDispatch(asmjit::x86::Assembler& a, asmjit::Label epilogue, const JitFuncInfo& info,
+                          const std::string& calleeName, uint8_t argCount);
     /// OP_CALL mailbox 路径（lazy mode / 有默认参数 / 有 upvalues / 有内部闭包）
     void emitCallMailbox(asmjit::x86::Assembler& a, asmjit::Label epilogue, const char* funNamePtr, uint8_t argCount);
     /// OP_CALL_EXPR 代码生成（闭包值调用，邮箱模式）
@@ -860,10 +923,93 @@ private:
     ///@{
     uint64_t nextCallSiteId_ = 0; ///< OP_MEMBER_GET callSiteId 分配计数器（编译期，先统计后重置再分配）
     size_t currentChunkIdx_ = 0;  ///< 当前编译的 chunk 索引（emitCheckInt/emitRecordTypeFeedback 反优化用）
+    /// ADR-008 阶段 1b: 单 chunk 编译模式（compileSingleChunkBlock 发射期置位）。
+    /// 跨块 fast path 仅在被调 chunk 已有 entryPtr 时可走，否则回落 mailbox 由
+    /// jitCallByName 运行期 lazy 触发（eager 全量模式所有块必编译，无需检查）。
+    bool singleChunkCompileMode_ = false;
     ///@}
 
     asmjit::JitRuntime runtime_;        ///< JIT 内存分配器
-    JitEntryFn currentEntry_ = nullptr; ///< R151: 当前已加载的 JIT 入口（execute 重复调用时释放旧代码）
+    JitEntryFn currentEntry_ = nullptr; ///< R151: main 块入口镜像（代码块所有权权威为 codeBlocks_）
+
+    // ============================================================
+    // ADR-008 per-chunk 代码块架构（阶段 1a）
+    // ------------------------------------------------------------
+    // 每个 chunk 编译为独立 CodeHolder/代码块。跨块引用两条通道：
+    // 跨块 OP_CALL fast path 经 callImportSlots_ 导入槽间接跳转（发射期分配
+    // 槽位、全部块 add 后回填）；非 main 块错误退出经 ctx->errorExit 指向
+    // main 块 epilogue。JitContext/JitFrame/helper ABI 三个跨块协议不变。
+    // ============================================================
+    /// 单个已提交代码块的所有权记录
+    struct JitCodeBlock {
+        JitEntryFn entry = nullptr; ///< 块基址（runtime_.add 返回，asmjit 释放句柄）
+        size_t chunkIdx = 0;        ///< 对应 allChunks 索引（main=0）
+        std::string chunkName;
+        uint64_t entryOffset = 0; ///< chunk 入口相对块基址偏移（main 块恒 0，入口即块基址）
+        bool isMain = false;      ///< main 块含 prologue/epilogue/闭包跳板，其余块为函数块
+        bool owned = true;        ///< false = 缓存共享块（生命周期归进程级块缓存，实例不释放）
+        uint64_t epilogueOffset = 0;   ///< 仅 main 块（errorExit 桩目标 = 基址 + 此偏移）
+        uint64_t trampolineOffset = 0; ///< 仅 main 块（闭包同步跳板偏移）
+    };
+    /// 导入槽回填记录（slotIdx → 被调 chunk 名；commit 阶段解析入口地址）
+    struct CallImportPatch {
+        size_t slotIdx = 0;
+        std::string calleeName;
+        bool isMethod = false; ///< 含 '.' 的方法名经 methodEntries_ 解析，否则 funcEntries_
+    };
+
+    // ============================================================
+    // ADR-008 阶段 2: 进程内编译块缓存（共享存活设计）
+    // ------------------------------------------------------------
+    // 键 = fnv1a64(字节码内容) ^ kJitCodegenVersion。首次 eager 编译：深拷贝
+    // CompileResult 作为编译宿主（块内嵌指针指向副本），代码块从进程级共享
+    // JitRuntime 分配，副本+块+映射元数据一并入缓存。命中实例直接引用共享块
+    // 与元数据，跳过重编译（零重绑定——块内嵌指针由缓存副本保持有效；
+    // 重定位/重绑层留给阶段 3 的磁盘持久化）。
+    // 门控：仅纯 eager 路径（!lazyMode_ && !tieredMode_ && 无自定义阈值），
+    // tiering/lazy 教学路径按需重编译、绕过缓存。
+    // 单执行线程假设：GUI 一次运行一个 JITBackend；淘汰与执行不做跨线程互斥
+    // （注册表互斥仅保护 map 结构）。
+    // ============================================================
+    /// JIT 代码生成版本——任何 codegen 逻辑变更必须递增，使旧缓存键失效
+    static constexpr uint32_t kJitCodegenVersion = 1;
+
+    struct JitBlockCacheEntry {
+        struct SharedBlock {
+            JitEntryFn entry = nullptr; ///< 可执行基址（共享 JitRuntime 分配，缓存持有）
+            std::string chunkName;
+            uint64_t entryOffset = 0;   ///< 非 main 块恒 0（块首即入口）
+            bool isMain = false;
+            uint64_t epilogueOffset = 0;   ///< 仅 main 块
+            uint64_t trampolineOffset = 0; ///< 仅 main 块
+        };
+        std::vector<SharedBlock> blocks;                                  ///< 顺序 = allChunks 顺序（main 在前）
+        std::vector<std::pair<std::string, JitMethodInfo>> methodEntries; ///< "Class.method" → 元数据
+        std::vector<std::pair<std::string, JitMethodInfo>> funcEntries;   ///< 函数名 → 元数据
+        std::vector<CallImportPatch> importPatches;                       ///< 导入槽回填清单（命中时同索引重填）
+        std::vector<std::string> chunkNames;                              ///< 全局 chunk 索引 → 名称
+        size_t memberIcCount = 0;                                         ///< memberGetIC_ 尺寸（IC id [0,N) 对齐）
+        size_t methodIcCount = 0;                                         ///< methodCallIC_ 尺寸
+        std::string capturedAsm;                                          ///< 教学汇编捕获（命中时复用）
+        std::shared_ptr<const CompileResult> result;                      ///< 块内嵌指针宿主（深拷贝快照）
+    };
+    /// 本次编译的全部代码块（main 块在前）。所有权权威：execute() 入口与析构
+    /// 按块释放；currentEntry_ 仅镜像 main 块入口（tiering save/restore 沿用）。
+    /// lazy/特化重编译的内部编译会把全部内层块移交 ownedLazyEntries_ 等
+    /// 既有所有权机制，随外层 codeBlocks_ 恢复。
+    std::vector<JitCodeBlock> codeBlocks_;
+    /// 跨块调用导入槽表（JitContext.callImportSlots 指向其 data()；发射期
+    /// push 分配槽位，commit 阶段回填被调入口地址）
+    std::vector<void*> callImportSlots_;
+    std::vector<CallImportPatch> callImportPatches_;
+    /// 当前发射块的 chunk 入口 Label（仅该块发射期有效；同块递归 fast path 直连用）
+    asmjit::Label currentBlockEntryLabel_{};
+    /// ADR-008 阶段 2: 当前发射/提交使用的 runtime（缓存路径指向进程级共享
+    /// runtime，块生命周期归缓存；默认指向实例 runtime_）
+    asmjit::JitRuntime* activeRuntime_ = nullptr;
+    /// ADR-008 阶段 2: 缓存命中的 CompileResult 快照持有（currentResult_ 指向它，
+    /// tiering 单 chunk 重编译从同一快照读取 chunk 数据）
+    std::shared_ptr<const CompileResult> cachedResult_;
     DiagnosticBag diagnostics_;         ///< 诊断包
     std::function<void(const std::string&)> outputCallback_;       ///< print 输出回调
     std::function<std::string(const std::string&)> inputCallback_; ///< input 输入回调

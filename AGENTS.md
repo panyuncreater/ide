@@ -1,10 +1,10 @@
 # MiniLang AGENTS
 
-> 版本 2.5 | 更新日期：2026-10-05 | 优先级：用户级规则（`%USERPROFILE%\.agent\AGENTS.md`）> 本文件 > `docs/`；同一语义冲突以 ADR 为最终裁决
+> 版本 2.6 | 更新日期：2026-10-11 | 优先级：用户级规则（`%USERPROFILE%\.agent\AGENTS.md`）> 本文件 > `docs/`；同一语义冲突以 ADR 为最终裁决
 
 ## 1. 角色与任务分派
 
-你是资深 C++20 编译器与虚拟机工程师，审计 MiniLang IDE——教学型编程语言 IDE：自研词法分析器与递归下降解析器、三套执行引擎（树遍历解释器、栈式字节码 VM、寄存器式 VM）+ x86-64 JIT 第四路径（asmjit，热路径分层编译，不支持场景优雅降级）、IR 层（SSA/GVN/LICM/内联）、调试器、格式化器、基于 Qt6 的完整 GUI。
+你是资深 C++20 编译器与虚拟机工程师，审计 MiniLang IDE——教学型编程语言 IDE：自研词法分析器与递归下降解析器、三套执行引擎（树遍历解释器、栈式字节码 VM、寄存器式 VM）+ x86-64 JIT 第四路径（asmjit，per-chunk 分层编译，不支持场景优雅降级）、IR 层（SSA/GVN/LICM/内联）、调试器、格式化器、基于 Qt6 的完整 GUI。
 
 - **执行引擎审计/修复**：按第 5 章流程排查，按「输出格式/交付格式」交付
 - **GUI/教学面板**：遵循 `docs/development.md`「新增教学面板指南」与 `gui/` 目录约定
@@ -35,6 +35,7 @@ Lexer → Parser → AST（MacroExpander 宏展开在 parse 期完成）→ {
 - 整数除法截断向零、and/or 短路返回操作数原值（非布尔）、类型注解强制、super 调用语义、dunder 分派、? 错误传播、async/await 调度均需多后端统一
 - IR 与非 IR 路径共享 VM，中间表示不同（BytecodeChunk vs RegBytecodeChunk）
 - 协程执行模型按 `MINILANG_CORO_FIBER` 平台门控（[ADR-007](docs/adr/ADR-007-coroutine-suspension.md)）：`=1`（Windows）三执行后端真挂起（副作用只执行一次），`=0` 三后端统一重放——**禁止单后端切换模式**；快照绝对索引重定基与嵌套上下文 checklist 见 `docs/specs/backend-consistency.md` §9
+- JIT per-chunk 编译架构（[ADR-008](docs/adr/ADR-008-jit-per-chunk.md)）：每 chunk 独立代码块，跨块调用经 `JitContext.callImportSlots` 导入槽；同源码重复运行命中进程内块缓存（键 = 字节码指纹 ^ `kJitCodegenVersion`，**codegen 行为变更必须递增该版本**，否则命中陈旧机器码）；lazy/分层/自定义阈值路径绕过缓存按需重编译
 
 ### 内存模型（出处：`docs/adr/ADR-001-nan-boxing.md`、`ADR-004-cow-memory.md`）
 - Value NaN-boxing（8 字节）；堆类型侵入式 RefCounted + GcManager mark-sweep 循环检测
@@ -64,7 +65,7 @@ Lexer → Parser → AST（MacroExpander 宏展开在 parse 期完成）→ {
 | 开发约定（含教学面板指南） | `docs/development.md` |
 | 测试策略与三后端差分 | `docs/testing.md` |
 | 构建与运行 | `docs/getting-started.md`、`docs/faq.md` |
-| 关键架构决策 ADR | `docs/adr/`（ADR-001~007：NaN-boxing/三后端/IR/COW/调试一致性/JIT/协程真挂起） |
+| 关键架构决策 ADR | `docs/adr/`（ADR-001~008：NaN-boxing/三后端/IR/COW/调试一致性/JIT/协程真挂起/JIT per-chunk 编译） |
 | 变更历史 | `docs/changelog/`（`archive/` 分月归档） |
 | 内存管理约定 | `docs/specs/memory-model.md` |
 | 多后端一致性 checklist + IR 栈平衡不变量 + JIT 语义判定 | `docs/specs/backend-consistency.md` |
@@ -139,3 +140,4 @@ Qoder 环境：以 `.qoder/skills/minilang-build/SKILL.md` 为诊断补充源（
 | 2026-10-03 | 2.3 | 审计清偿同步：§3 #1 更新为表驱动校验器（BytecodeIRBackendStackCheck.cpp + 编译期完备性）；§6 W4 豁免说明退役（gui/ 与 core 同基线）；新增 IROp 补表要求升级为编译期强制 |
 | 2026-10-04 | 2.4 | 三轮性能优化文档同步：§6 补 ctest -j 并行与 LNK1163（陈旧 unity obj 家族）处置注记；docs 同步（architecture IR 管线现状、backend-consistency §7 截断校验上移不变量、memory-model §2 内存序惯用法与 §3 GC 零拷贝根集/atomic 统计、testing 内联级联新行为、getting-started 排查条目）。代码变更明细见 CHANGELOG Unreleased 三条优化条目（三轮） |
 | 2026-10-05 | 2.5 | 协程真挂起架构 + 第四轮优化同步：新增 [ADR-007](docs/adr/ADR-007-coroutine-suspension.md)（三执行后端 `MINILANG_CORO_FIBER` 门控同步升级真挂起，勘误"VM 真挂起 D.5"历史注释；语义变更 = 生成器前缀副作用只执行一次）；§3 核心约束补协程模式门控行；backend-consistency 新增 §9（快照相对化 checklist/单边启用禁令/双路径核对义务）；development.md 最近变更摘要补 2026-10-05 条目。代码变更明细见 CHANGELOG Unreleased「协程真挂起架构落地」与「IR 编译路径优化第四轮」条目（4123/4123） |
+| 2026-10-11 | 2.6 | JIT per-chunk 编译架构落地：新增 [ADR-008](docs/adr/ADR-008-jit-per-chunk.md)（per-chunk 代码块 + tiering 真单 chunk 编译 + 进程内块缓存，勘误积压记录"跨后端帧协议"前提——JIT/VM 无帧互操作；执行行为零语义变化）；§3 核心约束补 JIT per-chunk 行（含 kJitCodegenVersion 递增纪律）；§1 角色行"分层编译"改"per-chunk 分层编译"；architecture.md JIT 节、backend-consistency.md §8（JitContext 字段数与 per-chunk 协议）、testing.md 测试计数同步。代码变更明细见 CHANGELOG Unreleased「JIT per-chunk 编译架构落地」条目（4132/4132，含 5 新增 BlockCache） |

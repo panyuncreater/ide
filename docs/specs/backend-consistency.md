@@ -71,10 +71,12 @@
 - **字节码截断校验（2026-10-04 上移）**：两 VM 的字节码截断检查在 `initExecution` 加载期一次性预扫描完成——`VM::initExecution` 校验主 chunk 与全部 `functionChunks_`（`validateChunkInstructionBoundaries`），`RegisterVM::initExecution` 同构（`validateRegChunkInstructionBoundaries`，基于 `RegBytecodeChunk::instructionSizeAt`）。主循环 release 不再逐指令做 `instructionSize`/`instructionSizeAt` 越界检查，debug 保留逐指令校验双保险。**不变量**：新增变长指令时，预扫描的展开逻辑（栈式 VM 内联 OP_CLOSURE 展开 / 寄存器 VM `instructionSizeAt`）与主循环消费的长度必须保持同一事实源，否则加载期校验与运行时推进错位。
 - 该校验器落地即捕获一处真实缺陷（顶层 super 写回多发 POP，见 CHANGELOG 2026-10-03）。
 
-## 8. JIT 语义判定补充（2026-10-03 复核）
+## 8. JIT 语义判定补充（2026-10-03 复核；2026-10-11 per-chunk 架构增补）
 
-- JIT 硬编码 NaN-boxing tag 常量与 `NaNBox.h` 编码的一致性由 `verifyNanBoxConstants()` 在 `JITBackend::execute` debug 入口校验（含 `JitContext` 30 个字段偏移的 static_assert 编译期护栏）。
+- JIT 硬编码 NaN-boxing tag 常量与 `NaNBox.h` 编码的一致性由 `verifyNanBoxConstants()` 在 `JITBackend::execute` debug 入口校验（含 `JitContext` 全部字段偏移的 static_assert 编译期护栏——**新增字段只允许尾部追加**并同步 `jit_offset` 常量与 static_assert，ADR-006 append-only 约束）。
 - JIT 遇不支持场景为 **fail-fast**（整体编译失败显式报错，无静默降级继续执行）；`genericXXX` 路径为运行时类型分发兜底，与审计报告 D4 中"FIXME/TODO 标记"无关（该说法为 `XXX` 子串误扫，勘误见报告内注）。
+- **per-chunk 编译架构（[ADR-008](../adr/ADR-008-jit-per-chunk.md)）跨块协议三不变**：`JitContext` 邮箱布局、`JitFrame` 72B 软帧布局、extern "C" helper ABI。跨块引用仅两条通道——跨块 OP_CALL fast path 经 `ctx->callImportSlots` 导入槽（槽位表跨编译代合并追加、`execute()` 入口清空）、非 main 块错误退出经 `ctx->errorExit`。涉及 JIT 代码生成的行为变更**必须递增 `kJitCodegenVersion`**（`JIT.h`），否则进程内块缓存会命中旧版本的陈旧机器码。
+- JIT 不与 StackVM/RegisterVM 发生帧互操作（VM 零 JIT 引用；OSR/反优化两端均为 JIT 块）——三后端一致性验证不涉及 JIT 帧协议；JIT 一致性以「已支持场景 = 与 StackVM 严格一致」断言（TestJIT/TestJITCoverageGaps）为准。
 
 ## 9. 协程真挂起一致性（2026-10-05 落地，ADR-007）
 

@@ -120,137 +120,203 @@ std::vector<std::pair<std::string, minilang::TypeFeedback>> JITBackend::getTypeF
 }
 
 // ============================================================
-// R152: compileChunkSpecialized — INT 特化重编译单个 chunk
+// ADR-008 阶段 1b: compileSingleChunkBlock —— 真单 chunk 编译
+// ------------------------------------------------------------
+// 仅发射目标 chunk 的独立代码块（块首入口 Label + 块体 + 错误退出桩；无
+// prologue/epilogue/闭包跳板——它作为"被调块"经既有 mailbox/导入槽协议进入，
+// r12/r13/r15 与共享操作数栈由调用方建立，与 lazy 模式既有跨块事实一致）。
+// 与全量编译（compileAllChunks）的关键差异：
+//   ① 不触碰 per-chunk 统计数组 / chunkTiers_ / classNameSet_ 等全局状态；
+//   ② 不覆写 ctx->errorExit / closureTrampoline_（无 main 块，继承外层值）；
+//   ③ IC callSiteId 追加编号（从既有容量起计，老块槽位永不失效）；
+//   ④ 跨块 fast path 仅在被调 chunk 已有 entryPtr 时走（singleChunkCompileMode_
+//      门控，见 emitCallDispatch；未编译被调回落 mailbox 运行期 lazy 触发）；
+//   ⑤ 导入槽表跨代合并追加（patchBegin 起回填，见 ADR-008 阶段 1a）。
+// 所有权：返回块基址（非 main 块块首即入口，entryPtr == 块基址），调用方恰好
+// 登记一次（ownedLazyEntries_ 或 registerSpecializedOwnership）。
 // ============================================================
-// 在 execute() 返回后对 recompiledFlags 标记的 chunk 调用。
-// 根据类型反馈决定是否特化：
-//   - TypeFeedback.otherCount == 0 且 floatCount == 0 → INT 特化（跳过 emitCheckInt）
-//   - 否则 → 不特化（返回 nullptr）
-//
-// 实现策略：复用 compileAllChunks 的全部逻辑，通过 specializeIntMode_ 标志控制
-// emitCheckInt 不生成类型检查代码。compileAllChunks 编译所有 chunk 为特化版本，
-// 从中提取目标 chunk 的入口并丢弃其他 chunk 的特化版本。
-//
-// 内存管理：特化版本的 CodeHolder 内存由 ownedSpecializedEntries_ 持有，析构时释放。
-// 入口切换：更新 methodEntries_[chunkName].entryPtr 为特化版本入口，下次 execute()
-// 时 emitMethodCall 自动 jmp 到特化版本。
-JitEntryFn JITBackend::compileChunkSpecialized(const CompileResult& result, size_t chunkIdx) {
-    if (currentResult_ == nullptr) {
+JitEntryFn JITBackend::compileSingleChunkBlock(const CompileResult& result, const std::string& chunkName) {
+    using namespace asmjit;
+
+    auto chunkIt = result.functionChunks.find(chunkName);
+    if (chunkIt == result.functionChunks.end()) {
         return nullptr;
     }
-    if (chunkIdx >= chunkNames_.size()) {
+    const BytecodeChunk& chunk = chunkIt->second;
+
+    // 全局 chunkIdx（per-chunk 统计数组寻址用，与全量编译索引严格一致）
+    size_t chunkIdx = static_cast<size_t>(-1);
+    for (size_t i = 1; i < chunkNames_.size(); ++i) {
+        if (chunkNames_[i] == chunkName) {
+            chunkIdx = i;
+            break;
+        }
+    }
+    if (chunkIdx == static_cast<size_t>(-1)) {
         return nullptr;
     }
 
-    // 检查类型反馈：仅当 otherCount==0 && floatCount==0 时才特化
-    if (chunkIdx >= typeFeedback_.size()) {
+    // funcTable 元数据（chunkId 按全局索引，供同块递归直连判定）
+    std::unordered_map<std::string, JitFuncInfo> funcTable;
+    for (const auto& [name, fc] : result.functionChunks) {
+        JitFuncInfo info;
+        info.localCount = fc.localCount;
+        info.arity = fc.arity;
+        info.requiredArity = fc.requiredArity;
+        info.chunk = &fc;
+        const auto& chunkCode = fc.code;
+        for (size_t i = 0; i < chunkCode.size();) {
+            if (static_cast<OpCode>(chunkCode[i]) == OpCode::OP_CLOSURE) {
+                info.hasInnerClosures = true;
+                break;
+            }
+            i += fc.instructionSizeAt(i);
+        }
+        funcTable.emplace(name, std::move(info));
+    }
+    for (size_t i = 1; i < chunkNames_.size(); ++i) {
+        auto fit = funcTable.find(chunkNames_[i]);
+        if (fit != funcTable.end()) {
+            fit->second.chunkId = i;
+        }
+    }
+
+    const size_t patchBegin = callImportPatches_.size(); // 本次编译代 patch 区段起点
+    const size_t memberIcBegin = memberGetIC_.size();    // memberGet IC 追加编号起点
+    const uint64_t methodIcBegin = nextMethodCallSiteId_;
+
+    CodeHolder code;
+    Error err = code.init(runtime_.environment());
+    if (err != kErrorOk) {
+        compileError(std::string("asmjit CodeHolder::init 失败: ") + DebugUtils::error_as_string(err));
+        return nullptr;
+    }
+    x86::Assembler a(&code);
+    Label entryLabel = a.new_label();
+    Label epilogueLabel = a.new_label();
+    currentBlockEntryLabel_ = entryLabel;
+
+    // IC 追加编号；跨块 fast path 按被调已编译与否分派（lazyMode_ 局部置 false）
+    nextCallSiteId_ = memberIcBegin;
+    nextMethodCallSiteId_ = methodIcBegin;
+    singleChunkCompileMode_ = true;
+    const bool savedLazyMode = lazyMode_;
+    lazyMode_ = false;
+    const bool ok = emitChunkBody(a, chunk, chunkIdx, epilogueLabel, funcTable);
+    lazyMode_ = savedLazyMode;
+    singleChunkCompileMode_ = false;
+    if (!ok) {
+        return nullptr;
+    }
+
+    // 错误退出桩（非 main 块，见 ADR-008 阶段 1a）
+    a.bind(epilogueLabel);
+    a.mov(x86::rax, x86::qword_ptr(x86::r12, jit_offset::errorExit));
+    a.jmp(x86::rax);
+
+    JitEntryFn blockEntry = nullptr;
+    Error addErr = runtime_.add(&blockEntry, &code);
+    if (addErr != kErrorOk) {
+        compileError(std::string("asmjit JitRuntime::add 失败: ") + DebugUtils::error_as_string(addErr));
+        return nullptr;
+    }
+
+    // 仅更新目标 chunk 的映射条目（不 clear/重建映射——外层其他块条目原样保留）
+    const uintptr_t entryAddr = reinterpret_cast<uintptr_t>(blockEntry) +
+                                code.label_offset_from_base(entryLabel);
+    if (chunkName.find('.') != std::string::npos) {
+        auto it = methodEntries_.find(chunkName);
+        if (it != methodEntries_.end()) {
+            it->second.entryPtr = reinterpret_cast<void*>(entryAddr);
+        }
+    } else {
+        auto it = funcEntries_.find(chunkName);
+        if (it != funcEntries_.end()) {
+            it->second.entryPtr = reinterpret_cast<void*>(entryAddr);
+        }
+    }
+
+    // memberGetIC_ 扩容到追加后的总量；重同步 ctx 指针（resize 可能 realloc）
+    if (memberGetIC_.size() < nextCallSiteId_) {
+        memberGetIC_.resize(nextCallSiteId_);
+    }
+    jitContext_.memberGetICPtr = memberGetIC_.data();
+
+    // 回填本次编译代的跨块导入槽（合并表追加区段，见 ADR-008 阶段 1a）
+    for (size_t p = patchBegin; p < callImportPatches_.size(); ++p) {
+        const CallImportPatch& patchInfo = callImportPatches_[p];
+        void* target = nullptr;
+        if (patchInfo.isMethod) {
+            auto it = methodEntries_.find(patchInfo.calleeName);
+            if (it != methodEntries_.end()) {
+                target = it->second.entryPtr;
+            }
+        } else {
+            auto it = funcEntries_.find(patchInfo.calleeName);
+            if (it != funcEntries_.end()) {
+                target = it->second.entryPtr;
+            }
+        }
+        if (target == nullptr) {
+            compileError("JIT 导入槽回填失败（被调 chunk 入口缺失）: " + patchInfo.calleeName);
+            runtime_.release(blockEntry);
+            return nullptr;
+        }
+        callImportSlots_[patchInfo.slotIdx] = target;
+    }
+    jitContext_.callImportSlots = callImportSlots_.data();
+
+    // OSR 入口点（仅 osrEntryGenMode_ 且 Label 已在本块生成；add 后偏移有效）
+    if (osrEntryGenMode_ && osrEntryLabelGenerated_ && osrEntryPointOut_ != nullptr) {
+        *osrEntryPointOut_ = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(blockEntry) +
+                                                     code.label_offset_from_base(osrEntryLabel_));
+    }
+
+    return blockEntry;
+}
+
+// ============================================================
+// R152: compileChunkSpecialized — INT 特化重编译单个 chunk（ADR-008 阶段 1b）
+// ============================================================
+// 在 execute() 返回后对 recompiledFlags 标记的 chunk 调用。
+// 类型反馈 otherCount==0 && floatCount==0 时以 specializeIntMode_ 门控重编译
+// 目标 chunk（emitCheckInt 跳过类型检查）。真单 chunk 编译：仅目标块重编译，
+// 不再全量重编译、不再 save/restore 外层状态（单 chunk 路径不触碰全局状态）。
+// 所有权经 registerSpecializedOwnership 登记退休链（重复特化时退休旧块）。
+JitEntryFn JITBackend::compileChunkSpecialized(const CompileResult& result, size_t chunkIdx) {
+    if (currentResult_ == nullptr || chunkIdx >= chunkNames_.size() || chunkIdx >= typeFeedback_.size()) {
         return nullptr;
     }
     const auto& tf = typeFeedback_[chunkIdx];
     if (tf.otherCount > 0 || tf.floatCount > 0) {
-        // 类型反馈显示非纯 INT，不特化（保持原版本）
-        return nullptr;
+        return nullptr; // 类型反馈显示非纯 INT，不特化（保持原版本）
+    }
+    const std::string targetChunkName = chunkNames_[chunkIdx];
+    if (targetChunkName.find('.') == std::string::npos) {
+        return nullptr; // 仅方法 chunk 参与特化入口切换（与既有行为一致）
     }
 
-    // 保存原 methodEntries_ 和 currentEntry_（compileAllChunks 会覆盖）
-    auto savedMethodEntries = methodEntries_;
-    // Bug #51 note: savedCurrentEntry 仅保存函数指针（指向 asmjit runtime 分配的
-    // 可执行内存）。当前安全性依赖于 asmjit::JitRuntime::add() 仅追加分配、
-    // 不释放已有代码这一事实——因此重编译期间 savedCurrentEntry 不会悬垂。
-    // 若未来引入代码回收/重用机制，需改用 RAII guard 或在恢复前重新验证指针有效性。
-    JitEntryFn savedCurrentEntry = currentEntry_;
-    // R152 fix: 保存 recompiledFlags_/chunkCallCounts_/typeFeedback_/hotThresholds_/chunkNames_
-    // compileAllChunks 会重置这些数组，导致 R151 测试在 execute() 返回后检查 recompiledFlags_ 时
-    // 发现已被重置为 0。必须保存并在特化后恢复。
-    auto savedRecompiledFlags = recompiledFlags_;
-    auto savedChunkCallCounts = chunkCallCounts_;
-    auto savedTypeFeedback = typeFeedback_;
-    auto savedHotThresholds = hotThresholds_;
-    auto savedChunkNames = chunkNames_;
-    auto savedGlobalNameToSlot = globalNameToSlot_;
-    auto savedClassInfo = classInfo_;
-    auto savedPendingFieldOrder = pendingFieldOrder_;
-    auto savedMethodLabels = std::move(specializedChunks_); // 保存已特化列表（临时清空避免干扰）
-
-    // 设置特化模式标志
     specializeIntMode_ = true;
-
-    // 调用 compileAllChunks 编译所有 chunk 为特化版本
-    // 注意：compileAllChunks 会调用 runtime_.add 分配新的可执行内存
-    JitEntryFn specializedEntry = compileAllChunks(result);
-
-    // 恢复特化模式标志
+    JitEntryFn targetBlock = compileSingleChunkBlock(result, targetChunkName);
     specializeIntMode_ = false;
-
-    if (!specializedEntry) {
-        // 特化编译失败，恢复原状态
-        methodEntries_ = std::move(savedMethodEntries);
-        currentEntry_ = savedCurrentEntry;
-        recompiledFlags_ = std::move(savedRecompiledFlags);
-        chunkCallCounts_ = std::move(savedChunkCallCounts);
-        typeFeedback_ = std::move(savedTypeFeedback);
-        hotThresholds_ = std::move(savedHotThresholds);
-        chunkNames_ = std::move(savedChunkNames);
-        globalNameToSlot_ = std::move(savedGlobalNameToSlot);
-        classInfo_ = std::move(savedClassInfo);
-        pendingFieldOrder_ = std::move(savedPendingFieldOrder);
-        specializedChunks_ = std::move(savedMethodLabels);
+    if (targetBlock == nullptr) {
         return nullptr;
     }
 
-    // 特化版本的 methodEntries_ 现在包含所有方法 chunk 的特化入口
-    // 提取目标 chunk 的特化入口（chunkNames_ 已被 compileAllChunks 重建，内容相同）
-    const std::string targetChunkName = (chunkIdx < chunkNames_.size()) ? chunkNames_[chunkIdx] : std::string{};
-    auto it = methodEntries_.find(targetChunkName);
-    void* specializedMethodEntry = nullptr;
-    if (it != methodEntries_.end()) {
-        specializedMethodEntry = it->second.entryPtr;
-    }
-
-    // 恢复原状态（compileAllChunks 重置了这些数组）
-    methodEntries_ = std::move(savedMethodEntries);
-    currentEntry_ = savedCurrentEntry;
-    recompiledFlags_ = std::move(savedRecompiledFlags);
-    chunkCallCounts_ = std::move(savedChunkCallCounts);
-    typeFeedback_ = std::move(savedTypeFeedback);
-    hotThresholds_ = std::move(savedHotThresholds);
-    chunkNames_ = std::move(savedChunkNames);
-    globalNameToSlot_ = std::move(savedGlobalNameToSlot);
-    classInfo_ = std::move(savedClassInfo);
-    pendingFieldOrder_ = std::move(savedPendingFieldOrder);
-    specializedChunks_ = std::move(savedMethodLabels);
-
-    if (!specializedMethodEntry) {
-        // 目标 chunk 不是方法 chunk（无 methodEntries_ 条目），无法切换入口
-        // 释放特化版本的 CodeHolder 内存
-        runtime_.release(specializedEntry);
-        return nullptr;
-    }
-
-    // 更新原 methodEntries_[targetChunkName].entryPtr 为特化版本入口
-    auto origIt = methodEntries_.find(targetChunkName);
-    if (origIt != methodEntries_.end()) {
-        origIt->second.entryPtr = specializedMethodEntry;
-    }
-
-    // R153: 持久化特化入口映射，下次 execute() compileAllChunks 后重新应用
-    // （compileAllChunks 每次调用会 methodEntries_.clear() 并重新填充，覆盖特化入口）
-    specializedMethodEntries_[targetChunkName] = specializedMethodEntry;
-
-    // 保存特化版本 CodeHolder 内存所有权，析构时释放
-    registerSpecializedOwnership(targetChunkName, specializedEntry); // AUDIT-R4 BUG-12: 旧块退休+新块登记
-
+    // R153: 持久化特化入口映射，下次 execute() 重新应用
+    specializedMethodEntries_[targetChunkName] = targetBlock;
+    // 所有权登记（AUDIT-R4 BUG-12: 旧块退休+新块登记，恰好一次）
+    registerSpecializedOwnership(targetChunkName, targetBlock);
     // 记录已特化的 chunk 名称
     specializedChunks_.push_back(targetChunkName);
-
     // 保存特化入口指针（按 chunkIdx 索引，测试验证用）
     if (specializedEntries_.size() <= chunkIdx) {
         specializedEntries_.resize(chunkIdx + 1, nullptr);
     }
-    specializedEntries_[chunkIdx] = specializedEntry;
-
-    return specializedEntry;
+    specializedEntries_[chunkIdx] = targetBlock;
+    return targetBlock;
 }
+
 
 // ============================================================
 // AUDIT-R4 BUG-12 fix: 特化块所有权登记与退休释放
@@ -282,288 +348,63 @@ void JITBackend::releaseRetiredSpecializedEntries() {
 }
 
 // ============================================================
-// R153: compileChunkSpecializedFloat — FLOAT 特化重编译单个 chunk
+// R153: compileChunkSpecializedFloat — FLOAT 特化重编译单个 chunk（ADR-008 阶段 1b）
 // ============================================================
-// 在 execute() 返回后对 recompiledFlags 标记的 chunk 调用。
-// 根据类型反馈决定是否特化：
-//   - TypeFeedback.floatCount > 0 且 otherCount == 0 → FLOAT 特化
-//     （emitCheckInt 生成无条件 jmp 跳过 INT 原生路径，emitRecordTypeFeedback 不生成代码）
-//   - 否则 → 不特化（返回 nullptr）
-//
-// 实现策略：复用 compileAllChunks 的全部逻辑，通过 specializeFloatMode_ 标志控制
-// emitCheckInt 生成无条件 jmp 跳过 INT 原生路径，emitRecordTypeFeedback 不生成代码。
-// compileAllChunks 编译所有 chunk 为 FLOAT 特化版本，从中提取目标 chunk 的入口并丢弃其他 chunk。
-//
-// 性能提升：跳过 INT 类型检查（6→2 条 jmp）+ 跳过类型反馈收集（7→0 条指令）+
-// 跳过 INT 原生路径溢出检查（运行时不执行）。操作数均走 genericXXX 路径调用 C++ 辅助函数。
-//
-// 内存管理：与 INT 特化版本一致，特化版本 CodeHolder 内存由 ownedSpecializedEntries_ 持有。
+// 类型反馈 floatCount>0 && otherCount==0 时以 specializeFloatMode_ 门控重编译
+// 目标 chunk（emitCheckInt 无条件跳过 INT 原生路径 + 不收集类型反馈）。
+// 其余与 compileChunkSpecialized 一致（真单 chunk 编译 + 所有权退休链）。
 JitEntryFn JITBackend::compileChunkSpecializedFloat(const CompileResult& result, size_t chunkIdx) {
-    if (currentResult_ == nullptr) {
-        return nullptr;
-    }
-    if (chunkIdx >= chunkNames_.size()) {
-        return nullptr;
-    }
-
-    // 检查类型反馈：仅当 floatCount>0 && otherCount==0 时才特化
-    if (chunkIdx >= typeFeedback_.size()) {
+    if (currentResult_ == nullptr || chunkIdx >= chunkNames_.size() || chunkIdx >= typeFeedback_.size()) {
         return nullptr;
     }
     const auto& tf = typeFeedback_[chunkIdx];
     if (tf.floatCount == 0 || tf.otherCount > 0) {
-        // 类型反馈显示非纯 FLOAT，不特化（保持原版本）
-        return nullptr;
+        return nullptr; // 类型反馈显示非纯 FLOAT，不特化（保持原版本）
+    }
+    const std::string targetChunkName = chunkNames_[chunkIdx];
+    if (targetChunkName.find('.') == std::string::npos) {
+        return nullptr; // 仅方法 chunk 参与特化入口切换（与既有行为一致）
     }
 
-    // 保存原 methodEntries_ 和 currentEntry_（compileAllChunks 会覆盖）
-    auto savedMethodEntries = methodEntries_;
-    // Bug #51 note: savedCurrentEntry 仅保存函数指针（指向 asmjit runtime 分配的
-    // 可执行内存）。当前安全性依赖于 asmjit::JitRuntime::add() 仅追加分配、
-    // 不释放已有代码这一事实——因此重编译期间 savedCurrentEntry 不会悬垂。
-    // 若未来引入代码回收/重用机制，需改用 RAII guard 或在恢复前重新验证指针有效性。
-    JitEntryFn savedCurrentEntry = currentEntry_;
-    // 保存所有 compileAllChunks 会重置的数组成员（与 INT 特化保持一致）
-    auto savedRecompiledFlags = recompiledFlags_;
-    auto savedChunkCallCounts = chunkCallCounts_;
-    auto savedTypeFeedback = typeFeedback_;
-    auto savedHotThresholds = hotThresholds_;
-    auto savedChunkNames = chunkNames_;
-    auto savedGlobalNameToSlot = globalNameToSlot_;
-    auto savedClassInfo = classInfo_;
-    auto savedPendingFieldOrder = pendingFieldOrder_;
-    auto savedMethodLabels = std::move(specializedChunks_); // 保存已特化列表（临时清空避免干扰）
-
-    // 设置 FLOAT 特化模式标志
     specializeFloatMode_ = true;
-
-    // 调用 compileAllChunks 编译所有 chunk 为 FLOAT 特化版本
-    JitEntryFn specializedEntry = compileAllChunks(result);
-
-    // 恢复特化模式标志
+    JitEntryFn targetBlock = compileSingleChunkBlock(result, targetChunkName);
     specializeFloatMode_ = false;
-
-    if (!specializedEntry) {
-        // 特化编译失败，恢复原状态
-        methodEntries_ = std::move(savedMethodEntries);
-        currentEntry_ = savedCurrentEntry;
-        recompiledFlags_ = std::move(savedRecompiledFlags);
-        chunkCallCounts_ = std::move(savedChunkCallCounts);
-        typeFeedback_ = std::move(savedTypeFeedback);
-        hotThresholds_ = std::move(savedHotThresholds);
-        chunkNames_ = std::move(savedChunkNames);
-        globalNameToSlot_ = std::move(savedGlobalNameToSlot);
-        classInfo_ = std::move(savedClassInfo);
-        pendingFieldOrder_ = std::move(savedPendingFieldOrder);
-        specializedChunks_ = std::move(savedMethodLabels);
+    if (targetBlock == nullptr) {
         return nullptr;
     }
 
-    // 特化版本的 methodEntries_ 现在包含所有方法 chunk 的特化入口
-    // 提取目标 chunk 的特化入口
-    const std::string targetChunkName = (chunkIdx < chunkNames_.size()) ? chunkNames_[chunkIdx] : std::string{};
-    auto it = methodEntries_.find(targetChunkName);
-    void* specializedMethodEntry = nullptr;
-    if (it != methodEntries_.end()) {
-        specializedMethodEntry = it->second.entryPtr;
-    }
-
-    // 恢复原状态（compileAllChunks 重置了这些数组）
-    methodEntries_ = std::move(savedMethodEntries);
-    currentEntry_ = savedCurrentEntry;
-    recompiledFlags_ = std::move(savedRecompiledFlags);
-    chunkCallCounts_ = std::move(savedChunkCallCounts);
-    typeFeedback_ = std::move(savedTypeFeedback);
-    hotThresholds_ = std::move(savedHotThresholds);
-    chunkNames_ = std::move(savedChunkNames);
-    globalNameToSlot_ = std::move(savedGlobalNameToSlot);
-    classInfo_ = std::move(savedClassInfo);
-    pendingFieldOrder_ = std::move(savedPendingFieldOrder);
-    specializedChunks_ = std::move(savedMethodLabels);
-
-    if (!specializedMethodEntry) {
-        // 目标 chunk 不是方法 chunk（无 methodEntries_ 条目），无法切换入口
-        runtime_.release(specializedEntry);
-        return nullptr;
-    }
-
-    // 更新原 methodEntries_[targetChunkName].entryPtr 为特化版本入口
-    auto origIt = methodEntries_.find(targetChunkName);
-    if (origIt != methodEntries_.end()) {
-        origIt->second.entryPtr = specializedMethodEntry;
-    }
-
-    // R153: 持久化特化入口映射，下次 execute() compileAllChunks 后重新应用
-    // （compileAllChunks 每次调用会 methodEntries_.clear() 并重新填充，覆盖特化入口）
-    specializedMethodEntries_[targetChunkName] = specializedMethodEntry;
-
-    // 保存特化版本 CodeHolder 内存所有权，析构时释放
-    registerSpecializedOwnership(targetChunkName, specializedEntry); // AUDIT-R4 BUG-12: 旧块退休+新块登记
-
-    // 记录已特化的 chunk 名称
+    specializedMethodEntries_[targetChunkName] = targetBlock;
+    registerSpecializedOwnership(targetChunkName, targetBlock);
     specializedChunks_.push_back(targetChunkName);
-
-    // 保存特化入口指针（按 chunkIdx 索引，测试验证用）
     if (specializedEntries_.size() <= chunkIdx) {
         specializedEntries_.resize(chunkIdx + 1, nullptr);
     }
-    specializedEntries_[chunkIdx] = specializedEntry;
-
-    return specializedEntry;
+    specializedEntries_[chunkIdx] = targetBlock;
+    return targetBlock;
 }
 
 // ============================================================
-// R157: compileSingleChunkLazy — 按需编译单个 chunk 到独立 CodeHolder
+// R157: compileSingleChunkLazy — 按需编译单个 chunk（ADR-008 阶段 1b 真单 chunk）
 // ------------------------------------------------------------
 // 在 lazyMode_ 为 true 且函数/方法首次调用时，由 jitCallByName 通过
-// backendPtr 触发。保存所有 compileAllChunks 会重置的状态 → 调用
-// compileAllChunks 编译所有 chunk → 提取目标 chunk 入口 → 恢复原状态 →
-// 更新原 funcEntries_/methodEntries_ 的 entryPtr → 保存内存所有权到
-// ownedLazyEntries_ → 记录到 lazyCompiledChunksList_。
-//
-// 简化版策略：lazy 编译仍编译全部 chunk（避免 chunk 间引用解析复杂度），
-// 但只提取目标 chunk 入口并更新原映射，使原 jitCallByName 查找返回
-// 非空入口。后续同 chunk 调用直接走已更新映射，无再次 lazy 触发。
+// backendPtr 触发。仅编译目标 chunk 的独立代码块并更新其映射条目，
+// 其余 chunk 状态零触碰（原实现重编译全部 chunk + 14 向量 save/restore）。
+// 所有权移交 ownedLazyEntries_，存活至下次 execute() 入口安全点释放。
 // ============================================================
 JitEntryFn JITBackend::compileSingleChunkLazy(const CompileResult& result, const std::string& chunkName) {
     if (!currentResult_) {
         return nullptr;
     }
 
-    // R157: 保存所有 compileAllChunks 会重置的状态（与 compileChunkSpecialized 保持一致）
-    // compileAllChunks 会重置 funcEntries_/methodEntries_/specializedMethodEntries_/
-    // chunkCallCounts_/chunkNames_/hotThresholds_/recompiledFlags_/typeFeedback_/
-    // osrLoopCounts_/osrLoopThresholds_/osrRecompiledFlags_ 等。
-    // 不保存/恢复会导致运行时统计丢失（如 OSR 回边计数被清零后重复触发）。
-    auto savedFuncEntries = funcEntries_;
-    auto savedMethodEntries = methodEntries_;
-    auto savedSpecializedMethodEntries = specializedMethodEntries_;
-    JitEntryFn savedCurrentEntry = currentEntry_;
-    auto savedRecompiledFlags = recompiledFlags_;
-    auto savedChunkCallCounts = chunkCallCounts_;
-    auto savedTypeFeedback = typeFeedback_;
-    auto savedHotThresholds = hotThresholds_;
-    auto savedChunkNames = chunkNames_;
-    auto savedSpecializedChunks = specializedChunks_;
-    auto savedOsrLoopCounts = osrLoopCounts_;
-    auto savedOsrLoopThresholds = osrLoopThresholds_;
-    auto savedOsrRecompiledFlags = osrRecompiledFlags_;
-    auto savedChunkTiers = chunkTiers_; // R159: 保存 chunkTiers_ 防止 inner compileAllChunks 覆盖
-
-    // 调用 compileAllChunks 编译全部 chunk 到新 CodeHolder
-    // 注意：compileAllChunks 会重置上述数组成员并重新填充
-    // R157 关键：临时禁用 lazyMode_，使新编译的 funcEntries_/methodEntries_
-    // 包含真实 entryPtr（而非 null），否则无法提取目标 chunk 入口。
-    bool savedLazyMode = lazyMode_;
-    lazyMode_ = false;
-    JitEntryFn newEntry = compileAllChunks(result);
-    lazyMode_ = savedLazyMode;
-    if (newEntry == nullptr) {
-        // 编译失败，恢复原状态
-        funcEntries_ = std::move(savedFuncEntries);
-        methodEntries_ = std::move(savedMethodEntries);
-        specializedMethodEntries_ = std::move(savedSpecializedMethodEntries);
-        currentEntry_ = savedCurrentEntry;
-        recompiledFlags_ = std::move(savedRecompiledFlags);
-        chunkCallCounts_ = std::move(savedChunkCallCounts);
-        typeFeedback_ = std::move(savedTypeFeedback);
-        hotThresholds_ = std::move(savedHotThresholds);
-        chunkNames_ = std::move(savedChunkNames);
-        specializedChunks_ = std::move(savedSpecializedChunks);
-        osrLoopCounts_ = std::move(savedOsrLoopCounts);
-        osrLoopThresholds_ = std::move(savedOsrLoopThresholds);
-        osrRecompiledFlags_ = std::move(savedOsrRecompiledFlags);
-        chunkTiers_ = std::move(savedChunkTiers);
+    JitEntryFn targetBlock = compileSingleChunkBlock(result, chunkName);
+    if (targetBlock == nullptr) {
         return nullptr;
     }
 
-    // 从新编译的 funcEntries_ 提取目标 chunk 入口（普通函数名查找）
-    JitEntryFn targetEntry = nullptr;
-    auto funcIt = funcEntries_.find(chunkName);
-    if (funcIt != funcEntries_.end()) {
-        targetEntry = reinterpret_cast<JitEntryFn>(funcIt->second.entryPtr);
-    } else {
-        // 也尝试 methodEntries_（"Class.method" 格式）
-        auto methodIt = methodEntries_.find(chunkName);
-        if (methodIt != methodEntries_.end()) {
-            targetEntry = reinterpret_cast<JitEntryFn>(methodIt->second.entryPtr);
-        }
-    }
-
-    if (targetEntry == nullptr) {
-        // 未找到目标 chunk，恢复原状态
-        funcEntries_ = std::move(savedFuncEntries);
-        methodEntries_ = std::move(savedMethodEntries);
-        specializedMethodEntries_ = std::move(savedSpecializedMethodEntries);
-        runtime_.release(newEntry);
-        currentEntry_ = savedCurrentEntry;
-        recompiledFlags_ = std::move(savedRecompiledFlags);
-        chunkCallCounts_ = std::move(savedChunkCallCounts);
-        typeFeedback_ = std::move(savedTypeFeedback);
-        hotThresholds_ = std::move(savedHotThresholds);
-        chunkNames_ = std::move(savedChunkNames);
-        specializedChunks_ = std::move(savedSpecializedChunks);
-        osrLoopCounts_ = std::move(savedOsrLoopCounts);
-        osrLoopThresholds_ = std::move(savedOsrLoopThresholds);
-        osrRecompiledFlags_ = std::move(savedOsrRecompiledFlags);
-        chunkTiers_ = std::move(savedChunkTiers);
-        return nullptr;
-    }
-
-    // 保存新 CodeHolder 内存所有权到 ownedLazyEntries_（避免被下次 compileAllChunks 释放）
-    ownedLazyEntries_.push_back(newEntry);
-
-    // 恢复原状态
-    funcEntries_ = std::move(savedFuncEntries);
-    methodEntries_ = std::move(savedMethodEntries);
-    specializedMethodEntries_ = std::move(savedSpecializedMethodEntries);
-    currentEntry_ = savedCurrentEntry;
-    recompiledFlags_ = std::move(savedRecompiledFlags);
-    chunkCallCounts_ = std::move(savedChunkCallCounts);
-    typeFeedback_ = std::move(savedTypeFeedback);
-    hotThresholds_ = std::move(savedHotThresholds);
-    chunkNames_ = std::move(savedChunkNames);
-    specializedChunks_ = std::move(savedSpecializedChunks);
-    osrLoopCounts_ = std::move(savedOsrLoopCounts);
-    osrLoopThresholds_ = std::move(savedOsrLoopThresholds);
-    osrRecompiledFlags_ = std::move(savedOsrRecompiledFlags);
-    chunkTiers_ = std::move(savedChunkTiers);
-
-    // R157 fix: 恢复状态后必须重新同步 jitContext_ 中所有指向 data() 的字段。
-    // compileAllChunks 内部会为 chunkCallCounts_/hotThresholds_/recompiledFlags_/
-    // typeFeedback_/osrLoopCounts_/osrLoopThresholds_/osrRecompiledFlags_ 重新分配
-    // 内存并设置 jitContext_ 指向新 data()。恢复旧 vector 后这些指针变为悬空，
-    // 导致后续 JIT 代码通过 jitContext_ 访问到无效内存（崩溃根因）。
-    jitContext_.chunkCallCounts = chunkCallCounts_.data();
-    jitContext_.hotThresholds = hotThresholds_.data();
-    jitContext_.recompiledFlags = recompiledFlags_.data();
-    jitContext_.typeFeedback = typeFeedback_.data();
-    jitContext_.osrLoopCountsPtr = osrLoopCounts_.data();
-    jitContext_.osrLoopThresholdsPtr = osrLoopThresholds_.data();
-    jitContext_.osrRecompiledFlagsPtr = osrRecompiledFlags_.data();
-    jitContext_.backendPtr = this;
-
-    // 更新原映射中目标 chunk 的 entryPtr
-    auto origFuncIt = funcEntries_.find(chunkName);
-    if (origFuncIt != funcEntries_.end()) {
-        origFuncIt->second.entryPtr = reinterpret_cast<void*>(targetEntry);
-    } else {
-        auto origMethodIt = methodEntries_.find(chunkName);
-        if (origMethodIt != methodEntries_.end()) {
-            origMethodIt->second.entryPtr = reinterpret_cast<void*>(targetEntry);
-        }
-    }
-
-    // 记录已 lazy 编译的 chunk 名称（去重）
-    if (std::find(lazyCompiledChunksList_.begin(), lazyCompiledChunksList_.end(), chunkName) ==
-        lazyCompiledChunksList_.end()) {
-        lazyCompiledChunksList_.push_back(chunkName);
-    }
+    // lazy 编译块移交 ownedLazyEntries_（下次 execute() 入口释放）
+    ownedLazyEntries_.push_back(targetBlock);
 
     // R159: Tier 0→Tier 1 自动升级 — lazy compile 成功后更新 chunkTiers_
-    // 分层编译模式下，非 main chunk 初始为 Tier 0 (Interpreter)，首次调用触发
-    // lazy compilation 升级到 Tier 1 (Baseline)。chunkNames_ 与 chunkTiers_ 在
-    // compileAllChunks 中按相同顺序构建，此处按名查找对应索引并升级。
     if (tieredMode_) {
         for (size_t i = 0; i < chunkNames_.size() && i < chunkTiers_.size(); ++i) {
             if (chunkNames_[i] == chunkName && chunkTiers_[i] == minilang::JitTier::Interpreter) {
@@ -573,7 +414,21 @@ JitEntryFn JITBackend::compileSingleChunkLazy(const CompileResult& result, const
         }
     }
 
-    return targetEntry;
+    // baseline 入口备份（反优化回退目标；等价原全量备份对该 chunk 的语义，
+    // 且不再被内层全量编译连带覆写其他 chunk 的备份）
+    if (chunkName.find('.') != std::string::npos) {
+        baselineMethodEntries_[chunkName] = reinterpret_cast<void*>(targetBlock);
+    } else {
+        baselineFuncEntries_[chunkName] = reinterpret_cast<void*>(targetBlock);
+    }
+
+    // 记录已 lazy 编译的 chunk 名称（去重，教学统计用）
+    if (std::find(lazyCompiledChunksList_.begin(), lazyCompiledChunksList_.end(), chunkName) ==
+        lazyCompiledChunksList_.end()) {
+        lazyCompiledChunksList_.push_back(chunkName);
+    }
+
+    return targetBlock;
 }
 
 // ============================================================
@@ -614,10 +469,8 @@ int64_t JITBackend::triggerOsrRecompile(int64_t chunkIdx) {
         return -1;
     }
 
-    // R157 fix: compileChunkSpecialized/Float 内部调用 compileAllChunks 会重置
-    // osrRecompiledFlags_ 为全 0（compileAllChunks 末尾 assign(size, 0)），
-    // 导致 JIT 代码后续循环迭代看到 flag==0 重新触发 OSR。
-    // 特化成功后重新设置标志，避免重复触发。
+    // R157 fix: 特化重编译不再重置 osrRecompiledFlags_（ADR-008 阶段 1b
+    // 真单 chunk 编译不触碰统计数组）；此处保留幂等置 1 防御。
     if (specializedEntry != nullptr) {
         if (static_cast<size_t>(chunkIdx) < osrRecompiledFlags_.size()) {
             osrRecompiledFlags_[static_cast<size_t>(chunkIdx)] = 1;
@@ -657,61 +510,33 @@ std::vector<std::pair<std::string, uint64_t>> JITBackend::getOsrRecompileStats()
 }
 
 // ============================================================
-// R158: compileChunkSpecializedWithOsr — INT 特化重编译（含 OSR 入口点）
+// R158: compileChunkSpecializedWithOsr — INT 特化重编译（含 OSR 入口点，阶段 1b）
 // ------------------------------------------------------------
-// 与 R152 compileChunkSpecialized 类似，但启用 OSR 入口点生成模式。
-// compileAllChunks 在目标 chunk 的第一个 OP_LOOP 位置生成 OSR 入口 Label，
-// 该 Label 恢复 r13/r15 从邮箱后跳转到循环回边目标。
-// OSR 入口点地址通过 osrEntryPointOut_ 输出。
-//
-// 设计要点：
-//   1. 保存/恢复模式与 compileChunkSpecialized 一致（12+ 成员）
-//   2. 额外保存/恢复 osrEntryGenMode_/osrTargetChunkIdx_/osrEntryLabelGenerated_/osrEntryPointOut_
-//   3. compileAllChunks 内部检测 osrEntryGenMode_ 并生成 OSR 入口 Label
-//   4. OSR 入口点地址在 runtime_.add 后由 compileAllChunks 写入 *osrEntryPointOut_
+// 与 R152 类似但启用 OSR 入口点生成模式：目标块在其第一个 OP_LOOP 位置生成
+// OSR 入口 Label（恢复 r13/r15 + 重载缓存常量 + jmp 循环回边），入口地址经
+// osrEntryPointOut_ 邮箱返回，实现真正 OSR 栈帧迁移。
 // ============================================================
 JitEntryFn JITBackend::compileChunkSpecializedWithOsr(const CompileResult& result, size_t chunkIdx,
                                                       void** osrEntryPointPtr) {
-    if (currentResult_ == nullptr || osrEntryPointPtr == nullptr) {
-        return nullptr;
-    }
-    if (chunkIdx >= chunkNames_.size()) {
-        return nullptr;
-    }
-
-    // 检查类型反馈：仅当 otherCount==0 && floatCount==0 时才 INT 特化
-    if (chunkIdx >= typeFeedback_.size()) {
+    if (currentResult_ == nullptr || osrEntryPointPtr == nullptr || chunkIdx >= chunkNames_.size() ||
+        chunkIdx >= typeFeedback_.size()) {
         return nullptr;
     }
     const auto& tf = typeFeedback_[chunkIdx];
     if (tf.otherCount > 0 || tf.floatCount > 0) {
         return nullptr;
     }
+    const std::string targetChunkName = chunkNames_[chunkIdx];
+    if (targetChunkName.find('.') == std::string::npos) {
+        return nullptr;
+    }
 
-    // 保存原状态（与 compileChunkSpecialized 保持一致）
-    auto savedMethodEntries = methodEntries_;
-    JitEntryFn savedCurrentEntry = currentEntry_;
-    auto savedRecompiledFlags = recompiledFlags_;
-    auto savedChunkCallCounts = chunkCallCounts_;
-    auto savedTypeFeedback = typeFeedback_;
-    auto savedHotThresholds = hotThresholds_;
-    auto savedChunkNames = chunkNames_;
-    auto savedGlobalNameToSlot = globalNameToSlot_;
-    auto savedClassInfo = classInfo_;
-    auto savedPendingFieldOrder = pendingFieldOrder_;
-    auto savedMethodLabels = std::move(specializedChunks_);
-    auto savedFuncEntries = funcEntries_;
-    auto savedSpecializedMethodEntries = specializedMethodEntries_;
-    auto savedOsrLoopCounts = osrLoopCounts_;
-    auto savedOsrLoopThresholds = osrLoopThresholds_;
-    auto savedOsrRecompiledFlags = osrRecompiledFlags_;
-    // R158: 保存 OSR 入口点生成模式状态
+    // 仅 OSR 模式状态需暂存/恢复（单 chunk 路径不触碰其余全局状态）
     bool savedOsrEntryGenMode = osrEntryGenMode_;
     size_t savedOsrTargetChunkIdx = osrTargetChunkIdx_;
     bool savedOsrEntryLabelGenerated = osrEntryLabelGenerated_;
     void** savedOsrEntryPointOut = osrEntryPointOut_;
 
-    // 设置 INT 特化 + OSR 入口点生成模式
     specializeIntMode_ = true;
     osrEntryGenMode_ = true;
     osrTargetChunkIdx_ = chunkIdx;
@@ -719,161 +544,57 @@ JitEntryFn JITBackend::compileChunkSpecializedWithOsr(const CompileResult& resul
     osrEntryPointOut_ = osrEntryPointPtr;
     *osrEntryPointPtr = nullptr; // 初始化为 null
 
-    // 调用 compileAllChunks 编译所有 chunk 为 INT 特化版本（含 OSR 入口点）
-    JitEntryFn specializedEntry = compileAllChunks(result);
+    JitEntryFn targetBlock = compileSingleChunkBlock(result, targetChunkName);
 
-    // 恢复特化模式标志
     specializeIntMode_ = false;
-    osrEntryGenMode_ = false;
-
-    if (!specializedEntry) {
-        // 特化编译失败，恢复原状态
-        methodEntries_ = std::move(savedMethodEntries);
-        currentEntry_ = savedCurrentEntry;
-        recompiledFlags_ = std::move(savedRecompiledFlags);
-        chunkCallCounts_ = std::move(savedChunkCallCounts);
-        typeFeedback_ = std::move(savedTypeFeedback);
-        hotThresholds_ = std::move(savedHotThresholds);
-        chunkNames_ = std::move(savedChunkNames);
-        globalNameToSlot_ = std::move(savedGlobalNameToSlot);
-        classInfo_ = std::move(savedClassInfo);
-        pendingFieldOrder_ = std::move(savedPendingFieldOrder);
-        specializedChunks_ = std::move(savedMethodLabels);
-        funcEntries_ = std::move(savedFuncEntries);
-        specializedMethodEntries_ = std::move(savedSpecializedMethodEntries);
-        osrLoopCounts_ = std::move(savedOsrLoopCounts);
-        osrLoopThresholds_ = std::move(savedOsrLoopThresholds);
-        osrRecompiledFlags_ = std::move(savedOsrRecompiledFlags);
-        osrEntryGenMode_ = savedOsrEntryGenMode;
-        osrTargetChunkIdx_ = savedOsrTargetChunkIdx;
-        osrEntryLabelGenerated_ = savedOsrEntryLabelGenerated;
-        osrEntryPointOut_ = savedOsrEntryPointOut;
-        // R157 教训：恢复状态后重新同步 jitContext_ 指针
-        jitContext_.chunkCallCounts = chunkCallCounts_.data();
-        jitContext_.hotThresholds = hotThresholds_.data();
-        jitContext_.recompiledFlags = recompiledFlags_.data();
-        jitContext_.typeFeedback = typeFeedback_.data();
-        jitContext_.osrLoopCountsPtr = osrLoopCounts_.data();
-        jitContext_.osrLoopThresholdsPtr = osrLoopThresholds_.data();
-        jitContext_.osrRecompiledFlagsPtr = osrRecompiledFlags_.data();
-        jitContext_.backendPtr = this;
-        return nullptr;
-    }
-
-    // 提取目标 chunk 的特化入口
-    const std::string targetChunkName = (chunkIdx < chunkNames_.size()) ? chunkNames_[chunkIdx] : std::string{};
-    auto it = methodEntries_.find(targetChunkName);
-    void* specializedMethodEntry = nullptr;
-    if (it != methodEntries_.end()) {
-        specializedMethodEntry = it->second.entryPtr;
-    }
-
-    // 恢复原状态
-    methodEntries_ = std::move(savedMethodEntries);
-    currentEntry_ = savedCurrentEntry;
-    recompiledFlags_ = std::move(savedRecompiledFlags);
-    chunkCallCounts_ = std::move(savedChunkCallCounts);
-    typeFeedback_ = std::move(savedTypeFeedback);
-    hotThresholds_ = std::move(savedHotThresholds);
-    chunkNames_ = std::move(savedChunkNames);
-    globalNameToSlot_ = std::move(savedGlobalNameToSlot);
-    classInfo_ = std::move(savedClassInfo);
-    pendingFieldOrder_ = std::move(savedPendingFieldOrder);
-    specializedChunks_ = std::move(savedMethodLabels);
-    funcEntries_ = std::move(savedFuncEntries);
-    specializedMethodEntries_ = std::move(savedSpecializedMethodEntries);
-    osrLoopCounts_ = std::move(savedOsrLoopCounts);
-    osrLoopThresholds_ = std::move(savedOsrLoopThresholds);
-    osrRecompiledFlags_ = std::move(savedOsrRecompiledFlags);
     osrEntryGenMode_ = savedOsrEntryGenMode;
     osrTargetChunkIdx_ = savedOsrTargetChunkIdx;
-    osrEntryLabelGenerated_ = savedOsrEntryLabelGenerated;
     osrEntryPointOut_ = savedOsrEntryPointOut;
 
-    // R157 教训：恢复状态后重新同步 jitContext_ 中所有指向 data() 的字段
-    jitContext_.chunkCallCounts = chunkCallCounts_.data();
-    jitContext_.hotThresholds = hotThresholds_.data();
-    jitContext_.recompiledFlags = recompiledFlags_.data();
-    jitContext_.typeFeedback = typeFeedback_.data();
-    jitContext_.osrLoopCountsPtr = osrLoopCounts_.data();
-    jitContext_.osrLoopThresholdsPtr = osrLoopThresholds_.data();
-    jitContext_.osrRecompiledFlagsPtr = osrRecompiledFlags_.data();
-    jitContext_.backendPtr = this;
-
-    if (!specializedMethodEntry) {
-        runtime_.release(specializedEntry);
+    if (targetBlock == nullptr) {
+        osrEntryLabelGenerated_ = savedOsrEntryLabelGenerated;
         return nullptr;
     }
+    // osrEntryLabelGenerated_ 保持 true（仅 osrEntryGenMode_ 会消费该标志，
+    // 下次 OSR 编译前由触发方显式清零）
 
-    // 更新原 methodEntries_[targetChunkName].entryPtr 为特化版本入口
-    auto origIt = methodEntries_.find(targetChunkName);
-    if (origIt != methodEntries_.end()) {
-        origIt->second.entryPtr = specializedMethodEntry;
-    }
-
-    // R153: 持久化特化入口映射
-    specializedMethodEntries_[targetChunkName] = specializedMethodEntry;
-
-    // 保存特化版本 CodeHolder 内存所有权
-    registerSpecializedOwnership(targetChunkName, specializedEntry); // AUDIT-R4 BUG-12: 旧块退休+新块登记
-
-    // 记录已特化的 chunk 名称
+    specializedMethodEntries_[targetChunkName] = targetBlock;
+    registerSpecializedOwnership(targetChunkName, targetBlock);
     specializedChunks_.push_back(targetChunkName);
-
-    // 保存特化入口指针
     if (specializedEntries_.size() <= chunkIdx) {
         specializedEntries_.resize(chunkIdx + 1, nullptr);
     }
-    specializedEntries_[chunkIdx] = specializedEntry;
+    specializedEntries_[chunkIdx] = targetBlock;
 
-    // OSR 入口点地址已由 compileAllChunks 写入 *osrEntryPointPtr
-    return specializedEntry;
+    // OSR 入口点地址已由 compileSingleChunkBlock 写入 *osrEntryPointPtr
+    return targetBlock;
 }
 
+
 // ============================================================
-// R158: compileChunkSpecializedFloatWithOsr — FLOAT 特化重编译（含 OSR 入口点）
+// R158: compileChunkSpecializedFloatWithOsr — FLOAT 特化重编译（含 OSR 入口点，
+//       ADR-008 阶段 1b 真单 chunk 编译）
 // ============================================================
 JitEntryFn JITBackend::compileChunkSpecializedFloatWithOsr(const CompileResult& result, size_t chunkIdx,
                                                            void** osrEntryPointPtr) {
-    if (currentResult_ == nullptr || osrEntryPointPtr == nullptr) {
-        return nullptr;
-    }
-    if (chunkIdx >= chunkNames_.size()) {
-        return nullptr;
-    }
-
-    // 检查类型反馈：仅当 floatCount>0 && otherCount==0 时才 FLOAT 特化
-    if (chunkIdx >= typeFeedback_.size()) {
+    if (currentResult_ == nullptr || osrEntryPointPtr == nullptr || chunkIdx >= chunkNames_.size() ||
+        chunkIdx >= typeFeedback_.size()) {
         return nullptr;
     }
     const auto& tf = typeFeedback_[chunkIdx];
     if (tf.floatCount == 0 || tf.otherCount > 0) {
         return nullptr;
     }
+    const std::string targetChunkName = chunkNames_[chunkIdx];
+    if (targetChunkName.find('.') == std::string::npos) {
+        return nullptr;
+    }
 
-    // 保存原状态（与 compileChunkSpecializedFloat 保持一致）
-    auto savedMethodEntries = methodEntries_;
-    JitEntryFn savedCurrentEntry = currentEntry_;
-    auto savedRecompiledFlags = recompiledFlags_;
-    auto savedChunkCallCounts = chunkCallCounts_;
-    auto savedTypeFeedback = typeFeedback_;
-    auto savedHotThresholds = hotThresholds_;
-    auto savedChunkNames = chunkNames_;
-    auto savedGlobalNameToSlot = globalNameToSlot_;
-    auto savedClassInfo = classInfo_;
-    auto savedPendingFieldOrder = pendingFieldOrder_;
-    auto savedMethodLabels = std::move(specializedChunks_);
-    auto savedFuncEntries = funcEntries_;
-    auto savedSpecializedMethodEntries = specializedMethodEntries_;
-    auto savedOsrLoopCounts = osrLoopCounts_;
-    auto savedOsrLoopThresholds = osrLoopThresholds_;
-    auto savedOsrRecompiledFlags = osrRecompiledFlags_;
     bool savedOsrEntryGenMode = osrEntryGenMode_;
     size_t savedOsrTargetChunkIdx = osrTargetChunkIdx_;
     bool savedOsrEntryLabelGenerated = osrEntryLabelGenerated_;
     void** savedOsrEntryPointOut = osrEntryPointOut_;
 
-    // 设置 FLOAT 特化 + OSR 入口点生成模式
     specializeFloatMode_ = true;
     osrEntryGenMode_ = true;
     osrTargetChunkIdx_ = chunkIdx;
@@ -881,99 +602,30 @@ JitEntryFn JITBackend::compileChunkSpecializedFloatWithOsr(const CompileResult& 
     osrEntryPointOut_ = osrEntryPointPtr;
     *osrEntryPointPtr = nullptr;
 
-    JitEntryFn specializedEntry = compileAllChunks(result);
+    JitEntryFn targetBlock = compileSingleChunkBlock(result, targetChunkName);
 
     specializeFloatMode_ = false;
-    osrEntryGenMode_ = false;
-
-    if (!specializedEntry) {
-        methodEntries_ = std::move(savedMethodEntries);
-        currentEntry_ = savedCurrentEntry;
-        recompiledFlags_ = std::move(savedRecompiledFlags);
-        chunkCallCounts_ = std::move(savedChunkCallCounts);
-        typeFeedback_ = std::move(savedTypeFeedback);
-        hotThresholds_ = std::move(savedHotThresholds);
-        chunkNames_ = std::move(savedChunkNames);
-        globalNameToSlot_ = std::move(savedGlobalNameToSlot);
-        classInfo_ = std::move(savedClassInfo);
-        pendingFieldOrder_ = std::move(savedPendingFieldOrder);
-        specializedChunks_ = std::move(savedMethodLabels);
-        funcEntries_ = std::move(savedFuncEntries);
-        specializedMethodEntries_ = std::move(savedSpecializedMethodEntries);
-        osrLoopCounts_ = std::move(savedOsrLoopCounts);
-        osrLoopThresholds_ = std::move(savedOsrLoopThresholds);
-        osrRecompiledFlags_ = std::move(savedOsrRecompiledFlags);
-        osrEntryGenMode_ = savedOsrEntryGenMode;
-        osrTargetChunkIdx_ = savedOsrTargetChunkIdx;
-        osrEntryLabelGenerated_ = savedOsrEntryLabelGenerated;
-        osrEntryPointOut_ = savedOsrEntryPointOut;
-        jitContext_.chunkCallCounts = chunkCallCounts_.data();
-        jitContext_.hotThresholds = hotThresholds_.data();
-        jitContext_.recompiledFlags = recompiledFlags_.data();
-        jitContext_.typeFeedback = typeFeedback_.data();
-        jitContext_.osrLoopCountsPtr = osrLoopCounts_.data();
-        jitContext_.osrLoopThresholdsPtr = osrLoopThresholds_.data();
-        jitContext_.osrRecompiledFlagsPtr = osrRecompiledFlags_.data();
-        jitContext_.backendPtr = this;
-        return nullptr;
-    }
-
-    const std::string targetChunkName = (chunkIdx < chunkNames_.size()) ? chunkNames_[chunkIdx] : std::string{};
-    auto it = methodEntries_.find(targetChunkName);
-    void* specializedMethodEntry = nullptr;
-    if (it != methodEntries_.end()) {
-        specializedMethodEntry = it->second.entryPtr;
-    }
-
-    methodEntries_ = std::move(savedMethodEntries);
-    currentEntry_ = savedCurrentEntry;
-    recompiledFlags_ = std::move(savedRecompiledFlags);
-    chunkCallCounts_ = std::move(savedChunkCallCounts);
-    typeFeedback_ = std::move(savedTypeFeedback);
-    hotThresholds_ = std::move(savedHotThresholds);
-    chunkNames_ = std::move(savedChunkNames);
-    globalNameToSlot_ = std::move(savedGlobalNameToSlot);
-    classInfo_ = std::move(savedClassInfo);
-    pendingFieldOrder_ = std::move(savedPendingFieldOrder);
-    specializedChunks_ = std::move(savedMethodLabels);
-    funcEntries_ = std::move(savedFuncEntries);
-    specializedMethodEntries_ = std::move(savedSpecializedMethodEntries);
-    osrLoopCounts_ = std::move(savedOsrLoopCounts);
-    osrLoopThresholds_ = std::move(savedOsrLoopThresholds);
-    osrRecompiledFlags_ = std::move(savedOsrRecompiledFlags);
     osrEntryGenMode_ = savedOsrEntryGenMode;
     osrTargetChunkIdx_ = savedOsrTargetChunkIdx;
-    osrEntryLabelGenerated_ = savedOsrEntryLabelGenerated;
     osrEntryPointOut_ = savedOsrEntryPointOut;
 
-    jitContext_.chunkCallCounts = chunkCallCounts_.data();
-    jitContext_.hotThresholds = hotThresholds_.data();
-    jitContext_.recompiledFlags = recompiledFlags_.data();
-    jitContext_.typeFeedback = typeFeedback_.data();
-    jitContext_.osrLoopCountsPtr = osrLoopCounts_.data();
-    jitContext_.osrLoopThresholdsPtr = osrLoopThresholds_.data();
-    jitContext_.osrRecompiledFlagsPtr = osrRecompiledFlags_.data();
-    jitContext_.backendPtr = this;
-
-    if (!specializedMethodEntry) {
-        runtime_.release(specializedEntry);
+    if (targetBlock == nullptr) {
+        osrEntryLabelGenerated_ = savedOsrEntryLabelGenerated;
         return nullptr;
     }
 
-    auto origIt = methodEntries_.find(targetChunkName);
-    if (origIt != methodEntries_.end()) {
-        origIt->second.entryPtr = specializedMethodEntry;
-    }
-    specializedMethodEntries_[targetChunkName] = specializedMethodEntry;
-    registerSpecializedOwnership(targetChunkName, specializedEntry); // AUDIT-R4 BUG-12: 旧块退休+新块登记
+    specializedMethodEntries_[targetChunkName] = targetBlock;
+    registerSpecializedOwnership(targetChunkName, targetBlock);
     specializedChunks_.push_back(targetChunkName);
     if (specializedEntries_.size() <= chunkIdx) {
         specializedEntries_.resize(chunkIdx + 1, nullptr);
     }
-    specializedEntries_[chunkIdx] = specializedEntry;
+    specializedEntries_[chunkIdx] = targetBlock;
 
-    return specializedEntry;
+    // OSR 入口点地址已由 compileSingleChunkBlock 写入 *osrEntryPointPtr
+    return targetBlock;
 }
+
 
 // ============================================================
 // R158: triggerOsrMigration — 真正 OSR 栈帧迁移触发器

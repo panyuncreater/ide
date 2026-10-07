@@ -5981,3 +5981,143 @@ TEST(TestJIT, Disabled) {
 }
 
 #endif // MINILANG_USE_JIT
+
+// ============================================================
+// ADR-008 阶段 2: 进程内编译块缓存回归测试
+// ------------------------------------------------------------
+// 共享存活设计：首次 eager 编译深拷贝 CompileResult 作为编译宿主，块从共享
+// runtime 分配入缓存；同源码的新 JITBackend 实例命中缓存直接引用共享块执行。
+// 门控：!lazyMode_ && !tieredMode_ && 无自定义阈值。
+// ============================================================
+#if defined(MINILANG_USE_JIT)
+
+namespace {
+
+// 独立编译并执行一次，返回输出与结果（不复用 jit_test_helper，便于观测缓存计数）
+struct CacheRunResult {
+    std::string output;
+    JitResult result = JitResult::OK;
+};
+
+CacheRunResult runJITForCacheTest(const std::string& src) {
+    CacheRunResult r;
+    Lexer lx;
+    auto tk = lx.scan(src);
+    Parser p;
+    auto ast = p.parse(tk);
+    if (!ast) {
+        r.output = "<parse-fail>";
+        r.result = JitResult::CompileError;
+        return r;
+    }
+    Compiler c;
+    auto cr = c.compile(*ast);
+    if (c.getDiagnostics().hasErrors()) {
+        r.output = "<compile:" + c.getLastError() + ">";
+        r.result = JitResult::CompileError;
+        return r;
+    }
+    JITBackend jit;
+    jit.setOutputCallback([&](const std::string& s) { r.output += s; });
+    r.result = jit.execute(cr);
+    return r;
+}
+
+} // namespace
+
+TEST(TestJIT, BlockCacheHitSameOutputAcrossInstances) {
+    // 同源码两次独立实例运行：首次入缓存，第二次命中，输出严格一致
+    const std::string src = "fun fib(n) { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); }"
+                            "print(fib(15));";
+    const uint64_t storesBefore = JITBackend::blockCacheStores();
+    const uint64_t hitsBefore = JITBackend::blockCacheHits();
+
+    CacheRunResult first = runJITForCacheTest(src);
+    ASSERT_EQ(first.result, JitResult::OK);
+    EXPECT_EQ(first.output, "610"); // fib(15) = 610
+    EXPECT_EQ(JITBackend::blockCacheStores(), storesBefore + 1) << "首次运行应写入缓存";
+
+    CacheRunResult second = runJITForCacheTest(src);
+    ASSERT_EQ(second.result, JitResult::OK);
+    EXPECT_EQ(second.output, first.output) << "缓存命中运行的输出必须与首编一致";
+    EXPECT_EQ(JITBackend::blockCacheHits(), hitsBefore + 1) << "同源码第二次运行应命中缓存";
+}
+
+TEST(TestJIT, BlockCacheDistinctSourceIsSeparateEntry) {
+    // 不同源码 → 不同键 → 各自入缓存且输出正确
+    const uint64_t storesBefore = JITBackend::blockCacheStores();
+    CacheRunResult a = runJITForCacheTest("print(100 + 23);");
+    ASSERT_EQ(a.result, JitResult::OK);
+    EXPECT_EQ(a.output, "123");
+    CacheRunResult b = runJITForCacheTest("print(100 + 24);");
+    ASSERT_EQ(b.result, JitResult::OK);
+    EXPECT_EQ(b.output, "124");
+    EXPECT_EQ(JITBackend::blockCacheStores(), storesBefore + 2);
+    // 再次运行 b：命中且输出不变
+    const uint64_t hitsBefore = JITBackend::blockCacheHits();
+    CacheRunResult b2 = runJITForCacheTest("print(100 + 24);");
+    ASSERT_EQ(b2.result, JitResult::OK);
+    EXPECT_EQ(b2.output, "124");
+    EXPECT_EQ(JITBackend::blockCacheHits(), hitsBefore + 1);
+}
+
+TEST(TestJIT, BlockCacheHitWithStatefulProgram) {
+    // 命中路径覆盖：方法调用 + 循环（OP_LOOP 回边/safepoint 轮询）+ 字符串输出
+    const std::string src = "class Acc {"
+                            "  var total = 0;"
+                            "  fun add(n) { total = total + n; return total; }"
+                            "}"
+                            "var acc = Acc();"
+                            "var i = 0;"
+                            "while (i < 5) { acc.add(i); i = i + 1; }"
+                            "print(acc.total);"
+                            "print(\"done\");";
+    CacheRunResult first = runJITForCacheTest(src);
+    ASSERT_EQ(first.result, JitResult::OK);
+    EXPECT_EQ(first.output, "10done");
+    CacheRunResult second = runJITForCacheTest(src);
+    ASSERT_EQ(second.result, JitResult::OK);
+    EXPECT_EQ(second.output, first.output) << "命中路径：方法/循环/字符串输出与首编严格一致";
+}
+
+TEST(TestJIT, BlockCacheBypassLazyMode) {
+    // lazyMode 路径绕过缓存（生成代码依赖运行模式）
+    const uint64_t storesBefore = JITBackend::blockCacheStores();
+    Lexer lx;
+    auto tk = lx.scan("fun sq(x) { return x * x; } print(sq(9));");
+    Parser p;
+    auto ast = p.parse(tk);
+    ASSERT_TRUE(ast != nullptr);
+    Compiler c;
+    auto cr = c.compile(*ast);
+    ASSERT_FALSE(c.getDiagnostics().hasErrors());
+    JITBackend jit;
+    std::string out;
+    jit.setOutputCallback([&](const std::string& s) { out += s; });
+    jit.setLazyCompilation(true);
+    EXPECT_EQ(jit.execute(cr), JitResult::OK);
+    EXPECT_EQ(out, "81");
+    EXPECT_EQ(JITBackend::blockCacheStores(), storesBefore) << "lazy 路径不应写入缓存";
+}
+
+TEST(TestJIT, BlockCacheBypassCustomThreshold) {
+    // 自定义热点阈值路径绕过缓存（阈值参与代码生成）
+    const uint64_t storesBefore = JITBackend::blockCacheStores();
+    Lexer lx;
+    auto tk = lx.scan("class W { fun go() { return 7; } } var w = W(); print(w.go());");
+    Parser p;
+    auto ast = p.parse(tk);
+    ASSERT_TRUE(ast != nullptr);
+    Compiler c;
+    auto cr = c.compile(*ast);
+    ASSERT_FALSE(c.getDiagnostics().hasErrors());
+    JITBackend jit;
+    std::string out;
+    jit.setOutputCallback([&](const std::string& s) { out += s; });
+    jit.setHotThreshold("W.go", 2); // 自定义阈值 → 绕过缓存
+    EXPECT_EQ(jit.execute(cr), JitResult::OK);
+    EXPECT_EQ(out, "7");
+    EXPECT_EQ(JITBackend::blockCacheStores(), storesBefore) << "自定义阈值路径不应写入缓存";
+}
+
+#endif // MINILANG_USE_JIT

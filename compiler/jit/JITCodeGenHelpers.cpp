@@ -1774,19 +1774,38 @@ void JITBackend::emitCallMailbox(x86::Assembler& a, Label epilogue, const char* 
 // OP_CALL fast path（非 lazy / 无默认参数 / 无 upvalues / 无内部闭包）
 // 返回 true 走快速路径（ip += 4 由调用方处理），false 交由调用方走 mailbox
 // ------------------------------------------------------------------
-bool JITBackend::emitCallDispatch(x86::Assembler& a, Label epilogue, const JitFuncInfo& info, uint8_t argCount) {
+bool JITBackend::emitCallDispatch(x86::Assembler& a, Label epilogue, const JitFuncInfo& info,
+                                  const std::string& calleeName, uint8_t argCount) {
     // R161 perf: 混合模式优化 — 非 lazy 模式 + 无默认参数 + 无 upvalues + 无内部闭包时
-    // 走编译期 jmp entryLabel 快速路径（恢复 R141 风格），消除 jitCallByName 的
+    // 走编译期跳转快速路径（恢复 R141 风格），消除 jitCallByName 的
     // C++ 调用 + unordered_map 查找 + std::string 构造 + arg pop/push 开销。
     // fib(30) 约 1.6M 次 OP_CALL，邮箱模式导致 0.60x 加速比，快速路径恢复到 >1x。
     // 条件说明：
-    //   !lazyMode_           — eager 模式所有 chunk 已编译，entryLabel 已绑定
+    //   !lazyMode_           — eager 模式所有 chunk 已编译，同块直连/跨块导入槽均已可解析
     //   defaultConstIndices.empty() — 无默认参数，argCount == arity（编译器保证）
     //   upvalues.empty()     — 函数不捕获 upvalue，无 OP_GET_UPVALUE/OP_SET_UPVALUE
     //   !hasInnerClosures    — 函数体无 OP_CLOSURE，不访问 frameUpvaluesStack_
     // 不满足条件时返回 false，调用方走 emitCallMailbox
     if (!lazyMode_ && info.chunk && info.chunk->defaultConstIndices.empty() && info.chunk->upvalues.empty() &&
         !info.hasInnerClosures) {
+
+        // ADR-008 阶段 1b: 单 chunk 编译模式下，跨块被调可能尚未编译（lazy 按需触发）。
+        // 必须在任何 fast-path 代码发射之前判定：未编译则整体返回 false 走 mailbox，
+        // 由 jitCallByName 在运行期触发被调 lazy 编译。eager 全量模式所有块必编译，
+        // 无需检查（发射期映射尚未填充，不能以此判断）。
+        if (singleChunkCompileMode_ && info.chunkId != currentChunkIdx_) {
+            bool calleeCompiled = false;
+            if (calleeName.find('.') != std::string::npos) {
+                auto mit = methodEntries_.find(calleeName);
+                calleeCompiled = mit != methodEntries_.end() && mit->second.entryPtr != nullptr;
+            } else {
+                auto fit = funcEntries_.find(calleeName);
+                calleeCompiled = fit != funcEntries_.end() && fit->second.entryPtr != nullptr;
+            }
+            if (!calleeCompiled) {
+                return false;
+            }
+        }
 
         Label returnLabel = a.new_label();
         Label overflowLabel = a.new_label();
@@ -1856,8 +1875,26 @@ bool JITBackend::emitCallDispatch(x86::Assembler& a, Label epilogue, const JitFu
         a.mov(x86::rax, static_cast<int32_t>((localCount - 1) * 8));
         a.lea(x86::r13, x86::qword_ptr(x86::r15, x86::rax));
 
-        // 7. jmp entryLabel（直接跳转，0 次 C++ 调用！）
-        a.jmp(info.entryLabel);
+        // 7. 跳转目标解析（ADR-008 per-chunk 架构）
+        //    同块（直接递归）→ 编译期直连 jmp（0 次 C++ 调用 + 直达分支）；
+        //    跨块 → 导入槽间接跳转：mov rax,[ctx+callImportSlots]; mov rax,[rax+slot*8];
+        //    jmp rax。槽位在全部块 runtime_.add 后按被调 chunk 名回填入口地址，
+        //    运行期零 C++ 调用（保住本 fast path 消除 jitCallByName 开销的初衷）。
+        //    Label 归属各自 CodeHolder，跨块严禁引用对方 entryLabel。
+        if (info.chunkId == currentChunkIdx_) {
+            a.jmp(currentBlockEntryLabel_);
+        } else {
+            const size_t slotIdx = callImportSlots_.size();
+            callImportSlots_.push_back(nullptr);
+            CallImportPatch patchInfo;
+            patchInfo.slotIdx = slotIdx;
+            patchInfo.calleeName = calleeName;
+            patchInfo.isMethod = calleeName.find('.') != std::string::npos;
+            callImportPatches_.push_back(std::move(patchInfo));
+            a.mov(x86::rax, x86::qword_ptr(x86::r12, jit_offset::callImportSlots));
+            a.mov(x86::rax, x86::qword_ptr(x86::rax, static_cast<int32_t>(slotIdx * 8)));
+            a.jmp(x86::rax);
+        }
 
         // 8. 栈溢出错误路径（必须在 returnLabel 之前，避免 fall-through 误触发）
         //    罕见路径，C++ 调用开销可忽略；错误消息与 jitCallByName 对齐

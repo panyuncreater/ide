@@ -4,6 +4,8 @@
 
 Accepted. 自 R138 起作为第四套执行引擎实现，基于 asmjit 的本地机器码编译后端。默认通过 CMake 选项 `MINILANG_USE_JIT=ON` 启用。
 
+> **后续演进（2026-10-10）**：本 ADR 记录的"整程序编译进一个 CodeHolder"单体布局已由 [ADR-008](ADR-008-jit-per-chunk.md) 升级为 per-chunk 独立代码块 + 进程内块缓存（执行语义与 JitContext 邮箱协议不变，新增字段遵循本 ADR 的 append-only 约束）。本文件的机制描述（分层/Tier/热点检测/邮箱模式）仍然有效；编译单元粒度以 ADR-008 为准。
+
 ## Background
 
 [ADR-002](ADR-002-triple-backend.md) 在 Alternatives 中明确写道："JIT 编译：复杂度过高，不适合教学场景"。该判断在项目初期成立——当时三后端（Interpreter / StackVM / RegisterVM）已能满足"易调试 + 高性能 + 教学对比"三个目标，引入 JIT 会显著增加维护成本与教学复杂度。
