@@ -101,7 +101,7 @@ jobs:
 
       # 修复问题 17：ccache + GHA cache 加速构建
       - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@v1.2.23
+        uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: ${{ matrix.os }}-${{ env.CMAKE_BUILD_TYPE }}-${{ matrix.arch }}
 
@@ -358,7 +358,7 @@ jobs:
         run: echo "QTDIR=${{ env.QT_ROOT_DIR }}/.." >> $GITHUB_ENV
 
       - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@v1.2.23
+        uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: ${{ runner.os }}-Debug
 
@@ -466,7 +466,7 @@ jobs:
         run: echo "QTDIR=${{ env.QT_ROOT_DIR }}/.." >> $GITHUB_ENV
 
       - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@v1.2.23
+        uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: ${{ runner.os }}-Debug-coverage
 
@@ -550,7 +550,7 @@ jobs:
         run: git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
 
       - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@v1.2.23
+        uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: ${{ runner.os }}-harness
 
@@ -854,7 +854,7 @@ jobs:
           which lrelease6 || which lrelease || which lrelease-qt6
 
       - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@v1.2.23
+        uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: ${{ runner.os }}-asan
 
@@ -1037,7 +1037,7 @@ jobs:
         run: echo "QTDIR=${{ env.QT_ROOT_DIR }}/.." >> $GITHUB_ENV
 
       - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@v1.2.23
+        uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: ${{ runner.os }}-perf-bench
 

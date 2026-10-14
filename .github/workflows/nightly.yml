@@ -97,7 +97,7 @@ jobs:
           which lrelease6 && sudo ln -sf "$(which lrelease6)" /usr/local/bin/lrelease || true
 
       - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@v1.2.23
+        uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: ${{ runner.os }}-native-fuzz
 
@@ -180,7 +180,7 @@ jobs:
           which lrelease6 && sudo ln -sf "$(which lrelease6)" /usr/local/bin/lrelease || true
 
       - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@v1.2.23
+        uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: ${{ runner.os }}-tsan
 
@@ -245,7 +245,7 @@ jobs:
           which lrelease6 && sudo ln -sf "$(which lrelease6)" /usr/local/bin/lrelease || true
 
       - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@v1.2.23
+        uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: ${{ runner.os }}-pipeline-diff
 
@@ -325,7 +325,7 @@ jobs:
           which lrelease6 && sudo ln -sf "$(which lrelease6)" /usr/local/bin/lrelease || true
 
       - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@v1.2.23
+        uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: ${{ runner.os }}-pipeline-san
 
@@ -398,7 +398,7 @@ jobs:
           which lrelease6 && sudo ln -sf "$(which lrelease6)" /usr/local/bin/lrelease || true
 
       - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@v1.2.23
+        uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: ${{ runner.os }}-formatter-audit
 
@@ -542,7 +542,7 @@ jobs:
           which lrelease6 && sudo ln -sf "$(which lrelease6)" /usr/local/bin/lrelease || true
 
       - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@v1.2.23
+        uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: ${{ runner.os }}-perf-baseline-refresh
 
