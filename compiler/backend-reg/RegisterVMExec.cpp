@@ -1603,10 +1603,9 @@ using RegCoroutineDataRawPtr = std::decay_t<decltype(*std::declval<Value&>().cor
 // stackSlot（frameIdx*32+regIdx 绝对编号）与 owningFrameIdx 为绝对索引，快照按
 // .next() 入口帧基线转相对存储，恢复时以新入口帧深重定基。
 struct RegisterVM::RegVMCoroutineSuspension {
-    std::vector<RegCallFrame> frames; // frames_[baseFrames..]（含生成器帧与体内嵌套调用帧）
+    std::vector<RegCallFrame> frames; // frames_[挂起调用入口帧深..]（含生成器帧与体内嵌套调用帧）
     std::vector<RegTryHandler> tryStack;
     size_t resumeIp = 0; // 触发 yield 的帧（顶层）恢复 ip（越过 REG_YIELD 3 字节）
-    size_t baseFrames = 0;
     std::vector<std::pair<size_t, std::weak_ptr<VMUpvalue>>> openUpvalues;
 };
 #endif // MINILANG_CORO_FIBER
@@ -1659,7 +1658,9 @@ VMResult RegisterVM::executeCoroutineOps(RegOp op, size_t& ip) {
         reg(dst) = yieldValue;
         auto* cd = static_cast<RegCoroutineDataRawPtr>(currentSuspendingCoro_);
         auto sus = std::make_shared<RegVMCoroutineSuspension>();
-        sus->baseFrames = coroSuspendBaseFrames_;
+        // 相对化参照 = 本次 .next() 入口帧深（coroSuspendBaseFrames_，见 callCoroutineNext
+        // 登记）；恢复时一律以**新入口**帧深重定基，快照不携带挂起时基线（跨深度恢复
+        // P1 fix 2026-10-22，与 StackVM 同型）。
         sus->frames.reserve(frames_.size() - coroSuspendBaseFrames_);
         for (size_t i = coroSuspendBaseFrames_; i < frames_.size(); ++i)
             sus->frames.push_back(frames_[i]);         // RegCallFrame 值拷贝（寄存器窗口随帧）

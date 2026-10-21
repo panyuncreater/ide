@@ -639,6 +639,37 @@ print(g.done());
     EXPECT_ALL_BACKENDS(src, "123true");
 }
 
+// 跨调用方深度恢复：两次 .next() 的调用方帧深不同（backend-consistency §9 重定基
+// 不变量——恢复后循环边界/挂起基线必须以**本次**入口深度为准）。
+// P1 fix 前（2026-10-22）：StackVM/RegisterVM（关 IR 内联实测）恢复后把循环边界回拨
+// 到首次挂起入口——深恢复越界执行调用方代码（实测 133true），浅恢复短路消耗快照
+// （后续 .next() 全新重建，报"yield 只能在生成器函数体内出现"）。
+TEST(CoroutineSuspension, ResumeAtDeeperCallSite) {
+    std::string src = R"(
+fun* g() { yield 1; yield 2; yield 3; }
+var x = g();
+print(x.next());
+fun h() { return x.next(); }
+print(h());
+print(x.next());
+print(x.done());
+)";
+    EXPECT_ALL_BACKENDS(src, "123true");
+}
+
+TEST(CoroutineSuspension, ResumeAtShallowerCallSite) {
+    std::string src = R"(
+fun* g() { yield 1; yield 2; yield 3; }
+var x = g();
+fun h() { return x.next(); }
+print(h());
+print(x.next());
+print(x.next());
+print(x.done());
+)";
+    EXPECT_ALL_BACKENDS(src, "123true");
+}
+
 // O(n) 行为代理锁定：300 次 .next() 序列正确（重放模式下此程序为 O(n²) 步数，
 // 挂起模式下线性；值序列一致即锁挂起语义不回退）
 TEST(CoroutineSuspension, LongSequenceValues) {
@@ -717,6 +748,29 @@ try { x.next(); } catch (e) { print(e); }
 print(x.done());
 )";
     EXPECT_ALL_BACKENDS(src, "1boomfalse");
+}
+
+TEST(CoroutineSuspension, TcoContextRestoredAcrossGeneratorTermination) {
+    // P1 fix（2026-10-22，F3/W2）：fiber 体守卫跨挂起边界滞留——生成器在异于首次
+    // .next() 的函数上下文终结（return 提前耗尽）时，守卫析构写回首次进入时的陈旧
+    // 蹦床快照（tcoDecl_=&a, tcoName_="a"），终结上下文 c 的尾调用 return a(k+1)
+    // 被误分类为 SelfFunction 无 target 信号，被 c 自己的蹦床循环捕获携错误实参重跑
+    // （缺陷输出 57：c 体以 k=6 重跑后 a(7)；a 的函数体从未执行）。修复 = TCO 五成员
+    // 纳入挂起/恢复协议（coroutineSuspend 对称保存/恢复 + CoroutineContextGuard
+    // 退出恢复调用方真值）。期望：a(5)→5，c(5)→a(6)→6。
+    std::string src = R"(
+fun* gen() {
+    yield 1;
+    if (true) { return "early"; }
+    yield 2;
+}
+fun a(n) { var x = g.next(); return n; }
+fun c(k) { var y = g.next(); return a(k + 1); }
+var g = gen();
+print(a(5));
+print(c(5));
+)";
+    EXPECT_EQ(minilang_test::runInterpreter(src), "56");
 }
 
 TEST(CoroutineSuspension, SuspendedGeneratorLocalsSurviveIncrementalGc) {

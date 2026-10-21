@@ -1758,12 +1758,10 @@ using VmCoroutineDataRawPtr = std::decay_t<decltype(*std::declval<Value&>().coro
 // stackSlot/owningFrameIdx 均为绝对索引，快照时按 .next() 入口基线转相对存储，
 // 恢复时以新入口基线重定基（两次 .next() 的调用方栈深/帧深可不同）。
 struct VM::VMCoroutineSuspension {
-    std::vector<Value> stackSuffix;  // stack_[baseStack..]（含 args/局部槽/操作数栈）
-    std::vector<VMCallFrame> frames; // frames_[baseFrames..]（含生成器帧与体内嵌套调用帧）
+    std::vector<Value> stackSuffix;  // stack_[挂起调用入口栈深..]（含 args/局部槽/操作数栈）
+    std::vector<VMCallFrame> frames; // frames_[挂起调用入口帧深..]（含生成器帧与体内嵌套调用帧）
     std::vector<TryHandler> tryStack;
     size_t resumeIp = 0;  // 触发 yield 的帧（顶层）恢复 ip（越过 OP_YIELD 1 字节）
-    size_t baseStack = 0; // 快照时的栈基线（相对化参照）
-    size_t baseFrames = 0;
     std::vector<std::pair<size_t, std::weak_ptr<VMUpvalue>>> openUpvalues;
 };
 #endif // MINILANG_CORO_FIBER
@@ -1829,8 +1827,10 @@ VMResult VM::executeCoroutineOps(OpCode op, size_t& ip) {
         push(std::move(exprResult));
         auto* cd = static_cast<VmCoroutineDataRawPtr>(currentSuspendingCoro_);
         auto sus = std::make_shared<VMCoroutineSuspension>();
-        sus->baseStack = coroSuspendBaseStack_;
-        sus->baseFrames = coroSuspendBaseFrames_;
+        // 相对化参照 = 本次 .next() 入口深度（coroSuspendBaseStack_/Frames_，见
+        // callCoroutineNext 登记）；恢复时一律以**新入口**深度重定基——快照不携带
+        // 挂起时基线（跨深度恢复 P1 fix 2026-10-22：旧实现恢复后把循环边界/挂起基线
+        // 回拨到首次挂起入口，两次 .next() 调用方深度不同即越界/短路）。
         sus->stackSuffix.reserve(stack_.size() - coroSuspendBaseStack_);
         for (size_t i = coroSuspendBaseStack_; i < stack_.size(); ++i)
             sus->stackSuffix.push_back(std::move(stack_[i]));
@@ -2081,8 +2081,12 @@ Value VM::callCoroutineNext(Value& coroVal) {
         // （调用方帧即恢复前的栈顶）。帧链内部帧的 returnIp 指向生成器体内
         // 调用点，与调用方无关，保持不变。
         frames_[savedFrameCount].returnIp = frames_[savedFrameCount - 1].ip;
-        savedFrameCount = sus->baseFrames;
-        savedStackSize = sus->baseStack;
+        // 循环边界/挂起基线保持为**本次** .next() 入口深度（savedFrameCount/savedStackSize
+        // 入口值）：P1 fix（2026-10-22）删除旧实现"savedFrameCount = sus->baseFrames;
+        // savedStackSize = sus->baseStack;"回拨——两次 .next() 调用方深度不同时，
+        // 回拨使循环越过生成器帧区执行调用方代码（深恢复）或直接短路消耗快照
+        // （浅恢复，后续 .next() 全新重建），探针实测 P1 133true / P2 运行时错误。
+        // 相对→绝对重定基在上方已完成，快照内不携带任何绝对基线。
         cd->gcRootContributor = nullptr; // P0 fix：丢弃快照同步置空根集贡献回调
         cd->vmSuspension.reset();
         currentCoroutineTargetYieldId_ = cd->currentYieldId; // 过 OP_YIELD 防御检查（挂起模式不做目标比较）

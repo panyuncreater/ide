@@ -1779,7 +1779,12 @@ Value RegisterVM::callCoroutineNext(Value& coroVal) {
         // （调用方帧即恢复前的栈顶）。帧链内部帧的 returnIp 指向生成器体内
         // 调用点，与调用方无关，保持不变。
         frames_[savedFrameCount].returnIp = frames_[savedFrameCount - 1].ip;
-        savedFrameCount = sus->baseFrames;
+        // 循环边界/挂起基线保持为**本次** .next() 入口帧深（savedFrameCount 入口值）：
+        // P1 fix（2026-10-22）删除旧实现"savedFrameCount = sus->baseFrames;"回拨——
+        // 两次 .next() 调用方深度不同时，回拨使循环越过生成器帧区执行调用方代码
+        // （深恢复）或直接短路消耗快照（浅恢复，后续 .next() 全新重建）；默认构建中
+        // 寄存器后端经 IR 内联掩盖，关内联（setIRSSAOptimize(false)）实测与 StackVM
+        // 同型错值。相对→绝对重定基在上方已完成，快照内不携带任何绝对基线。
         cd->gcRootContributor = nullptr; // P0 fix：丢弃快照同步置空根集贡献回调
         cd->vmSuspension.reset();
         currentCoroutineTargetYieldId_ = cd->currentYieldId; // 过 REG_YIELD 防御检查（挂起模式不做目标比较）
