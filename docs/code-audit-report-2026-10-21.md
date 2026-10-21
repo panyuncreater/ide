@@ -259,3 +259,22 @@
 - 全量 ctest **4163/4163 通过**（-j 10，80s，MINILANG_BUILD_PERF_TESTS=ON 全口径，/W4+/WX 零警告）；测试计数 4159 → 4163（+3：NaN 键一致性 + dict 注解切分 ×2）
 - 行为语义变更 1 项（NaN 键 SameValueZero，已入 backend-consistency §2）；其余均为行为无差异的性能/清理项
 - 构建环境注记：本机 VS 位于 `D:/vs`（非标准 `ProgramFiles(x86)` 布局，vswhere 缺失）——`scripts/_common.bat` 的 VS 检测在裸 shell 不可用，构建需直接 `call D:\vs\VC\Auxiliary\Build\vcvars64.bat` 后调用 `D:/vs/.../CMake/bin/cmake.exe`（本机实测口径，供后续轮次复用）
+
+## 8. 2026-10-22 日间轮次（调度任务续作：§3.3/§3.10 清偿）
+
+### 8.1 已修复（2 项）
+
+- **P2｜§3.3 清偿｜泛型嵌套函数/lambda/局部 enum 类型参数词法传播（提交 1001580）**：原修复建议的「运行时 CallFrameGuard 合并调用方参数」经调查**不充分**——延迟调用（`make<T>()` 返回 inner 后再调）时调用方上下文已无 T，动态合并覆盖不到且会制造新分歧（VM 编译期擦除后接受、解释器拒绝）。落地为完整词法传播：① 编译期 `Compiler::declareFunction` / `AstIRBuilder::emitFunctionBody` 以 外层上下文 ∪ 自身声明 替代覆盖式赋值（lambda 在泛型类方法体内同样丢失类类型参数，一并修复）；② 运行时词法事实源 = **闭包携带定义期快照**（`ClosureData::definingTypeParams`，纯字符串向量无 GC 交互，COW 共享无 clone 路径），三个闭包调用点合并 定义期 ∪ 声明，funRegistry 回退空值退化为原语义；③ 局部 enum 三侧 visitEnumDecl 并入（variant 载荷校验的擦除判定数据源）
+  - **实施期捕获两个真问题**：① IR 路径 `FunctionEmitCtx::savedCurrentTypeParams` 只有声明与恢复点、**从无快照赋值**——嵌套函数编译后父函数类型参数上下文本即丢失（R163 既有遗漏，泛型+嵌套组合此前无测试覆盖）；② 调用点读类型参数必须走 const 访问器——非 const 的 `ensureUnique` 在共享闭包上触发 COW 克隆，调用返回的 capturedVars 写回落在被丢弃的克隆上，破坏快照语义（AuditBatch6 快照语义锁实测回归后修正）
+  - **回归 4 项**（`GenericErasureCompletion.*`）：嵌套函数立即调用 / 延迟闭包调用 / lambda / 局部 enum 载荷，四执行路径锁定
+- **P3｜§3.10 清偿｜instructionSizeAt 截断防御钳制（提交 1625439）**：主体移入文件局部 `instructionSizeAtImpl`，外层把计算结果钳制到剩余字节数——多段变长指令（REG_DEFINE_CLASS 等）在段缺失时原按 baseSize 回退，buildIpMap/relocateGlobalSlots 线性走查会跳入指令数据中段错位解读。合法字节码发射器保证指令不越界，钳制为无变化；仅畸形字节码可达（缓存 FNV 校验双重防御），属保守加固
+
+### 8.2 阻塞与登记（更新）
+
+- **§3.4/§3.5（Parser.cpp 两项）本轮独立复现同一写入守卫误判**：编辑 Parser.cpp 时守卫对既有 `Token` 型声明赋值行（`const Token& tok = peek();` 等）误报为凭据字面量（键名 `token`，值不回显）——与 §7.2 记录同源，按守卫协议不绕过、不换通道写盘；两项修复方案维持已定位状态，待守卫口径修正后一轮落盘并配四后端回归
+- 剩余维持登记：§3.2（解析器默认值专项轮）、§3.8（协程跨线程防御）、JIT 缓存键 enumInfos 补全、泛型函数内声明类（方法合并类+方法参数，外层函数 T 不入——本轮范围外新登记，与泛型类内嵌套 lambda 已修复形态相邻）
+
+### 8.3 验证与统计（本轮）
+
+- 两笔提交（1001580 / 1625439）各自独立通过全量 ctest；末次口径 **4167/4167 通过**（-j 10，MINILANG_BUILD_PERF_TESTS=ON 全口径，/W4+/WX 零警告）；测试计数 4163 → 4167（+4 §3.3 回归）
+- 语言能力变更 1 项（泛型嵌套作用域类型参数传播，此前四后端一致拒绝的合法程序转为接受；非泛型程序行为零变化——合并对外层空上下文与无嵌套场景均为无变化）

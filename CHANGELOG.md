@@ -8,6 +8,7 @@
 
 ### Added
 
+- **泛型嵌套作用域类型参数词法传播（嵌套函数/lambda/局部 enum）**：`fun f<T>(x: T) { fun inner(y: T): T { return y; } return inner(x); }` 此前四执行后端一致拒绝合法程序（类型参数上下文按函数声明覆盖而非词法作用域合并）。现：编译期 declareFunction/emitFunctionBody 以 外层上下文 ∪ 自身声明 合并（lambda 在泛型类方法体内同步继承类类型参数）；运行时词法事实源 = 闭包携带定义期类型参数快照（ClosureData::definingTypeParams，覆盖 make<T> 返回内嵌函数后再调的延迟调用形态）；局部 enum 三侧声明点并入（variant 载荷校验擦除判定）。附带修复 IR 路径 savedCurrentTypeParams 从无快照赋值的既有遗漏（嵌套函数编译后父函数类型参数上下文丢失）。非泛型程序行为零变化；回归 4 项四执行路径锁定，详见 docs/code-audit-report-2026-10-21.md §8.1（提交 1001580）
 - **性能基准套件新增 object 类双基准（method_call / field_access）**：`tests/TestPerformanceRegression.cpp` 补齐实例路径覆盖——`method_call`（20000 次实例方法调用，覆盖 findMethodChunk 类/方法查找 + 帧构造 + 字段槽位预填 + this 字段读写 + 返回写回全链路）与 `field_access`（50000 次纯实例字段读/写，覆盖 unordered_map 哈希查找路径，无方法调用干扰），三执行后端 + JIT（R160 起原生支持类成员访问，实测正确执行）共 8 个新用例，category 新增 `object`。基线（release 干净树，同会话实测）：StackVM method_call 31.4ms / field_access 40.6ms；RegisterVM 36.8ms / 58.7ms；Interpreter 147.9ms / 85.7ms。
 
 - **泛型显式类型实参语法（`Name<T>(args)` 调用/实例化，解析后擦除）**：此前 `id<int>(5)` / `Box<int>()` 被静默解析为**比较运算链**（`<int>` → `x < int` 的比较），运行时报"未定义的变量: int"——四后端一致的误导性错误（`tests/TestGenerics.cpp` 探针实测发现）。现 Parser 调用点增加探测式扫描（`Parser::trySkipExplicitTypeArgs`）：平衡 `<...>` 且其后紧跟 `(` 才按类型实参消费并擦除（延续 R163 擦除语义，AST 不携带、运行时行为零变化），否则完整回退比较解析路径。消歧规则与 C#/Java 同型——`a < b > (c)` 优先按泛型调用解释（既有程序中 `(a < b) > (c)` 的比较结果再调用属病态写法）；类型实参内容限类型形态 token（标识符/类型关键字/逗号/嵌套 `<>`/`[]`/`?`），出现字面量即回退（`x < 5 > (y)` 仍按比较解析）；词法无移位运算符（`>>` 为两个独立 `>`），`Box<Box<int>>()` 嵌套天然支持。10 个回归锁定用例见 `GenericErasureCompletion.*`。
@@ -24,6 +25,7 @@
 
 ### Fixed
 
+- **P3：RegisterVM instructionSizeAt 截断防御钳制（§3.10 清偿）**——多段变长指令（REG_DEFINE_CLASS 等）在段缺失时原按 baseSize 回退，buildIpMap/relocateGlobalSlots 的线性走查会跳入指令数据中段错位解读；现把计算结果钳制到剩余字节数（合法字节码零变化，仅畸形字节码可达——缓存 FNV 校验双重防御下的保守加固；提交 1625439）
 - **P2：dict 键类型含 `:` 的注解形态擦除漏判 + 必然拒绝（§3.6 清偿）**——`fun f<K>(x: dict[dict[string:K]:int])` / `dict[fun():K:string]` 形态被首个 `:` 截断（键类型 `dict[string` / `fun()`），擦除漏判 → 运行时校验必拒合法程序（四后端一致地错）。修复：`common/TypeChecker.h` 新增与 `parseTypeAnnotation` 同构的文法贪婪切分 `findDictKVSeparator`（dict[K:V]/fun(p):r 递归 + `[]`/`?` 后缀堆叠；`fun():K` 的返回类型冒号与分隔冒号同深度，纯括号深度不可区分），擦除判定（annotationReferencesTypeParam）与运行时校验（typeMatchValue）两侧共用。回归 `GenericErasureCompletion.DictNestedDictKeyAnnotationErasure` / `DictFunKeyAnnotationErasure`（四后端）。
 
 - **P3：字典 NaN 键可写不可查 → SameValueZero（§3.11 清偿，语义变更）**——NaN 位模式随运算来源不同散布不同 hash 桶 + equal 判否：每次 NaN 键写入成为不可查找死条目（len 只增、读永 miss）。修复：DictKeyHash 所有 NaN 规范化到 quiet_NaN 同一位模式（与既有 -0.0→+0.0 同型）+ DictKeyEqual 判 NaN 互等（对齐 JS Map/Set），单点修复对含字面量构建在内的全部路径自动一致。注：`0.0/0.0` 是显式除零错误，NaN 经 `inf - inf` 产生（浮点乘/减无检查）。回归 `ConsistencyDiff.DictNaNKeySameValueZero`（三后端 `21`）；语义条款已入 backend-consistency §2。
