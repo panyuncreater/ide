@@ -28,6 +28,7 @@
 | super 非方法上下文 | 顶层/嵌套普通函数中 `super` 为**运行时错误**（"未定义的变量: this"），不崩溃不静默 | `AuditBatch1Super.TopLevelSuperRuntimeError`、`ConsistencyDiff.H7b` |
 | 无限循环防护 | 循环回边注入迭代计数，超限报错（对齐 Interpreter） | R166、`compiler/jit/JIT.cpp` OP_LOOP safepoint |
 | 生成器挂起语义 | `MINILANG_CORO_FIBER=1` 平台三执行后端真挂起（副作用只执行一次），`=0` 统一重放；yield 表达式恢复值 = 自身 yield 值，最终 yield 即 done | 单边启用禁令、快照相对化/returnIp 重定基/嵌套上下文 checklist、`CoroutineSuspension.*` 锁定测试——见 §9 与 [ADR-007](../adr/ADR-007-coroutine-suspension.md) |
+| 字典 NaN 键 | **SameValueZero**（2026-10-22）：所有 NaN 键归一（DictKeyHash 规范化到 quiet_NaN 同一模式 + DictKeyEqual 判 NaN 互等，对齐 JS Map/Set）——可写、可查、重复写覆盖 | `ConsistencyDiff.DictNaNKeySameValueZero`（三后端 `21`）；四后端共享 DictMap 自动一致；共享 DictMap 的 JIT 运行时 helper 同语义 |
 
 > 表中每项的新增/修改都必须在三后端同步实现（含 IR 双出口），并以一致性测试锁定（§5）。
 

@@ -1545,12 +1545,12 @@ void Interpreter::writeBackChain(ChainInfo& info, Value innermost, int line, int
                     parentVal.fields()[ma->fieldName] = currentVal;
                 }
             } else if (parentVal.isDict()) {
-                // S1 fix: 优先使用 tryGetMutableDict 跳过 COW 深拷贝
+                // S1 fix: 优先使用 tryGetMutableDict 跳过 COW 深拷贝；
+                // PERF（2026-10-22）: 字段名透明写路径，覆盖赋值零拷贝
                 if (auto* entries = parentVal.tryGetMutableDict()) {
-                    // L4 fix: 字典 member-set 用 DictKey{string}
-                    (*entries)[Value::DictKey{ma->fieldName}] = currentVal;
+                    Value::dictGetOrInsertFieldRef(*entries, ma->fieldName) = currentVal;
                 } else {
-                    parentVal.dictVal()[Value::DictKey{ma->fieldName}] = currentVal;
+                    Value::dictGetOrInsertFieldRef(parentVal.dictVal(), ma->fieldName) = currentVal;
                 }
             } else {
                 runtimeError(ErrorMessages::kTypeNotMemberAssignable, line, col, DiagCodes::kTypeMismatch);
@@ -1635,8 +1635,9 @@ Value Interpreter::writeBack(ASTNode* objectNode, bool isIndexAssign, ASTNode* i
         if (modifiedObj.isInstance()) {
             modifiedObj.fields()[fieldName] = val;
         } else if (modifiedObj.isDict()) {
-            // L4 fix: 字典 member-set 用 DictKey{string}
-            modifiedObj.dictVal()[Value::DictKey{fieldName}] = val;
+            // PERF（2026-10-22）: 字段名透明写路径——覆盖赋值（最常见）零拷贝，
+            // 仅真正插入新键才构造拥有型 DictKey（COW detach 语义不变）
+            Value::dictGetOrInsertFieldRef(modifiedObj.dictVal(), fieldName) = val;
         } else {
             runtimeError(ErrorMessages::kTypeNotMemberAssignable, line, col);
         }
@@ -3370,16 +3371,9 @@ Value Interpreter::evaluateMatchBody(ASTNode* body) {
     return evaluate(body);
 }
 
-// 辅助：判断类型名是否是 enum 的类型参数（如 T、E、K、V）
-// 用于 visitEnumVariantExpr 的类型校验——类型参数运行时擦除，跳过校验。
-bool Interpreter::isTypeParameter(const std::string& typeName, const std::vector<std::string>& typeParams) const {
-    for (const auto& tp : typeParams) {
-        if (typeName == tp) {
-            return true;
-        }
-    }
-    return false;
-}
+// （Interpreter::isTypeParameter 已于 2026-10-22 移除——无调用方的双事实源，
+//  防复活 R163 修复前的精确匹配漏擦；擦除判定统一走 common/TypeChecker.h 的
+//  annotationReferencesTypeParam，见 Interpreter.h 同日注记）
 
 void Interpreter::visitDictLiteral(DictLiteral& node) {
     checkBreak(&node);

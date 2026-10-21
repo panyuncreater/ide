@@ -76,6 +76,7 @@
 #include <atomic> // L3 fix: ClosureData::functionId 全局生成器
 #include <cassert>
 #include <functional> // P0 fix 2026-10-21: CoroutineData::gcRootContributor
+#include <limits>     // SameValueZero fix 2026-10-22: 字典 NaN 键 hash 规范化用 quiet_NaN
 #include <charconv> // Perf-Finding2: VAL_INT toString 用 to_chars 替代 std::to_string（避免 locale 查询）
 #include <cmath>
 #include <condition_variable> // R136 ChannelData 同步原语
@@ -167,6 +168,8 @@ public:
         size_t operator()(double v) const {
             if (v == 0.0)
                 v = 0.0; // P0 fix: 规范化 -0.0 → +0.0，保证 hash 不变量
+            if (std::isnan(v))
+                v = std::numeric_limits<double>::quiet_NaN(); // SameValueZero fix: 所有 NaN 同一 hash 桶（NaN 位模式随运算来源不同，否则同值键分桶致 equal 永不触发）
             uint64_t bits;
             std::memcpy(&bits, &v, sizeof(double));
             return kDoubleTag ^ std::hash<uint64_t>{}(bits);
@@ -186,6 +189,8 @@ public:
                         double dv = v;
                         if (dv == 0.0)
                             dv = 0.0; // P0 fix: 规范化 -0.0 → +0.0
+                        if (std::isnan(dv))
+                            dv = std::numeric_limits<double>::quiet_NaN(); // SameValueZero fix: 同上（与透明路径产生相同 hash）
                         uint64_t bits;
                         std::memcpy(&bits, &dv, sizeof(double));
                         return kDoubleTag ^ std::hash<uint64_t>{}(bits);
@@ -200,7 +205,16 @@ public:
     struct DictKeyEqual {
         using is_transparent = void; // 启用 C++20 透明查找
 
-        bool operator()(const DictKey& a, const DictKey& b) const { return a == b; }
+        bool operator()(const DictKey& a, const DictKey& b) const {
+            // SameValueZero fix（2026-10-22）：NaN 键互相相等（对齐 JS Map/Set）。
+            // 修复前 NaN != NaN 使每次 NaN 键写入都成为不可再查找的死条目
+            // （同 hash 桶内 equal 判否 → 永不命中、永不覆盖，len 只增不减）。
+            const double* da = std::get_if<double>(&a);
+            const double* db = std::get_if<double>(&b);
+            if (da != nullptr && db != nullptr)
+                return *da == *db || (std::isnan(*da) && std::isnan(*db));
+            return a == b;
+        }
         bool operator()(const DictKey& a, const std::string_view& b) const {
             return std::holds_alternative<std::string>(a) && std::get<std::string>(a) == b;
         }
@@ -214,7 +228,9 @@ public:
             return std::holds_alternative<bool>(a) && std::get<bool>(a) == b;
         }
         bool operator()(const DictKey& a, double b) const {
-            return std::holds_alternative<double>(a) && std::get<double>(a) == b;
+            return std::holds_alternative<double>(a) &&
+                   (std::get<double>(a) == b ||
+                    (std::isnan(std::get<double>(a)) && std::isnan(b))); // SameValueZero fix
         }
         // PERF: 对称反向重载——C++20 异构查找仅要求比较器对 (查找键, 存储键) 可调用，
         // 不同 STL 实现的参数顺序不同，提供两种顺序保证可移植。
@@ -231,7 +247,9 @@ public:
             return std::holds_alternative<bool>(b) && a == std::get<bool>(b);
         }
         bool operator()(double a, const DictKey& b) const {
-            return std::holds_alternative<double>(b) && a == std::get<double>(b);
+            return std::holds_alternative<double>(b) &&
+                   (a == std::get<double>(b) ||
+                    (std::isnan(a) && std::isnan(std::get<double>(b)))); // SameValueZero fix
         }
     };
 
@@ -300,7 +318,8 @@ public:
     /// 构造拥有型 DictKey 插入（string 键仅在真正插入时发生一次深拷贝）。
     /// 前置条件：dictKeyIsValid(key)（调用方负责先校验并报错）。
     /// 返回可写条目引用（语义对齐 entries[DictKey] 的 operator[] 默认构造 + 赋值）。
-    /// 注意：返回引用在 map rehash 后失效，与 operator[] 相同约束。
+    /// 注意（2026-10-22 修订）：标准保证插入/rehash 不使元素引用失效（仅迭代器失效），
+    /// erase 被删元素才使引用失效——调用方跨插入持有引用是安全的。
     static Value& dictGetOrInsertRef(DictMap& entries, const Value& key) {
         if (key.isString()) {
             std::string_view sv(key.stringVal());
@@ -314,6 +333,26 @@ public:
         if (key.isBool())
             return entries[key.boolVal()];
         return entries[key.floatVal()];
+    }
+
+    /// PERF（2026-10-22）: 字典字段名透明查找——键为编译期常量字段名（obj.field，
+    /// 名字来自字节码常量池）。取代 find(DictKey{std::string})：member-get 与
+    /// member-set 在键已存在时均不再发生字段名字符串深拷贝（每次 obj.field
+    /// 读取/写入省 1 次堆分配 + 拷贝）。跨三后端共用 + JIT 运行时 helper。
+    /// 返回命中条目指针；未命中返回 nullptr。
+    static const Value* dictFindFieldRef(const DictMap& entries, std::string_view name) {
+        auto it = entries.find(name);
+        return it != entries.end() ? &it->second : nullptr;
+    }
+
+    /// PERF（2026-10-22）: 字典字段名透明写路径——先异构查找命中则原地返回既有条目
+    /// 引用（覆盖赋值最常见路径零拷贝），未命中才构造拥有型 DictKey 插入。
+    /// 返回可写条目引用（与 dictGetOrInsertRef 相同的失效约束：erase 被删元素才失效）。
+    static Value& dictGetOrInsertFieldRef(DictMap& entries, std::string_view name) {
+        auto it = entries.find(name);
+        if (it != entries.end())
+            return it->second;
+        return entries[DictKey{std::string(name)}];
     }
 
     /// DictKey → string 转换（用于 toString/打印/Formatter 兼容旧接口）。

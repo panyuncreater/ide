@@ -535,13 +535,10 @@ VMResult VM::executeMemberOps(OpCode op, size_t& ip) {
                 }
             }
         } else if (obj.isDict()) {
-            // L4 fix: member access on dict wraps fieldName as DictKey{string}
-            auto it = obj.dictVal().find(Value::DictKey{fieldName});
-            if (it != obj.dictVal().end()) {
-                push(it->second);
-            } else {
-                push(Value::nullValue());
-            }
+            // PERF（2026-10-22）: 字段名透明查找——fieldName 来自常量池，string_view 异构
+            // find 免 DictKey{string} 的每次访问深拷贝（obj 为 const，dictVal() 即 const 重载）
+            const Value* found = Value::dictFindFieldRef(obj.dictVal(), fieldName);
+            push(found ? *found : Value::nullValue());
         } else if (obj.isNull()) {
             // P2 fix (null-access): null 值成员访问给出明确的 null-access 诊断码
             return runtimeError("不能在 null 值上访问属性或调用方法", DiagCodes::kNullAccess);
@@ -568,8 +565,9 @@ VMResult VM::executeMemberOps(OpCode op, size_t& ip) {
         if (obj.isInstance()) {
             obj.fields()[fieldName] = val;
         } else if (obj.isDict()) {
-            // L4 fix: 字典 member-set 用 DictKey{string}
-            obj.dictVal()[Value::DictKey{fieldName}] = val;
+            // PERF（2026-10-22）: 字段名透明写路径——覆盖赋值（最常见）零拷贝，
+            // 仅真正插入新键才构造拥有型 DictKey（非 const dictVal() COW detach 语义不变）
+            Value::dictGetOrInsertFieldRef(obj.dictVal(), fieldName) = val;
         } else {
             return runtimeError(ErrorMessages::kTypeNotMemberAssignable);
         }
@@ -596,8 +594,8 @@ VMResult VM::executeMemberOps(OpCode op, size_t& ip) {
         if (obj.isInstance()) {
             obj.fields()[fieldName] = val;
         } else if (obj.isDict()) {
-            // L4 fix: 字典 member-set-var 用 DictKey{string}
-            obj.dictVal()[Value::DictKey{fieldName}] = val;
+            // PERF（2026-10-22）: 字段名透明写路径（同 OP_MEMBER_SET）
+            Value::dictGetOrInsertFieldRef(obj.dictVal(), fieldName) = val;
         } else {
             return runtimeError(ErrorMessages::kTypeNotMemberAssignable);
         }
@@ -637,8 +635,8 @@ VMResult VM::executeMemberOps(OpCode op, size_t& ip) {
                 }
             }
         } else if (obj.isDict()) {
-            // L4 fix: 字典 member-set-local 用 DictKey{string}
-            obj.dictVal()[Value::DictKey{fieldName}] = val;
+            // PERF（2026-10-22）: 字段名透明写路径（同 OP_MEMBER_SET）
+            Value::dictGetOrInsertFieldRef(obj.dictVal(), fieldName) = val;
         } else {
             return runtimeError(ErrorMessages::kTypeNotMemberAssignable);
         }

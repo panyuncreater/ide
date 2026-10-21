@@ -372,8 +372,9 @@ public:
     /// 在 caseEnv 中绑定变量；返回是否匹配成功。
     /// 支持 WILDCARD/LITERAL/VARIABLE/VARIANT/TUPLE/OR 六种 pattern 递归匹配。
     bool tryMatchPattern(const MatchPattern& p, const Value& scrutinee, Environment& caseEnv);
-    /// 判断类型名是否是 enum 的类型参数（运行时擦除，跳过类型校验）
-    bool isTypeParameter(const std::string& typeName, const std::vector<std::string>& typeParams) const;
+    // （isTypeParameter 成员已于 2026-10-22 移除——已无调用方，与 common/TypeChecker.h
+    //  自由函数构成双事实源；保留双源易复活 R163 修复前的精确匹配漏擦缺陷。
+    //  擦除判定统一走 TypeChecker.h 的 annotationReferencesTypeParam）
 
 private:
     // 运行时限制常量 — 统一引用 common/RuntimeLimits.h

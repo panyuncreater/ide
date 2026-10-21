@@ -477,6 +477,23 @@ TEST(GenericErasureCompletion, DictWithTPayloadAnnotation) {
                              "42");
 }
 
+TEST(GenericErasureCompletion, DictNestedDictKeyAnnotationErasure) {
+    // 键类型自带冒号形态（2026-10-22）：dict[dict[string:K]:int] —— 修复前取首个 ':'
+    // 截断为 dict[string / K]:int，擦除漏判 → 运行时校验必拒合法程序；修复后按
+    // parseTypeAnnotation 同构文法贪婪消费键类型后定位分隔符，K 被识别 → 整体擦除
+    expectAllGenericBackends("fun f<K>(x: dict[dict[string:K]:int]): int { return 1; }"
+                             "print(f(5));",
+                             "1");
+}
+
+TEST(GenericErasureCompletion, DictFunKeyAnnotationErasure) {
+    // 同族：fun 返回类型冒号与 dict 分隔冒号在括号外同深度，必须贪婪消费 fun():K
+    // 后定位分隔符（括号深度感知不可区分，需文法同构切分）
+    expectAllGenericBackends("fun f<K>(x: dict[fun():K:string]): int { return 2; }"
+                             "print(f(5));",
+                             "2");
+}
+
 TEST(GenericErasureCompletion, VarDeclTArrayAnnotation) {
     // 函数体内 var: T[] 注解——编译期不再发射 OP_TYPE_CHECK/TYPE_CHECK IR
     expectAllGenericBackends("fun wrap<T>(x: T): T { var copy: T[] = [x]; return copy[0]; } print(wrap(9));", "9");

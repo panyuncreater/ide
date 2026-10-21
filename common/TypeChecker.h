@@ -76,6 +76,84 @@ namespace minilang {
 //   - RegisterVM REG_TYPE_CHECK (RegisterVM.cpp:1337-1357) 同样有继承链 fallback
 //   三个后端对相同输入产生一致结果，仅代码组织不同（共享 helper + 调用方 fallback
 //   vs 内联实现）。null 兼容性、T? 剥离、fun() 类型、数组/dict 元素递归均已对齐。
+/// （2026-10-22）dict[inner] 键/值分隔冒号定位：从左贪婪消费一个完整类型注解
+///（与 Parser::parseTypeAnnotation 的生成文法同构：dict[K:V] / fun(p):r 复合
+/// 形态递归 + []/? 后缀堆叠），其后的 ':' 即键/值分隔符。
+/// 修复"取首个 ':'"在键类型自带冒号形态下的截断：
+///   dict[dict[string:K]:int] —— 首冒号在嵌套 dict 方括号内；
+///   dict[fun():K:string]     —— fun 返回类型冒号与分隔冒号在括号外同深度，
+///                               必须贪婪消费键类型 fun():K 后定位分隔符。
+/// 两侧共用（annotationReferencesTypeParam 与 typeMatchValue），保证擦除判定
+/// 与运行时校验看到同一把切分尺。
+/// 返回分隔冒号下标；格式异常返回 npos（调用方保守走原拒绝路径）。
+inline size_t skipTypeAnnotationFrom(const std::string& inner, size_t start) {
+    const auto isIdentChar = [](char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+    };
+    size_t j = start;
+    if (j >= inner.size() || !isIdentChar(inner[j]))
+        return std::string::npos;
+    while (j < inner.size() && isIdentChar(inner[j]))
+        ++j;
+    const std::string base = inner.substr(start, j - start);
+    if (base == "dict" && j < inner.size() && inner[j] == '[' &&
+        !(j + 1 < inner.size() && inner[j + 1] == ']')) {
+        // dict[K:V]：递归消费键类型、':'、值类型、']'（对齐 parseTypeAnnotation；
+        // "dict[]" 不进入此分支，按数组后缀处理）
+        ++j; // '['
+        j = skipTypeAnnotationFrom(inner, j);
+        if (j == std::string::npos || j >= inner.size() || inner[j] != ':')
+            return std::string::npos;
+        j = skipTypeAnnotationFrom(inner, j + 1);
+        if (j == std::string::npos || j >= inner.size() || inner[j] != ']')
+            return std::string::npos;
+        ++j;
+    } else if (base == "fun" && j < inner.size() && inner[j] == '(') {
+        // fun(params):ret：参数列表 ':' 返回类型（对齐 parseTypeAnnotation，
+        // 返回类型必填；',' 后紧跟 ')' 的尾随逗号同样被容忍）
+        ++j; // '('
+        if (j < inner.size() && inner[j] != ')') {
+            for (;;) {
+                j = skipTypeAnnotationFrom(inner, j);
+                if (j == std::string::npos)
+                    return std::string::npos;
+                if (j < inner.size() && inner[j] == ',') {
+                    ++j;
+                    if (j < inner.size() && inner[j] == ')')
+                        break; // 尾随逗号：',' 已消费，参数列表结束
+                    continue;
+                }
+                break;
+            }
+        }
+        if (j >= inner.size() || inner[j] != ')')
+            return std::string::npos;
+        ++j;
+        if (j >= inner.size() || inner[j] != ':')
+            return std::string::npos;
+        j = skipTypeAnnotationFrom(inner, j + 1);
+        if (j == std::string::npos)
+            return std::string::npos;
+    }
+    // 后缀 [] 与 ? 任意堆叠（对齐 parseTypeAnnotation 尾循环）
+    for (;;) {
+        if (j + 1 < inner.size() && inner[j] == '[' && inner[j + 1] == ']')
+            j += 2;
+        else if (j < inner.size() && inner[j] == '?')
+            ++j;
+        else
+            break;
+    }
+    return j;
+}
+
+inline size_t findDictKVSeparator(const std::string& inner) {
+    const size_t end = skipTypeAnnotationFrom(inner, 0);
+    if (end == std::string::npos || end >= inner.size() || inner[end] != ':')
+        return std::string::npos;
+    return end;
+}
+
 inline bool typeMatchValue(const Value& val, const std::string& annotation) {
     if (annotation.empty())
         return true;
@@ -118,7 +196,9 @@ inline bool typeMatchValue(const Value& val, const std::string& annotation) {
         if (!val.isDict())
             return false;
         std::string inner = annotation.substr(5, annotation.size() - 6);
-        size_t colonPos = inner.find(':');
+        // 文法同构切分（2026-10-22）：键类型自带冒号形态（dict[dict[..:K]:..] /
+        // dict[fun():K:string]）此前被首个 ':' 截断，键类型永不命中白名单 → 必拒
+        size_t colonPos = findDictKVSeparator(inner);
         if (colonPos == std::string::npos)
             return false;
         std::string keyType = inner.substr(0, colonPos);
@@ -170,7 +250,9 @@ inline bool typeMatchValue(const Value& val, const std::string& annotation) {
 /// R163 泛型扩展：判断类型名是否是类型参数（如 T、E、K、V）。
 /// 用于四后端（Interpreter/StackVM/RegisterVM/IR）的类型参数擦除——
 /// 类型参数运行时不校验，仅跳过类型检查。
-/// 对齐 Interpreter::isTypeParameter 的实现。
+/// （注：曾与 Interpreter::isTypeParameter 成员构成双事实源，后者已于
+/// 2026-10-22 移除，本自由函数为唯一判定入口；复合注解请用
+/// annotationReferencesTypeParam，精确匹配仅适用于已剥离的基础类型名。）
 inline bool isTypeParameter(const std::string& typeName, const std::vector<std::string>& typeParams) {
     for (const auto& tp : typeParams) {
         if (typeName == tp) {
@@ -200,8 +282,11 @@ inline bool annotationReferencesTypeParam(const std::string& annotation, const s
     // dict[K:V]：键/值类型分别递归（内嵌嵌套 dict 由值类型递归覆盖）
     if (annotation.size() >= 7 && annotation.compare(0, 5, "dict[") == 0 && annotation.back() == ']') {
         std::string inner = annotation.substr(5, annotation.size() - 6);
-        // parseTypeAnnotation 生成的键类型是基础类型，取首个 ':' 分隔（对齐 typeMatchValue）
-        size_t colon = inner.find(':');
+        // 文法同构切分（2026-10-22）：与 typeMatchValue 共用 findDictKVSeparator，
+        // 取代"首个 ':'"——键类型自带冒号形态（dict[dict[string:K]:int] /
+        // dict[fun():K:string]）此前被截断为 dict[string / fun()，擦除漏判 →
+        // 运行时校验必拒合法程序（四后端一致地错）
+        size_t colon = findDictKVSeparator(inner);
         if (colon == std::string::npos)
             return false;
         return annotationReferencesTypeParam(inner.substr(0, colon), typeParams) ||

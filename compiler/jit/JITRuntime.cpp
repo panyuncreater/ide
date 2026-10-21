@@ -93,8 +93,10 @@ extern "C" int64_t jitTruthy(uint64_t bits) {
 /// @param rightBits 右操作数 raw bits
 /// @return 结果 raw bits（FLOAT 或 STRING）
 extern "C" uint64_t jitAddGeneric(JitContext* ctx, uint64_t leftBits, uint64_t rightBits) {
-    Value left = bitsToValue(leftBits);
-    Value right = bitsToValue(rightBits);
+    // const 声明：stringVal()/intVal() 等只读访问器走 const 重载，共享字符串读零拷贝
+    // （修复前非 const 声明使 stringVal() 走 ensureUnique —— 共享字符串每次拼接/比较整串深拷贝）
+    const Value left = bitsToValue(leftBits);
+    const Value right = bitsToValue(rightBits);
     // 字符串拼接（StackVM numericOp OP_ADD_INT 路径对齐）
     if (left.isString() && right.isString()) {
         const auto& ls = left.stringVal();
@@ -249,8 +251,9 @@ extern "C" uint64_t jitNotEqualGeneric(uint64_t leftBits, uint64_t rightBits) {
 /// @param cmpType 0=less, 1=greater, 2=less_equal, 3=greater_equal
 /// @return NaN-boxing BOOL raw bits
 extern "C" uint64_t jitOrderedCompare(uint64_t leftBits, uint64_t rightBits, int64_t cmpType) {
-    Value left = bitsToValue(leftBits);
-    Value right = bitsToValue(rightBits);
+    // const 声明：同 jitAddGeneric（共享字符串每次比较整串深拷贝 → 零拷贝）
+    const Value left = bitsToValue(leftBits);
+    const Value right = bitsToValue(rightBits);
     bool result = false;
     if (left.isString() && right.isString()) {
         const auto& ls = left.stringVal();
@@ -339,7 +342,10 @@ extern "C" void jitBuildArray(JitContext* ctx, uint8_t count) {
 /// @param idxBits 索引 raw bits
 /// @return 元素 raw bits；错误时设置 hasError 并返回 NULL bits
 extern "C" uint64_t jitIndexGet(JitContext* ctx, uint64_t objBits, uint64_t idxBits) {
-    Value obj = bitsToValue(objBits);
+    // const 声明：arrayVal/dictVal/stringVal/tupleVal 全部走 const 重载——修复前非 const
+    // 声明使共享容器每次索引读取触发 ensureUnique 整容器深拷贝（注释声称"const 重载"
+    // 与代码不符；IC 版 helper 已用 std::as_const 修过，本函数为同族遗漏）
+    const Value obj = bitsToValue(objBits);
     Value idx = bitsToValue(idxBits);
     // 数组索引读取（最常见的路径）
     if (obj.isArray() && idx.isInt()) {
@@ -401,20 +407,19 @@ extern "C" uint64_t jitIndexGet(JitContext* ctx, uint64_t objBits, uint64_t idxB
     }
     // R147 阶段 4b：字典索引读取（键支持 string/int/bool/float，与 StackVM 对齐）
     if (obj.isDict()) {
-        auto dk = Value::dictKeyFromValue(idx);
-        if (!dk) {
+        if (!Value::dictKeyIsValid(idx)) {
             if (ctx && ctx->hasError && ctx->errorBuffer) {
                 *ctx->hasError = true;
                 *ctx->errorBuffer = ErrorMessages::kDictKeyInvalidType;
             }
             return jitReturn(Value());
         }
-        const auto& dict = obj.dictVal(); // const 重载，不触发 COW
-        auto it = dict.find(*dk);
-        if (it == dict.end()) {
+        // PERF（2026-10-22）: 透明查找，string 键免 DictKey 深拷贝（对齐 StackVM OP_GET_INDEX）
+        const Value* found = Value::dictFindValue(obj.dictVal(), idx);
+        if (!found) {
             return jitReturn(Value()); // 不存在键返回 null（与 StackVM 一致）
         }
-        return jitReturn(it->second);
+        return jitReturn(*found);
     }
     // R147 阶段 4b：元组索引读取（immutable，与数组语义一致）
     if (obj.isTuple() && idx.isInt()) {
@@ -484,8 +489,9 @@ extern "C" void jitIndexSetLocal(JitContext* ctx, uint8_t slot, int64_t* frameBa
 
     if (obj.isArray() && idx.isInt()) {
         int64_t i = idx.intVal();
-        // 越界检查用 const 重载避免 COW detach
-        const auto& arr = obj.arrayVal();
+        // 越界检查用 const 重载避免 COW detach（原实现注释与代码不符——非 const 重载
+        // 在越界错误路径也整数组深拷贝；修复后 detach 仅发生在真正写入时）
+        const auto& arr = std::as_const(obj).arrayVal();
         if (i < 0 || static_cast<size_t>(i) >= arr.size()) {
             if (ctx->hasError && ctx->errorBuffer) {
                 *ctx->hasError = true;
@@ -503,16 +509,16 @@ extern "C" void jitIndexSetLocal(JitContext* ctx, uint8_t slot, int64_t* frameBa
     }
     // R147 阶段 4b：字典索引赋值（键支持 string/int/bool/float，与 StackVM 对齐）
     if (obj.isDict()) {
-        auto dk = Value::dictKeyFromValue(idx);
-        if (!dk) {
+        if (!Value::dictKeyIsValid(idx)) {
             if (ctx->hasError && ctx->errorBuffer) {
                 *ctx->hasError = true;
                 *ctx->errorBuffer = ErrorMessages::kDictKeyInvalidType;
             }
             return;
         }
-        // 触发 COW detach（非 const dictVal 重载调用 ensureUnique<DictData>）
-        obj.dictVal()[*dk] = val;
+        // 触发 COW detach（非 const dictVal 重载调用 ensureUnique<DictData>）；
+        // PERF（2026-10-22）: 透明写路径，覆盖赋值零 DictKey 拷贝（对齐 StackVM OP_INDEX_SET_LOCAL）
+        Value::dictGetOrInsertRef(obj.dictVal(), idx) = val;
         *slotPtr = valueToBits(obj); // 写回栈槽
         return;
     }
@@ -551,7 +557,8 @@ extern "C" void jitIndexSetGlobal(JitContext* ctx, int64_t* slotPtr) {
 
     if (obj.isArray() && idx.isInt()) {
         int64_t i = idx.intVal();
-        const auto& arr = obj.arrayVal();
+        // PERF（2026-10-22）: 越界检查改 const 重载——修复前非 const 在越界错误路径也整容器深拷贝
+        const auto& arr = std::as_const(obj).arrayVal();
         if (i < 0 || static_cast<size_t>(i) >= arr.size()) {
             if (ctx->hasError && ctx->errorBuffer) {
                 *ctx->hasError = true;
@@ -565,15 +572,16 @@ extern "C" void jitIndexSetGlobal(JitContext* ctx, int64_t* slotPtr) {
         return;
     }
     if (obj.isDict()) {
-        auto dk = Value::dictKeyFromValue(idx);
-        if (!dk) {
+        if (!Value::dictKeyIsValid(idx)) {
             if (ctx->hasError && ctx->errorBuffer) {
                 *ctx->hasError = true;
                 *ctx->errorBuffer = ErrorMessages::kDictKeyInvalidType;
             }
             return;
         }
-        obj.dictVal()[*dk] = val; // COW detach
+        // 触发 COW detach（非 const dictVal 重载调用 ensureUnique<DictData>）；
+        // PERF（2026-10-22）: 透明写路径，覆盖赋值零 DictKey 拷贝
+        Value::dictGetOrInsertRef(obj.dictVal(), idx) = val;
         *slotPtr = valueToBits(obj);
         return;
     }
@@ -601,7 +609,9 @@ extern "C" void jitLen(JitContext* ctx) {
         return;
     }
     int64_t* sp = ctx->stackTop;
-    Value v = bitsToValue(*sp);
+    // const 声明：array/dict/string/tuple 四分支只读 size() 零拷贝（修复前 len() 每次调用
+    // 对共享容器整容器深拷贝——循环条件中的 len() 是重灾区）
+    const Value v = bitsToValue(*sp);
     sp += 1; // pop v（向高地址移动）
     int64_t len = 0;
     if (v.isArray()) {
@@ -665,16 +675,16 @@ extern "C" void jitIndexSet(JitContext* ctx) {
         // 触发 COW detach（非 const arrayVal 重载调用 ensureUnique<ArrayData>）
         obj.arrayVal()[static_cast<size_t>(i)] = val;
     } else if (obj.isDict()) {
-        // 字典键支持 string/int/bool/float（与 StackVM 对齐）
-        auto dk = Value::dictKeyFromValue(innerIdx);
-        if (!dk) {
+        // 字典键支持 string/int/bool/float（与 StackVM 对齐）；
+        // PERF（2026-10-22）: 透明写路径，覆盖赋值零 DictKey 拷贝
+        if (!Value::dictKeyIsValid(innerIdx)) {
             if (ctx->hasError && ctx->errorBuffer) {
                 *ctx->hasError = true;
                 *ctx->errorBuffer = ErrorMessages::kDictKeyInvalidType;
             }
             return;
         }
-        obj.dictVal()[*dk] = val; // COW detach
+        Value::dictGetOrInsertRef(obj.dictVal(), innerIdx) = val; // COW detach
     } else if (obj.isArray()) {
         if (ctx->hasError && ctx->errorBuffer) {
             *ctx->hasError = true;
@@ -1536,7 +1546,8 @@ extern "C" void jitDefineClass(JitContext* ctx, const char* className, const cha
         return;
     }
     int64_t* sp = ctx->stackTop;
-    Value templateInstance = bitsToValue(*sp);
+    // const 声明：fields() 只读访问走 const 重载（模板实例字段默认值提取零拷贝）
+    const Value templateInstance = bitsToValue(*sp);
     sp += 1; // pop templateInstance
     ctx->stackTop = sp;
     if (!templateInstance.isInstance()) {
@@ -1620,7 +1631,10 @@ extern "C" void jitMemberGet(JitContext* ctx, const char* fieldName) {
         return;
     }
     int64_t* sp = ctx->stackTop;
-    Value obj = bitsToValue(*sp);
+    // const 声明：instance fields() 与 dict dictVal() 只读访问走 const 重载
+    //（修复前共享实例/字典每次字段读取触发 ensureUnique 整对象/整字典深拷贝，
+    // 注释声称"const 引用"与代码不符；IC 版 helper 已修，本函数为同族遗漏）
+    const Value obj = bitsToValue(*sp);
     sp += 1; // pop obj
     if (obj.isInstance()) {
         const auto& fields = obj.fields(); // const 引用，不触发 COW
@@ -1640,10 +1654,9 @@ extern "C" void jitMemberGet(JitContext* ctx, const char* fieldName) {
         return;
     }
     if (obj.isDict()) {
-        auto dk = Value::dictKeyFromValue(Value(std::string(fieldName)));
-        const auto& dict = obj.dictVal(); // const 引用
-        auto it = dict.find(*dk);
-        Value result = (it != dict.end()) ? it->second : Value();
+        // PERF（2026-10-22）: 字段名透明查找，免 Value(std::string(fieldName)) + DictKey 双重堆分配
+        const Value* found = Value::dictFindFieldRef(obj.dictVal(), fieldName);
+        Value result = found ? *found : Value();
         sp -= 1;
         *sp = valueToBits(result);
         ctx->stackTop = sp;
@@ -1731,10 +1744,9 @@ extern "C" void jitMemberGetWithIC(JitContext* ctx, const char* fieldName, uint6
     // 非 Instance 类型（dict/null/...）：回退到原 jitMemberGet 逻辑
     sp += 1; // pop obj
     if (obj.isDict()) {
-        auto dk = Value::dictKeyFromValue(Value(std::string(fieldName)));
-        const auto& dict = obj.dictVal();
-        auto it = dict.find(*dk);
-        Value result = (it != dict.end()) ? it->second : Value();
+        // PERF（2026-10-22）: 字段名透明查找（免双重堆分配）+ as_const 防 COW 误分离
+        const Value* found = Value::dictFindFieldRef(std::as_const(obj).dictVal(), fieldName);
+        Value result = found ? *found : Value();
         sp -= 1;
         *sp = valueToBits(result);
         ctx->stackTop = sp;
@@ -1764,8 +1776,9 @@ extern "C" void jitMemberSetVar(JitContext* ctx, int64_t* slotPtr, const char* f
         return;
     }
     if (obj.isDict()) {
-        auto dk = Value::dictKeyFromValue(Value(std::string(fieldName)));
-        obj.dictVal()[*dk] = val; // 非 const 触发 COW detach
+        // PERF（2026-10-22）: 字段名透明写路径——覆盖赋值零拷贝，仅真正插入新键才构造
+        // 拥有型键（修复前每次 Value(std::string) + DictKey 双重堆分配；COW detach 语义不变）
+        Value::dictGetOrInsertFieldRef(obj.dictVal(), fieldName) = val;
         *slotPtr = valueToBits(obj);
         return;
     }
@@ -1812,8 +1825,8 @@ extern "C" void jitMemberSetLocal(JitContext* ctx, uint8_t slot, int64_t* frameB
         return;
     }
     if (obj.isDict()) {
-        auto dk = Value::dictKeyFromValue(Value(std::string(fieldName)));
-        obj.dictVal()[*dk] = val;
+        // PERF（2026-10-22）: 字段名透明写路径（同 jitMemberSetVar）
+        Value::dictGetOrInsertFieldRef(obj.dictVal(), fieldName) = val;
         *slotPtr = valueToBits(obj);
         return;
     }

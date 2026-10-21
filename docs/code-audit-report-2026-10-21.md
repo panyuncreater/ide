@@ -224,3 +224,60 @@
 - 三次提交（7dd9557 / 251a54c / 46f3a6d）各自独立通过全量 ctest（-j 10，MINILANG_BUILD_PERF_TESTS=ON 全口径，/W4+/WX 零警告）；末次口径 4159/4159（含本轮新增 2 项回归；并行会话故意失败的临时探针 ProbeTmp2 已由其自行撤除）
 - 测试计数：4156 → 4159（+2 协程跨深度回归 +1 并行会话轮次新增）
 - 本轮未触及：§3.7（并行会话在途实施）、§3.3-§3.6/§3.8/§3.10-§3.12（按约束清单第 6 条维持登记）
+
+---
+
+# 2026-10-22 深夜轮次（调度任务：§6.4 推荐项清偿 + 透明查找收尾）
+
+> 本轮按 §6.4 剩余清单执行：清偿 §3.6、§3.11 与三条记录项（透明查找未覆盖点 / isTypeParameter 双事实源 / Value.h 注释修订），并连带修复同族新发现的 JIT 只读 helper COW 误分离（§7.1.4）。§3.4/§3.5（解析器两项）受阻于平台写入守卫对 Parser.cpp 的凭据启发式误判，无法落盘（详见 §7.2，修复方案已定位到行、待解除后一轮实施）。
+
+## 7.1 已修复（本轮 5 项）
+
+### 7.1.1 P2｜§3.6 清偿｜dict 键类型含 `:` 注解形态擦除漏判 + 必然拒绝
+
+- **位置**：`common/TypeChecker.h` 新增 `findDictKVSeparator`/`skipTypeAnnotationFrom` + `annotationReferencesTypeParam` dict 分支 + `typeMatchValue` dict 分支
+- **类型**：边界条件（四后端一致拒绝合法程序）
+- **复现**：`fun f<K>(x: dict[dict[string:K]:int]): int { return 1; } print(f(5));` → 修复前四后端一致运行时拒绝（内层被首个 `:` 截断为 `dict[string` / `K]:int`，擦除漏判 → 运行时校验必拒）；修复后 K 被识别 → 整体擦除 → 接受
+- **根因**：`fun():K` 形态键类型的返回类型冒号与 dict 分隔冒号在括号外同深度——纯括号深度感知不可区分，必须按 `parseTypeAnnotation` 同构文法从左**贪婪消费键类型**后定位分隔符
+- **修复**：新增文法同构切分（dict[K:V]/fun(p):r 递归 + `[]`/`?` 后缀堆叠 + 尾随逗号容忍），擦除判定与运行时校验两侧共用同一把切分尺（typeMatchValue 侧对可达输入为行为无变化的一致性收口）
+- **回归**：`GenericErasureCompletion.DictNestedDictKeyAnnotationErasure` / `DictFunKeyAnnotationErasure`（四后端）
+
+### 7.1.2 P3｜§3.11 清偿｜NaN 键可写不可查 → SameValueZero（对齐 JS Map/Set）
+
+- **位置**：`interpreter/Value.h` DictKeyHash（透明 double 重载 + DictKey 分支）+ DictKeyEqual（DictKey/DictKey、DictKey/double、double/DictKey 三重载）
+- **类型**：语义边界
+- **复现**：`var inf = 1e308 * 10.0; var nan = inf - inf; d[nan] = 1; d[nan] = 2; print(d[nan]); print(d.len());` → 修复前 len=2 且 `d[nan]` 永 miss（NaN 位模式随运算来源不同散布不同 hash 桶 + equal 判否，每次写入成为不可查找死条目）；修复后写覆盖、读命中、len=1（`21`）
+- **修复口径说明**：原报告建议"前置拦截显式报错，或文档化"。本轮选择**未列出的第三方案 SameValueZero 规范化**：① hash 侧所有 NaN 规范化到 quiet_NaN 同一位模式（与既有 -0.0→+0.0 P0 fix 同型；位模式随运算来源不同是 equal 永不触发的前因）；② equal 侧 NaN 互等。理由：单文件两处修改即对**全部路径**（含 OP_BUILD_DICT 字面量路径——报错方案需另行补 4 处字面量门控，且 `kDictKeyInvalidType` 文案对 NaN 误导）自动一致；JS Map/Set 先例；无既有成功程序被新增拒绝。属语义变更（NaN 键 len 计数与可查性变化），已入 `backend-consistency.md` §2 语义细则对照表
+- **注**：`0.0/0.0` 在 MiniLang 是显式除零错误（NumericUtils DivByZero 对 float 同样拦截），NaN 须经 `inf - inf` 产生（浮点乘/减无检查）——std/math 的 `sqrt` 负数分支同样会被除零拦截，属另案登记的库内潜在问题
+- **回归**：`ConsistencyDiff.DictNaNKeySameValueZero`（三后端 `21`；四后端共享 DictMap 自动一致）
+
+### 7.1.3 记录项清偿｜字典透明查找收尾（member-set/get 9 处 + JIT helper 8 处）
+
+- **位置**：`compiler/backend-stack/VMContainers.cpp`（OP_MEMBER_GET + OP_MEMBER_SET/SET_VAR/SET_LOCAL）、`compiler/backend-reg/RegisterVMExec.cpp`（REG_MEMBER_GET/SET）、`interpreter/Interpreter.cpp`（writeBackChain/writeBack 字典 member-set 3 处）、`compiler/jit/JITRuntime.cpp`（jitMemberGet/jitMemberGetWithIC 回退/jitMemberSetVar/jitMemberSetLocal/jitIndexGet/jitIndexSetLocal/Global/Index）
+- **类型**：性能（行为无差异）
+- **内容**：① `Value.h` 新增 `dictFindFieldRef`/`dictGetOrInsertFieldRef`（string_view 异构查找，键为字节码常量池字段名）——修复前每次 `obj.field` 读/写构造 `DictKey{std::string}`（每次访问 1 次堆分配 + 拷贝，覆盖赋值也不例外）；② JIT 索引/成员路径从 `dictKeyFromValue(Value(std::string(fieldName)))` 迁移到 `dictFindValue`/`dictGetOrInsertRef`/`dictFindFieldRef`——修复前 string 键每次访问双重堆分配（临时 StringData + 拥有型 DictKey）
+- **纪律**：JIT 仅改 helper 函数体（调用符号与 ABI 不变，生成机器码零变化）→ `kJitCodegenVersion` 不递增
+
+### 7.1.4 P2（本轮新发现）｜JIT 只读 helper 非 const 容器访问触发 COW 误分离
+
+- **位置**：`compiler/jit/JITRuntime.cpp` jitIndexGet / jitLen / jitAddGeneric / jitOrderedCompare / jitMemberGet / jitDefineClass（接收者声明改 const）+ jitIndexSetLocal/Global/Index 三处越界检查行（`std::as_const`）+ jitMemberGetWithIC dict 回退
+- **类型**：性能（只读路径语义无变化）
+- **根因**：`bitsToValue`（fromBitsBorrowed）对堆类型 addRef，JIT 栈槽与 helper 局部 Value 并存 → refcount ≥ 2 → 非 const 访问器（arrayVal/dictVal/stringVal/fields）走 ensureUnique → **共享容器每次只读访问整容器/整串深拷贝**（jitLen 的 len()、字符串拼接/比较、`arr[i]`/`d[k]`/`obj.field` 读取均在内）。多处注释声称"const 重载，不触发 COW"与代码不符；IC 版 helper（jitMemberGetWithIC 实例分支）已用 as_const 修过，其余为同族遗漏
+- **修复**：只读 helper 接收者一律 const 声明；写路径越界检查改 as_const（修复前越界错误路径也先整容器拷贝再报错）
+- **回归**：全量 ctest（行为无差异）+ TestJIT 专项 + perf 基准套件通过
+
+### 7.1.5 记录项清偿｜isTypeParameter 双事实源移除 + Value.h 注释修订
+
+- `Interpreter::isTypeParameter`（无调用方）删除（Interpreter.h/Interpreter.cpp），防复活 R163 修复前的精确匹配漏擦；`TypeChecker.h` 注释同步声明唯一判定入口为自由函数 + 复合注解走 `annotationReferencesTypeParam`
+- `Value.h` dictGetOrInsertRef 注释"返回引用在 map rehash 后失效"与标准不符（rehash 仅失效迭代器）——修订为准确表述
+
+## 7.2 未实施（本轮受阻/维持登记）
+
+- **§3.4 / §3.5（P2，解析器两项）受阻于平台写入守卫误判**：AutoClaw 工作区写入守卫对 Parser.cpp 全文件扫描时，把既有代码/注释误判为凭据字面量——① 558 行注释（含英文词 token 与冒号分隔的键值状说明，2026-06-06 提交 9c60347e）；② `const Token& tok = peek();` 等 Token 型声明赋值行（全文件 token+等号组合 175 行，启发式逐轮上报不同首命中行，无法按行收敛）。按守卫协议不绕过、不改写无关既有代码；两项修复（trySkipExplicitTypeArgs 白名单补 `:`/`(`/`)`——`(` 仅允许前缀为 TK_FUN 防误吃算术分组、`)` 配对平衡；enum 变体分支在 match(TK_LPAREN) 前前置 trySkipExplicitTypeArgs）已定位到行，待守卫口径修正后一轮落盘并配四后端回归
+- §3.3 泛型嵌套函数类型参数传播（需设计立项）、§3.8 协程跨线程防御（可达性低 + 协程子系统刚经三轮精密修复，本轮不冒险）、§3.10 RegisterVM instructionSizeAt（仅畸形字节码可达）、JIT 缓存键 enumInfos 补全（随下次 key 结构变更）：维持登记
+
+## 7.3 验证与统计
+
+- 全量 ctest **4163/4163 通过**（-j 10，80s，MINILANG_BUILD_PERF_TESTS=ON 全口径，/W4+/WX 零警告）；测试计数 4159 → 4163（+3：NaN 键一致性 + dict 注解切分 ×2）
+- 行为语义变更 1 项（NaN 键 SameValueZero，已入 backend-consistency §2）；其余均为行为无差异的性能/清理项
+- 构建环境注记：本机 VS 位于 `D:/vs`（非标准 `ProgramFiles(x86)` 布局，vswhere 缺失）——`scripts/_common.bat` 的 VS 检测在裸 shell 不可用，构建需直接 `call D:\vs\VC\Auxiliary\Build\vcvars64.bat` 后调用 `D:/vs/.../CMake/bin/cmake.exe`（本机实测口径，供后续轮次复用）

@@ -1044,13 +1044,10 @@ VMResult RegisterVM::executeMemberOps(RegOp op, size_t& ip) {
                 }
             }
         } else if (obj.isDict()) {
-            const auto& dict = obj.dictVal();
-            auto it = dict.find(Value::DictKey{fieldName});
-            if (it == dict.end()) {
-                reg(dst) = Value::nullValue();
-            } else {
-                reg(dst) = it->second;
-            }
+            // PERF（2026-10-22）: 字段名透明查找——fieldName 来自常量池，
+            // 免 DictKey{string} 的每次访问深拷贝（obj 为 const 引用，语义不变）
+            const Value* found = Value::dictFindFieldRef(obj.dictVal(), fieldName);
+            reg(dst) = found ? *found : Value::nullValue();
         } else if (obj.isNull()) {
             return runtimeError("不能在 null 值上访问属性或调用方法", DiagCodes::kNullAccess);
         } else {
@@ -1073,7 +1070,9 @@ VMResult RegisterVM::executeMemberOps(RegOp op, size_t& ip) {
             obj.fields()[fieldName] = val;
             frame.fieldsModified = true;
         } else if (obj.isDict()) {
-            obj.dictVal()[Value::DictKey{fieldName}] = val;
+            // PERF（2026-10-22）: 字段名透明写路径——覆盖赋值（最常见）零拷贝，
+            // 仅真正插入新键才构造拥有型 DictKey（COW detach 语义不变）
+            Value::dictGetOrInsertFieldRef(obj.dictVal(), fieldName) = val;
         } else {
             return runtimeError(ErrorMessages::kTypeNotMemberAssignable);
         }

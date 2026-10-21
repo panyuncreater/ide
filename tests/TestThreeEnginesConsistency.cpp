@@ -2908,3 +2908,28 @@ TEST(ConsistencyDiff, ReturnTypeAnnotationNullCompatible) {
     EXPECT_EQ(ri, rs) << "null 返回类型注解：Interpreter vs StackVM";
     EXPECT_EQ(ri, rr) << "null 返回类型注解：Interpreter vs RegisterVM";
 }
+
+// ============================================================
+// 字典 NaN 键 SameValueZero（2026-10-22）
+// ------------------------------------------------------------
+// 修复前：NaN != NaN 使每次 NaN 键写入都成为不可再查找的死条目
+//（d[nan]=1 两次 → len=2、d[nan] → null）；修复后 DictKeyHash 把所有 NaN
+// 规范化到同一 hash、DictKeyEqual 判 NaN 互等（对齐 JS Map/Set SameValueZero），
+// 写入覆盖、读取命中。四后端共享 DictMap，语义自动一致。
+// ============================================================
+
+TEST(ConsistencyDiff, DictNaNKeySameValueZero) {
+    // NaN 产源：浮点乘法无溢出检查（IntOverflow 仅 int）→ 1e308*10 = inf；
+    // 减法无零检查 → inf - inf = NaN（除零被显式拒绝，不能走 0.0/0.0）。
+    // 期望：读取命中最后一次写入的 2，且两次写入合并为 1 个条目 → 输出 "21"
+    std::string src = "var d = {};"
+                      "var inf = 1e308 * 10.0;"
+                      "var nan = inf - inf;"
+                      "d[nan] = 1;"
+                      "d[nan] = 2;"
+                      "print(d[nan]);"
+                      "print(d.len());";
+    EXPECT_EQ(runInterp(src), "21");
+    EXPECT_EQ(runStackVM_IR(src), "21");
+    EXPECT_EQ(runRegVM_IR(src), "21");
+}
