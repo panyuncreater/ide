@@ -157,11 +157,14 @@ size_t RegBytecodeChunk::instructionSize(RegOp op) {
     return getRegOpInfo(op).baseSize;
 }
 
-size_t RegBytecodeChunk::instructionSizeAt(size_t offset) const {
-    if (offset >= code.size())
-        return 1;
+// §3.10 fix（2026-10-22）：截断防御——畸形字节码（缓存校验被绕过的理论路径）的多段
+// 变长指令在段缺失时按 baseSize 回退，buildIpMap/relocateGlobalSlots 的线性走查会
+// 跳入指令数据中段错位解读。统一在外层把计算结果钳制到剩余字节数：走查必在 code
+// 末尾终止且永不越界；合法字节码发射器保证指令不越界，钳制为无变化。
+namespace {
+size_t instructionSizeAtImpl(const std::vector<uint8_t>& code, size_t offset) {
     RegOp op = static_cast<RegOp>(code[offset]);
-    size_t baseSize = instructionSize(op);
+    size_t baseSize = getRegOpInfo(op).baseSize;
 
     // 变长指令：根据操作数计算实际长度
     switch (op) {
@@ -277,6 +280,15 @@ size_t RegBytecodeChunk::instructionSizeAt(size_t offset) const {
     default:
         return baseSize;
     }
+}
+} // namespace
+
+size_t RegBytecodeChunk::instructionSizeAt(size_t offset) const {
+    if (offset >= code.size())
+        return 1;
+    size_t computed = instructionSizeAtImpl(code, offset);
+    size_t remaining = code.size() - offset;
+    return computed > remaining ? remaining : computed;
 }
 
 void RegBytecodeChunk::buildIpMap() {
