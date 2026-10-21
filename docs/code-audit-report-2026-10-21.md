@@ -202,32 +202,10 @@
 - P2：trySkipExplicitTypeArgs 白名单缺 `:`/`(`（需配对平衡设计）
 - P2：enum 变体构造带类型实参 AST 降级；P2：dict 键类型含 `:` 长尾；P2：协程跨线程恢复缺防御
 - P3：NaN 键可写不可查；RegisterVM tryStack 跨挂起计数不可靠（本轮改用帧深度判别后仍建议下轮核对账目）
-- RegisterVM 协程 §9 checklist 专项审计仍建议补齐（本轮由并行会话覆盖了重定基与回拨，IC/tiering 外的其余项未逐条核）
+- RegisterVM 协程 §9 checklist 专项审计：夜间调度会话已按 §9 逐项核对完毕（单边启用禁令/快照字段相对化/returnIp 重定基/嵌套挂起上下文/GC 根义务/OP_RETURN try 处理器随帧回收——均确认无恙；跨深度回拨 P1 即该轮发现）；IC/tiering 内部实现仍不在覆盖面
+- §3.2 遗留小项（登记不动）：① BUG-DEF-1 白名单拒绝后 synchronize 残留 `}` 再报一条多余的右括号顶层错误（双重诊断噪音，GUI 诊断面板可见）；② 宽松 harness 下残缺 AST 各后端恢复形态不一致——两者仅在忽略诊断的 harness 可达，修复收益低、synchronize 全局共用改动风险高
 
-## 6. 2026-10-22 轮次（夜间调度任务追加：VM 侧协程快照/重定基专项审计 + 推荐项清偿）
-
-> 本轮即上节 §4 遗留的"VM 侧协程快照/重定基专项审计"，按 backend-consistency §9 checklist 逐项核对（单边启用禁令/快照字段相对化/returnIp 重定基/嵌套挂起上下文/GC 根义务/OP_RETURN try 处理器随帧回收——均确认无恙），**新发现并修复一个 P1**。同夜另有并行会话按同一推荐清单作业（其 §3.7 TCO 五成员挂起协议在途），双方提交边界经 git 逐文件独立核验、未互串。
-
-### 6.1 已修复（本轮 3 项）
-
-- **P1｜§3.1 VM 错误逃逸后 `.next()` 语义对齐解释器（提交 7dd9557）**：`CoroutineData` 新增 `vmPendingErrorBox`——StackVM/RegisterVM 生成器体内未捕获异常穿透到脚本层处理器（帧深度判别）时按值捕获，入口前置检查持续同点重抛（done 保持 false、前缀副作用不重执行），对齐解释器 fiber 失败保留语义；`=0` 重放平台不保留（重执行+重抛一致）。`FailedGeneratorRethrowsSameErrorOnEveryNext` 升级四执行路径锁定（`1boomboomfalse`）。GcManager 协程分支补 `vmPendingErrorBox` 根集。修复过程中捕获回归由探针实测定位：RegisterVM 恢复后捕获基准计入生成器自身挂起 try 帧，生成器内 catch 弹出自己 try 帧被误判逃逸（TryCatchInsideGenerator / TryCatchAcrossSuspension 回归），两 VM 判别均已改为帧深度基准（含并行会话在 7dd9557 收录的判别器修正）
-- **P1｜VM 协程跨调用方深度恢复循环边界回拨（§9 专项审计新发现，提交 251a54c）**：真挂起恢复路径在完成相对→绝对重定基后，旧实现把循环边界/挂起基线回拨到**首次挂起时**的调用方入口（`savedFrameCount = sus->baseFrames` / `savedStackSize = sus->baseStack`）——两次 `.next()` 调用方帧深不同即破坏：深恢复在生成器帧弹出后循环越界继续执行调用方指令（探针实测 yield 序列 `133true` 而非 `123true`）；浅恢复循环短路、快照被消费而帧未清理，后续 `.next()` 全新重建报"yield 只能在生成器函数体内出现"；重挂起窗口 `coroSuspendBase*` 同被回拨，切片把调用方栈槽/帧误并入快照。修复：删除两处回拨（StackVM/RegisterVM），循环边界、VMYieldSignal 清理、needCleanup 栈收缩、`coroSuspendBase*` 登记一律保持**本次**入口深度；快照结构移除只写字段 `baseStack`/`baseFrames`，快照内不携带任何绝对基线。**关键验证注记**：RegisterVM 默认构建经 IR inlinePass 掩盖（小函数内联后无跨深度路径），`setIRSSAOptimize(false)` 关内联实测与 StackVM 同型错值——修复对两 VM 同步生效。回归：`CoroutineSuspension.ResumeAtDeeperCallSite` / `ResumeAtShallowerCallSite`（跨深度场景此前无任何测试覆盖）
-- **P3｜§3.9 JIT 块缓存同键重复 store（提交 46f3a6d）**：store 前按 key 查旧条目，先逐块 `sharedCacheRuntime().release` 再摘除 LRU 节点与 map 条目——旧实现的同键双节点使命中遍历/淘汰计数失真且旧共享块永不释放（防御性清偿，前置源码自标不应发生）
-
-### 6.2 §3.2 勘误（无需代码修复）
-
-- 四后端探针复测：`fun f(a: int[] = [1, 2]) ...` / 无注解变体 / 类 init 变体 / dict 字面量默认值——当前 HEAD 全部被 BUG-DEF-1 白名单**显式 ParseError 拒绝**（"默认参数值必须是字面量…"），产品主路径（GUI/CLI 展示诊断、拒绝运行）**不存在"静默不绑定"**。原报告"运行时错误『未定义的变量: a』"实为探针 harness 缺陷：宽松 harness 忽略 parse 诊断继续执行错误恢复后的残缺 AST（fun 声明保留但默认值未绑定）——与 §5 方法论注记"复现场景必须实跑验证"同源，本轮实测还原了该误判链路
-- 遗留小项（登记不动）：① 白名单拒绝后 synchronize 残留 `}` 再报一条"多余的 '}'} 在顶层"（双重诊断噪音，GUI 诊断面板可见）；② 宽松 harness 下残缺 AST 各后端恢复形态不一致（Interpreter/RegisterVM 跑出运行时错、StackVM 报编译错）——两者仅在忽略诊断的 harness 可达，修复收益低、synchronize 全局共用改动风险高。"扩展 BUG-DEF-1 支持数组/字典字面量默认值"属能力增强（非缺陷），如立项另行走特性流程
-
-### 6.3 验证与统计（本轮）
-
-- 三次提交（7dd9557 / 251a54c / 46f3a6d）各自独立通过全量 ctest（-j 10，MINILANG_BUILD_PERF_TESTS=ON 全口径，/W4+/WX 零警告）；末次口径 4159/4159（含本轮新增 2 项回归；并行会话故意失败的临时探针 ProbeTmp2 已由其自行撤除）
-- 测试计数：4156 → 4159（+2 协程跨深度回归 +1 并行会话轮次新增）
-- 本轮未触及：§3.7（并行会话在途实施）、§3.3-§3.6/§3.8/§3.10-§3.12（按约束清单第 6 条维持登记）
-
----
-
-# 2026-10-22 深夜轮次（调度任务：§6.4 推荐项清偿 + 透明查找收尾）
+## 7. 2026-10-22 深夜轮次（调度任务：§6.4 推荐项清偿 + 透明查找收尾）
 
 > 本轮按 §6.4 剩余清单执行：清偿 §3.6、§3.11 与三条记录项（透明查找未覆盖点 / isTypeParameter 双事实源 / Value.h 注释修订），并连带修复同族新发现的 JIT 只读 helper COW 误分离（§7.1.4）。§3.4/§3.5（解析器两项）受阻于平台写入守卫对 Parser.cpp 的凭据启发式误判，无法落盘（详见 §7.2，修复方案已定位到行、待解除后一轮实施）。
 
