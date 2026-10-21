@@ -18,10 +18,10 @@
 
 #include <gtest/gtest.h>
 
-#include "compiler/core/Compiler.h"
-#include "compiler/ir/IR.h"
 #include "compiler/backend-reg/RegisterVM.h"
 #include "compiler/backend-stack/VM.h"
+#include "compiler/core/Compiler.h"
+#include "compiler/ir/IR.h"
 #include "doc/DocGenerator.h"
 #include "formatter/Formatter.h"
 #include "interpreter/Interpreter.h"
@@ -438,4 +438,105 @@ TEST(GenericDoc, NonGenericHasEmptyTypeParams) {
     auto result = generateDocs(src);
     ASSERT_EQ(result.entries.size(), 1u);
     EXPECT_TRUE(result.entries[0].typeParams.empty());
+}
+
+// ============================================================
+// 10. 泛型擦除补全回归锁定（2026-10-07）
+// ------------------------------------------------------------
+// R163 的擦除仅精确匹配裸类型名，复合注解（T[]/T?/dict[string:T]）漏擦导致
+// 四后端不一致（Interpreter 拒绝 / 三 VM 接受，TestGenerics 探针实测）；
+// 显式类型实参 id<int>(5) 被静默解析为比较运算（"未定义的变量: int"）。
+// 本节锁定：① 复合注解四后端统一擦除；② 显式类型实参解析后擦除（C#/Java
+// 同型消歧：平衡 <> 后紧跟 ( 才按类型实参，否则回退比较）。
+// ============================================================
+
+static void expectAllGenericBackends(const std::string& src, const std::string& expected) {
+    EXPECT_EQ(runInterpreter(src), expected);
+    EXPECT_EQ(runStackVM(src), expected);
+    EXPECT_EQ(runStackVM_IR(src), expected);
+    EXPECT_EQ(runRegVM(src), expected);
+}
+
+TEST(GenericErasureCompletion, ArrayOfTParamAnnotation) {
+    // 修复前：Interpreter 报"类型注解违反: 期望类型 T[]，实际为 array"，三 VM 通过
+    expectAllGenericBackends("fun first<T>(xs: T[]): T { return xs[0]; } print(first([7, 8]));", "7");
+}
+
+TEST(GenericErasureCompletion, OptionalTParamAnnotation) {
+    // T? 注解：null 与具体值均放行（擦除）
+    expectAllGenericBackends("fun isAbsent<T>(x: T?): string { if (x == null) { return \"y\"; } return \"n\"; }"
+                             "print(isAbsent(null)); print(isAbsent(3));",
+                             "yn");
+}
+
+TEST(GenericErasureCompletion, DictWithTPayloadAnnotation) {
+    // dict[string:T] 参数注解：整体擦除（含键类型校验一并放弃，属记录的简化）
+    expectAllGenericBackends("fun firstVal<T>(d: dict[string:T]): T { return d[\"k\"]; }"
+                             "print(firstVal({\"k\": 42}));",
+                             "42");
+}
+
+TEST(GenericErasureCompletion, VarDeclTArrayAnnotation) {
+    // 函数体内 var: T[] 注解——编译期不再发射 OP_TYPE_CHECK/TYPE_CHECK IR
+    expectAllGenericBackends("fun wrap<T>(x: T): T { var copy: T[] = [x]; return copy[0]; } print(wrap(9));", "9");
+}
+
+TEST(GenericErasureCompletion, EnumPayloadCompositeTAnnotation) {
+    // enum variant 载荷的复合类型参数注解（Cell(T[])）——Interpreter 侧载荷校验同步擦除
+    expectAllGenericBackends("enum Row<T> { Cell(T[]) }"
+                             "var r = Row.Cell([1, 2]);"
+                             "print(r);",
+                             "Row.Cell([1, 2])");
+}
+
+TEST(GenericErasureCompletion, ExplicitTypeArgsAtCall) {
+    // 修复前：id<int>(5) 解析为比较链，报"未定义的变量: int"
+    expectAllGenericBackends("fun id<T>(x: T): T { return x; } print(id<int>(5));", "5");
+}
+
+TEST(GenericErasureCompletion, ExplicitTypeArgsAtInstantiation) {
+    expectAllGenericBackends("class Box<T> {"
+                             "    var v: T = null;"
+                             "    fun get(): T { return this.v; }"
+                             "    fun set(x: T): void { this.v = x; }"
+                             "}"
+                             "var b = Box<int>();"
+                             "b.set(5);"
+                             "print(b.get());",
+                             "5");
+}
+
+TEST(GenericErasureCompletion, NestedExplicitTypeArgs) {
+    // 嵌套 Box<Box<int>>：>> 为两个独立 TK_GT（词法无移位运算符），平衡扫描天然支持
+    expectAllGenericBackends("class Box<T> {"
+                             "    var v: T = null;"
+                             "    fun get(): T { return this.v; }"
+                             "    fun set(x: T): void { this.v = x; }"
+                             "}"
+                             "var b = Box<Box<int>>();"
+                             "var inner = Box();"
+                             "inner.set(77);"
+                             "b.set(inner);"
+                             "print(b.get().get());",
+                             "77");
+}
+
+TEST(GenericErasureCompletion, ComparisonPathStillWorksAfterScanBacktrack) {
+    // 消歧回退路径：无 `> (` 结构的比较表达式不受探测影响
+    expectAllGenericBackends("var a = 1; var b = 2; if (a < b) { print(\"lt\"); } print(a > b);", "ltfalse");
+}
+
+TEST(GenericErasureCompletion, ErasedAssignmentSemanticsDocumented) {
+    // 记录既有擦除语义：泛型字段赋值不校验具体类型（b.set("s") 合法且打印 s）——
+    // 若未来立项泛型运行时强检（需 ADR），本用例随语义变更同步修订
+    expectAllGenericBackends("class Box<T> {"
+                             "    var v: T = null;"
+                             "    fun get(): T { return this.v; }"
+                             "    fun set(x: T): void { this.v = x; }"
+                             "}"
+                             "var b = Box();"
+                             "b.set(5);"
+                             "b.set(\"s\");"
+                             "print(b.get());",
+                             "s");
 }

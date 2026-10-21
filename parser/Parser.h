@@ -216,6 +216,16 @@ private:
     /// @return 类型注解字符串；若当前位置不是 `:`，返回空串（不消费任何 token）
     std::string parseOptionalNameTypeAnnotation(int line, int col);
 
+    /// 泛型显式类型实参探测（2026-10-07）：当前位置为 `<` 时，探测式扫描平衡的
+    /// `<...>` 类型实参列表且其后紧跟 `(`（形如 Name<T,E[]>(args) 的调用/实例化），
+    /// 命中则消费整段类型实参并返回 true（R163 擦除语义：类型实参解析后即擦除）；
+    /// 否则完整回退到 `<` 之前并返回 false（保持比较运算解析路径）。
+    /// 消歧规则与 C#/Java 同型：`a < b > (c)` 优先按泛型调用解释——
+    /// 既有程序中 `(a < b) > (c)` 的比较链后接调用属病态写法（bool 与值比较）。
+    /// 类型实参内容仅接受类型形态 token（标识符/类型关键字/逗号/嵌套 <>/[]/?），
+    /// 出现字面量等即回退（如 `x < 5 > (y)` 仍按比较解析）。
+    bool trySkipExplicitTypeArgs();
+
     // P2-1 fix: 移除未实现的 parseReturnType() 声明（死代码）
     // 实际的 -> type 解析逻辑在 funDecl() 和 classDecl() 中内联实现
 

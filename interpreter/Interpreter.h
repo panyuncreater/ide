@@ -42,6 +42,7 @@
 #include "common/ModulePath.h" // AUDIT-R5 R6 fix: 模块路径缓存键规范化单一事实源
 #include "common/Result.h"     // R98 W2: invokeClosureSync 返回 Result<Value>
 #include "common/RuntimeLimits.h"
+#include "common/TypeChecker.h"         // 泛型擦除补全: annotationReferencesTypeParam（checkType 复合注解跳过）
 #include "interpreter/BuiltinMethods.h" // R164 fix: handleCoroutineMethod 返回 BuiltinMethodResult
 #include "interpreter/CallFrame.h"      // ARCH-02 fix: CallFrame 拆出，避免传递依赖
 #include "interpreter/Environment.h"
@@ -736,8 +737,10 @@ private:
     void checkType(const Value& val, const std::string& annotation, ContextBuilder&& contextBuilder, int line,
                    int col) {
         (void)contextBuilder; // R164 fix: 不再用于错误消息，保留参数避免改调用方
-        // R163 泛型扩展：类型参数运行时擦除（跳过校验），与 enum variant 的 isTypeParameter 模式一致
-        if (!currentTypeParams_.empty() && isTypeParameter(annotation, currentTypeParams_)) {
+        // 泛型擦除补全（2026-10-07）：复合注解（T[]/T?/dict[..T..]/fun(..T..)）任一分量
+        // 引用类型参数即整体跳过校验——原精确匹配漏擦 "T[]" 导致四后端不一致
+        // （Interpreter 拒绝 / 三 VM 接受），见 TestGenerics::GenericCompositeAnnotation。
+        if (minilang::annotationReferencesTypeParam(annotation, currentTypeParams_)) {
             return;
         }
         if (!typeMatch(val, annotation)) {

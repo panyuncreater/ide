@@ -19,6 +19,7 @@
 | 异常 | `try/catch/finally` + 字符串标签 + `?` 错误传播（Result） | 无 | `try/except/finally` | `try/catch/finally` |
 | 类 | 单继承 + `init` 构造 + trait/mixin（`with`） | 无 | 多继承 | 单继承 + `interface` |
 | 运算符重载 | `__add`/`__sub` 等 dunder 方法 | 无 | `__add__` 等 dunder | 不支持 |
+| 泛型 | `fun id<T>(x: T): T` / `class Box<T>` / 泛型 enum，支持显式类型实参 `id<int>(5)` / `Box<int>()`；**运行时擦除**（类型参数不校验，与 Java 同策略） | 模板（编译期实例化） | 无（鸭子类型） | 泛型（类型擦除） |
 | 协程/异步 | 生成器 yield + `async fun`/`await`（std/async 调度器） | 无 | generator + asyncio | 虚拟线程/CompletableFuture |
 | 宏 | 表达式模板宏 `macro name(p) { <expr> }` + `name!(args)` | `#define` 文本宏 | 无 | 无 |
 | 模块系统 | `import "path"` + 循环依赖检测 | `#include` | `import` + `sys.path` | `import` + classpath |

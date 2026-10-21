@@ -10,6 +10,7 @@
 //   - memory        堆分配与字符串操作（string_concat）
 //   - container     数组索引与交换（bubble_sort）
 //   - closure       闭包捕获与 upvalue 访问（closure_counter）
+//   - object        实例方法分派（method_call）+ 成员哈希访问（field_access，2026-10-07）
 //
 // 输出格式：JSON（stdout），供 CI 流水线采集与趋势分析。
 // 设计原则：仅报告，不失败 —— 回归检测由外部 CI 脚本对比历史数据。
@@ -20,9 +21,9 @@
 
 #include <gtest/gtest.h>
 
-#include "compiler/core/Compiler.h"
 #include "compiler/backend-reg/RegisterVM.h"
 #include "compiler/backend-stack/VM.h"
+#include "compiler/core/Compiler.h"
 #include "interpreter/Interpreter.h"
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
@@ -175,6 +176,48 @@ while (i < 10000) {
 print(sum);
 )";
 
+// 2026-10-07 新增基准 5：方法分派（object）
+// 测试实例方法调用全路径：findMethodChunk 类/方法查找 + 帧构造 + 字段槽位预填
+// + this 字段读/写（成员访问）+ 方法返回写回（fieldSlotIndex）。
+// 每次迭代 1 次方法调用 + 2 次成员访问，20000 次迭代。
+// 预期输出：600030000（s 累加 add 的返回值 = 运行中 total，Σ 3k, k=1..20000）
+const std::string kMethodCallSource = R"(
+class Counter {
+    var total = 0;
+    fun add(n) {
+        this.total = this.total + n;
+        return this.total;
+    }
+}
+var c = Counter();
+var i = 0;
+var s = 0;
+while (i < 20000) {
+    s = s + c.add(3);
+    i = i + 1;
+}
+print(s);
+)";
+
+// 2026-10-07 新增基准 6：字段访问（object）
+// 测试实例成员读/写（unordered_map 哈希查找路径），无方法调用干扰。
+// 每次迭代 2 次字段写 + 2 次字段读，50000 次迭代。
+// 预期输出：150000（50000 × 1 + 50000 × 2）
+const std::string kFieldAccessSource = R"(
+class Point {
+    var x = 0;
+    var y = 0;
+}
+var p = Point();
+var i = 0;
+while (i < 50000) {
+    p.x = p.x + 1;
+    p.y = p.y + 2;
+    i = i + 1;
+}
+print(p.x + p.y);
+)";
+
 // ============================================================
 // 基准规格表（R117 引入，用于集中管理 name / category / source）
 // ============================================================
@@ -187,10 +230,16 @@ struct BenchmarkSpec {
 
 // 注意：保持顺序与下面 TEST() 一致，便于 ZZZ_PrintResults 汇总
 const std::vector<BenchmarkSpec> kBenchmarkSpecs = {
-    {"fibonacci", "recursion", kFibonacciSource},          {"large_loop", "compute", kLargeLoopSource},
-    {"string_concat", "memory", kStringConcatSource},      {"array_alloc", "memory", kArrayAllocSource},      {"tak", "recursion", kTakSource},
-    {"ackermann", "recursion", kAckermannSource},          {"bubble_sort", "container", kBubbleSortSource},
+    {"fibonacci", "recursion", kFibonacciSource},
+    {"large_loop", "compute", kLargeLoopSource},
+    {"string_concat", "memory", kStringConcatSource},
+    {"array_alloc", "memory", kArrayAllocSource},
+    {"tak", "recursion", kTakSource},
+    {"ackermann", "recursion", kAckermannSource},
+    {"bubble_sort", "container", kBubbleSortSource},
     {"closure_counter", "closure", kClosureCounterSource},
+    {"method_call", "object", kMethodCallSource},
+    {"field_access", "object", kFieldAccessSource},
 };
 
 // ============================================================
@@ -525,6 +574,28 @@ TEST(PerfBenchmark, ClosureCounter_RegisterVM) {
     g_allResults.push_back(runRegisterVMBenchmark(kClosureCounterSource, "closure_counter"));
 }
 
+// --- 2026-10-07 新增：方法分派基准（object，方法调用 + 成员访问路径）---
+TEST(PerfBenchmark, MethodCall_Interpreter) {
+    g_allResults.push_back(runInterpreterBenchmark(kMethodCallSource, "method_call"));
+}
+TEST(PerfBenchmark, MethodCall_StackVM) {
+    g_allResults.push_back(runStackVMBenchmark(kMethodCallSource, "method_call"));
+}
+TEST(PerfBenchmark, MethodCall_RegisterVM) {
+    g_allResults.push_back(runRegisterVMBenchmark(kMethodCallSource, "method_call"));
+}
+
+// --- 2026-10-07 新增：字段访问基准（object，成员哈希查找路径）---
+TEST(PerfBenchmark, FieldAccess_Interpreter) {
+    g_allResults.push_back(runInterpreterBenchmark(kFieldAccessSource, "field_access"));
+}
+TEST(PerfBenchmark, FieldAccess_StackVM) {
+    g_allResults.push_back(runStackVMBenchmark(kFieldAccessSource, "field_access"));
+}
+TEST(PerfBenchmark, FieldAccess_RegisterVM) {
+    g_allResults.push_back(runRegisterVMBenchmark(kFieldAccessSource, "field_access"));
+}
+
 // --- R150 新增：JIT 后端基准（条件编译，MINILANG_USE_JIT=ON 时启用）---
 // 设计原则与三后端一致：仅报告，不判定回归。
 // 注意：closure_counter 触发 JIT 不支持的 upvalue 捕获，会记录 jit-compile 错误
@@ -550,6 +621,13 @@ TEST(PerfBenchmark, BubbleSort_JIT) {
 }
 TEST(PerfBenchmark, ClosureCounter_JIT) {
     g_allResults.push_back(runJITBenchmark(kClosureCounterSource, "closure_counter"));
+}
+// 类实例基准：JIT 已支持类成员访问（R160 单态 IC，jitMemberGetWithIC），原生执行
+TEST(PerfBenchmark, MethodCall_JIT) {
+    g_allResults.push_back(runJITBenchmark(kMethodCallSource, "method_call"));
+}
+TEST(PerfBenchmark, FieldAccess_JIT) {
+    g_allResults.push_back(runJITBenchmark(kFieldAccessSource, "field_access"));
 }
 #endif
 

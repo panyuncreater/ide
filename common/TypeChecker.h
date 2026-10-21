@@ -180,6 +180,66 @@ inline bool isTypeParameter(const std::string& typeName, const std::vector<std::
     return false;
 }
 
+/// 泛型擦除补全（2026-10-07）：判断注解是否（递归地）引用了类型参数。
+/// R163 原实现仅精确匹配裸类型名，复合注解（T[] / T? / dict[string:T] / fun(T):T）
+/// 漏擦——Interpreter 侧 typeMatch 将 "T[]" 当具体数组元素类型校验而拒绝合法程序，
+/// 而 VM 路径因编译期发射的 OP_TYPE_CHECK 未发出/通过而接受（四后端不一致，
+/// 由 TestGenerics 探针发现）。规则：注解结构中任一基础类型是类型参数 →
+/// 整个注解视为泛型注解 → 整体跳过运行时校验（对齐 R163"类型参数运行时不校验"；
+/// dict 具体键的校验一并放弃，属记录的简化，重启条件 = 泛型运行时强检立项）。
+/// 注解字符串格式与 Parser::parseTypeAnnotation 的生成格式一一对应。
+inline bool annotationReferencesTypeParam(const std::string& annotation, const std::vector<std::string>& typeParams) {
+    if (annotation.empty() || typeParams.empty())
+        return false;
+    // T? 可选类型：剥离 '?' 后递归
+    if (annotation.back() == '?')
+        return annotationReferencesTypeParam(annotation.substr(0, annotation.size() - 1), typeParams);
+    // T[] / T[][] 数组：剥离 [] 后缀后递归（多维逐层剥离）
+    if (annotation.size() >= 2 && annotation.compare(annotation.size() - 2, 2, "[]") == 0)
+        return annotationReferencesTypeParam(annotation.substr(0, annotation.size() - 2), typeParams);
+    // dict[K:V]：键/值类型分别递归（内嵌嵌套 dict 由值类型递归覆盖）
+    if (annotation.size() >= 7 && annotation.compare(0, 5, "dict[") == 0 && annotation.back() == ']') {
+        std::string inner = annotation.substr(5, annotation.size() - 6);
+        // parseTypeAnnotation 生成的键类型是基础类型，取首个 ':' 分隔（对齐 typeMatchValue）
+        size_t colon = inner.find(':');
+        if (colon == std::string::npos)
+            return false;
+        return annotationReferencesTypeParam(inner.substr(0, colon), typeParams) ||
+               annotationReferencesTypeParam(inner.substr(colon + 1), typeParams);
+    }
+    // fun(p1,p2):ret：按括号深度切分参数列表与返回类型，逐段递归
+    // （嵌套 fun(...) 的 '(' ')' 与顶层配对，顶层 ',' 才是参数分隔）
+    if (annotation.size() >= 5 && annotation.compare(0, 4, "fun(") == 0) {
+        size_t depth = 1; // 已消费 "fun(" 的 '('
+        size_t i = 4;
+        std::vector<std::string> parts;
+        size_t start = i;
+        for (; i < annotation.size(); ++i) {
+            char c = annotation[i];
+            if (c == '(') {
+                ++depth;
+            } else if (c == ')') {
+                --depth;
+                if (depth == 0)
+                    break; // 参数列表闭合
+            } else if (c == ',' && depth == 1) {
+                parts.push_back(annotation.substr(start, i - start));
+                start = i + 1;
+            }
+        }
+        if (i >= annotation.size())
+            return false;                                     // 格式异常：保守走原校验路径
+        parts.push_back(annotation.substr(start, i - start)); // 末参数（含空参数列表的空串）
+        if (i + 1 < annotation.size() && annotation[i + 1] == ':')
+            parts.push_back(annotation.substr(i + 2)); // 返回类型
+        bool refs = false;
+        for (const auto& p : parts)
+            refs = refs || annotationReferencesTypeParam(p, typeParams);
+        return refs;
+    }
+    return isTypeParameter(annotation, typeParams);
+}
+
 /// 类型种类（预留，未来扩展）
 enum class TypeKind {
     UNKNOWN,  // 未推断（动态类型）

@@ -6,6 +6,24 @@
 
 ## [Unreleased]
 
+### Added
+
+- **性能基准套件新增 object 类双基准（method_call / field_access）**：`tests/TestPerformanceRegression.cpp` 补齐实例路径覆盖——`method_call`（20000 次实例方法调用，覆盖 findMethodChunk 类/方法查找 + 帧构造 + 字段槽位预填 + this 字段读写 + 返回写回全链路）与 `field_access`（50000 次纯实例字段读/写，覆盖 unordered_map 哈希查找路径，无方法调用干扰），三执行后端 + JIT（R160 起原生支持类成员访问，实测正确执行）共 8 个新用例，category 新增 `object`。基线（release 干净树，同会话实测）：StackVM method_call 31.4ms / field_access 40.6ms；RegisterVM 36.8ms / 58.7ms；Interpreter 147.9ms / 85.7ms。
+
+- **泛型显式类型实参语法（`Name<T>(args)` 调用/实例化，解析后擦除）**：此前 `id<int>(5)` / `Box<int>()` 被静默解析为**比较运算链**（`<int>` → `x < int` 的比较），运行时报"未定义的变量: int"——四后端一致的误导性错误（`tests/TestGenerics.cpp` 探针实测发现）。现 Parser 调用点增加探测式扫描（`Parser::trySkipExplicitTypeArgs`）：平衡 `<...>` 且其后紧跟 `(` 才按类型实参消费并擦除（延续 R163 擦除语义，AST 不携带、运行时行为零变化），否则完整回退比较解析路径。消歧规则与 C#/Java 同型——`a < b > (c)` 优先按泛型调用解释（既有程序中 `(a < b) > (c)` 的比较结果再调用属病态写法）；类型实参内容限类型形态 token（标识符/类型关键字/逗号/嵌套 `<>`/`[]`/`?`），出现字面量即回退（`x < 5 > (y)` 仍按比较解析）；词法无移位运算符（`>>` 为两个独立 `>`），`Box<Box<int>>()` 嵌套天然支持。10 个回归锁定用例见 `GenericErasureCompletion.*`。
+
+### Changed
+
+- **"Inline Cache 优化"路线图项评估收口（StackVM/RegisterVM 成员字段 IC 不实施，实测数据裁决）**：排查确认内联缓存在本项目的实际落点——JIT 的 `OP_MEMBER_GET` 单态 IC 已于 R160 落地（`memberGetIC_`/`jitMemberGetWithIC`，含 COW 悬垂规避），StackVM 三级缓存（`callCache_`/per-chunk `varCache_`/`methodCache_`，PERF-14）覆盖调用/全局/方法分派；**唯一未覆盖的热路径是 StackVM/RegisterVM 的实例字段哈希查找**。立项前提实测（独立微基准，release 级优化编译）：短 SSO 键 `unordered_map::find` 仅 **5.8ns/次**，per-site IC 命中 0.8ns——每成员操作节省 ~5ns，对 field_access 基准总收益上限 **~2.5%**（低于基准方差 ±1.6% 的 2 倍），与"性能跃升"预期相距一个量级；且需引入 InstanceData 身份令牌协议（COW 克隆换新 id + 全局单调计数器，R160 在 JIT 侧已处理的同类 COW 悬垂问题）等语义复杂度。**裁决：StackVM/RegisterVM 成员字段 IC 不实施**。重启条件：① 对象模型槽位化重构（hidden-class 式，届时成员访问 O(1) 槽读，IC 无必要）；② 实测 find 退化（长字段名超 SSO / 字段表大幅增大）。
+
+- **协程真挂起平台覆盖扩展（[ADR-007](docs/adr/ADR-007-coroutine-suspension.md) 平台覆盖项部分清偿；执行行为零语义变化——真挂起与重放的值序列逐点一致，唯一差异是前缀副作用只执行一次）**：`MINILANG_CORO_FIBER` 从仅 Windows 扩展至 **Linux**（POSIX ucontext 平台层），三执行后端在 Linux 上同步启用真挂起（ADR-002 单边启用禁令由共享门控自动保持）。实现：`interpreter/InterpreterCoroutine.cpp` 平台层改为双分支——Windows fiber API 包装原样保留，新增 ucontext 分支（每个 fiber 一个堆上控制块：`ucontext_t` + 专有 4MB 栈 + 首次入口参数；`thread_local` 登记当前 fiber 作为 `switchToFiber` 双向保存锚点；`makecontext` int 宽参数限制经控制块指针拆高低 32 位 + 首次入口 `fiberEntry` 重组；五函数接口 `convertThreadToFiber`/`createFiber`/`switchToFiber`/`deleteFiber`/`currentFiber` 两平台对称，其余挂起/恢复协议代码平台中立零改动）；ASan 构建下切换前后配对 `__sanitizer_start/finish_switch_fiber` 备用栈标注（`MINILANG_FIBER_ASAN` 门控，GCC `__SANITIZE_ADDRESS__` / clang `__has_feature` 分层判定），由 CI Linux ASan 门禁持续验证；macOS 保留重放（ucontext 例程标记 deprecated 且发布矩阵 mac job 仅编译不跑测试、无行为验证通道；bionic 无 `makecontext` 不在支持范围）。测试：`TestCoroutine.cpp` 顶部平台 `static_assert` 锁定"有平台层 ⟺ `=1`"对应关系，既有 `CoroutineSuspension.*` 语义锁与 `CoroutineTest`/`AsyncAwait` 全量用例在 Linux CI 上自动转挂起路径执行。文档同步：ADR-007（Status/Decision/实现形态表/Known Limitations #1）、`backend-consistency.md` §9 平台层扩展义务、AGENTS.md §3。验证：Windows debug 树全量 4132/4132 通过（/W4+/WX 零警告）；Linux GCC 13 实机（WSL Ubuntu 24.04）真实 TU `-fsanitize=address` 与 `-O2 -Wall -Wextra` 编译零警告 + 切换协议行为冒烟（多次挂起/恢复往返、fiber 栈对象往返完好、双 fiber 交叉切换、终结释放、ASan 运行零报告）全绿。
+
+### Fixed
+
+- **四后端不一致（P1）：泛型复合注解擦除遗漏**——`fun first<T>(xs: T[]): T` 在 Interpreter 被拒绝（"类型注解违反: 期望类型 T[]，实际为 array"）而 StackVM/StackVM-IR/RegisterVM 通过，违反 ADR-002（探针实测，R163 回归缺口：原擦除仅精确匹配裸类型名）。根因：`common/TypeChecker.h` 的 `isTypeParameter` 只做整串比对，`T[]`/`T?`/`dict[string:T]`/`fun(T):T` 等复合注解漏擦——Interpreter 运行时 `checkType` 落入 typeMatch 的元素递归（元素类型 "T" 未知 → false），VM 侧编译期发射点漏擦/enum 载荷校验点漏擦形态各异。修复：新增递归判定 `annotationReferencesTypeParam`（注解结构中任一基础类型引用类型参数 → 整体跳过校验，对齐 R163"类型参数运行时不校验"；注解字符串格式与 `Parser::parseTypeAnnotation` 生成格式一一对应），统一接入六处擦除点——`Interpreter::checkType`（运行时）、`Interpreter::visitEnumVariantExpr` 载荷校验、`Compiler::emitTypeCheck`（栈式发射期）、`AstIRBuilder::emitTypeCheckIR`（IR 发射期）、StackVM `OP_BUILD_ENUM_VARIANT` 载荷校验、RegisterVM 对应点。10 个四后端回归锁定（`GenericErasureCompletion.*`，含函数体内 `var: T[]`、`dict[string:T]` 参数、enum 载荷 `Cell(T[])`、`T?` 参数）。
+
+- **docs/development.md P2-10 条目陈旧修正**：SSA 重命名阶段"LOCAL 变量循环回边 bug"早已由后续修复轮次清偿——`ssaConstructPass` 重命名阶段的 currentDef 栈（`slotStacks`：STORE_LOCAL 压栈、回边 PHI 操作数经 `stack.back()` 填充、支配树退出弹栈）即 Cytron 式重命名，且 `irOptimize_`/`irSSAOptimize_` 默认已为 `true`（`compiler/core/Compiler.h`），SSA 构造/析构包裹 GVN/LICM 按返回值守卫。原"待后续实施（修复方向：实现 currentDef 栈重命名）"的工程量评估作废；全量回归（含 TestIRSSA/TestAstIRBuilder 与默认开启 IR 优化的全量 E2E）持续通过佐证。
+
 ## [v1.4.0] - 2026-10-07
 
 协程真挂起执行架构（[ADR-007](docs/adr/ADR-007-coroutine-suspension.md)，生成器前缀副作用只执行一次——本版唯一语义变更）与 JIT per-chunk 编译架构（[ADR-008](docs/adr/ADR-008-jit-per-chunk.md)，tiering 定向重编译 O(1) 化 + 进程内块缓存，执行行为零语义变化）两大架构级改造落地；GC 登记表 slot-index 重构与运行时/IR/GUI 多轮性能优化；新增 Windows MSVC ASan 阻断式内存错误门禁；修复 IR 路径 super 调用栈不平衡、JIT 异常分派 use-after-pop、Environment 弱指针悬挂收口等缺陷。

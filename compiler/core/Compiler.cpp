@@ -547,8 +547,10 @@ uint16_t Compiler::identifierIndex(const std::string& name) {
 void Compiler::emitTypeCheck(const std::string& typeAnnotation, int line) {
     if (typeAnnotation.empty())
         return;
-    // R163 泛型扩展：类型参数运行时擦除——不发射 OP_TYPE_CHECK，对齐 Interpreter 的 isTypeParameter 跳过逻辑
-    if (!currentTypeParams_.empty() && minilang::isTypeParameter(typeAnnotation, currentTypeParams_)) {
+    // R163 泛型扩展：类型参数运行时擦除——不发射 OP_TYPE_CHECK。
+    // 泛型擦除补全（2026-10-07）：复合注解（T[]/T?/dict[..T..]/fun(..T..)）任一分量
+    // 引用类型参数即整体跳过，对齐 Interpreter::checkType 的递归擦除。
+    if (minilang::annotationReferencesTypeParam(typeAnnotation, currentTypeParams_)) {
         return;
     }
     uint16_t typeIdx = chunk_.addConstant(Value(typeAnnotation));

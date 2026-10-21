@@ -421,6 +421,53 @@ std::string Parser::parseOptionalNameTypeAnnotation(int line, int col) {
     return parseTypeAnnotation();
 }
 
+bool Parser::trySkipExplicitTypeArgs() {
+    // 显式类型实参（2026-10-07）：泛型显式类型实参此前被静默解析为比较运算，
+    // `id<int>(5)` 报"未定义的变量: int"（探针实测，四后端一致的误导性错误）。
+    // 现按 C#/Java 同型消歧：探测式扫描平衡 <>，命中 `> (` 才按类型实参消费
+    // （R163 擦除语义：解析后即擦除，AST 不携带）；否则完整回退保持比较解析。
+    // 安全性：类型形态 token 白名单（标识符/类型关键字/逗号/嵌套 <>/[]/?），
+    // 字面量与运算符即回退；词法无移位运算符（`>>` 为两个 TK_GT），嵌套天然安全。
+    int save = current_;
+    advance(); // 消耗 '<'
+    int depth = 1;
+    bool sawType = false;
+    while (!isAtEnd()) {
+        if (check(TokenType::TK_LT)) {
+            ++depth;
+            advance();
+            sawType = false; // 新嵌套层需重新出现类型名
+        } else if (check(TokenType::TK_GT)) {
+            --depth;
+            advance();
+            if (depth == 0) {
+                // 命中：> 后紧跟 ( 才是显式类型实参的调用/实例化
+                if (sawType && check(TokenType::TK_LPAREN)) {
+                    return true; // 类型实参已消费并擦除
+                }
+                current_ = save;
+                return false;
+            }
+        } else if (check(TokenType::TK_COMMA)) {
+            advance();
+            sawType = false; // 逗号后必须再来一个类型
+        } else if (check(TokenType::TK_LBRACKET) || check(TokenType::TK_RBRACKET) || check(TokenType::TK_FUNC) ||
+                   check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY) || check(TokenType::TK_ENUM) ||
+                   check(TokenType::TK_FUN)) {
+            // 类型后缀 []、可选 ?（TK_FUNC 槽位）与 dict/array/enum/fun 基础类型关键字
+            advance();
+        } else if (isIdentifierOrType()) {
+            advance();
+            sawType = true;
+        } else {
+            current_ = save; // 字面量/运算符等：不是类型实参，回退
+            return false;
+        }
+    }
+    current_ = save; // 未闭合：回退
+    return false;
+}
+
 // ---- 声明与语句 ----
 
 std::unique_ptr<ASTNode> Parser::declaration() {
@@ -2392,6 +2439,12 @@ std::unique_ptr<ASTNode> Parser::call() {
 
     // 支持链式调用: obj.method(args).field[0]
     while (true) {
+        // 显式类型实参（2026-10-07）：Name<T>(args) / expr.m<T>(args) ——
+        // 探测命中则消费并擦除（R163 擦除语义），未命中回退比较运算路径
+        if (check(TokenType::TK_LT) && trySkipExplicitTypeArgs()) {
+            // 类型实参已消费，语义上由后续调用/实例化按推断处理（AST 不携带）
+        }
+
         // 函数调用: expr(args)
         if (match(TokenType::TK_LPAREN)) {
             const Token& paren = previous();

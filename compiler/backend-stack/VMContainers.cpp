@@ -195,7 +195,7 @@ VMResult VM::executeContainerBuildOps(OpCode op, size_t& ip) {
         // executeMiscTypeCheck 的 classInfo_ 查找模式。
         for (size_t fi = 0; fi < fields.size() && fi < varInfo->paramTypes.size(); ++fi) {
             const std::string& expectedType = varInfo->paramTypes[fi];
-            if (expectedType.empty() || minilang::isTypeParameter(expectedType, info.typeParams))
+            if (expectedType.empty() || minilang::annotationReferencesTypeParam(expectedType, info.typeParams))
                 continue;
             if (!minilang::typeMatchValue(fields[fi], expectedType)) {
                 bool inheritOk = false;

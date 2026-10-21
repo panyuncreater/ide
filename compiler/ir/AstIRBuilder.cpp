@@ -919,8 +919,10 @@ void AstIRBuilder::emitStoreVar(const std::string& name, IROperand val, int line
 void AstIRBuilder::emitTypeCheckIR(IROperand val, const std::string& typeAnnotation, int line) {
     if (typeAnnotation.empty())
         return;
-    // R163 泛型扩展：类型参数运行时擦除——不发射 TYPE_CHECK IR，对齐 Compiler 的 emitTypeCheck 跳过逻辑
-    if (!currentTypeParams_.empty() && minilang::isTypeParameter(typeAnnotation, currentTypeParams_)) {
+    // R163 泛型扩展：类型参数运行时擦除——不发射 TYPE_CHECK IR。
+    // 泛型擦除补全（2026-10-07）：复合注解任一分量引用类型参数即整体跳过，
+    // 对齐 Compiler::emitTypeCheck 的递归擦除。
+    if (minilang::annotationReferencesTypeParam(typeAnnotation, currentTypeParams_)) {
         return;
     }
     uint32_t typeIdx = ir_->addConstant(Value(typeAnnotation));

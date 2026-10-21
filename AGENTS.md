@@ -1,6 +1,6 @@
 # MiniLang AGENTS
 
-> 版本 2.6 | 更新日期：2026-10-11 | 优先级：用户级规则（`%USERPROFILE%\.agent\AGENTS.md`）> 本文件 > `docs/`；同一语义冲突以 ADR 为最终裁决
+> 版本 2.8 | 更新日期：2026-10-07 | 优先级：用户级规则（`%USERPROFILE%\.agent\AGENTS.md`）> 本文件 > `docs/`；同一语义冲突以 ADR 为最终裁决
 
 ## 1. 角色与任务分派
 
@@ -34,7 +34,7 @@ Lexer → Parser → AST（MacroExpander 宏展开在 parse 期完成）→ {
 - 同一源码在 Interpreter / StackVM / RegisterVM 三条路径必须产生相同语义；JIT 对已支持场景与 StackVM 严格一致，未支持场景优雅降级（不崩溃不错值）
 - 整数除法截断向零、and/or 短路返回操作数原值（非布尔）、类型注解强制、super 调用语义、dunder 分派、? 错误传播、async/await 调度均需多后端统一
 - IR 与非 IR 路径共享 VM，中间表示不同（BytecodeChunk vs RegBytecodeChunk）
-- 协程执行模型按 `MINILANG_CORO_FIBER` 平台门控（[ADR-007](docs/adr/ADR-007-coroutine-suspension.md)）：`=1`（Windows）三执行后端真挂起（副作用只执行一次），`=0` 三后端统一重放——**禁止单后端切换模式**；快照绝对索引重定基与嵌套上下文 checklist 见 `docs/specs/backend-consistency.md` §9
+- 协程执行模型按 `MINILANG_CORO_FIBER` 平台门控（[ADR-007](docs/adr/ADR-007-coroutine-suspension.md)）：`=1`（Windows fiber / Linux ucontext）三执行后端真挂起（副作用只执行一次），`=0`（macOS/其他）三后端统一重放——**禁止单后端切换模式**；快照绝对索引重定基与嵌套上下文 checklist 见 `docs/specs/backend-consistency.md` §9
 - JIT per-chunk 编译架构（[ADR-008](docs/adr/ADR-008-jit-per-chunk.md)）：每 chunk 独立代码块，跨块调用经 `JitContext.callImportSlots` 导入槽；同源码重复运行命中进程内块缓存（键 = 字节码指纹 ^ `kJitCodegenVersion`，**codegen 行为变更必须递增该版本**，否则命中陈旧机器码）；lazy/分层/自定义阈值路径绕过缓存按需重编译
 
 ### 内存模型（出处：`docs/adr/ADR-001-nan-boxing.md`、`ADR-004-cow-memory.md`）
@@ -54,6 +54,7 @@ Lexer → Parser → AST（MacroExpander 宏展开在 parse 期完成）→ {
 8. **Formatter 往返等价性**：缩进双重计算、括号保留规则、AST 结构不等价
 9. **类继承**：字段默认值丢失、super 方法查找、方法回退链、fieldSlotIndex
 10. **GUI/线程安全**：Worker 状态清理不完整、运行期间 UI 操作未禁用、原子标志竞态
+11. **泛型注解擦除**：类型参数擦除点共六处（`Interpreter::checkType` / `visitEnumVariantExpr` 载荷校验 / `Compiler::emitTypeCheck` / `AstIRBuilder::emitTypeCheckIR` / StackVM `OP_BUILD_ENUM_VARIANT` 载荷校验 / RegisterVM 对应点），新增注解形态（如 `T[]`/`T?`/`dict[..T..]`）必须六处同步——判定用 `common/TypeChecker.h` 的 `annotationReferencesTypeParam` 递归判定（精确匹配裸类型名会漏擦复合注解，2026-10-07 曾致四后端不一致）；Parser 显式类型实参经 `trySkipExplicitTypeArgs` 探测擦除
 
 > 排查操作流程见 `minilang-bughunt`、差分验证见 `minilang-diffcheck`（均位于 `.qoder/skills/`）。
 
@@ -141,3 +142,5 @@ Qoder 环境：以 `.qoder/skills/minilang-build/SKILL.md` 为诊断补充源（
 | 2026-10-04 | 2.4 | 三轮性能优化文档同步：§6 补 ctest -j 并行与 LNK1163（陈旧 unity obj 家族）处置注记；docs 同步（architecture IR 管线现状、backend-consistency §7 截断校验上移不变量、memory-model §2 内存序惯用法与 §3 GC 零拷贝根集/atomic 统计、testing 内联级联新行为、getting-started 排查条目）。代码变更明细见 CHANGELOG Unreleased 三条优化条目（三轮） |
 | 2026-10-05 | 2.5 | 协程真挂起架构 + 第四轮优化同步：新增 [ADR-007](docs/adr/ADR-007-coroutine-suspension.md)（三执行后端 `MINILANG_CORO_FIBER` 门控同步升级真挂起，勘误"VM 真挂起 D.5"历史注释；语义变更 = 生成器前缀副作用只执行一次）；§3 核心约束补协程模式门控行；backend-consistency 新增 §9（快照相对化 checklist/单边启用禁令/双路径核对义务）；development.md 最近变更摘要补 2026-10-05 条目。代码变更明细见 CHANGELOG Unreleased「协程真挂起架构落地」与「IR 编译路径优化第四轮」条目（4123/4123） |
 | 2026-10-11 | 2.6 | JIT per-chunk 编译架构落地：新增 [ADR-008](docs/adr/ADR-008-jit-per-chunk.md)（per-chunk 代码块 + tiering 真单 chunk 编译 + 进程内块缓存，勘误积压记录"跨后端帧协议"前提——JIT/VM 无帧互操作；执行行为零语义变化）；§3 核心约束补 JIT per-chunk 行（含 kJitCodegenVersion 递增纪律）；§1 角色行"分层编译"改"per-chunk 分层编译"；architecture.md JIT 节、backend-consistency.md §8（JitContext 字段数与 per-chunk 协议）、testing.md 测试计数同步。代码变更明细见 CHANGELOG Unreleased「JIT per-chunk 编译架构落地」条目（4132/4132，含 5 新增 BlockCache） |
+| 2026-10-07 | 2.7 | 协程真挂起平台覆盖扩展（ADR-007 平台覆盖项部分清偿）：`MINILANG_CORO_FIBER` 新增 Linux ucontext 平台层（`InterpreterCoroutine.cpp` 五函数对称接口 + ASan fiber 标注），Linux 三执行后端真挂起、macOS 保持重放；backend-consistency §9 补平台层扩展义务；测试补平台 `static_assert` 锁定。代码变更明细见 CHANGELOG Unreleased「协程真挂起平台覆盖扩展」条目 |
+| 2026-10-07 | 2.8 | 泛型擦除补全 + 显式类型实参（路线图"泛型/模板"推进）：§3 高频 Bug 模式新增 #11（泛型注解擦除六处同步 + `annotationReferencesTypeParam` 递归判定 + `trySkipExplicitTypeArgs` 消歧）；修复 R163 复合注解漏擦四后端不一致（P1）、显式类型实参静默误解析（P1）；架构文档补协程执行模型章节（ADR-007 纳入四后端架构 ADR 索引）；testing/README 测试计数同步（4059/511/4150）。代码变更明细见 CHANGELOG Unreleased「四后端不一致（P1）：泛型复合注解擦除遗漏」与「泛型显式类型实参语法」条目（4150/4150） |

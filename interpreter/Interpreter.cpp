@@ -3011,10 +3011,11 @@ void Interpreter::visitEnumVariantExpr(EnumVariantExpr& node) {
 
     // 类型注解校验（与 visitVarDecl 的 typeAnnotation 一致：宽松匹配）
     // 对每个 paramType 进行 typeMatch 检查，类型不匹配报错。
-    // 注意：泛型类型参数运行时擦除（无法校验），仅校验具体类型。
+    // 泛型擦除补全（2026-10-07）：复合注解（如 Cell(T[])）任一分量引用类型参数即整体跳过，
+    // 对齐 checkType 的 annotationReferencesTypeParam（原精确匹配漏擦 T[] 形态）。
     for (size_t i = 0; i < fields.size(); ++i) {
         const std::string& expectedType = varInfo.paramTypes[i];
-        if (!expectedType.empty() && !isTypeParameter(expectedType, info.typeParams)) {
+        if (!expectedType.empty() && !minilang::annotationReferencesTypeParam(expectedType, info.typeParams)) {
             if (!typeMatch(fields[i], expectedType)) {
                 // AUDIT-R6 F9 fix: 补齐 kTypeMismatch 诊断码（VM 侧 F3 新增同码校验，三后端一致）
                 runtimeError(ErrorFormat::formatStd("enum variant '{}.{}' 第 {} 个参数类型不匹配：期望 {}，得到 {}",
