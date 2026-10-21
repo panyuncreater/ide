@@ -604,8 +604,11 @@ bool Compiler::declareFunction(FunDecl& node, const CompileContext& saved, const
     // BUG-TYPE-1 fix (P1): 保存当前函数返回类型注解，供 visitReturnStmt 发射 OP_TYPE_CHECK。
     // 对齐 Interpreter 的 currentFunctionReturnType_ + CallFrameGuard 机制。
     currentFunctionReturnType_ = node.returnType;
-    // R163 泛型扩展：记录当前函数的类型参数，供 emitTypeCheck 擦除类型参数注解
-    currentTypeParams_ = node.typeParams;
+    // R163 泛型扩展：记录当前函数的类型参数，供 emitTypeCheck 擦除类型参数注解。
+    // §3.3 fix（2026-10-22）：词法传播——嵌套函数/lambda 继承外层泛型上下文
+    // （saved.currentTypeParams ∪ 自身声明，去重；对齐类方法路径 emitMethodBody 的
+    // 合并语义）。原覆盖式赋值使 fun f<T> 内的嵌套函数体四后端一致拒绝合法程序。
+    currentTypeParams_ = minilang::mergeTypeParams(saved.currentTypeParams, node.typeParams);
     // TCO: 记录当前函数名与 FunDecl 指针，供 visitReturnStmt 识别 return f(args)。
     // 入口 IP 在 compileFunctionBody 中编译函数体首指令前记录。
     currentFunctionName_ = node.name;

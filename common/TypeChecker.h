@@ -29,6 +29,7 @@
 
 #include "Diagnostic.h"
 #include "interpreter/Value.h" // 2026-06-29: typeMatchValue 需要 Value 类型
+#include <algorithm>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -270,6 +271,19 @@ inline bool isTypeParameter(const std::string& typeName, const std::vector<std::
 /// 整个注解视为泛型注解 → 整体跳过运行时校验（对齐 R163"类型参数运行时不校验"；
 /// dict 具体键的校验一并放弃，属记录的简化，重启条件 = 泛型运行时强检立项）。
 /// 注解字符串格式与 Parser::parseTypeAnnotation 的生成格式一一对应。
+// §3.3 fix（2026-10-22）：类型参数词法合并（去重）——嵌套函数/lambda/局部 enum 的
+// 定义期上下文 ∪ 自身声明。同名参数不重复入列（同名遮蔽 = 同一擦除语义，
+// annotationReferencesTypeParam 按名判定）；延迟调用（make<T> 返回 inner 后再调）
+// 以闭包携带的定义期快照为词法事实源（见 Value.h ClosureData::definingTypeParams）。
+inline std::vector<std::string> mergeTypeParams(std::vector<std::string> base,
+                                                const std::vector<std::string>& extra) {
+    for (const auto& tp : extra) {
+        if (std::find(base.begin(), base.end(), tp) == base.end())
+            base.push_back(tp);
+    }
+    return base;
+}
+
 inline bool annotationReferencesTypeParam(const std::string& annotation, const std::vector<std::string>& typeParams) {
     if (annotation.empty() || typeParams.empty())
         return false;

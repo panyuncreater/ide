@@ -416,6 +416,14 @@ private:
         // 因此同一闭包值的拷贝判等，独立 makeClosure 创建的闭包不判等（即使 name/env 相同）。
         // 替代原"name + env"判等契约，解决"同名同环境但函数体不同的闭包误判相等"的限制。
         uint64_t functionId = 0;
+        // §3.3 fix（2026-10-22）：定义期类型参数（词法作用域传播）——makeClosure 时的
+        // Interpreter::currentTypeParams_ 快照。嵌套函数/lambda 延迟调用（make<T> 返回
+        // inner 后再调）时调用方上下文已无 T，调用点以 定义期参数 ∪ 函数声明参数 合并
+        // （common/TypeChecker.h mergeTypeParams），对齐编译期词法合并语义
+        // （Compiler::declareFunction / AstIRBuilder::emitFunctionBody）。
+        // 纯字符串向量：无堆 Value、无 GC 交互；COW 拷贝共享同一 ClosureData，
+        // 字段随创建一次性写入、此后只读，无 clone 路径。
+        std::vector<std::string> definingTypeParams;
 
         ClosureData() : RefCounted(ValueType::VAL_CLOSURE) {}
         ClosureData(const std::string& n, std::shared_ptr<Environment> e, const std::vector<std::string>& p,
@@ -1348,6 +1356,20 @@ public:
             std::abort();
         }
         return box_.asPtr<ClosureData>()->body;
+    }
+
+    // §3.3 fix（2026-10-22）：闭包定义期类型参数（词法作用域传播，见 ClosureData 注释）
+    std::vector<std::string>& closureDefiningTypeParams() {
+        if (!isClosure()) {
+            std::abort();
+        }
+        return ensureUnique<ClosureData>()->definingTypeParams;
+    }
+    const std::vector<std::string>& closureDefiningTypeParams() const {
+        if (!isClosure()) {
+            std::abort();
+        }
+        return box_.asPtr<ClosureData>()->definingTypeParams;
     }
 
     std::unordered_map<std::string, Value>& capturedVars() {

@@ -1,4 +1,4 @@
-﻿#include "ast/ASTNode.h"
+#include "ast/ASTNode.h"
 #include "ast/ModuleIsolation.h" // BUG-AUDIT-MOD-2: IR 模块隔离（非导出顶层名前缀化）
 #include "common/Logger.h"
 #include "common/ModulePath.h"           // AUDIT-R5 R6 fix: 模块路径缓存键规范化单一事实源
@@ -1882,6 +1882,11 @@ IROperand AstIRBuilder::visitFunDecl(FunDecl* node) {
     // VM/RegisterVM 报"类没有父类，不能使用 super"。改为复制保存，保持方法体内可读。
     ctx.savedCompilingClassName = compilingClassName_;
     ctx.savedCurrentFunctionReturnType = std::move(currentFunctionReturnType_); // BUG-TYPE-1 fix
+    // §3.3 fix（2026-10-22）：类型参数上下文快照——原实现只声明了 savedCurrentTypeParams
+    // 与恢复点（2148 行），从无快照赋值：嵌套函数编译后父函数的类型参数上下文本即丢失
+    // （R163 既有遗漏，泛型+嵌套组合无测试覆盖），泛型函数体内嵌套函数之后的 T 注解
+    // 全部漏擦。快照后 emitFunctionBody 才能以真词法外层值做合并（2089 行）。
+    ctx.savedCurrentTypeParams = std::move(currentTypeParams_);
     ctx.savedOuterLocalSlots = std::move(outerLocalSlots_);
     ctx.savedOuterUpvalueNames = std::move(outerUpvalueNames_);
     ctx.savedOuterFunctions = std::move(outerFunctions_);
@@ -2068,7 +2073,7 @@ void AstIRBuilder::emitFunctionPrologue(FunDecl& node, FunctionEmitCtx& ctx) {
     currentFunctionEntryLabel_ = entryLabel;
 }
 
-void AstIRBuilder::emitFunctionBody(FunDecl& node, FunctionEmitCtx& /*ctx*/) {
+void AstIRBuilder::emitFunctionBody(FunDecl& node, FunctionEmitCtx& ctx) {
     // 步骤 7-8：编译函数体 + 末尾隐式 RETURN_NULL
     // BUG-TYPE-1 fix (P1): 设置当前函数返回类型注解，供 visitReturnStmt 发射 TYPE_CHECK
     currentFunctionReturnType_ = node.returnType;
@@ -2083,7 +2088,10 @@ void AstIRBuilder::emitFunctionBody(FunDecl& node, FunctionEmitCtx& /*ctx*/) {
             currentTypeParams_.push_back(tp);
         }
     } else {
-        currentTypeParams_ = node.typeParams;
+        // §3.3 fix（2026-10-22）：词法传播——嵌套函数/lambda 继承外层类型参数
+        // （ctx.savedCurrentTypeParams 与下方恢复点同一事实源）。原覆盖式赋值使
+        // 泛型函数内的嵌套函数体四后端一致拒绝合法程序（对齐 Compiler::declareFunction）。
+        currentTypeParams_ = minilang::mergeTypeParams(ctx.savedCurrentTypeParams, node.typeParams);
     }
     if (node.body)
         visitNode(node.body.get());
@@ -2662,7 +2670,9 @@ void AstIRBuilder::visitEnumDecl(EnumDecl* node) {
     VMEnumInfo info;
     info.name = node->name;
     // AUDIT-R6 F3 fix: 携带字段类型注解与泛型参数（对齐 Interpreter 字段类型校验）。
-    info.typeParams = node->typeParams;
+    // §3.3 fix（2026-10-22）：局部 enum 词法继承外层泛型上下文（对齐 Interpreter
+    // visitEnumDecl）——载荷校验按 info.typeParams 判定擦除。
+    info.typeParams = minilang::mergeTypeParams(node->typeParams, currentTypeParams_);
     info.variants.reserve(node->variants.size());
     for (const auto& v : node->variants) {
         VMEnumVariantInfo vi;

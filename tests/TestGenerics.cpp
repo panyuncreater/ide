@@ -507,6 +507,56 @@ TEST(GenericErasureCompletion, EnumPayloadCompositeTAnnotation) {
                              "Row.Cell([1, 2])");
 }
 
+// ============================================================
+// §3.3 fix（2026-10-22）：泛型嵌套函数/lambda/局部 enum 类型参数词法传播
+// （修复前四后端一致拒绝合法程序：类型参数上下文按函数声明覆盖而非词法作用域合并）
+// ============================================================
+
+TEST(GenericErasureCompletion, NestedFunTypeParamPropagation) {
+    // 审计复现场景：嵌套函数体内 T[] 注解——修复前四路径报"类型注解 T[] 不匹配"
+    expectAllGenericBackends("fun f<T>(x: T) {"
+                             "    fun inner(y: T): T { return y; }"
+                             "    return inner(x);"
+    "}"
+                             "print(f(7));",
+                             "7");
+}
+
+TEST(GenericErasureCompletion, DeferredClosureTypeParamPropagation) {
+    // 延迟调用：make<T> 返回内嵌函数后再调——调用方上下文已无 T，
+    // 词法事实源 = 闭包携带的定义期快照（动态合并调用方参数覆盖不到的形态）
+    expectAllGenericBackends("fun make<T>(x: T) {"
+                             "    fun inner(y: T): T { return y; }"
+                             "    return inner;"
+    "}"
+                             "var g = make<int>(9);"
+                             "print(g(2));",
+                             "2");
+}
+
+TEST(GenericErasureCompletion, NestedLambdaTypeParamPropagation) {
+    // lambda 同步继承：泛型函数体内的匿名函数 T 注解
+    expectAllGenericBackends("fun f<T>(x: T) {"
+                             "    var l = fun(y: T): T { return y; };"
+                             "    return l(x);"
+    "}"
+                             "print(f(11));",
+                             "11");
+}
+
+TEST(GenericErasureCompletion, LocalEnumOuterTypeParamPayload) {
+    // 局部 enum variant 载荷引用外层 T——载荷校验按 EnumInfo.typeParams 判定擦除，
+    // 声明点并入定义期上下文（编译器 chunk 元数据与解释器 enumRegistry_ 两侧同改）
+    expectAllGenericBackends("fun f<T>(x: T) {"
+                             "    enum Box { Cell(T) }"
+                             "    var c = Box.Cell(x);"
+                             "    print(\"ok\");"
+                             "    return c;"
+                             "}"
+                             "print(f(5));",
+                             "okBox.Cell(5)");
+}
+
 TEST(GenericErasureCompletion, ExplicitTypeArgsAtCall) {
     // 修复前：id<int>(5) 解析为比较链，报"未定义的变量: int"
     expectAllGenericBackends("fun id<T>(x: T): T { return x; } print(id<int>(5));", "5");

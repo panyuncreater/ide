@@ -2391,6 +2391,10 @@ void Interpreter::visitFunDecl(FunDecl& node) {
     bool isLambda = node.name.empty();
     std::string closureName = isLambda ? std::string("<lambda>") : node.name;
     Value funVal = Value::makeClosure(closureName, currentEnv_, node.params, nodeShared);
+    // §3.3 fix（2026-10-22）：闭包携带定义期类型参数——嵌套函数/lambda 词法继承
+    // 外层泛型上下文；调用点以 定义期参数 ∪ 函数声明参数 合并（覆盖延迟调用场景：
+    // make<T> 返回 inner 后再调，调用方上下文已无 T）。
+    funVal.closureDefiningTypeParams() = currentTypeParams_;
 
     // AUDIT-BUG-I1 fix: 标记当前 env 被闭包引用（env weak_ptr 目标），
     // 防止 visitBlock 退出时将 blockEnv 回收到 envPool_——即使闭包仅捕获父级变量
@@ -2961,6 +2965,10 @@ void Interpreter::visitEnumDecl(EnumDecl& node) {
 
     EnumInfo info;
     info.typeParams = node.typeParams;
+    // §3.3 fix（2026-10-22）：局部 enum 词法继承外层泛型上下文——variant 载荷校验
+    // （visitEnumVariantExpr）按 EnumInfo.typeParams 判定擦除，外层 T 不并入则
+    // fun f<T> 内声明的 `Cell(T)` 载荷校验必然拒绝（四后端一致拒绝合法程序）。
+    info.typeParams = minilang::mergeTypeParams(std::move(info.typeParams), currentTypeParams_);
     info.variants = node.variants;
     for (size_t i = 0; i < node.variants.size(); ++i) {
         info.variantIndex[node.variants[i].name] = i;

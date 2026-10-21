@@ -242,7 +242,13 @@ Value Interpreter::callClosureValue(FunCall& node) {
 
     // B3 fix: CallFrameGuard 自动管理 currentFunctionReturnType_ + callStack_ 的保存/恢复
     // R163 泛型扩展：传入 funDecl->typeParams，使函数体内的类型参数注解（如 x: T）跳过类型校验
-    CallFrameGuard frameGuard{*this, funDecl->returnType, /*manageCtx=*/false, funDecl->typeParams};
+    // §3.3 fix（2026-10-22）：类型参数词法合并——闭包定义期参数 ∪ 函数声明参数
+    // （调用方上下文不可依赖：make<T> 返回内嵌函数后再调，调用方已无 T）。
+    // 注意必须走 const 访问器（非 const 的 ensureUnique 在共享闭包上会触发 COW 克隆，
+    // 调用返回的 capturedVars 写回将落在被丢弃的克隆上，破坏快照语义——实测回归）。
+    CallFrameGuard frameGuard{*this, funDecl->returnType, /*manageCtx=*/false,
+                              minilang::mergeTypeParams(static_cast<const Value&>(calleeVal).closureDefiningTypeParams(),
+                                                        funDecl->typeParams)};
     auto prevEnv = currentEnv_;
 
     // S2 fix: 统一使用 RecursionGuard RAII 管理递归深度
@@ -456,7 +462,12 @@ Result<Value> Interpreter::invokeClosureSync(const Value& closure, const Value* 
     }
 
     // R163 泛型扩展：传入 funDecl->typeParams，使函数体内的类型参数注解跳过类型校验
-    CallFrameGuard frameGuard{*this, funDecl->returnType, /*manageCtx=*/false, funDecl->typeParams};
+    // §3.3 fix（2026-10-22）：类型参数词法合并——闭包定义期参数 ∪ 函数声明参数
+    // （同步/异步宿主同步调用路径，词法事实源在闭包快照；const 访问器防 COW 克隆，
+    // 理由同 callClosureValue 点）
+    CallFrameGuard frameGuard{*this, funDecl->returnType, /*manageCtx=*/false,
+                              minilang::mergeTypeParams(static_cast<const Value&>(closure).closureDefiningTypeParams(),
+                                                        funDecl->typeParams)};
     auto prevEnv = currentEnv_;
     RecursionGuard recursionGuard{recursionDepth_};
 
@@ -1043,7 +1054,14 @@ Value Interpreter::callNamedFunction(FunCall& node) {
 
     // B3 fix: CallFrameGuard 自动管理 currentFunctionReturnType_ + callStack_ 的保存/恢复
     // R163 泛型扩展：传入 funDecl->typeParams，使函数体内的类型参数注解跳过类型校验
-    CallFrameGuard frameGuard{*this, funDecl->returnType, /*manageCtx=*/false, funDecl->typeParams};
+    // §3.3 fix（2026-10-22）：类型参数词法合并——闭包定义期参数 ∪ 函数声明参数；
+    // funRegistry_ 回退（无闭包值，如 body 缺失）时退化为仅声明参数（原语义）。
+    // const 视图访问防 COW 克隆（理由同 callClosureValue 点）
+    CallFrameGuard frameGuard{*this, funDecl->returnType, /*manageCtx=*/false,
+                              minilang::mergeTypeParams(
+                                  closureValPtr ? static_cast<const Value&>(*closureValPtr).closureDefiningTypeParams()
+                                                : std::vector<std::string>{},
+                                  funDecl->typeParams)};
     auto prevEnv = currentEnv_;
 
     // S2 fix: 统一使用 RecursionGuard RAII 管理递归深度

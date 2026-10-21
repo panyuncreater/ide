@@ -736,7 +736,9 @@ void Compiler::visitEnumDecl(EnumDecl& node) {
     info.name = node.name;
     // AUDIT-R6 F3 fix: 携带字段类型注解与泛型参数，使 OP_BUILD_ENUM_VARIANT 能对齐
     // Interpreter 的字段类型校验（原仅 arity）。
-    info.typeParams = node.typeParams;
+    // §3.3 fix（2026-10-22）：局部 enum 词法继承外层泛型上下文（对齐 Interpreter
+    // visitEnumDecl）——OP_BUILD_ENUM_VARIANT 载荷校验按 info.typeParams 判定擦除。
+    info.typeParams = minilang::mergeTypeParams(node.typeParams, currentTypeParams_);
     info.variants.reserve(node.variants.size());
     for (const auto& v : node.variants) {
         VMEnumVariantInfo vi;
