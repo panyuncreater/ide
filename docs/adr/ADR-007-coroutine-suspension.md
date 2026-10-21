@@ -3,6 +3,7 @@
 ## Status
 
 Accepted. 2026-10-05 落地，三执行后端同步启用（`MINILANG_CORO_FIBER=1` 平台，当前为 Windows）。全量回归 4123/4123 通过。
+2026-10-07 平台覆盖扩展：Linux 经 POSIX ucontext 平台层启用（`=1`），ASan fiber 标注配套落地（Known Limitations #1 部分清偿，macOS 仍重放）。
 
 ## Background
 
@@ -21,16 +22,18 @@ R164（2026-07-23，见 [docs/development.md](../development.md) 协程四后端
 
 ## Decision
 
-三执行后端同步升级为**真挂起模式**：yield 时保存执行位置并切回调用方，下次 `.next()` 从挂起点精确恢复。副作用只执行一次，n 次 `.next()` 总代价 O(n)。升级由平台宏 `MINILANG_CORO_FIBER` 门控（[interpreter/CoroutineFiber.h](../../interpreter/CoroutineFiber.h)），当前仅 Windows（`=1`）启用；其他平台三后端**统一**保留重放路径——同一平台上要么全部挂起、要么全部重放，跨平台行为差异属已记录的既定限制（与 [ADR-006](ADR-006-jit-backend.md) 的 JIT 平台降级同模式）。
+三执行后端同步升级为**真挂起模式**：yield 时保存执行位置并切回调用方，下次 `.next()` 从挂起点精确恢复。副作用只执行一次，n 次 `.next()` 总代价 O(n)。升级由平台宏 `MINILANG_CORO_FIBER` 门控（[interpreter/CoroutineFiber.h](../../interpreter/CoroutineFiber.h)）：Windows（fiber API）与 Linux（POSIX ucontext，2026-10-07 起）`=1`；其他平台三后端**统一**保留重放路径——同一平台上要么全部挂起、要么全部重放，跨平台行为差异属已记录的既定限制（与 [ADR-006](ADR-006-jit-backend.md) 的 JIT 平台降级同模式）。
 
 ### 各后端实现形态
 
 | 后端 | 挂起载体 | 恢复机制 |
 |------|---------|---------|
-| Interpreter | Windows fiber（`ConvertThreadToFiberEx`/`CreateFiberEx`/`SwitchToFiber`），递归树遍历解释器的 C++ 栈即延续 | fiber 切换回生成器栈，`visitYieldExpr` 的 `switchToFiber` 调用点之后继续 |
+| Interpreter | 平台 fiber（Windows fiber API / Linux ucontext，封装于 `InterpreterCoroutine.cpp` 的 `minilang_fiber` 命名空间，五函数接口 `convertThreadToFiber`/`createFiber`/`switchToFiber`/`deleteFiber`/`currentFiber` 两平台对称），递归树遍历解释器的 C++ 栈即延续 | fiber 切换回生成器栈，`visitYieldExpr` 的 `switchToFiber` 调用点之后继续 |
 | StackVM | `VMCoroutineSuspension`（VMCalls.cpp）：帧链 + 栈切片（`VMStack` 定长数组的 `[baseStack, top)` 区间）+ try 栈 + 开放 upvalue，存入 `CoroutineData::vmSuspension` | `callCoroutineNext` 恢复分支回推切片、重挂帧链与 upvalue、按 `resumeIp` 继续指令循环 |
 | RegisterVM | `RegVMCoroutineSuspension`（RegisterVMExec.cpp）：帧链（寄存器窗口 `std::array<Value,32>` 内嵌于帧，无独立值栈）+ try 栈 + 开放 upvalue | 同构恢复分支 |
 | JIT | 无改动 | 含生成器的程序经 CompileError 整体回退 VM（既有行为），自动继承 VM 挂起语义 |
+
+Linux ucontext 平台层要点（2026-10-07）：每个 fiber 一个堆上控制块（`ucontext_t` + 专有 4MB 栈 + 首次入口参数），`thread_local` 登记当前 fiber 作为 `switchToFiber` 双向保存锚点；`makecontext` 仅能传 int 宽参数，控制块指针拆高低 32 位经首次入口 `fiberEntry` 重组；ASan 构建下 `swapcontext` 前后配对 `__sanitizer_start/finish_switch_fiber` 标注（`MINILANG_FIBER_ASAN` 门控，GCC `__SANITIZE_ADDRESS__` / clang `__has_feature`），由 Linux ASan 门禁（sanitize-asan job）持续验证。
 
 `CoroutineData`（[interpreter/Value.h](../../interpreter/Value.h)）扩展两个不透明持有字段：`interpreterFiber`（Interpreter fiber 状态）与 `vmSuspension`（VM 快照，两 VM 互斥使用）；克隆路径（`cloneImpl` 的 `VAL_COROUTINE` 分支）有意不复制——克隆得到未启动的独立协程（与既有"迭代器单消费者"语义一致）。
 
@@ -60,7 +63,7 @@ R164（2026-07-23，见 [docs/development.md](../development.md) 协程四后端
 
 ## Known Limitations（有意记录）
 
-1. **平台覆盖**：非 Windows 平台三后端统一为重放模式。POSIX ucontext 路径为后续方向，落地时需配套 ASan fiber 标注（`__sanitizer_start_switch_fiber`/`__sanitizer_finish_switch_fiber`）避免备用栈误报。
+1. **平台覆盖**：Windows（fiber API）与 Linux（POSIX ucontext + ASan fiber 标注，2026-10-07）三后端真挂起；macOS/其他平台统一为重放模式。macOS 启用需先补 macOS 测试门禁（发布矩阵的 mac job 仅编译不跑测试，ucontext 例程在 macOS 标记 deprecated）；bionic（Android）无 `makecontext`，不在支持范围。`tests/TestCoroutine.cpp` 顶部的平台 `static_assert` 锁定宏与平台层的对应关系（有平台层 ⟺ `=1`）。
 2. **fiber 栈析构不执行**：`DeleteFiber` 直接释放栈内存，其上未析构的 C++ 对象（含 env `shared_ptr`）引用计数随栈内存一并遗忘——仅发生在协程弃用（done 后弃置/解释器销毁）路径的有界一次性泄漏。
 3. **生成器自恢复禁用**：生成器体内对自身调用 `.next()` 在挂起模式下显式报错（fiber 不可重入激活；重放模式下该写法本就趋于无限重放，无合法用途）。
 4. **GC 边缘（理论性）**：挂起 fiber 的 C++ 栈上值临时对象对 mark-sweep 不可见；因所有用户可见状态（局部变量/闭包捕获）都经 Environment 链且已被快照生根，仅含非循环临时值的 parked 栈不受影响，循环引用临时值不可达该状态（自引用需要命名绑定），当前不做额外处理。

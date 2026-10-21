@@ -72,6 +72,18 @@ IR → StackVM 字节码的 lowering 由栈平衡校验器护航（`compiler/ir/
 
 **IR 优化管线（2026-10-04 现状）**：`optimizeIR` 每轮序列为「常量折叠 → 分支折叠 → [复制传播（默认禁）] → [CSE] → [循环展开] → DCE」，最多 3 轮至收敛。分支折叠（`branchFoldingPass`，无条件启用）消费常量折叠产出的 bool 常量条件：恒真删分支、恒假替换为 JUMP（`JUMP_IF_FALSE` 为 peek 零栈效应，变换不改栈平衡），另含跳转链线程化、跳转到紧邻 LABEL 消除、无条件转移后不可达代码删除。`inlinePass` 扫描 caller 全部块并内部迭代到不动点（最多 3 轮，指令预算跨轮共享），含控制流的 caller 与 a→b→c 传递内联均已生效。两个 VM 的字节码截断校验在 `initExecution` 加载期一次性预扫描（`validateChunkInstructionBoundaries`，变长 OP_CLOSURE 展开逻辑与逐指令检查逐点等价），release 主循环零逐指令检查、debug 保留双保险。
 
+### 协程执行模型
+
+生成器（`fun*` / `yield` / `.next()`）与 `async`/`await` 的执行模型由平台宏 `MINILANG_CORO_FIBER` 整体门控（[interpreter/CoroutineFiber.h](../interpreter/CoroutineFiber.h)），三执行后端（Interpreter / StackVM / RegisterVM）同一平台必须同模式——**禁止单后端分叉**（[ADR-002](adr/ADR-002-triple-backend.md)）：
+
+| 平台 | 模式 | Interpreter 载体 | StackVM/RegisterVM 载体 |
+|------|------|-----------------|------------------------|
+| Windows | 真挂起 | fiber API（`CreateFiberEx`/`SwitchToFiber`） | 帧链快照/恢复（纯堆容器，平台无关） |
+| Linux（2026-10-07 起） | 真挂起 | POSIX ucontext（堆上控制块 + 4MB 专有栈 + `thread_local` 切换锚点；ASan 构建配 `__sanitizer_start/finish_switch_fiber` 备用栈标注） | 同左（与 Windows 共用实现） |
+| macOS/其他 | 重放 | ——（每次 `.next()` 从头重执行，以 yield 计数器跳过已消费 yield） | 同左 |
+
+真挂起语义：yield 保存执行位置切回调用方，下次 `.next()` 从挂起点精确恢复——前缀副作用只执行一次，n 次 `.next()` 总代价 O(n)；与重放的值序列逐点一致，唯一可观察差异是副作用执行次数。平台层五函数接口（`convertThreadToFiber`/`createFiber`/`switchToFiber`/`deleteFiber`/`currentFiber`）在 `InterpreterCoroutine.cpp` 内两平台对称实现；快照绝对索引重定基与嵌套上下文不变量见 [backend-consistency.md](specs/backend-consistency.md) §9。完整决策与各后端实现形态见 [ADR-007](adr/ADR-007-coroutine-suspension.md)。
+
 ### JIT 后端
 
 JIT 后端将 `BytecodeChunk` 编译为 x86-64 本地机器码直接在 CPU 上执行，消除 dispatch loop 开销。实现 V8 风格的分层编译（Tier 0 Interpreter → Tier 1 Baseline → Tier 2 Specialized），含热点检测、类型反馈、INT/FLOAT 特化重编译、lazy compilation、OSR 栈帧迁移、反优化等现代 JIT 核心机制。JIT 代码通过 `JitContext` 邮箱模式与 C++ 运行时交互（`r12` 寄存器持有上下文指针，字段偏移经 `jit_offset` 命名常量 + `static_assert(offsetof)` 编译期校验）。
@@ -81,6 +93,7 @@ JIT 后端将 `BytecodeChunk` 编译为 x86-64 本地机器码直接在 CPU 上�
 详见 [ADR-002: 三后端策略](adr/ADR-002-triple-backend.md)
 详见 [ADR-003: IR 中间层](adr/ADR-003-ir-layer.md)
 详见 [ADR-006: JIT 后端](adr/ADR-006-jit-backend.md)
+详见 [ADR-007: 协程真挂起](adr/ADR-007-coroutine-suspension.md)
 详见 [ADR-008: per-chunk 编译架构](adr/ADR-008-jit-per-chunk.md)
 
 ---

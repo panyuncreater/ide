@@ -42,6 +42,7 @@ Value Interpreter::makeCoroutineValue(std::shared_ptr<FunDecl> generatorDecl, st
 }
 
 #if MINILANG_CORO_FIBER
+#if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -75,6 +76,121 @@ inline FiberHandle currentFiber() {
     return GetCurrentFiber();
 }
 } // namespace minilang_fiber
+#elif defined(__linux__)
+#include <cstdint>
+#include <cstdlib>
+#include <ucontext.h>
+
+// —— POSIX ucontext 包装（Linux；见 CoroutineFiber.h 的隔离说明）——
+// 切换协议与 Windows fiber 对称：currentFiber 由 thread_local 登记维护，
+// switchToFiber 经 swapcontext 双向保存/恢复（每个 FiberContext 持有自己的
+// ucontext 记录），首次进入经 fiberEntry 登记后转入用户过程。
+namespace minilang_fiber {
+
+// 与 Windows fiber 同余量（4MB）：生成器体内深度递归的 C++ 栈安全余量
+// （递归深度受 MAX_RECURSION_DEPTH 保护）
+constexpr size_t kFiberStackSize = 4 * 1024 * 1024;
+
+// 每个 fiber 一个堆上控制块：ucontext 记录 + 首次入口参数 + 栈所有权
+// （主线程上下文 stack 为 nullptr）。FiberHandle 即指向控制块。
+struct FiberContext {
+    ucontext_t ctx{};
+    void (*proc)(void*) = nullptr;
+    void* arg = nullptr;
+    unsigned char* stack = nullptr;
+    size_t stackSize = 0;
+};
+
+using FiberHandle = FiberContext*;
+
+// ASan fiber 标注（ADR-007 平台覆盖要求）：备用栈切换必须告知 ASan，
+// 否则 mark-sweep/栈扫描按主栈边界误报（linux-asan 门禁验证该路径）。
+// 符号为 ASan 运行时 ABI 稳定接口，直接 extern "C" 声明避免头文件依赖差异。
+#if defined(__SANITIZE_ADDRESS__)
+#define MINILANG_FIBER_ASAN 1
+#elif defined(__has_feature)
+#define MINILANG_FIBER_ASAN __has_feature(address_sanitizer)
+#else
+#define MINILANG_FIBER_ASAN 0
+#endif
+#if MINILANG_FIBER_ASAN
+extern "C" {
+void __sanitizer_start_switch_fiber(void** fake_stack_save, const void* bottom, size_t size);
+void __sanitizer_finish_switch_fiber(void* fake_stack_save, const void** bottom_old, size_t* size_old);
+}
+#endif
+
+// 线程当前 fiber 登记（switchToFiber 双向保存/恢复协议的锚点）
+thread_local FiberContext* t_currentFiber = nullptr;
+
+// 首次进入协程 fiber：完成 ASan 到栈标注（fake stack 从无到有，无需保存），
+// 登记当前 fiber，转入用户过程。proc 按协议不返回（终结前 switchToFiber
+// 回 resumer，见 coroutineFiberBody 尾部注释）。
+void fiberEntry(int lo, int hi) {
+#if MINILANG_FIBER_ASAN
+    __sanitizer_finish_switch_fiber(nullptr, nullptr, nullptr);
+#endif
+    uintptr_t addr = (static_cast<uintptr_t>(static_cast<uint32_t>(hi)) << 32) | static_cast<uint32_t>(lo);
+    auto* self = reinterpret_cast<FiberContext*>(addr);
+    t_currentFiber = self;
+    self->proc(self->arg);
+    // 不可达（对齐 Windows fiber proc 返回语义的防御收紧）：协议破坏时
+    // 显式终止而非静默线程退出/未定义回落（uc_link 为 nullptr）
+    std::abort();
+}
+
+// 幂等转换：ucontext 无需线程级转换——惰性构造主线程控制块并登记
+// （无专有栈：主线程栈即延续）。对齐 Windows 版"同线程二次转换复用"语义。
+inline FiberHandle convertThreadToFiber() {
+    if (!t_currentFiber) {
+        t_currentFiber = new FiberContext();
+        getcontext(&t_currentFiber->ctx);
+    }
+    return t_currentFiber;
+}
+// 栈内存新分配（惰性页分配，未触碰页不占 RSS）：对齐 Windows 4MB 余量
+inline FiberHandle createFiber(void (*proc)(void*), void* arg) {
+    auto* fc = new FiberContext();
+    fc->proc = proc;
+    fc->arg = arg;
+    fc->stack = new unsigned char[kFiberStackSize];
+    fc->stackSize = kFiberStackSize;
+    getcontext(&fc->ctx);
+    fc->ctx.uc_stack.ss_sp = fc->stack;
+    fc->ctx.uc_stack.ss_size = fc->stackSize;
+    fc->ctx.uc_link = nullptr; // 终结经 switchToFiber(resumer) 离开，不回落
+    // makecontext 仅能传 int 宽参数：控制块指针拆高低 32 位（x86-64/Linux）
+    uintptr_t addr = reinterpret_cast<uintptr_t>(fc);
+    makecontext(&fc->ctx, reinterpret_cast<void (*)()>(&fiberEntry), 2, static_cast<int>(addr & 0xFFFFFFFFu),
+                static_cast<int>(addr >> 32));
+    return fc;
+}
+inline void switchToFiber(FiberHandle target) {
+    FiberContext* self = t_currentFiber;
+#if MINILANG_FIBER_ASAN
+    void* fakeStackSave = nullptr;
+    __sanitizer_start_switch_fiber(&fakeStackSave, target->stack, target->stackSize);
+#endif
+    swapcontext(&self->ctx, &target->ctx);
+#if MINILANG_FIBER_ASAN
+    __sanitizer_finish_switch_fiber(fakeStackSave, nullptr, nullptr);
+#endif
+    t_currentFiber = self;
+}
+inline void deleteFiber(FiberHandle fc) {
+    // 栈内存直接释放（对齐 Windows DeleteFiber 语义）：其上 C++ 析构不执行，
+    // 未释放的 shared_ptr 引用计数一并遗忘——仅发生在协程弃用/解释器销毁
+    // 路径的有界泄漏（见 CoroutineFiberState 析构注释）
+    delete[] fc->stack;
+    delete fc;
+}
+inline FiberHandle currentFiber() {
+    return t_currentFiber;
+}
+} // namespace minilang_fiber
+#else
+#error "MINILANG_CORO_FIBER=1 平台缺少 fiber 平台层（支持：Windows fiber / Linux ucontext）"
+#endif // _WIN32 / __linux__
 
 namespace {
 // CoroutineData 为 Value 私有嵌套类型，经公有访问器 coroutineData() 的返回类型

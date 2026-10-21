@@ -83,6 +83,7 @@
 生成器 `.next()` / `await` 的执行模型由重放模式升级为真挂起模式（yield 保存执行位置切回调用方，下次恢复），**三执行后端由同一宏 `MINILANG_CORO_FIBER`（[interpreter/CoroutineFiber.h](../../interpreter/CoroutineFiber.h)）门控同步启用**——设计依据与实现细节见 [ADR-007](../adr/ADR-007-coroutine-suspension.md)，本节只写 checklist。
 
 - **单边启用禁令**：真挂起/重放是平台级整体开关，禁止单后端先行切换（副作用执行次数会成为跨后端分歧点）。新增第四执行路径（如未来 WASM 后端）时必须同步实现挂起或显式回退重放。
+- **平台层扩展义务**（Interpreter fiber）：`=1` 平台集合 = 有 `minilang_fiber` 平台层实现的平台集合（当前 Windows fiber API / Linux ucontext，见 `InterpreterCoroutine.cpp`）。新平台启用真挂起须同时：平台层五函数对称实现 + `CoroutineFiber.h` 门控 + ASan 备用栈标注（如适用）+ `TestCoroutine.cpp` 顶部 `static_assert` 平台锁定更新；无平台层的平台必须维持 `=0`（重放）。
 - **双路径核对义务**：`MINILANG_CORO_FIBER=0` 平台的构建中重放路径与挂起路径并存于 `callCoroutineNext`/`visitYieldExpr`/`executeCoroutineOps` 的 `#if` 双分支。修改协程相关代码时必须双路径核对语义等价（挂起路径的语义基线见 ADR-007"语义选择"表）。
 - **快照字段相对化**：帧/try 处理器/upvalue 上的一切绝对索引（StackVM `basePointer`/`stackBase`/`stackSlot`，RegisterVM 寄存器 upvalue 编号，两 VM 的 `frameIndex`）入快照必须转为相对偏移、恢复时按新入口基线转回。**新增帧字段或 try 处理器字段时，若引入新的绝对索引，必须同步纳入快照相对化**，否则调用方深度变化后读写错位。
 - **最外层生成器帧 `returnIp` 重定基**：自然完成可发生在任意一次 `.next()` 中，恢复时必须把最外层生成器帧的 `returnIp` 重定基到本次调用点；漏做 = 自然完成后调用方从历史调用点重执行。

@@ -14,6 +14,18 @@
 #include <gtest/gtest.h>
 #include <string>
 
+#include "interpreter/CoroutineFiber.h"
+
+// 平台覆盖锁定（ADR-007 协程真挂起）：有 fiber 平台层的平台上宏必须启用。
+// Windows = fiber API；Linux = POSIX ucontext + ASan fiber 标注
+// （interpreter/InterpreterCoroutine.cpp 平台层）。macOS/其他平台保留重放。
+#if defined(_WIN32) || defined(__linux__)
+static_assert(MINILANG_CORO_FIBER == 1, "fiber platform must enable coroutine true suspension (ADR-007)");
+#endif
+#if !defined(_WIN32) && !defined(__linux__)
+static_assert(MINILANG_CORO_FIBER == 0, "platform without fiber layer must stay in replay mode (ADR-002)");
+#endif
+
 // ============================================================
 // 1. 基础生成器：三个 yield 顺序返回
 // ============================================================
