@@ -516,6 +516,13 @@ private:
         // tracked 容器地址追加进根集；丢弃快照时必须同步置空。空 = 无挂起状态。
         // 克隆路径（cloneImpl 逐字段复制）有意不复制本回调——克隆得到未启动的独立协程。
         std::function<void(std::vector<const void*>&)> gcRootContributor;
+        // —— VM 失败保留盒（P1 fix 2026-10-22，仅 MINILANG_CORO_FIBER=1 语义使用）——
+        // StackVM/RegisterVM 生成器体错误逃逸到脚本层处理器时捕获的待重抛异常值
+        // （单元素盒）。真挂起平台：失败协程后续 .next() 经入口前置检查同点重抛同一
+        // 错误（对齐解释器 fiber 的失败保留语义，done 保持 false、前缀副作用不重执行）；
+        // 重放平台（=0）不写入（全新调用重执行+重抛，与解释器重放一致）。非空 = 协程
+        // 处于失败态，所有后续 .next() 持续重抛；随 CoroutineData 存亡，无需清理。
+        std::vector<Value> vmPendingErrorBox;
         CoroutineData() : RefCounted(ValueType::VAL_COROUTINE) {}
     };
 

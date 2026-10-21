@@ -1722,6 +1722,15 @@ Value RegisterVM::callCoroutineNext(Value& coroVal) {
     if (cd->done) {
         return cd->currentValueBox.empty() ? Value::nullValue() : cd->currentValueBox.front();
     }
+#if MINILANG_CORO_FIBER
+    // P1 fix（2026-10-22）：失败协程入口前置重抛——与 StackVM 同型（对齐解释器
+    // fiber"同点重抛"语义：done 不置位、前缀副作用不重执行）；=0 重放平台不保留。
+    if (!cd->vmPendingErrorBox.empty()) {
+        Value pendingErr = cd->vmPendingErrorBox.front();
+        throwException(std::move(pendingErr));
+        return Value::nullValue();
+    }
+#endif
     const RegBytecodeChunk* genChunk = cd->regChunk;
     if (!genChunk) {
         runtimeError("协程缺少生成器字节码块");
@@ -1735,6 +1744,13 @@ Value RegisterVM::callCoroutineNext(Value& coroVal) {
     size_t savedFrameCount = frames_.size();
     int savedTargetYieldId = currentCoroutineTargetYieldId_;
     int savedYieldExecCount = currentYieldExecutionCount_;
+    // P1 fix（2026-10-22）：异常穿透检测基准必须在快照恢复把生成器 try 帧压回**之前**
+    // 捕获（与 StackVM callCoroutineNext 同型）：基准 = 本次 .next() 入口（脚本层）try
+    // 深度 T0。若在恢复后捕获，基准被计入生成器自身挂起的 try 帧（T0+k），生成器内
+    // catch 弹出自己的 try 帧时（T0+k-1 < T0+k）被误判为"逃逸到脚本层"，把已被生成器
+    // 捕获的异常写入 vmPendingErrorBox——后续 .next() 错误重抛（TryCatchInsideGenerator
+    // / TryCatchAcrossSuspension 回归）。
+    size_t savedTryStackSize = tryStack_.size();
 #if MINILANG_CORO_FIBER
     if (cd->vmSuspension) {
         // —— 真挂起恢复：帧链（寄存器随帧）回位 + try 栈/开放 upvalue 重挂
@@ -1825,8 +1841,8 @@ Value RegisterVM::callCoroutineNext(Value& coroVal) {
 #endif
     // AUDIT-R7 F2 fix: 快照 tryStack_ 检测异常穿透（生成器体内未捕获 throw 被外层
     // catch 捕获时，hasError_ 为 false 且帧数回落，原实现误入 normalReturn 分支：
-    // 读取陈旧的 coroutineReturnValue_ 邮箱并误置 done=true）。
-    size_t savedTryStackSize = tryStack_.size();
+    // 读取陈旧的 coroutineReturnValue_ 邮箱并误置 done=true）。捕获点已上移至本函数
+    // 入口（savedFrameCount 处，P1 fix 2026-10-22）——基准不含生成器挂起 try 帧。
     Value result = Value::nullValue();
     bool needCleanup = false;
     bool normalReturn = false;
@@ -1839,8 +1855,21 @@ Value RegisterVM::callCoroutineNext(Value& coroVal) {
                 break;
             }
             VMResult r = executeOneInstruction();
-            if (r == VMResult::VM_EXCEPTION_THROW)
+            if (r == VMResult::VM_EXCEPTION_THROW) {
+#if MINILANG_CORO_FIBER
+                // P1 fix（2026-10-22）：生成器体内未捕获异常穿透到脚本层处理器时保留
+                // 待重抛错误——异常值存于 pendingException_（throwException 刚设置，
+                // catch 块的 REG_LOAD_EXCEPTION 尚未执行）。逃逸判别用帧深度（处理器
+                // 落在生成器帧区域之外，frames_ 回落到 savedFrameCount）——tryStack_
+                // 计数在跨挂起恢复场景下不可靠（本后端实测误触发：内部 try 跨 yield
+                // 挂起后恢复，throw 被生成器内处理器捕获仍被判为逃逸）。仅首次逃逸
+                // 捕获；=0 重放平台不保留。
+                if (frames_.size() <= savedFrameCount && cd->vmPendingErrorBox.empty()) {
+                    cd->vmPendingErrorBox.assign(1, pendingException_);
+                }
+#endif
                 continue;
+            }
             if (r != VMResult::VM_OK || hasError_)
                 break;
         }

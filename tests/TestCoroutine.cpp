@@ -677,15 +677,14 @@ print(g.done());
 // ============================================================
 
 TEST(CoroutineSuspension, FailedGeneratorRethrowsSameErrorOnEveryNext) {
-    // 修复前（fiber 路径）：错误逃逸后 fiber 弃用重建，第三次 .next() 从头重跑
-    // 函数体返回首个 yield 值且提前置 done；重放路径为同点再抛——语义分歧。
-    // 修复后：解释器 fiber 与重放一致——每次 .next() 同点重抛，done 保持 false。
+    // P1 fix（2026-10-22）：错误逃逸后各后端语义对齐——解释器 fiber 保留失败态
+    // 同点重抛（上轮修复）；VM 侧原以全新调用重入生成器体（重挂首 yield → 计数器
+    // 伪递增 → 提前置 done + 返回首 yield 值，探针实测 1E1false1true）——现经
+    // CoroutineData::vmPendingErrorBox 保留异常值 + 入口前置重抛，四后端一致：
+    // 每次 .next() 同点重抛同一错误值，done 保持 false。
     // 注意：① throw 必须位于非最终 yield 之后（经辅助函数在 yield 之间逃逸）——
     // 生成器最终 yield 之后的尾部语句不执行（既有设计），直接写在末尾是死代码；
-    // ② 已实测 StackVM/RegisterVM 错误逃逸后的下一次 .next() 返回末 yield 值并置
-    // done（与解释器分歧，预存问题，见 docs/code-audit-report-2026-10-21.md），
-    // 故三段序列仅锁解释器路径；四后端一致的前缀（首次错误传播 + done=false）
-    // 由 FailedGeneratorErrorEscapePrefix 锁定。
+    // ② 重放平台（=0）VM 全新调用重执行+重抛，与解释器重放一致（无失败保留）。
     std::string src = R"(
 fun boom() { throw "boom"; }
 fun* g() {
@@ -695,11 +694,11 @@ fun* g() {
 }
 var x = g();
 print(x.next());
-try { x.next(); } catch (e) { print("E1"); }
-try { x.next(); } catch (e) { print("E2"); }
+try { x.next(); } catch (e) { print(e); }
+try { x.next(); } catch (e) { print(e); }
 print(x.done());
 )";
-    EXPECT_EQ(minilang_test::runInterpreter(src), "1E1E2false");
+    EXPECT_ALL_BACKENDS(src, "1boomboomfalse");
 }
 
 TEST(CoroutineSuspension, FailedGeneratorErrorEscapePrefix) {

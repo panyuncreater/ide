@@ -237,6 +237,8 @@ void GcManager::markValue(const Value& v, std::unordered_set<const void*>& marke
                 worklist.push_back(&cv);
             for (const auto& cb : cd->vmClosureBox)
                 worklist.push_back(&cb);
+            for (const auto& pe : cd->vmPendingErrorBox)
+                worklist.push_back(&pe);
             // 挂起快照根集贡献（P0 fix 2026-10-21）：interpreterFiber/vmSuspension 是
             // shared_ptr<void>，mark 无法穿透——仅被挂起快照持有的容器不在任何根集内，
             // sweep 会清空其元素（挂起窗口的增量 GC → 恢复后数据损坏）。回调由挂起
@@ -318,6 +320,8 @@ void GcManager::markTrackedRoot(const void* rootPtr, std::unordered_set<const vo
                 markValue(v, marked, worklist);
             for (const auto& v : cd->vmClosureBox)
                 markValue(v, marked, worklist);
+            for (const auto& pe : cd->vmPendingErrorBox)
+                markValue(pe, marked, worklist);
             // 挂起快照根集贡献（P0 fix 2026-10-21）：同 markValue 协程分支
             if (cd->gcRootContributor) {
                 std::vector<const void*> extra;

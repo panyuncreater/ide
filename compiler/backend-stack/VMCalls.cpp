@@ -2012,6 +2012,20 @@ Value VM::callCoroutineNext(Value& coroVal) {
         return cd->currentValueBox.empty() ? Value::nullValue() : cd->currentValueBox.front();
     }
 
+#if MINILANG_CORO_FIBER
+    // P1 fix（2026-10-22）：失败协程入口前置重抛——错误逃逸后 VM 不再以全新调用
+    // 重入生成器体（原行为：重挂首 yield → currentYieldId 伪递增 → 提前置 done +
+    // 返回首 yield 值，与解释器 fiber"同点重抛"分歧，探针实测 1E1false1true vs
+    // 1E1false<runtime>）。重抛走 throwException 就位 catch 状态（栈顶异常值 +
+    // caller catchIp），dispatch 的 tryStack_ 收缩检测转为 VM_EXCEPTION_THROW；
+    // 无处理器时 hasError_ 传播"未捕获的异常"（对齐解释器）。done 保持 false。
+    if (!cd->vmPendingErrorBox.empty()) {
+        Value pendingErr = cd->vmPendingErrorBox.front();
+        throwException(std::move(pendingErr));
+        return Value::nullValue();
+    }
+#endif
+
     const BytecodeChunk* genChunk = cd->vmChunk;
     if (!genChunk) {
         runtimeError("协程缺少生成器字节码块");
@@ -2164,8 +2178,20 @@ Value VM::callCoroutineNext(Value& coroVal) {
             }
             VMResult r = executeOneInstruction();
             // L14: VM_EXCEPTION_THROW 表示异常被 try/catch 捕获，继续执行
-            if (r == VMResult::VM_EXCEPTION_THROW)
+            if (r == VMResult::VM_EXCEPTION_THROW) {
+#if MINILANG_CORO_FIBER
+                // P1 fix（2026-10-22）：生成器体内未捕获异常穿透到脚本层处理器时保留
+                // 待重抛错误——异常值刚由 throwException 压入栈顶、catch 块尚未执行
+                // （循环头 frames_.size() > savedFrameCount 在帧回落到脚本层后立即退出），
+                // 此刻按值捕获安全。逃逸判别用帧深度（异常处理器落在生成器帧区域之外，
+                // frames_ 回落到 savedFrameCount）——tryStack_ 计数在跨挂起恢复场景下
+                // 不可靠（RegisterVM 实测误触发）。仅首次逃逸捕获；=0 重放平台不保留。
+                if (frames_.size() <= savedFrameCount && cd->vmPendingErrorBox.empty()) {
+                    cd->vmPendingErrorBox.assign(1, stack_.back());
+                }
+#endif
                 continue;
+            }
             if (r != VMResult::VM_OK || hasError_) {
                 break;
             }
