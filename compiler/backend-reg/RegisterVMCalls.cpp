@@ -1766,8 +1766,13 @@ Value RegisterVM::callCoroutineNext(Value& coroVal) {
         }
         const size_t regBase = savedFrameCount * RegCallFrame::MAX_REGISTERS;
         for (auto& entry : sus->openUpvalues) {
-            openUpvalues_.emplace(entry.first + regBase, entry.second);
+            const size_t absKey = entry.first + regBase;
+            openUpvalues_.emplace(absKey, entry.second);
             if (auto uv = entry.second.lock()) {
+                // F1 fix（2026-10-22）：窗口期闭包写回传播到恢复后的寄存器，再重挂 open
+                // （与 StackVM 同型）。
+                frames_[absKey / RegCallFrame::MAX_REGISTERS].registers[absKey % RegCallFrame::MAX_REGISTERS] = uv->value;
+                uv->isClosed = false;
                 uv->stackSlot += regBase;
                 uv->owningFrameIdx += savedFrameCount;
             }

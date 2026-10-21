@@ -88,6 +88,7 @@
 - **快照字段相对化**：帧/try 处理器/upvalue 上的一切绝对索引（StackVM `basePointer`/`stackBase`/`stackSlot`，RegisterVM 寄存器 upvalue 编号，两 VM 的 `frameIndex`）入快照必须转为相对偏移、恢复时按新入口基线转回。**新增帧字段或 try 处理器字段时，若引入新的绝对索引，必须同步纳入快照相对化**，否则调用方深度变化后读写错位。
 - **最外层生成器帧 `returnIp` 重定基**：自然完成可发生在任意一次 `.next()` 中，恢复时必须把最外层生成器帧的 `returnIp` 重定基到本次调用点；漏做 = 自然完成后调用方从历史调用点重执行。
 - **嵌套挂起上下文**：`callCoroutineNext` 可嵌套（await drain、生成器调用生成器），登记自身上下文前保存外层值、全部退出路径恢复。
-- **语义基线（挂起 = 重放的逐点对齐，唯一差异为副作用执行一次）**：yield 表达式恢复值 = 自身 yield 值；最终 yield（`currentYieldId >= yieldCount`）即 done、尾部不执行；动态 yieldCount（`kDynamicYieldCount`）仅在函数体自然结束时 done；错误封送重抛、done 不置位、下次 `.next()` 全新重建。
+- **语义基线（挂起 = 重放的逐点对齐，唯一差异为副作用执行一次）**：yield 表达式恢复值 = 自身 yield 值；最终 yield（`currentYieldId >= yieldCount`）即 done、尾部不执行；动态 yieldCount（`kDynamicYieldCount`）仅在函数体自然结束时 done；错误封送重抛、done 不置位。**错误逃逸后的后续 `.next()` 双模式分列（2026-10-22 修复，勿依旧文"全新重建"误判）**：`=1`（真挂起）平台 = 失败保留同点重抛（解释器 fiber 经 CoroutineFiberState::pendingError；StackVM/RegisterVM 经 `CoroutineData::vmPendingErrorBox` 入口前置 throwException，不重建不重执行）；`=0`（重放）平台 = 全新重建重执行后同点再抛。跨调用方深度恢复：循环边界/清理基线保持**本次** `.next()` 入口深度，快照内不携带绝对基线（2026-10-22 回拨删除修复）。
+- **挂起窗口 upvalue 语义（2026-10-22）**：挂起时生成器区开放 upvalue **快照式关闭**（`uv->value` = 槽值、`isClosed=true`；原 open 态相对 stackSlot 指向已搬空的活栈区域，窗口期逃逸闭包跨快照访问会读错值/写坏调用方栈），窗口期闭包经关闭盒读写；恢复时先传播写回再重挂 open（生成器体与逃逸闭包双向一致）。新增 VM 挂起路径时必须同型处理。
 - **GC 根义务**（Interpreter fiber）：挂起时快照环境链根 + callStack 后缀（帧持 env）；新增随挂起存活的解释器成员引用时必须纳入快照。
 - **锁定测试**：`CoroutineSuspension.*` 5 项（副作用一次/恢复值/状态连续/try 跨挂起/长序列）为四后端一致性断言；`CoroutineTest` 22 项 + `AsyncAwait` 11 项在双模式下均须通过。

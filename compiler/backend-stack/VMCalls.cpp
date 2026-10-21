@@ -1850,6 +1850,13 @@ VMResult VM::executeCoroutineOps(OpCode op, size_t& ip) {
         for (auto it = openUpvalues_.lower_bound(coroSuspendBaseStack_); it != openUpvalues_.end(); ++it) {
             sus->openUpvalues.emplace_back(it->first - coroSuspendBaseStack_, it->second);
             if (auto uv = it->second.lock()) {
+                // F1 fix（2026-10-22）：快照式关闭——窗口期（挂起至下次恢复）开放 upvalue
+                // 的 stackSlot 处于相对态且指向已搬空的活栈区域，而对象仍被逃逸闭包共享：
+                // 窗口期调用闭包经 open 路径读写会静默读错值/向调用方活栈写入（P1，写路径
+                // 可升级 P0）。改为关闭态（uv->value = 快照槽值），窗口期闭包读写走关闭盒；
+                // 恢复时传播写回并重挂 open（与重放语言"关闭=快照"语义自洽）。
+                uv->value = sus->stackSuffix[it->first - coroSuspendBaseStack_];
+                uv->isClosed = true;
                 uv->stackSlot -= coroSuspendBaseStack_;
                 uv->owningFrameIdx -= coroSuspendBaseFrames_;
             }
@@ -2068,8 +2075,14 @@ Value VM::callCoroutineNext(Value& coroVal) {
             tryStack_.push_back(t);
         }
         for (auto& entry : sus->openUpvalues) {
-            openUpvalues_.emplace(entry.first + savedStackSize, entry.second);
+            const size_t absSlot = entry.first + savedStackSize;
+            openUpvalues_.emplace(absSlot, entry.second);
             if (auto uv = entry.second.lock()) {
+                // F1 fix（2026-10-22）：窗口期闭包写回传播到恢复后的栈槽，再重挂 open——
+                // 生成器体后续读写（走栈槽）与逃逸闭包读写（走 upvalue）恢复双向一致；
+                // 无窗口期写入时 uv->value == 挂起时快照值，幂等。
+                stack_[absSlot] = uv->value;
+                uv->isClosed = false;
                 uv->stackSlot += savedStackSize;
                 uv->owningFrameIdx += savedFrameCount;
             }

@@ -773,6 +773,27 @@ print(c(5));
     EXPECT_EQ(minilang_test::runInterpreter(src), "56");
 }
 
+TEST(CoroutineSuspension, SuspendedWindowClosureUpvalueSemantics) {
+    // F1 fix（2026-10-22）：挂起窗口期生成器区开放 upvalue 的相对索引对跨快照访问者
+    // 暴露——yield 出捕获生成器局部的闭包并在窗口期调用：原 open 态相对 stackSlot
+    // 指向已搬空的活栈区域（静默读错值/向调用方活栈写入，写路径可升级 P0）；修复 =
+    // 挂起时快照式关闭（uv->value = 快照槽值）、窗口期闭包经关闭盒读写、恢复时传播
+    // 写回并重挂 open（生成器体与逃逸闭包双向一致）。四后端语义锁定：窗口调用得 11，
+    // 恢复后生成器读到 11。
+    std::string src = R"(
+fun* gen() {
+    var counter = 10;
+    yield fun() { counter = counter + 1; return counter; };
+    yield counter;
+}
+var x = gen();
+var f = x.next();
+print(f());
+print(x.next());
+)";
+    EXPECT_ALL_BACKENDS(src, "1111");
+}
+
 TEST(CoroutineSuspension, SuspendedGeneratorLocalsSurviveIncrementalGc) {
     // P0 回归（Interpreter 路径，阈值 8192）：挂起后 3 万次分配确保多次触发
     // 增量 GC；修复前仅被生成器局部环境持有的数组 a 被清空元素，恢复后索引报错。

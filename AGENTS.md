@@ -54,7 +54,7 @@ Lexer → Parser → AST（MacroExpander 宏展开在 parse 期完成）→ {
 8. **Formatter 往返等价性**：缩进双重计算、括号保留规则、AST 结构不等价
 9. **类继承**：字段默认值丢失、super 方法查找、方法回退链、fieldSlotIndex
 10. **GUI/线程安全**：Worker 状态清理不完整、运行期间 UI 操作未禁用、原子标志竞态
-11. **泛型注解擦除**：类型参数擦除点共六处（`Interpreter::checkType` / `visitEnumVariantExpr` 载荷校验 / `Compiler::emitTypeCheck` / `AstIRBuilder::emitTypeCheckIR` / StackVM `OP_BUILD_ENUM_VARIANT` 载荷校验 / RegisterVM 对应点），新增注解形态（如 `T[]`/`T?`/`dict[..T..]`）必须六处同步——判定用 `common/TypeChecker.h` 的 `annotationReferencesTypeParam` 递归判定（精确匹配裸类型名会漏擦复合注解，2026-10-07 曾致四后端不一致）；Parser 显式类型实参经 `trySkipExplicitTypeArgs` 探测擦除
+11. **泛型注解擦除**：类型参数擦除点共七处（`Interpreter::checkType` / `visitEnumVariantExpr` 载荷校验 / `Compiler::emitTypeCheck` / `AstIRBuilder::emitTypeCheckIR` / StackVM `OP_BUILD_ENUM_VARIANT` 载荷校验 / RegisterVM 对应点 / JIT `jitBuildEnumVariant`——第七处 2026-10-22 补齐），新增注解形态（如 `T[]`/`T?`/`dict[..T..]`）必须七处同步——判定用 `common/TypeChecker.h` 的 `annotationReferencesTypeParam` 递归判定（精确匹配裸类型名会漏擦复合注解，2026-10-07 曾致四后端不一致）；Parser 显式类型实参经 `trySkipExplicitTypeArgs` 探测擦除；JIT 通道不计入 `expectAllGenericBackends`，需 runJIT 专项回归（2026-10-22 教训）
 
 > 排查操作流程见 `minilang-bughunt`、差分验证见 `minilang-diffcheck`（均位于 `.qoder/skills/`）。
 

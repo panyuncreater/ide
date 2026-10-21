@@ -121,7 +121,7 @@ try {
 cd out/build/debug && ctest -R LexerTest.* --verbose
 ```
 
-项目包含 **4155 个 GoogleTest 测试**（minilang_tests 4064 个 / 511 套件 + App 编排层 / GUI 冒烟 / 性能基准），覆盖前端（Lexer/Parser）、解释器、编译器与虚拟机、IR 中间层（含 SSA 基础设施）、四后端一致性（Interpreter/StackVM/RegisterVM/JIT，含 JIT try/catch/throw 异常处理、try/catch 捕获 runtimeError、TCO 尾调用优化、enum variant 校验、match 无 default 抛异常、break/continue 循环外报错、循环导入延迟加载、spawn 异常传播、泛型复合注解擦除）、新语言特性（运算符重载、宏模板、trait/mixin、async/await、`?` 错误传播、泛型显式类型实参、插件/沙箱/C API）、格式化器、LSP 语言服务器、DAP 调试适配器（含 pause 同步暂停）、包管理器（含 SemVer 版本约束 + 传递依赖）、教学面板数据完整性、教学面板 GUI 交互级 E2E（边界选择/按钮幂等/跨面板定时器隔离）、反向调试状态回滚、IR lowering 栈平衡校验器、Formatter 往返 AST 等价（samples/mini 数据驱动）、fuzz 语料（异常/继承/字典三类）等。覆盖率门槛 75%（Windows OpenCppCoverage + Linux gcovr）。
+项目包含 **4160 个 GoogleTest 测试**（minilang_tests 4069 个 / 511 套件 + App 编排层 / GUI 冒烟 / 性能基准），覆盖前端（Lexer/Parser）、解释器、编译器与虚拟机、IR 中间层（含 SSA 基础设施）、四后端一致性（Interpreter/StackVM/RegisterVM/JIT，含 JIT try/catch/throw 异常处理、try/catch 捕获 runtimeError、TCO 尾调用优化、enum variant 校验、match 无 default 抛异常、break/continue 循环外报错、循环导入延迟加载、spawn 异常传播、泛型复合注解擦除）、新语言特性（运算符重载、宏模板、trait/mixin、async/await、`?` 错误传播、泛型显式类型实参、插件/沙箱/C API）、格式化器、LSP 语言服务器、DAP 调试适配器（含 pause 同步暂停）、包管理器（含 SemVer 版本约束 + 传递依赖）、教学面板数据完整性、教学面板 GUI 交互级 E2E（边界选择/按钮幂等/跨面板定时器隔离）、反向调试状态回滚、IR lowering 栈平衡校验器、Formatter 往返 AST 等价（samples/mini 数据驱动）、fuzz 语料（异常/继承/字典三类）等。覆盖率门槛 75%（Windows OpenCppCoverage + Linux gcovr）。
 
 ## 文档
 

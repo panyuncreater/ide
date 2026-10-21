@@ -219,6 +219,16 @@ struct Interpreter::CoroutineFiberState {
     std::vector<CallFrame> suspendedCallStack;
     std::string suspendedReturnType;
     int suspendedRecursionDepth = 0;
+    // P1 fix（2026-10-22）：TCO 五成员纳入挂起/恢复协议（对称于 returnType/depth）——
+    // 守卫跨挂起边界滞留曾致 ① 挂起窗口 disabled 态滞留（调用方尾调用退化普通递归，
+    // 深度叠加可虚假触发 256 上限）② 生成器在异构上下文终结时守卫析构写回首次进入时
+    // 的陈旧蹦床快照（尾调用被误分类为 SelfFunction 无 target → 终结上下文函数体携
+    // 错误实参重跑、被调函数体从未执行）。
+    FunDecl* suspendedTcoDecl = nullptr;
+    std::string suspendedTcoName;
+    bool suspendedTcoIsMethod = false;
+    bool suspendedTcoEnabled = false;
+    int suspendedTcoTryDepth = 0;
     std::shared_ptr<Environment> funEnv; // 生成器函数环境（终结时 closeCapturedVariables，对齐重放守卫）
     ~CoroutineFiberState() {
         if (fiber)
@@ -298,11 +308,23 @@ void Interpreter::coroutineSuspend(Value yieldValue) {
     callStack_.resize(fs->resumerStackDepth);
     fs->suspendedReturnType = currentFunctionReturnType_;
     fs->suspendedRecursionDepth = recursionDepth_;
+    // P1 fix（2026-10-22）：TCO 五成员随快照保存，恢复点对称还原——生成器体恢复执行
+    // 时回到挂起前的 TCO 语境（生成器体为 disabled 态），不再读到调用方真值。
+    fs->suspendedTcoDecl = tcoDecl_;
+    fs->suspendedTcoName = tcoName_;
+    fs->suspendedTcoIsMethod = tcoIsMethod_;
+    fs->suspendedTcoEnabled = tcoEnabled_;
+    fs->suspendedTcoTryDepth = tcoTryDepth_;
     minilang_fiber::switchToFiber(fs->resumer);
     // —— 恢复点：下一次 .next() 切回。此刻解释器成员为调用方状态，先还原 ——
     currentEnv_ = std::move(fs->suspendedEnv);
     currentFunctionReturnType_ = std::move(fs->suspendedReturnType);
     recursionDepth_ = fs->suspendedRecursionDepth;
+    tcoDecl_ = fs->suspendedTcoDecl;
+    tcoName_ = std::move(fs->suspendedTcoName);
+    tcoIsMethod_ = fs->suspendedTcoIsMethod;
+    tcoEnabled_ = fs->suspendedTcoEnabled;
+    tcoTryDepth_ = fs->suspendedTcoTryDepth;
     if (!fs->suspendedCallStack.empty()) {
         callStack_.insert(callStack_.end(), std::make_move_iterator(fs->suspendedCallStack.begin()),
                           std::make_move_iterator(fs->suspendedCallStack.end()));
@@ -370,6 +392,16 @@ Value Interpreter::callCoroutineNext(Value& coroVal) {
         std::string prevReturnType;
         std::shared_ptr<Environment> funEnv;
         size_t savedStackDepth; // AUDIT-R3 P2-8 fix: 析构时统一收缩调用栈
+        // P1 fix（2026-10-22）：TCO 五成员纳入 .next() 退出恢复——fiber 体守卫在终结
+        // 路径的析构写回的是首次进入时的陈旧蹦床快照，本恢复在其后以调用方真值覆盖，
+        // 消除蹦床误派发（终结上下文的尾调用被误分类为 SelfFunction 无 target →
+        // 函数体携错误实参重跑）；挂起窗口的 disabled 滞留由 coroutineSuspend 的
+        // 对称保存/恢复处理。
+        FunDecl* prevTcoDecl;
+        std::string prevTcoName;
+        bool prevTcoIsMethod;
+        bool prevTcoEnabled;
+        int prevTcoTryDepth;
         ~CoroutineContextGuard() {
             if (funEnv)
                 funEnv->closeCapturedVariables();
@@ -377,12 +409,18 @@ Value Interpreter::callCoroutineNext(Value& coroVal) {
             interp.currentCoroutineTargetYieldId_ = prevTargetYieldId;
             interp.currentYieldExecutionCount_ = prevYieldExecCount;
             interp.currentFunctionReturnType_ = std::move(prevReturnType);
+            interp.tcoDecl_ = prevTcoDecl;
+            interp.tcoName_ = std::move(prevTcoName);
+            interp.tcoIsMethod_ = prevTcoIsMethod;
+            interp.tcoEnabled_ = prevTcoEnabled;
+            interp.tcoTryDepth_ = prevTcoTryDepth;
             // AUDIT-R3 P2-8 fix: 异常路径也恢复调用栈深度
             while (interp.callStack_.size() > savedStackDepth) {
                 interp.callStack_.pop_back();
             }
         }
-    } guard{*this, prevEnv, prevTargetYieldId, prevYieldExecCount, prevReturnType, nullptr, callStack_.size()};
+    } guard{*this, prevEnv, prevTargetYieldId, prevYieldExecCount, prevReturnType, nullptr, callStack_.size(),
+            tcoDecl_, tcoName_, tcoIsMethod_, tcoEnabled_, tcoTryDepth_};
 
 #if MINILANG_CORO_FIBER
     // —— 真挂起路径（Windows fiber）：yield 保存执行位置切回，副作用只执行一次。
