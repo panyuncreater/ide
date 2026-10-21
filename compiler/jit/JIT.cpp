@@ -841,6 +841,19 @@ void JITBackend::storeBlocksToCache(uint64_t key) {
     std::lock_guard<std::mutex> lock(blockCacheMutex());
     auto& map = blockCacheMap();
     auto& lru = blockCacheLru();
+    // P3 fix（2026-10-22）：同键重复 store 先摘除旧条目——旧 LRU 节点滞留使同键
+    // 出现双节点（命中遍历/淘汰计数失真）且旧条目共享块永不 release（asmjit
+    // runtime 对外来指针按查块失败 no-op 掩盖跨分配器释放缺口）。源码自标
+    // "不应发生"（前置：元数据损坏回退或跨线程双 store），防御性清偿。
+    if (auto existing = map.find(key); existing != map.end()) {
+        for (const auto& sb : existing->second->blocks) {
+            if (sb.entry != nullptr) {
+                sharedCacheRuntime().release(sb.entry);
+            }
+        }
+        lru.remove_if([&key](const auto& node) { return node.first == key; });
+        map.erase(existing);
+    }
     // 淘汰：FIFO（容量 kBlockCacheCapacity），被淘汰条目的共享块经共享 runtime 释放
     while (lru.size() >= kBlockCacheCapacity) {
         auto victim = lru.back();
