@@ -759,6 +759,17 @@ std::shared_ptr<Environment> Interpreter::setupInitEnvironment(ClassInfo* cls, F
     // 绑定 this
     initEnv->define("this", instance);
 
+    // 泛型擦除补全（2026-10-21 fix）：构造路径的参数/默认值 checkType 必须在合并类型
+    // 参数语境下执行——原合并 guard 在 runInitMethodBody 才建立，晚于本函数全部
+    // checkType，`class Box<T> { init(v: T[]) {} }` 的 Box([1,2]) 在 Interpreter 被拒
+    // （期望类型 T[]）而 VM 无参数校验发射点直接通过——四后端不一致，且与 init 体内
+    // 同注解被擦除自相矛盾。对齐 invokeMethod/callNamedFunction 的先合并后校验顺序。
+    std::vector<std::string> ctorMergedTypeParams = cls->typeParams;
+    for (const auto& tp : initMethod->typeParams) {
+        ctorMergedTypeParams.push_back(tp);
+    }
+    CallFrameGuard typeParamsGuard{*this, currentFunctionReturnType_, /*manageCtx=*/false, ctorMergedTypeParams};
+
     // P5 fix: 绑定实例而非深拷贝所有字段
     // 绑定参数
     for (size_t i = 0; i < initMethod->params.size(); ++i) {

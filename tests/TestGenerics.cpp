@@ -28,6 +28,7 @@
 #include "interpreter/Value.h"
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
+#include "TestJITHelper.h" // jit_test_helper::runJIT（MINILANG_USE_JIT 门控）
 
 #include <string>
 
@@ -540,3 +541,51 @@ TEST(GenericErasureCompletion, ErasedAssignmentSemanticsDocumented) {
                              "print(b.get());",
                              "s");
 }
+
+// ============================================================
+// 11. 泛型擦除补全第二轮（2026-10-21 审计修复回归）
+// ------------------------------------------------------------
+// 修复 1（P1 四后端不一致）：构造路径的 init 参数/默认值 checkType 发生在合并
+//   类型参数 guard（runInitMethodBody 的 CallFrameGuard）之前——Box([1,2]) 在
+//   Interpreter 被拒而 VM 无参数校验发射点直接通过。修复 = guard 前移至
+//   setupInitEnvironment / visitVarDecl 自动构造的参数循环之前。
+// 修复 2（P1 四后端不一致）：JIT jitBuildEnumVariant 载荷校验仍用 isTypeParameter
+//   精确匹配（第七处擦除点漏改），复合注解载荷 + 非空数组在 JIT 报类型不匹配。
+// ============================================================
+
+TEST(GenericErasureCompletion, GenericClassInitParamCompositeAnnotation) {
+    // 修复前：Interpreter 报"类型注解违反: 期望类型 T[]，实际为 array"，三 VM 通过
+    expectAllGenericBackends("class Box<T> {"
+                             "    init(v: T[]) { }"
+                             "}"
+                             "var b = Box([1, 2]);"
+                             "print(\"ok\");",
+                             "ok");
+}
+
+TEST(GenericErasureCompletion, GenericClassInitDefaultTParamAnnotation) {
+    // 自动构造路径（constructClassInstance 零实参分支）：默认值的 checkType 先于旧
+    // guard——修复前 checkType(3, "T") 在空 currentTypeParams_ 下按具体类型校验被拒
+    // （"类型注解违反: 期望类型 T"），VM 无参数校验发射点通过——四后端不一致。
+    // 注：数组字面量默认值（= [1, 2]）被 Parser BUG-DEF-1 策略拒绝（仅字面量），
+    // 故用标量默认值；复合注解的默认值场景待 BUG-DEF-1 扩展后补充。
+    expectAllGenericBackends("class Box<T> {"
+                             "    var v = null;"
+                             "    init(x: T = 3) { this.v = x; }"
+                             "}"
+                             "var b = Box();"
+                             "print(b.v);",
+                             "3");
+}
+
+#ifdef MINILANG_USE_JIT
+TEST(GenericErasureCompletion, EnumPayloadCompositeTAnnotationJIT) {
+    // 修复前：jitBuildEnumVariant 载荷校验用 isTypeParameter 精确匹配——
+    // Some(T[]) 复合注解 + 非空数组在 JIT 报"类型不匹配"中止，其余三后端
+    // （已递归擦除）构造成功——四后端分歧
+    EXPECT_EQ(jit_test_helper::runJIT("enum Row<T> { Cell(T[]) }"
+                                      "var r = Row.Cell([1, 2]);"
+                                      "print(r);"),
+              "Row.Cell([1, 2])");
+}
+#endif

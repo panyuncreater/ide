@@ -1855,7 +1855,30 @@ VMResult VM::executeCoroutineOps(OpCode op, size_t& ip) {
             }
         }
         openUpvalues_.erase(openUpvalues_.lower_bound(coroSuspendBaseStack_), openUpvalues_.end());
+        auto susForGcRoots = sus; // P0 fix：贡献回调持 shared_ptr 副本（标记期间快照必存活）
         cd->vmSuspension = std::move(sus);
+        // P0 fix（2026-10-21）：注册挂起快照 GC 根集贡献——挂起窗口在两次 .next()
+        // 之间，栈切片/帧链已移出 VM 活动状态（VM 执行期虽有 CallbackSuppressor
+        // 抑制增量 GC，但挂起窗口内解释器语句边界的 GC 照常触发），快照持有的容器
+        // 对 mark 不可见，会被清空元素。丢弃快照的两处 reset 同步置空回调。
+        cd->gcRootContributor = [susForGcRoots](std::vector<const void*>& roots) {
+            for (const auto& v : susForGcRoots->stackSuffix) {
+                if (v.isPointer()) {
+                    const void* p = v.gcRootPtr();
+                    if (p)
+                        roots.push_back(p);
+                }
+            }
+            for (const auto& f : susForGcRoots->frames) {
+                for (const auto& uv : f.upvalues) {
+                    if (uv && uv->isClosed && uv->value.isPointer()) {
+                        const void* p = uv->value.gcRootPtr();
+                        if (p)
+                            roots.push_back(p);
+                    }
+                }
+            }
+        };
         throw VMYieldSignal(std::move(yieldValue));
     }
 #endif
@@ -2046,6 +2069,7 @@ Value VM::callCoroutineNext(Value& coroVal) {
         frames_[savedFrameCount].returnIp = frames_[savedFrameCount - 1].ip;
         savedFrameCount = sus->baseFrames;
         savedStackSize = sus->baseStack;
+        cd->gcRootContributor = nullptr; // P0 fix：丢弃快照同步置空根集贡献回调
         cd->vmSuspension.reset();
         currentCoroutineTargetYieldId_ = cd->currentYieldId; // 过 OP_YIELD 防御检查（挂起模式不做目标比较）
     } else
@@ -2184,6 +2208,7 @@ Value VM::callCoroutineNext(Value& coroVal) {
             // 不 closeUpvaluesFrom——生成器区开放 upvalue 已随快照摘除保存，恢复时重挂。
             if (cd->currentYieldId >= cd->yieldCount) {
                 cd->done = true;
+                cd->gcRootContributor = nullptr; // P0 fix：丢弃快照同步置空根集贡献回调
                 cd->vmSuspension.reset();
             }
             while (frames_.size() > savedFrameCount)

@@ -207,12 +207,14 @@ struct Interpreter::CoroutineFiberState {
     minilang_fiber::FiberHandle fiber = nullptr;
     minilang_fiber::FiberHandle resumer = nullptr;
     bool completed = false; // 生成器体执行终结（自然结束/显式 return/错误逃逸）
-    bool failed = false;    // 错误逃逸（fiber 不可复用；.next() 重抛后丢弃重建，对齐重放语义）
+    bool failed = false;    // 错误逃逸（fiber 不可复用；保留至协程终结，后续 .next() 持续重抛同一错误对齐重放）
     std::exception_ptr pendingError;
     Value handoffValue;           // yield 值交接（挂起→恢复）
     size_t resumerStackDepth = 0; // .next() 入口时 callStack_ 深度（挂起截断基线，=守卫 savedStackDepth）
-    // 挂起期间的解释器上下文快照（env/帧持 GC 根：防 suspendedEnv 被 envPool 复用
-    // 或仅由 fiber C++ 栈持有的环境链在 mark-sweep 中失根）
+    // 挂起期间的解释器上下文快照（P0 fix 2026-10-21：快照持 shared_ptr 仅保对象存活，
+    // 不构成 mark-sweep 根——根集经 CoroutineData::gcRootContributor →
+    // collectCoroutineFiberGcRoots 贡献。此前注释声称"env/帧持 GC 根"但从未接线，
+    // 挂起窗口的增量 GC 会清空仅被快照环境持有的容器元素）
     std::shared_ptr<Environment> suspendedEnv;
     std::vector<CallFrame> suspendedCallStack;
     std::string suspendedReturnType;
@@ -309,6 +311,27 @@ void Interpreter::coroutineSuspend(Value yieldValue) {
     // yield 表达式值 = 自身 yield 值（对齐重放 skip 语义：lastValue_ = yieldValue）
     lastValue_ = fs->handoffValue;
 }
+
+void Interpreter::collectCoroutineFiberGcRoots(const CoroutineFiberState& fs, std::vector<const void*>& roots) {
+    // P0 fix（2026-10-21）：挂起协程快照根集——suspendedEnv/funEnv/suspendedCallStack
+    // 各帧环境链中的变量（tracked 容器）全部贡献为 GC 根。链间去重交给 mark 阶段的
+    // marked 集（重复根无害，见 triggerIncrementalGc 同类注释）。
+    auto collectChain = [&roots](const Environment* env) {
+        int depth = 0;
+        while (env && depth++ < 1024) {
+            collectEnvLocalGcRoots(env, roots);
+            env = env->parent.get();
+        }
+    };
+    if (fs.suspendedEnv)
+        collectChain(fs.suspendedEnv.get());
+    if (fs.funEnv)
+        collectChain(fs.funEnv.get());
+    for (const auto& frame : fs.suspendedCallStack) {
+        if (frame.env)
+            collectChain(frame.env.get());
+    }
+}
 #endif // MINILANG_CORO_FIBER
 
 Value Interpreter::callCoroutineNext(Value& coroVal) {
@@ -320,6 +343,7 @@ Value Interpreter::callCoroutineNext(Value& coroVal) {
 #if MINILANG_CORO_FIBER
         // 最终 yield 触发的 done：fiber 停在 yield 点永不再恢复，弃用之
         // （完成路径的 done 此处 reset 为 no-op）
+        cd->gcRootContributor = nullptr; // P0 fix：丢弃快照同步置空根集贡献回调
         cd->interpreterFiber.reset();
 #endif
         return cd->currentValueBox.empty() ? Value::nullValue() : cd->currentValueBox.front();
@@ -373,6 +397,23 @@ Value Interpreter::callCoroutineNext(Value& coroVal) {
             fs->cd = cd;
             cd->interpreterFiber = {fs, [](void* p) { delete static_cast<CoroutineFiberState*>(p); }};
             fs->fiber = minilang_fiber::createFiber(&coroutineFiberTrampoline, fs);
+            // P0 fix（2026-10-21）：注册挂起快照 GC 根集贡献回调。捕获裸 fs：fs 由
+            // cd->interpreterFiber 持有，mark 到达本 cd 时必存活；两处丢弃 fiber 的
+            // reset 均同步置空回调（见下）。
+            cd->gcRootContributor = [fs](std::vector<const void*>& roots) {
+                fs->interp->collectCoroutineFiberGcRoots(*fs, roots);
+            };
+        }
+        if (fs->failed) {
+            // P1 fix（2026-10-21）：失败 fiber 不再弃用重建。原实现 reset 后下次
+            // .next() 从头重跑函数体，coroutineSuspend 无条件递增 currentYieldId，
+            // 与重放模式"跳过已消费 yield 后同点再抛"逐点分歧（首查即提前置 done、
+            // 返回错误前首个 yield 值、前缀副作用重复）。保留失败 fiber：后续
+            // .next() 持续重抛同一错误——值/错误序列与重放逐点一致，前缀副作用
+            // 只执行一次（ADR-007 挂起 vs 重放的唯一既定差异口径）。
+            // 实现要点：重抛必须在切入前（此处）——fiber 体已终结，switch 进去即重入
+            // 死栈 = UB；首次失败在 switch 返回后重抛（见下方返回点检查）。
+            std::rethrow_exception(fs->pendingError);
         }
         if (activeCoroutineFiber_ == fs) {
             runtimeError("生成器不能在自身执行体内调用 .next()（真挂起模式不支持自恢复）", 0, 0);
@@ -387,12 +428,14 @@ Value Interpreter::callCoroutineNext(Value& coroVal) {
         activeCoroutineFiber_ = prevActive;
         recursionDepth_ = prevRecursion;
         if (fs->failed) {
-            auto err = fs->pendingError;
-            cd->interpreterFiber.reset(); // 死 fiber 弃用：下次 .next() 全新重建（对齐重放重新执行）
-            std::rethrow_exception(err);
+            // 首次失败到达此处（fiber 体内设 failed 后切回）：重抛并保留 fiber
+            // （后续 .next() 走上方前置检查直接重抛，不再重建）。
+            std::rethrow_exception(fs->pendingError);
         }
-        if (fs->completed)
+        if (fs->completed) {
+            cd->gcRootContributor = nullptr; // P0 fix：丢弃快照同步置空根集贡献回调
             cd->interpreterFiber.reset(); // fiber 生命周期终结（deleter 删平台资源）
+        }
         // yield 值 / return 值 / 自然耗尽 null 均已写入 currentValueBox
         return cd->currentValueBox.empty() ? Value::nullValue() : cd->currentValueBox.front();
     }

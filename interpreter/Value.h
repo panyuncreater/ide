@@ -75,6 +75,7 @@
 #include <array>
 #include <atomic> // L3 fix: ClosureData::functionId 全局生成器
 #include <cassert>
+#include <functional> // P0 fix 2026-10-21: CoroutineData::gcRootContributor
 #include <charconv> // Perf-Finding2: VAL_INT toString 用 to_chars 替代 std::to_string（避免 locale 查询）
 #include <cmath>
 #include <condition_variable> // R136 ChannelData 同步原语
@@ -505,6 +506,16 @@ private:
         // 分支）逐字段复制、有意不复制这两个字段——克隆得到未启动的独立协程。
         std::shared_ptr<void> interpreterFiber; // Interpreter fiber 状态
         std::shared_ptr<void> vmSuspension;     // StackVM/RegisterVM 挂起快照（按 chunk 互斥使用）
+        // —— 挂起快照 GC 根集贡献（P0 fix 2026-10-21）——
+        // 真挂起状态下，仅被快照持有的容器（Interpreter 侧在 suspendedEnv/funEnv/
+        // suspendedCallStack 各帧环境链、VM 侧在 stackSuffix/寄存器窗口）对 mark-sweep
+        // 不可见：interpreterFiber/vmSuspension 是 shared_ptr<void>，mark 无法穿透，
+        // 这类容器不在任何根集内，挂起窗口（两次 .next() 之间的语句边界）触发的增量
+        // GC 会把它们误判为不可达孤岛并清空元素，恢复后数据损坏。由各挂起实现在创建
+        // 快照时注册本回调，GcManager mark 到达 VAL_COROUTINE 时调用并把快照持有的
+        // tracked 容器地址追加进根集；丢弃快照时必须同步置空。空 = 无挂起状态。
+        // 克隆路径（cloneImpl 逐字段复制）有意不复制本回调——克隆得到未启动的独立协程。
+        std::function<void(std::vector<const void*>&)> gcRootContributor;
         CoroutineData() : RefCounted(ValueType::VAL_COROUTINE) {}
     };
 
@@ -1380,6 +1391,13 @@ public:
         // R99 枚举与 ADT：enum variant 作为 GC 根，fields 可能持有可变容器形成间接环。
         if (isEnumVariant())
             return static_cast<const void*>(box_.asPtr<EnumVariantData>());
+        // P0 fix（2026-10-21）：协程作为 GC 根——挂起协程快照（suspendedEnv/VM 栈切片/
+        // 寄存器窗口）持有的容器仅经 CoroutineData::gcRootContributor 可达；与闭包同型
+        // （BUG-REPL-AUDIT-7 先例）：CoroutineData 不登记进 slots_ 不会被 sweep，但作为
+        // 根可让 markPhase 进入协程分支标记其持有容器并触发快照贡献回调。此前对协程
+        // 返回 nullptr，环境变量直接持有的挂起协程整体不进根集，快照容器被误清空。
+        if (isCoroutine())
+            return static_cast<const void*>(box_.asPtr<CoroutineData>());
         return nullptr;
     }
 

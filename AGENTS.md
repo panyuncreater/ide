@@ -1,6 +1,6 @@
 # MiniLang AGENTS
 
-> 版本 2.8 | 更新日期：2026-10-07 | 优先级：用户级规则（`%USERPROFILE%\.agent\AGENTS.md`）> 本文件 > `docs/`；同一语义冲突以 ADR 为最终裁决
+> 版本 2.9 | 更新日期：2026-10-21 | 优先级：用户级规则（`%USERPROFILE%\.agent\AGENTS.md`）> 本文件 > `docs/`；同一语义冲突以 ADR 为最终裁决
 
 ## 1. 角色与任务分派
 
@@ -116,6 +116,7 @@ ctest --test-dir out/build/debug --output-on-failure
 ```
 > 注意：`ctest` 依赖全部 4 个测试可执行文件（`minilang_tests` / `minilang_app_tests` / `minilang_gui_smoke` / `minilang_perf_test`）。只构建 `minilang_tests` 时 ctest 会以 `*_NOT_BUILT (Not Run)` 结尾并返回非 0（clean 构建后尤其必现，2026-10-03 实测）。
 > 注意：`ctest -j <N>` 可并行（4109 用例 `-j 10` 约 100s，串行 20 分钟+；用例均为独立进程，CI 已用 `-j 4`）。增量链接出现 **LNK1163（COMDAT 节的选择无效）**与 LNK2019/LNK1120 同族（核心头文件变更后陈旧 unity obj，见 `docs/getting-started.md` 构建问题排查），`build.bat` 自动重试名单未含它——删除报错目标 `CMakeFiles/<目标>.dir/Unity/unity_*.cxx.obj` 重编即可。
+> 注意：`minilang_perf_test` 目标被 `MINILANG_BUILD_PERF_TESTS` 门控，且该 option 在 `CMakeLists.txt` 中定义于 `add_subdirectory(tests)` **之后**——全新 configure 时测试目录先于 option 求值，目标静默不注册（ninja 报 unknown target，2026-10-21 实测）。全新构建必须显式 `cmake --preset Qt-Debug -DMINILANG_BUILD_PERF_TESTS=ON`（CI benchmark job 同款做法），否则 ctest 以缺失 perf 用例的非全量口径收尾。
 便捷入口：`configure.bat` / `build.bat` / `run_tests.bat`（与 `scripts/` 同名脚本等价）。
 
 ### 验证通过标准
@@ -144,3 +145,4 @@ Qoder 环境：以 `.qoder/skills/minilang-build/SKILL.md` 为诊断补充源（
 | 2026-10-11 | 2.6 | JIT per-chunk 编译架构落地：新增 [ADR-008](docs/adr/ADR-008-jit-per-chunk.md)（per-chunk 代码块 + tiering 真单 chunk 编译 + 进程内块缓存，勘误积压记录"跨后端帧协议"前提——JIT/VM 无帧互操作；执行行为零语义变化）；§3 核心约束补 JIT per-chunk 行（含 kJitCodegenVersion 递增纪律）；§1 角色行"分层编译"改"per-chunk 分层编译"；architecture.md JIT 节、backend-consistency.md §8（JitContext 字段数与 per-chunk 协议）、testing.md 测试计数同步。代码变更明细见 CHANGELOG Unreleased「JIT per-chunk 编译架构落地」条目（4132/4132，含 5 新增 BlockCache） |
 | 2026-10-07 | 2.7 | 协程真挂起平台覆盖扩展（ADR-007 平台覆盖项部分清偿）：`MINILANG_CORO_FIBER` 新增 Linux ucontext 平台层（`InterpreterCoroutine.cpp` 五函数对称接口 + ASan fiber 标注），Linux 三执行后端真挂起、macOS 保持重放；backend-consistency §9 补平台层扩展义务；测试补平台 `static_assert` 锁定。代码变更明细见 CHANGELOG Unreleased「协程真挂起平台覆盖扩展」条目 |
 | 2026-10-07 | 2.8 | 泛型擦除补全 + 显式类型实参（路线图"泛型/模板"推进）：§3 高频 Bug 模式新增 #11（泛型注解擦除六处同步 + `annotationReferencesTypeParam` 递归判定 + `trySkipExplicitTypeArgs` 消歧）；修复 R163 复合注解漏擦四后端不一致（P1）、显式类型实参静默误解析（P1）；架构文档补协程执行模型章节（ADR-007 纳入四后端架构 ADR 索引）；testing/README 测试计数同步（4059/511/4150）。代码变更明细见 CHANGELOG Unreleased「四后端不一致（P1）：泛型复合注解擦除遗漏」与「泛型显式类型实参语法」条目（4150/4150） |
+| 2026-10-21 | 2.9 | 审计修复轮（4 子代理并行审计：协程挂起/JIT 块缓存/泛型擦除/字典透明查找）：P0 挂起协程快照 GC 根集缺失（`gcRootContributor` 回调 + `gcRootPtr` 协程分支，三执行后端全覆盖）；P1 泛型构造路径擦除时序（guard 前移两处）+ JIT 第七处擦除点（`jitBuildEnumVariant`）+ 失败协程弃用重建语义分歧（保留重抛）；P2 JIT 块缓存 owned 标志。§6 补 minilang_perf_test 目标开关注记。审计新发现（未修，见 docs/code-audit-report-2026-10-21.md）：VM 错误逃逸后 .next() 语义分歧、数组字面量默认值静默不绑定、泛型嵌套函数类型参数不传播等。测试计数 4064/511/4155 |

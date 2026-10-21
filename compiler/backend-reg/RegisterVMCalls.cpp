@@ -1764,6 +1764,7 @@ Value RegisterVM::callCoroutineNext(Value& coroVal) {
         // 调用点，与调用方无关，保持不变。
         frames_[savedFrameCount].returnIp = frames_[savedFrameCount - 1].ip;
         savedFrameCount = sus->baseFrames;
+        cd->gcRootContributor = nullptr; // P0 fix：丢弃快照同步置空根集贡献回调
         cd->vmSuspension.reset();
         currentCoroutineTargetYieldId_ = cd->currentYieldId; // 过 REG_YIELD 防御检查（挂起模式不做目标比较）
     } else
@@ -1873,6 +1874,7 @@ Value RegisterVM::callCoroutineNext(Value& coroVal) {
             // 快照摘除保存，恢复时重挂。
             if (cd->currentYieldId >= cd->yieldCount) {
                 cd->done = true;
+                cd->gcRootContributor = nullptr; // P0 fix：丢弃快照同步置空根集贡献回调
                 cd->vmSuspension.reset();
             }
             while (frames_.size() > savedFrameCount)

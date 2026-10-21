@@ -14,7 +14,7 @@
 #include "common/ErrorFormat.h"
 #include "common/ErrorMessages.h"
 #include "common/RuntimeLimits.h"
-#include "common/TypeChecker.h" // enum 字段类型校验：typeMatchValue/isTypeParameter
+#include "common/TypeChecker.h" // enum 字段类型校验：typeMatchValue/annotationReferencesTypeParam
 #include "common/Utf8Utils.h"
 #include "compiler/jit/JITInternal.h"
 #include "interpreter/BuiltinMethods.h"    // 并发原语共享层：executeSharedSpawn/handleSyncObjectMethod 等
@@ -1008,9 +1008,12 @@ extern "C" void jitBuildEnumVariant(JitContext* ctx, const char* enumName, const
 
     // AUDIT-R6 F3 对齐：字段类型注解校验（泛型类型参数擦除；实例继承链 fallback
     // 对齐 VM executeContainerBuildOps 的 classInfo_ 查找模式，JIT 侧用 JitClassInfo）
+    // 泛型擦除补全（2026-10-21 fix）：升级为 annotationReferencesTypeParam 递归判定——
+    // 原精确匹配漏擦复合注解（Some(T[])/Some(T?) 等，非空数组载荷必判 false），
+    // JIT 与 Interpreter/StackVM/RegisterVM（均已递归擦除）四后端分歧。
     for (size_t fi = 0; fi < fields.size() && fi < varInfo->paramTypes.size(); ++fi) {
         const std::string& expectedType = varInfo->paramTypes[fi];
-        if (expectedType.empty() || minilang::isTypeParameter(expectedType, info.typeParams))
+        if (expectedType.empty() || minilang::annotationReferencesTypeParam(expectedType, info.typeParams))
             continue;
         if (!minilang::typeMatchValue(fields[fi], expectedType)) {
             bool inheritOk = false;

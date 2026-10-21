@@ -538,7 +538,7 @@ private:
     int currentYieldExecutionCount_ = 0;
 
     // —— 协程真挂起（第四轮架构优化，平台支持见 interpreter/CoroutineFiber.h）——
-    // MINILANG_CORO_FIBER=1（Windows fiber）时 .next() 走挂起/恢复路径；
+    // MINILANG_CORO_FIBER=1（Windows fiber / Linux ucontext）时 .next() 走挂起/恢复路径；
     // =0 时以下成员/方法恒不使用（visitYieldExpr 的挂起分支以 activeCoroutineFiber_
     // 非空判定，重放路径不受影响）。状态结构对头文件不透明（定义于
     // InterpreterCoroutine.cpp）；CoroutineData::interpreterFiber 以 shared_ptr<void> 持有。
@@ -554,6 +554,12 @@ private:
     /// fiber 蹦床（平台 fiber 入口要求的裸函数指针；经状态块的 interp 指标转入
     /// coroutineFiberBody 成员函数以获得私有访问）
     static void coroutineFiberTrampoline(void* arg);
+    /// 挂起协程快照 GC 根集贡献（P0 fix 2026-10-21）：把 suspendedEnv/funEnv/
+    /// suspendedCallStack 各帧环境链中的 tracked 容器地址追加进 roots——GcManager
+    /// mark 到达挂起协程时经 CoroutineData::gcRootContributor 回调进入（仅
+    /// MINILANG_CORO_FIBER=1 有实现；快照持 shared_ptr 仅保对象存活，不构成
+    /// mark-sweep 根，缺此贡献时挂起窗口的增量 GC 会清空仅被快照持有的容器元素）。
+    void collectCoroutineFiberGcRoots(const CoroutineFiberState& fs, std::vector<const void*>& roots);
 
     // ARCH-12 fix: REPL 状态暂存聚合为 ReplState 结构体（原为 10 个散布的 saved* 字段）。
     // 将 REPL 状态管理的完整边界集中在一处，便于理解和未来进一步提取为独立类。

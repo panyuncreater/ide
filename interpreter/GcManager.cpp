@@ -237,12 +237,96 @@ void GcManager::markValue(const Value& v, std::unordered_set<const void*>& marke
                 worklist.push_back(&cv);
             for (const auto& cb : cd->vmClosureBox)
                 worklist.push_back(&cb);
+            // 挂起快照根集贡献（P0 fix 2026-10-21）：interpreterFiber/vmSuspension 是
+            // shared_ptr<void>，mark 无法穿透——仅被挂起快照持有的容器不在任何根集内，
+            // sweep 会清空其元素（挂起窗口的增量 GC → 恢复后数据损坏）。回调由挂起
+            // 实现注册，无挂起状态时为空。
+            if (cd->gcRootContributor) {
+                std::vector<const void*> extra;
+                cd->gcRootContributor(extra);
+                for (const void* p : extra)
+                    markTrackedRoot(p, marked, worklist);
+            }
             break;
         }
         case ValueType::VAL_STRING:
         case ValueType::VAL_INT:
             // 叶子节点，无子引用
             break;
+        default:
+            break;
+        }
+    }
+}
+
+void GcManager::markTrackedRoot(const void* rootPtr, std::unordered_set<const void*>& marked,
+                                std::vector<const Value*>& worklist) {
+    if (marked.insert(rootPtr).second) {
+        // 根据 type 遍历根指针的子元素
+        const RefCounted* rc = static_cast<const RefCounted*>(rootPtr);
+        switch (rc->type) {
+        case ValueType::VAL_ARRAY: {
+            const auto& elements = static_cast<const Value::ArrayData*>(rootPtr)->elements;
+            for (const auto& elem : elements) {
+                markValue(elem, marked, worklist);
+            }
+            break;
+        }
+        case ValueType::VAL_DICT: {
+            const auto& entries = static_cast<const Value::DictData*>(rootPtr)->entries;
+            for (const auto& kv : entries) {
+                markValue(kv.second, marked, worklist);
+            }
+            break;
+        }
+        case ValueType::VAL_INSTANCE: {
+            const auto& fields = static_cast<const Value::InstanceData*>(rootPtr)->fields;
+            for (const auto& kv : fields) {
+                markValue(kv.second, marked, worklist);
+            }
+            break;
+        }
+        case ValueType::VAL_CLOSURE: {
+            const auto& captured = static_cast<const Value::ClosureData*>(rootPtr)->capturedVars;
+            for (const auto& kv : captured) {
+                markValue(kv.second, marked, worklist);
+            }
+            break;
+        }
+        case ValueType::VAL_TUPLE: {
+            // R98 元组与解构：元组作为根时，标记其元素
+            const auto& elements = static_cast<const Value::TupleData*>(rootPtr)->elements;
+            for (const auto& elem : elements) {
+                markValue(elem, marked, worklist);
+            }
+            break;
+        }
+        case ValueType::VAL_ENUM_VARIANT: {
+            // R99 枚举与 ADT：enum variant 作为根时，标记其 fields
+            const auto& fields = static_cast<const Value::EnumVariantData*>(rootPtr)->fields;
+            for (const auto& f : fields) {
+                markValue(f, marked, worklist);
+            }
+            break;
+        }
+        case ValueType::VAL_COROUTINE: {
+            // AUDIT-R3 P1-6 fix: 协程作为根时，标记其持有的参数/yield 值/闭包值
+            const auto* cd = static_cast<const Value::CoroutineData*>(rootPtr);
+            for (const auto& a : cd->args)
+                markValue(a, marked, worklist);
+            for (const auto& v : cd->currentValueBox)
+                markValue(v, marked, worklist);
+            for (const auto& v : cd->vmClosureBox)
+                markValue(v, marked, worklist);
+            // 挂起快照根集贡献（P0 fix 2026-10-21）：同 markValue 协程分支
+            if (cd->gcRootContributor) {
+                std::vector<const void*> extra;
+                cd->gcRootContributor(extra);
+                for (const void* p : extra)
+                    markTrackedRoot(p, marked, worklist);
+            }
+            break;
+        }
         default:
             break;
         }
@@ -268,69 +352,7 @@ void GcManager::collectCycle(const std::vector<const void*>& roots) {
     // PERF-GC: 整个 mark 阶段共享一个 worklist（1 次分配），传引用给所有 markValue 调用。
     std::vector<const Value*> markWorklist;
     for (const void* rootPtr : roots) {
-        if (marked.insert(rootPtr).second) {
-            // 根据 type 遍历根指针的子元素
-            const RefCounted* rc = static_cast<const RefCounted*>(rootPtr);
-            switch (rc->type) {
-            case ValueType::VAL_ARRAY: {
-                const auto& elements = static_cast<const Value::ArrayData*>(rootPtr)->elements;
-                for (const auto& elem : elements) {
-                    markValue(elem, marked, markWorklist);
-                }
-                break;
-            }
-            case ValueType::VAL_DICT: {
-                const auto& entries = static_cast<const Value::DictData*>(rootPtr)->entries;
-                for (const auto& kv : entries) {
-                    markValue(kv.second, marked, markWorklist);
-                }
-                break;
-            }
-            case ValueType::VAL_INSTANCE: {
-                const auto& fields = static_cast<const Value::InstanceData*>(rootPtr)->fields;
-                for (const auto& kv : fields) {
-                    markValue(kv.second, marked, markWorklist);
-                }
-                break;
-            }
-            case ValueType::VAL_CLOSURE: {
-                const auto& captured = static_cast<const Value::ClosureData*>(rootPtr)->capturedVars;
-                for (const auto& kv : captured) {
-                    markValue(kv.second, marked, markWorklist);
-                }
-                break;
-            }
-            case ValueType::VAL_TUPLE: {
-                // R98 元组与解构：元组作为根时，标记其元素
-                const auto& elements = static_cast<const Value::TupleData*>(rootPtr)->elements;
-                for (const auto& elem : elements) {
-                    markValue(elem, marked, markWorklist);
-                }
-                break;
-            }
-            case ValueType::VAL_ENUM_VARIANT: {
-                // R99 枚举与 ADT：enum variant 作为根时，标记其 fields
-                const auto& fields = static_cast<const Value::EnumVariantData*>(rootPtr)->fields;
-                for (const auto& f : fields) {
-                    markValue(f, marked, markWorklist);
-                }
-                break;
-            }
-            case ValueType::VAL_COROUTINE: {
-                // AUDIT-R3 P1-6 fix: 协程作为根时，标记其持有的参数/yield 值/闭包值
-                const auto* cd = static_cast<const Value::CoroutineData*>(rootPtr);
-                for (const auto& a : cd->args)
-                    markValue(a, marked, markWorklist);
-                for (const auto& v : cd->currentValueBox)
-                    markValue(v, marked, markWorklist);
-                for (const auto& v : cd->vmClosureBox)
-                    markValue(v, marked, markWorklist);
-                break;
-            }
-            default:
-                break;
-            }
-        }
+        markTrackedRoot(rootPtr, marked, markWorklist);
     }
     // R113 C 项：Phase 1 结束，记录可达节点数
     lastMarkedCount_ = marked.size();

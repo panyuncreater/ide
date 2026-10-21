@@ -809,7 +809,7 @@ bool JITBackend::tryExecuteFromCache(uint64_t key) {
 
 void JITBackend::storeBlocksToCache(uint64_t key) {
     auto entry = std::make_shared<JitBlockCacheEntry>();
-    for (const auto& blk : codeBlocks_) {
+    for (auto& blk : codeBlocks_) {
         JitBlockCacheEntry::SharedBlock sb;
         sb.entry = blk.entry;
         sb.chunkName = blk.chunkName;
@@ -818,6 +818,12 @@ void JITBackend::storeBlocksToCache(uint64_t key) {
         sb.epilogueOffset = blk.epilogueOffset;
         sb.trampolineOffset = blk.trampolineOffset;
         entry->blocks.push_back(std::move(sb));
+        // P2 fix（2026-10-21 审计 D2）：块从共享 runtime 分配、所有权已移交缓存条目，
+        // 实例侧必须翻转 owned——否则下次 execute 入口/析构经实例 runtime_.release
+        // 跨分配器释放共享块（asmjit 对外来指针按查块失败 no-op 掩盖；runtime 合一
+        // 即双重释放/UAF）。与命中路径 owned=false（JIT.h "缓存共享块实例不释放"）
+        // 的既定不变量对齐。
+        blk.owned = false;
     }
     for (const auto& [n, info] : methodEntries_) {
         entry->methodEntries.emplace_back(n, info);

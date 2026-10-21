@@ -1875,6 +1875,15 @@ Value Interpreter::evalVarDeclValue(VarDecl& node) {
 
         // AUDIT-P1 fix: 绑定 init 的默认参数到 initEnv（对齐 constructClassInstance）。
         // 原实现直接 executeFunctionBody，未绑定参数，init 体引用参数时穿透到父环境。
+        // 泛型擦除补全（2026-10-21 fix）：默认值的 checkType 必须在合并类型参数语境下
+        // 执行——原 guard 在下方才建立，`class Bag<T> { init(v: T[] = [1]) {} }` 的
+        // Bag() 自动构造路径在空 currentTypeParams_ 下被拒（与 constructClassInstance
+        // 同型的四后端不一致）。
+        std::vector<std::string> mergedTypeParams = cls.typeParams;
+        for (const auto& tp : initMethod->typeParams) {
+            mergedTypeParams.push_back(tp);
+        }
+        CallFrameGuard typeParamsGuard{*this, currentFunctionReturnType_, /*manageCtx=*/false, mergedTypeParams};
         for (size_t i = 0; i < initMethod->params.size(); ++i) {
             if (i < initMethod->defaultValues.size() && initMethod->defaultValues[i]) {
                 // 默认值在类定义的闭包环境中求值（与 constructClassInstance 一致）
@@ -1910,10 +1919,7 @@ Value Interpreter::evalVarDeclValue(VarDecl& node) {
         // H3 fix: 与 visitFunCall 类构造路径保持一致的状态管理
         // B3 fix: CallFrameGuard 自动管理 currentFunctionReturnType_ + callStack_ + classContextStack_
         // R163 泛型扩展：合并类泛型参数 + init 方法泛型参数，使 init 体内的类型参数注解跳过类型校验
-        std::vector<std::string> mergedTypeParams = cls.typeParams;
-        for (const auto& tp : initMethod->typeParams) {
-            mergedTypeParams.push_back(tp);
-        }
+        // （mergedTypeParams 已在默认值校验前构建，见上方 2026-10-21 fix）
         CallFrameGuard frameGuard{*this, initMethod->returnType, /*manageCtx=*/true, mergedTypeParams};
         callStack_.emplace_back(cls.name + ".init", initEnv, node.line, recursionDepth_ + 1);
         // AUDIT-P1-CORRECT fix: 压入"init 方法定义所在类"而非"实例类"。

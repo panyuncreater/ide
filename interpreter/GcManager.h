@@ -175,6 +175,12 @@ private:
     // 暂停期仅 1 次分配，取代原先每个根元素各建一个 vector 的模式。
     void markValue(const Value& v, std::unordered_set<const void*>& marked, std::vector<const Value*>& worklist);
 
+    // 挂起协程快照根集贡献（P0 fix 2026-10-21）：按 RefCounted 类型分派，标记一个
+    // tracked 容器根指针及其子元素——collectCycle 根循环与 CoroutineData::
+    // gcRootContributor 回调共用同一入口，避免两处 switch 漂移。
+    void markTrackedRoot(const void* rootPtr, std::unordered_set<const void*>& marked,
+                         std::vector<const Value*>& worklist);
+
     // BUG-003 fix: 检查分配阈值，达到则调用 gcTriggerCallback_ 进行增量回收
     void checkIncrementalGc();
 

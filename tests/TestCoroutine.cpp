@@ -664,3 +664,82 @@ print(g.done());
     EXPECT_ALL_BACKENDS(src, "44850false");
 }
 #endif // MINILANG_CORO_FIBER
+
+// ============================================================
+// 2026-10-21 审计修复回归（真挂起）
+// ------------------------------------------------------------
+// 修复 1（P0）：挂起协程快照（suspendedEnv/funEnv/suspendedCallStack、VM 侧
+//   stackSuffix/寄存器窗口）不在任何 GC 根集——挂起窗口的增量 GC 把仅被快照
+//   持有的容器清空元素，恢复后数据损坏。修复 = CoroutineData::gcRootContributor
+//   贡献回调（mark 到达 VAL_COROUTINE 时追加快照根）。
+// 修复 2（P1）：失败协程弃用重建导致 yield 计数错位——值序列错乱 + done 提前
+//   置位，与重放"同点再抛"分歧。修复 = 保留失败 fiber 持续重抛。
+// ============================================================
+
+TEST(CoroutineSuspension, FailedGeneratorRethrowsSameErrorOnEveryNext) {
+    // 修复前（fiber 路径）：错误逃逸后 fiber 弃用重建，第三次 .next() 从头重跑
+    // 函数体返回首个 yield 值且提前置 done；重放路径为同点再抛——语义分歧。
+    // 修复后：解释器 fiber 与重放一致——每次 .next() 同点重抛，done 保持 false。
+    // 注意：① throw 必须位于非最终 yield 之后（经辅助函数在 yield 之间逃逸）——
+    // 生成器最终 yield 之后的尾部语句不执行（既有设计），直接写在末尾是死代码；
+    // ② 已实测 StackVM/RegisterVM 错误逃逸后的下一次 .next() 返回末 yield 值并置
+    // done（与解释器分歧，预存问题，见 docs/code-audit-report-2026-10-21.md），
+    // 故三段序列仅锁解释器路径；四后端一致的前缀（首次错误传播 + done=false）
+    // 由 FailedGeneratorErrorEscapePrefix 锁定。
+    std::string src = R"(
+fun boom() { throw "boom"; }
+fun* g() {
+    yield 1;
+    boom();
+    yield 2;
+}
+var x = g();
+print(x.next());
+try { x.next(); } catch (e) { print("E1"); }
+try { x.next(); } catch (e) { print("E2"); }
+print(x.done());
+)";
+    EXPECT_EQ(minilang_test::runInterpreter(src), "1E1E2false");
+}
+
+TEST(CoroutineSuspension, FailedGeneratorErrorEscapePrefix) {
+    // 四后端一致前缀：生成器体内未捕获错误穿透到调用方 catch（异常值 = throw 值），
+    // 错误后 done 保持 false
+    std::string src = R"(
+fun boom() { throw "boom"; }
+fun* g() {
+    yield 1;
+    boom();
+    yield 2;
+}
+var x = g();
+print(x.next());
+try { x.next(); } catch (e) { print(e); }
+print(x.done());
+)";
+    EXPECT_ALL_BACKENDS(src, "1boomfalse");
+}
+
+TEST(CoroutineSuspension, SuspendedGeneratorLocalsSurviveIncrementalGc) {
+    // P0 回归（Interpreter 路径，阈值 8192）：挂起后 3 万次分配确保多次触发
+    // 增量 GC；修复前仅被生成器局部环境持有的数组 a 被清空元素，恢复后索引报错。
+    // VM 路径执行期由 CallbackSuppressor 抑制增量 GC（快照根集由 gcRootContributor
+    // 覆盖跨 execute 边界的挂起窗口），本用例不触发；重放平台（=0）每次 .next()
+    // 重建局部环境，本用例退化为通过（不影响判定）。
+    std::string src = R"(
+fun* gen() {
+    var a = [10, 20, 30];
+    yield a[0];
+    yield a[1];
+}
+var g = gen();
+print(g.next());
+var i = 0;
+while (i < 30000) {
+    var junk = [i, i + 1];
+    i = i + 1;
+}
+print(g.next());
+)";
+    EXPECT_EQ(minilang_test::runInterpreter(src), "1020");
+}
