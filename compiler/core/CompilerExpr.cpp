@@ -311,6 +311,15 @@ void Compiler::visitVarDecl(VarDecl& node) {
             uint16_t nameIdx = identifierIndex(node.name);
             chunk_.writeOp(OpCode::OP_DEFINE_VAR, node.line);
             chunk_.writeShort(nameIdx, node.line);
+            // V11 fix（2026-10-22）：块作用域新声明全局（非预分配槽位名且非祖先遮蔽名）
+            // 登记进 currentLocals_，visitBlock 块退出经 blockVars 发射 OP_DELETE_VAR 清理
+            // globals_ 残留——此前顶层分支从不登记，blockVars 恒空，变量块外仍可读
+            // （与解释器环境链不一致，diff_test V11 实证）。祖先遮蔽名走 visitBlock
+            // 保存/恢复协议，清理由协议负责；预分配槽位名（顶层 pre-scan）永不过期。
+            if (blockDepth_ > 0 && lookupGlobalSlot(node.name) < 0 &&
+                shadowedGlobalNames_.count(node.name) == 0) {
+                currentLocals_[node.name] = -1;
+            }
         }
         // B4: topLevelGlobals_ 已删除（write-only 死代码，从未被读取）
     }

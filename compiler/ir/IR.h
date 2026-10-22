@@ -812,6 +812,13 @@ private:
     std::vector<BlockScope> blockScopes_;
     int blockDepth_ = 0; // 当前块嵌套深度（仅在 inFunction_==true 时有效）
 
+    // V11 fix（2026-10-22）：顶层块内新声明全局名的逐块栈。visitVarDecl 顶层分支对
+    // varMap_ 无旧绑定的名字（非预分配槽位名、非遮蔽重声明）登记到栈顶块，
+    // visitBlock 顶层路径退出时发射 DELETE_VAR + 移除 varMap_ 条目——此前绑定
+    // 永久残留，变量块外仍可读（与解释器环境链/直译路径不一致，diff_test V11 实证）。
+    // 遮蔽重声明（varMap_ 有旧绑定）由 shadowedSaves 保存/恢复协议负责（CRITICAL-2/3）。
+    std::vector<std::vector<std::string>> topLevelBlockFreshGlobals_;
+
     // R164 fixup2: 待注入到函数体块作用域的参数名列表。
     // visitFunDecl 设置参数后填充，visitBlock 进入函数体块时消费（注入 declaredNames）。
     // 使 visitVarDecl 能检测参数重定义（如 `fun f(b) { returna b; }` 中 `returna b;`

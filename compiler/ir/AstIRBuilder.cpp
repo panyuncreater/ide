@@ -1658,9 +1658,16 @@ void AstIRBuilder::visitVarDecl(VarDecl* node) {
             emitIR(IROp::DEFINE_GLOBAL, {IROperand::imm(static_cast<uint32_t>(slot)), val}, node->line);
         } else {
             // 无槽位：回退名称索引
+            // V11 fix（2026-10-22）：先捕获 varMap_ 是否已有旧绑定——无绑定且在顶层块内
+            // 即块作用域新声明全局，登记进 topLevelBlockFreshGlobals_，块退出清理；
+            // 有旧绑定（预分配槽位名 / 祖先块遮蔽名）走 shadowedSaves 保存/恢复协议。
+            bool hadVarMapBinding = (varMap_.find(node->name) != varMap_.end());
             uint32_t idx = ir_->addGlobal(node->name);
             varMap_[node->name] = {VarInfo::Kind::GLOBAL_NAME, idx};
             emitIR(IROp::DEFINE_GLOBAL, {IROperand::global(idx), val}, node->line);
+            if (blockDepth_ > 0 && !hadVarMapBinding && !topLevelBlockFreshGlobals_.empty()) {
+                topLevelBlockFreshGlobals_.back().push_back(node->name);
+            }
         }
     }
 }
@@ -2556,6 +2563,9 @@ void AstIRBuilder::visitBlock(Block* node) {
         // 污染外层块的全局槽位且退出不 restore。修复：基于 varMap_ 判断是否需要遮蔽，
         // 支持 GLOBAL_SLOT 和 GLOBAL_NAME 两种旧绑定。
         blockDepth_++;
+        // V11 fix：每层顶层块入栈一个 fresh 名单，visitVarDecl 登记新声明全局，
+        // 块退出（见本函数尾部）发射 DELETE_VAR 并弹栈。与 shadowedSaves 同生命周期。
+        topLevelBlockFreshGlobals_.emplace_back();
         struct ShadowedSave {
             std::string varName;
             VarInfo oldInfo;     // varMap_ 旧条目
@@ -2629,6 +2639,19 @@ void AstIRBuilder::visitBlock(Block* node) {
                 emitIR(IROp::STORE_GLOBAL, {IROperand::global(sv.nameIdx), sv.savedVreg}, node->line);
             }
         }
+        // V11 fix（2026-10-22）：块作用域新声明全局清理——发射 DELETE_VAR + 移除
+        // varMap_ 条目，对齐顶层 for 循环清理（BUG-IR-SCOPE-1）与直译 Compiler 路径
+        // （currentLocals_ diff → OP_DELETE_VAR）。删除后对该名字的引用经 resolveVar
+        // 回退重新绑定为 GLOBAL_NAME，运行期报「未定义的变量」，与解释器环境链一致。
+        // 祖先块 fresh 名在本块 shadowedSaves 中已保存/恢复，其 DELETE 由祖先块退出时负责。
+        for (const auto& freshName : topLevelBlockFreshGlobals_.back()) {
+            auto it = varMap_.find(freshName);
+            if (it != varMap_.end() && it->second.kind == VarInfo::Kind::GLOBAL_NAME) {
+                emitIR(IROp::DELETE_VAR, {IROperand::global(it->second.index)}, node->line);
+                varMap_.erase(it);
+            }
+        }
+        topLevelBlockFreshGlobals_.pop_back();
         blockDepth_--;
     }
 }

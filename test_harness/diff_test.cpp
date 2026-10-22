@@ -107,7 +107,11 @@ static ExecResult runVM(const std::string& source) {
     VMResult vmRes = vm.execute(compileResult);
     if (vmRes == VMResult::VM_RUNTIME_ERROR) {
         res.hasError = true;
-        res.error = std::string("VMRT:") + vm.getLastError();
+        // V11 fix（2026-10-22）：VM 运行期错误与解释器 RuntimeError 同属 RT 阶段，
+        // 统一标 RT: 使 categoryOf 归入同类后按 AUDIT-ERRPATH 规则比较消息内容。
+        // 原标签 VMRT: 不被 categoryOf 识别 → OTHER，与 interp 的 RT 判为类别失配
+        // （V11 块内新名作用域用例首次踩中：两侧同为「未定义的变量: y」却被判 differ）。
+        res.error = std::string("RT:") + vm.getLastError();
     } else {
         // Collect globals
         for (auto& [name, val] : vm.getGlobalsRef()) {

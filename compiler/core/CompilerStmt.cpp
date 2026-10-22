@@ -2732,7 +2732,12 @@ void Compiler::visitBlock(Block& node) {
                 // 也必须保存当前有效值——否则嵌套块退出不恢复外层遮蔽值（V10 3,3,1 vs 解释器 3,2,1）。
                 // 对齐 AstIRBuilder 顶层块 CRITICAL-3 的 GLOBAL_NAME 保存路径。
                 bool ancestorShadowed = (gsSlot < 0) && (shadowedGlobalNames_.count(vd->name) > 0);
-                if (gsSlot >= 0 || ancestorShadowed) {
+                // V11 fix（2026-10-22）：祖先顶层块 fresh 声明的名字（在 currentLocals_、无槽位映射）——
+                // 嵌套块重声明同样必须保存当前有效值并在退出恢复（hash 存储同段覆写问题），
+                // 对齐解释器环境链遮蔽语义；槽位遮蔽名（ancestorShadowed）由 V10 协议负责。
+                bool ancestorFresh = (gsSlot < 0) && !ancestorShadowed &&
+                                     (currentLocals_.count(vd->name) > 0);
+                if (gsSlot >= 0 || ancestorShadowed || ancestorFresh) {
                     std::string saveName = "__blk_save_" + std::to_string(blockDepth_) + "_" +
                                            std::to_string(blockSaveCounter_++) + "_" + vd->name;
                     shadowedSaves.push_back({vd->name, saveName});

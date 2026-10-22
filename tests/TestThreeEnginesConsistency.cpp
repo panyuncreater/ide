@@ -180,6 +180,29 @@ TEST(ConsistencyDiff, BlockShadowInnerReassignRestored) {
     EXPECT_EQ(runRegVM_IR(src), expected);
 }
 
+TEST(ConsistencyDiff, BlockFreshVarScopeEndsAtBrace) {
+    // V11 fix（2026-10-22）：块内新声明全局在块退出后不可见（解释器环境链语义）。
+    // 修复前双编译路径均泄漏：visitVarDecl 顶层分支从不登记（直译路径 blockVars 恒空）、
+    // varMap_ 绑定永久残留（IR 路径），块外 print(y) 仍得 5；diff_test V11 实证。
+    std::string src = "var a = 1; { var y = 5; print(y); } print(y);";
+    std::string expected = "5<runtime:未定义的变量: y>";
+    EXPECT_EQ(runInterp(src), expected);
+    EXPECT_EQ(runStackVM_Direct(src), expected);
+    EXPECT_EQ(runStackVM_IR(src), expected);
+    EXPECT_EQ(runRegVM_IR(src), expected);
+}
+
+TEST(ConsistencyDiff, BlockFreshVarNestedShadowRestored) {
+    // V11 fix 同族：祖先块 fresh 名被嵌套块重声明——内层退出恢复祖先遮蔽值（751），
+    // 外层块退出后名字消失（print(a) 后不再引用 y）。
+    std::string src = "var a = 1; { var y = 5; { var y = 7; print(y); } print(y); } print(a);";
+    std::string expected = "751";
+    EXPECT_EQ(runInterp(src), expected);
+    EXPECT_EQ(runStackVM_Direct(src), expected);
+    EXPECT_EQ(runStackVM_IR(src), expected);
+    EXPECT_EQ(runRegVM_IR(src), expected);
+}
+
 // ============================================================
 // 1. 算术运算隐式类型转换
 // ============================================================
