@@ -867,3 +867,61 @@ g.next();
     EXPECT_EQ(out, "2true");
 }
 #endif // MINILANG_CORO_FIBER
+
+// ============================================================
+// §9.2 清偿（2026-10-22）：协程值跨线程析构的 DeleteFiber 边界防御
+// ------------------------------------------------------------
+// DeleteFiber 的执行线程 = CoroutineData 最后一次释放线程（RefCounted atomic
+// 归零侧）。IDE 可达：ReplPanel future.get() 在主线程析构 worker 线程创建的
+// 挂起协程 Value / restoreReplState 同构。修复前：主线程对 parked fiber 执行
+// 跨线程 DeleteFiber（Windows 未文档化行为）；修复后：非创建线程析构有意弃置
+// （不调用 deleteFiber，泄漏栈内存有界，无 UAF——只命中 parked fiber）。本用例
+// 锁定：跨线程析构不崩溃 + 后续新建协程完整跑通（fiber 注册表/GC 状态未损坏）。
+// 重放平台（=0）无 fiber 面，用例整体门控跳过。
+// ============================================================
+#if MINILANG_CORO_FIBER
+TEST(CoroutineSuspension, CrossThreadParkedFiberDestruction) {
+    Value parkedCoro;
+    bool extracted = false;
+    std::thread worker([&parkedCoro, &extracted] {
+        Interpreter interpA;
+        std::string outA;
+        interpA.setOutputCallback([&](const std::string& s) { outA += s; });
+        auto run = [&interpA](const std::string& src) {
+            Lexer lx;
+            auto tk = lx.scan(src);
+            Parser p;
+            auto ast = p.parse(tk);
+            interpA.executeRepl(*ast);
+        };
+        run("fun* gen() { yield 1; yield 2; }");
+        run("var g = gen();");
+        run("g.next();"); // fiber 创建于本线程并挂起（parked）
+        const Value* v = interpA.getGlobalEnvironment()->getVariableOnly("g");
+        if (v) {
+            parkedCoro = *v; // 引用计数拷贝，跨线程带出
+            extracted = true;
+        }
+    });
+    worker.join();
+    ASSERT_TRUE(extracted);
+    // 主线程（≠创建线程）析构挂起协程 Value → 跨线程 ~CoroutineFiberState：
+    // 修复后走有意弃置分支（不跨线程 DeleteFiber），不崩溃
+    parkedCoro = Value();
+    // 状态未损坏：随后完整跑第二个协程（创建/挂起/恢复/终结/释放全链路）
+    Interpreter interpB;
+    std::string out;
+    interpB.setOutputCallback([&](const std::string& s) { out += s; });
+    auto runB = [&interpB](const std::string& src) {
+        Lexer lx;
+        auto tk = lx.scan(src);
+        Parser p;
+        auto ast = p.parse(tk);
+        interpB.executeRepl(*ast);
+    };
+    runB("fun* gen2() { yield 7; yield 8; }");
+    runB("var g2 = gen2();");
+    runB("print(g2.next()); print(g2.next()); print(g2.done());");
+    EXPECT_EQ(out, "78true");
+}
+#endif // MINILANG_CORO_FIBER

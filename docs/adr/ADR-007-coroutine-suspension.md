@@ -65,8 +65,9 @@ Linux ucontext 平台层要点（2026-10-07）：每个 fiber 一个堆上控制
 
 1. **平台覆盖**：Windows（fiber API）与 Linux（POSIX ucontext + ASan fiber 标注，2026-10-07）三后端真挂起；macOS/其他平台统一为重放模式。macOS 启用需先补 macOS 测试门禁（发布矩阵的 mac job 仅编译不跑测试，ucontext 例程在 macOS 标记 deprecated）；bionic（Android）无 `makecontext`，不在支持范围。`tests/TestCoroutine.cpp` 顶部的平台 `static_assert` 锁定宏与平台层的对应关系（有平台层 ⟺ `=1`）。
 2. **fiber 栈析构不执行**：`DeleteFiber` 直接释放栈内存，其上未析构的 C++ 对象（含 env `shared_ptr`）引用计数随栈内存一并遗忘——仅发生在协程弃用（done 后弃置/解释器销毁）路径的有界一次性泄漏。
-3. **生成器自恢复禁用**：生成器体内对自身调用 `.next()` 在挂起模式下显式报错（fiber 不可重入激活；重放模式下该写法本就趋于无限重放，无合法用途）。
-4. **GC 边缘（理论性）**：挂起 fiber 的 C++ 栈上值临时对象对 mark-sweep 不可见；因所有用户可见状态（局部变量/闭包捕获）都经 Environment 链且已被快照生根，仅含非循环临时值的 parked 栈不受影响，循环引用临时值不可达该状态（自引用需要命名绑定），当前不做额外处理。
+3. **跨线程析构弃置（2026-10-22 §9.2 清偿）**：`~CoroutineFiberState` 校验析构线程与 `ownerThread` 一致性——同线程照常 `DeleteFiber`；非创建线程析构（IDE 可达：ReplPanel future.get() 主线程析构 worker 线程创建的挂起协程 Value / restoreReplState 同构）时**有意弃置** fiber（不调用跨线程 DeleteFiber——Windows 未文档化行为），泄漏其栈约 4MB/协程（有界，仅命中 parked fiber，无 UAF），其余成员照常析构。语言层不可达（单线程执行模型 + §3.8 恢复防御）；回归 `CoroutineSuspension.CrossThreadParkedFiberDestruction`。
+4. **生成器自恢复禁用**：生成器体内对自身调用 `.next()` 在挂起模式下显式报错（fiber 不可重入激活；重放模式下该写法本就趋于无限重放，无合法用途）。
+5. **GC 边缘（理论性）**：挂起 fiber 的 C++ 栈上值临时对象对 mark-sweep 不可见；因所有用户可见状态（局部变量/闭包捕获）都经 Environment 链且已被快照生根，仅含非循环临时值的 parked 栈不受影响，循环引用临时值不可达该状态（自引用需要命名绑定），当前不做额外处理。
 
 ## Consequences
 

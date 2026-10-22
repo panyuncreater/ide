@@ -1,5 +1,6 @@
 #include "common/ErrorFormat.h"
 #include "common/ErrorMessages.h"
+#include "common/Logger.h"
 #include "common/RuntimeLimits.h"
 #include "interpreter/BuiltinMethods.h"
 #include "interpreter/CoroutineFiber.h"
@@ -233,10 +234,24 @@ struct Interpreter::CoroutineFiberState {
     int suspendedTcoTryDepth = 0;
     std::shared_ptr<Environment> funEnv; // 生成器函数环境（终结时 closeCapturedVariables，对齐重放守卫）
     ~CoroutineFiberState() {
-        if (fiber)
+        if (!fiber)
+            return;
+        if (ownerThread == std::this_thread::get_id()) {
             minilang_fiber::deleteFiber(fiber); // 栈内存直接释放：其上 C++ 析构不执行，
                                                 // 未释放的 shared_ptr 引用计数一并遗忘——
                                                 // 仅发生在协程弃用/解释器销毁路径的有界泄漏
+        } else {
+            // §9.2 清偿（2026-10-22）：跨线程析构防御。DeleteFiber 的执行线程 =
+            // CoroutineData 最后一次释放线程（RefCounted atomic 归零侧），IDE 可达
+            // （ReplPanel future.get() 主线程析构挂起协程 Value / restoreReplState 同构），
+            // Windows 跨线程 DeleteFiber 为未文档化行为。非创建线程析构时有意弃置
+            // fiber（不调用 deleteFiber，泄漏其栈约 4MB/协程，有界且仅命中 parked
+            // fiber，无 UAF），与 ADR-007 Known Limitation 弃置语义对齐；其余成员
+            // 照常析构（cd 保活语义不变）。语言层不可达（单线程执行模型 + §3.8 恢复
+            // 防御），仅嵌入层可达。
+            Logger::Warning("协程 fiber 被非创建线程析构：有意弃置（泄漏栈内存，避免跨线程 DeleteFiber 未定义行为）",
+                            "Coroutine");
+        }
     }
 };
 
