@@ -19,8 +19,12 @@ void Interpreter::visitClassDecl(ClassDecl& node) {
     cls.name = node.name;
     cls.superClassName = node.superClassName;
     cls.closureEnv = currentEnv_; // O5: 捕获类定义时的环境（闭包）
-    // R163 泛型扩展：记录类的类型参数，供 invokeMethod 合并类泛型 + 方法泛型参数
-    cls.typeParams = node.typeParams;
+    // R163 泛型扩展：记录类的类型参数，供 invokeMethod 合并类泛型 + 方法泛型参数。
+    // §8.2 类路径清偿（2026-10-22）：并入 currentTypeParams_（visitClassDecl 正在外层函数体
+    // 内执行，currentTypeParams_ = 外层函数执行期词法上下文）——类在泛型函数 f<T> 内声明时，
+    // invokeMethod/init 各合并点以 ClassInfo.typeParams 为事实源，方法调用词法继承外层 T。
+    // 顶层类外层为空 = 原语义零变化；f 重复调用重复注册同值幂等。
+    cls.typeParams = minilang::mergeTypeParams(currentTypeParams_, node.typeParams);
     // 不再存储 superClass 裸指针，运行时通过 superClassName 查找
 
     // 如果有父类，验证父类是否已定义

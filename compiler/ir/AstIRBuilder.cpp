@@ -3679,7 +3679,12 @@ void AstIRBuilder::visitClassDecl(ClassDecl* node) {
             fd->name = node->name + "." + origName;
             compilingMethod_ = true;
             compilingClassName_ = node->name;             // P1 fix: 供 super 调用查找父类
-            compilingClassTypeParams_ = node->typeParams; // R163 泛型扩展: 供 emitFunctionBody 合并
+            // R163 泛型扩展: 供 emitFunctionBody 合并。§8.2 类路径清偿（2026-10-22）：并入
+            // currentTypeParams_（visitClassDecl 正在外层函数体内发射，currentTypeParams_ =
+            // 外层词法上下文）——类在泛型函数 f<T> 内声明时方法词法继承外层 T（对齐
+            // visitEnumDecl 的同族合并）。emitFunctionBody 方法分支取 compilingClassTypeParams_
+            // ∪ method.typeParams，故此处一并并入即可。顶层类外层为空 = 原语义零变化。
+            compilingClassTypeParams_ = minilang::mergeTypeParams(currentTypeParams_, node->typeParams);
             // L7 fix: compilingClassFieldNames_ 已在上方构建 allFieldNames 时设置，
             //   emitFunctionPrologue 会消费它将字段注册为局部变量
             try {

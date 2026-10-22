@@ -557,6 +557,48 @@ TEST(GenericErasureCompletion, LocalEnumOuterTypeParamPayload) {
                              "okBox.Cell(5)");
 }
 
+// ============================================================
+// §8.2 fix（2026-10-22）：泛型函数内声明类——类方法词法继承外层函数类型参数
+// （修复前四后端一致报“类型注解违反: 期望类型 T”：类路径残留覆盖式赋值，
+//   外层函数 T 未并入类/方法类型参数上下文，擦除漏判）
+// ============================================================
+
+TEST(GenericErasureCompletion, ClassInGenericFnMethodAnnotations) {
+    // 审计复现场景：字段注解 var v: T + 方法参数注解 set(v2: T) + 返回注解 get(): T——
+    // 修复前四路径报“类型注解违反: 期望类型 T”
+    expectAllGenericBackends("fun f<T>(x: T) {"
+                             "    class C {"
+                             "        var v: T = null;"
+                             "        fun get(): T { return this.v; }"
+                             "        fun set(v2: T): void { this.v = v2; }"
+                             "    }"
+                             "    var c = C();"
+                             "    c.set(x);"
+                             "    return c.get();"
+                             "}"
+                             "print(f(42));",
+                             "42");
+}
+
+TEST(GenericErasureCompletion, ClassInGenericFnMethodOwnTypeParam) {
+    // 三方合并：外层 T ∪ 类参数 ∪ 方法自带 U——方法自带类型参数不因并入外层而丢失，
+    // pick 的参数 U 与返回 T 同批擦除（编译期 OP_TYPE_CHECK/TYPE_CHECK IR 不发射、
+    // 解释器 invokeMethod 合并 ClassInfo ∪ method 双侧同锁）
+    expectAllGenericBackends("fun f<T>(x: T) {"
+                             "    class C {"
+                             "        var v: T = null;"
+                             "        fun set(v2: T): void { this.v = v2; }"
+                             "        fun pick<U>(u: U): T { return this.v; }"
+                             "    }"
+                             "    var c = C();"
+                             "    c.set(x);"
+                             "    print(c.pick(1));"
+                             "    return x;"
+                             "}"
+                             "print(f(9));",
+                             "99");
+}
+
 TEST(GenericErasureCompletion, ExplicitTypeArgsAtCall) {
     // 修复前：id<int>(5) 解析为比较链，报"未定义的变量: int"
     expectAllGenericBackends("fun id<T>(x: T): T { return x; } print(id<int>(5));", "5");

@@ -157,12 +157,13 @@ void Compiler::emitMethodBody(FunDecl& method, const std::string& className,
     compilingMethodBody_ = true;   // AUDIT-R7 F5 fix: 方法体 TCO isMethod 判据（guard.saved
                                    // 不管理此字段；compileClassMembers 每轮迭代后由
                                    // visitFunDecl/方法编译入口重新设置，无残留风险）
-    // R163 泛型扩展：合并类泛型参数 + 方法泛型参数，供 emitTypeCheck 擦除（对齐 Interpreter invokeMethod 的
-    // mergedTypeParams）
-    currentTypeParams_ = classTypeParams;
-    for (const auto& tp : method.typeParams) {
-        currentTypeParams_.push_back(tp);
-    }
+    // R163 泛型扩展：合并 外层词法上下文 ∪ 类泛型参数 ∪ 方法泛型参数，供 emitTypeCheck 擦除
+    // （对齐 Interpreter invokeMethod 的 mergedTypeParams）。§8.2 类路径清偿（2026-10-22）：
+    // 外层快照取 guard.saved.currentTypeParams——compileClassMembers 构造守卫时正处于外层
+    // 函数体编译中（类在泛型函数 f<T> 内声明时为 [T]），方法须词法继承外层 T；对齐
+    // declareFunction 的 §3.3 词法传播。顶层类/非泛型函数内类外层为空 = 原语义零变化。
+    currentTypeParams_ = minilang::mergeTypeParams(
+        minilang::mergeTypeParams(guard.saved.currentTypeParams, classTypeParams), method.typeParams);
     // O5: 如果类定义在函数内，设置 outerLocals_ 以检测不支持的闭包捕获
     // C-P2-10 fix: 与 visitFunDecl 一致——使用 guard.saved 引用外层状态
     if (guard.saved.inFunction) {
