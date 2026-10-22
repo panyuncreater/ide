@@ -2433,6 +2433,9 @@ bool Compiler::bindCatchVariable(TryStmt& node, CatchVarBindInfo& bind) {
             chunk_.writeOp(OpCode::OP_DEFINE_VAR, node.line);
             chunk_.writeShort(saveIdx, node.line);
             globalSlotAllocator_.removeMapping(node.catchVarName); // B4: 临时遮蔽
+            // V10 同族收尾（2026-10-22）：登记移除的映射名，供 catch 体内嵌套顶层块
+            // pre-pass 判定祖先遮蔽（恢复点：restoreCatchScope 及其错误路径）
+            shadowedGlobalNames_.insert(node.catchVarName);
         }
         // 定义 catch 变量
         uint16_t nameIdx = identifierIndex(node.catchVarName);
@@ -2505,6 +2508,7 @@ bool Compiler::emitCatchBodyWithCleanup(TryStmt& node, const CatchVarBindInfo& b
             // 对齐 L1840-L1845 的正常路径恢复逻辑。
             if (bind.hasShadowedGlobal) {
                 globalSlotAllocator_.restoreMapping(node.catchVarName, bind.shadowedGlobalSlot);
+                shadowedGlobalNames_.erase(node.catchVarName); // V10 同族：错误路径同步解除
             }
             currentLocals_ = std::move(bind.savedCatchLocals);
             return false;
@@ -2544,6 +2548,7 @@ void Compiler::restoreCatchScope(TryStmt& node, const CatchVarBindInfo& bind) {
     // restoreMapping 是编译期操作（修改 slots_ map），不影响运行时字节码，只调用一次
     if (bind.hasShadowedGlobal) {
         globalSlotAllocator_.restoreMapping(node.catchVarName, bind.shadowedGlobalSlot); // B4: 恢复遮蔽
+        shadowedGlobalNames_.erase(node.catchVarName); // V10 同族：catch 作用域结束，祖先遮蔽登记解除
     }
 
     // BUG-AUDIT-EXC-CATCH-CLOSE fix: 函数内 catch 变量 slot 在恢复 currentLocals_ 前
@@ -2723,37 +2728,46 @@ void Compiler::visitBlock(Block& node) {
         // 收集块作用域中将要声明的变量名，以便在编译前保存被遮蔽的全局变量
         std::vector<std::pair<std::string, std::string>> shadowedSaves; // (blockVarName, tempSaveName)
         std::vector<std::pair<std::string, int>> removedSlots;          // H1: (name, slot) 用于恢复
+        // V11 同族收尾（2026-10-22）：候选收集覆盖 var 声明与解构绑定两类块级声明——
+        // 解构名字此前完全不进 pre-pass，嵌套遮蔽/退出恢复均缺失。
+        auto collectShadowedSave = [&](const std::string& varName, int line) {
+            int gsSlot = lookupGlobalSlot(varName);
+            // V10 fix（2026-10-22）：gsSlot < 0 但祖先块/catch 已 removeMapping（shadowedGlobalNames_
+            // 命中）时，运行时有效值仍在原槽位（globalNameToSlot_ 快路径未随编译期移除同步），
+            // 也必须保存当前有效值——否则嵌套块退出不恢复外层遮蔽值（V10 3,3,1 vs 解释器 3,2,1）。
+            // 对齐 AstIRBuilder 顶层块 CRITICAL-3 的 GLOBAL_NAME 保存路径。
+            bool ancestorShadowed = (gsSlot < 0) && (shadowedGlobalNames_.count(varName) > 0);
+            // V11 fix（2026-10-22）：祖先顶层块 fresh 声明的名字（在 currentLocals_、无槽位映射）——
+            // 嵌套块重声明同样必须保存当前有效值并在退出恢复（hash 存储同段覆写问题），
+            // 对齐解释器环境链遮蔽语义；槽位遮蔽名（ancestorShadowed）由 V10 协议负责。
+            bool ancestorFresh = (gsSlot < 0) && !ancestorShadowed &&
+                                 (currentLocals_.count(varName) > 0);
+            if (gsSlot < 0 && !ancestorShadowed && !ancestorFresh)
+                return; // 从未定义：无需保存（既有行为）
+            std::string saveName = "__blk_save_" + std::to_string(blockDepth_) + "_" +
+                                   std::to_string(blockSaveCounter_++) + "_" + varName;
+            shadowedSaves.push_back({varName, saveName});
+            // A2: 使用槽位操作码保存全局变量值
+            uint16_t saveIdx = identifierIndex(saveName);
+            if (gsSlot >= 0) {
+                chunk_.writeOp(OpCode::OP_GET_GLOBAL, line);
+                chunk_.writeShort(static_cast<uint16_t>(gsSlot), line);
+            } else {
+                // 祖先遮蔽名：名称 op 经运行时快路径读当前有效值（原槽位）
+                chunk_.writeOp(OpCode::OP_GET_VAR, line);
+                chunk_.writeShort(identifierIndex(varName), line);
+            }
+            chunk_.writeOp(OpCode::OP_DEFINE_VAR, line);
+            chunk_.writeShort(saveIdx, line);
+        };
         for (auto& stmt : node.statements) {
-            if (stmt && stmt->nodeType == NodeType::NODE_VAR_DECL) {
-                VarDecl* vd = static_cast<VarDecl*>(stmt.get());
-                int gsSlot = lookupGlobalSlot(vd->name);
-                // V10 fix（2026-10-22）：gsSlot < 0 但祖先块已 removeMapping（shadowedGlobalNames_
-                // 命中）时，运行时有效值仍在原槽位（globalNameToSlot_ 快路径未随编译期移除同步），
-                // 也必须保存当前有效值——否则嵌套块退出不恢复外层遮蔽值（V10 3,3,1 vs 解释器 3,2,1）。
-                // 对齐 AstIRBuilder 顶层块 CRITICAL-3 的 GLOBAL_NAME 保存路径。
-                bool ancestorShadowed = (gsSlot < 0) && (shadowedGlobalNames_.count(vd->name) > 0);
-                // V11 fix（2026-10-22）：祖先顶层块 fresh 声明的名字（在 currentLocals_、无槽位映射）——
-                // 嵌套块重声明同样必须保存当前有效值并在退出恢复（hash 存储同段覆写问题），
-                // 对齐解释器环境链遮蔽语义；槽位遮蔽名（ancestorShadowed）由 V10 协议负责。
-                bool ancestorFresh = (gsSlot < 0) && !ancestorShadowed &&
-                                     (currentLocals_.count(vd->name) > 0);
-                if (gsSlot >= 0 || ancestorShadowed || ancestorFresh) {
-                    std::string saveName = "__blk_save_" + std::to_string(blockDepth_) + "_" +
-                                           std::to_string(blockSaveCounter_++) + "_" + vd->name;
-                    shadowedSaves.push_back({vd->name, saveName});
-                    // A2: 使用槽位操作码保存全局变量值
-                    uint16_t saveIdx = identifierIndex(saveName);
-                    if (gsSlot >= 0) {
-                        chunk_.writeOp(OpCode::OP_GET_GLOBAL, vd->line);
-                        chunk_.writeShort(static_cast<uint16_t>(gsSlot), vd->line);
-                    } else {
-                        // 祖先遮蔽名：名称 op 经运行时快路径读当前有效值（原槽位）
-                        chunk_.writeOp(OpCode::OP_GET_VAR, vd->line);
-                        chunk_.writeShort(identifierIndex(vd->name), vd->line);
-                    }
-                    chunk_.writeOp(OpCode::OP_DEFINE_VAR, vd->line);
-                    chunk_.writeShort(saveIdx, vd->line);
-                }
+            if (!stmt)
+                continue;
+            if (stmt->nodeType == NodeType::NODE_VAR_DECL) {
+                collectShadowedSave(static_cast<VarDecl*>(stmt.get())->name, stmt->line);
+            } else if (stmt->nodeType == NodeType::NODE_DESTRUCTURE_BINDING) {
+                for (const auto& dn : static_cast<DestructureBinding*>(stmt.get())->names)
+                    collectShadowedSave(dn, stmt->line);
             }
         }
 

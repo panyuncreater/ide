@@ -3242,6 +3242,9 @@ void AstIRBuilder::visitDestructureBinding(DestructureBinding* node) {
             }
         } else {
             // 顶层：使用全局槽位
+            // V11 同族收尾（2026-10-22）：与 visitVarDecl 同规格的 fresh 判定与登记——
+            // varMap_ 无旧绑定且在顶层块内 → 块退出 DELETE_VAR + 移除 varMap_。
+            bool hadVarMapBinding = (varMap_.find(name) != varMap_.end());
             int slot = lookupGlobalSlot(name);
             if (slot >= 0) {
                 varMap_[name] = {VarInfo::Kind::GLOBAL_SLOT, static_cast<uint32_t>(slot)};
@@ -3250,6 +3253,9 @@ void AstIRBuilder::visitDestructureBinding(DestructureBinding* node) {
                 uint32_t idx = ir_->addGlobal(name);
                 varMap_[name] = {VarInfo::Kind::GLOBAL_NAME, idx};
                 emitIR(IROp::DEFINE_GLOBAL, {IROperand::global(idx), elemVReg}, node->line);
+                if (blockDepth_ > 0 && !hadVarMapBinding && !topLevelBlockFreshGlobals_.empty()) {
+                    topLevelBlockFreshGlobals_.back().push_back(name);
+                }
             }
             // DEFINE_GLOBAL 在 StackVM lowering 中用 OP_DEFINE_GLOBAL（pop），
             // 元素值已被消费，无需额外 POP。

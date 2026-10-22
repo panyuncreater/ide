@@ -203,6 +203,33 @@ TEST(ConsistencyDiff, BlockFreshVarNestedShadowRestored) {
     EXPECT_EQ(runRegVM_IR(src), expected);
 }
 
+TEST(ConsistencyDiff, BlockFreshDestructureScopeEndsAtBrace) {
+    // V11 同族收尾（2026-10-22）：块内解构绑定 fresh 全局与 var 同规格清理。
+    // 修复前解构名字永不入 currentLocals_/fresh 栈，块外仍可读。
+    std::string src = "var a = 1; { var (y, z) = (5, 6); print(y); print(z); } print(y);";
+    std::string expected = "56<runtime:未定义的变量: y>";
+    EXPECT_EQ(runInterp(src), expected);
+    EXPECT_EQ(runStackVM_Direct(src), expected);
+    EXPECT_EQ(runStackVM_IR(src), expected);
+    EXPECT_EQ(runRegVM_IR(src), expected);
+}
+
+TEST(ConsistencyDiff, CatchVarShadowNestedBlockRestored) {
+    // V10 同族收尾（2026-10-22）：顶层 catch 变量遮蔽同名全局，catch 体内嵌套块
+    // 重声明——内层退出恢复 catch 变量值（异常对象），catch 退出恢复外层全局值。
+    // 修复前 catch removeMapping 未登记 shadowedGlobalNames_，嵌套块 pre-pass
+    // 既不保存也不恢复，外层 catch 剩余体读到污染值。
+    std::string src =
+        "var x = 1;"
+        "try { throw \"e\"; } catch (x) { print(x); { var x = 3; print(x); } print(x); }"
+        "print(x);";
+    std::string expected = "e3e1";
+    EXPECT_EQ(runInterp(src), expected);
+    EXPECT_EQ(runStackVM_Direct(src), expected);
+    EXPECT_EQ(runStackVM_IR(src), expected);
+    EXPECT_EQ(runRegVM_IR(src), expected);
+}
+
 // ============================================================
 // 1. 算术运算隐式类型转换
 // ============================================================

@@ -678,6 +678,13 @@ void Compiler::bindDestructureVar(const std::string& name, int line, int col) {
             uint16_t nameIdx = identifierIndex(name);
             chunk_.writeOp(OpCode::OP_DEFINE_VAR, line);
             chunk_.writeShort(nameIdx, line);
+            // V11 同族收尾（2026-10-22）：块内解构绑定的 fresh 全局名与 visitVarDecl 同规格
+            // 登记 currentLocals_，visitBlock 块退出经 blockVars 发射 OP_DELETE_VAR 清理——
+            // 此前解构名字永不登记，块外仍可读（与解释器环境链不一致）。
+            if (blockDepth_ > 0 && lookupGlobalSlot(name) < 0 &&
+                shadowedGlobalNames_.count(name) == 0) {
+                currentLocals_[name] = -1;
+            }
         }
     }
 }
