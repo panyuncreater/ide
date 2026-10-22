@@ -278,3 +278,26 @@
 
 - 两笔提交（1001580 / 1625439）各自独立通过全量 ctest；末次口径 **4167/4167 通过**（-j 10，MINILANG_BUILD_PERF_TESTS=ON 全口径，/W4+/WX 零警告）；测试计数 4163 → 4167（+4 §3.3 回归）
 - 语言能力变更 1 项（泛型嵌套作用域类型参数传播，此前四后端一致拒绝的合法程序转为接受；非泛型程序行为零变化——合并对外层空上下文与无嵌套场景均为无变化）
+
+## 9. 2026-10-22 日间集群轮（四子代理并行：剩余登记集中清偿）
+
+> 集群模式分发四个独立子任务（协程线程防御 / 泛型类传播 / JIT 缓存键 / PkgCli flake），子代理只改码不构建，主会话集中验证与提交；文件所有权互斥分区（TestCoroutine/TestGenerics/TestJIT/TestPkgCli 各自独立）。
+
+### 9.1 已修复（4 项）
+
+- **P2｜§3.8 清偿｜协程跨线程恢复防御（提交 7b4ec10）**：`CoroutineFiberState` 新增 `ownerThread`（首次 `.next()` 懒构造时登记创建线程），恢复路径在触碰任何 fiber 机制前校验——非创建线程 `runtimeError("协程不可跨线程恢复")`，消除 Windows SwitchToFiber 跨线程未定义行为 / Linux ucontext 空指针崩溃边界。**设计取舍**：以「协程↔线程」绑定替代审计建议的 namespace 级 thread_local（后者仅记录线程最近 fiber，绑定语义弱）。**测试可达性调查**：语言层不可达——spawn 为延迟执行模式（join 时同一线程同步执行闭包，无第二个 OS 线程驱动 Interpreter），回归用例经 C++ `std::thread` 严格串行驱动确定性命中（`CoroutineSuspension.CrossThreadResumeRejected`，MINILANG_CORO_FIBER 门控）
+- **P2｜泛型函数内声明类清偿（提交 50a49b7，§3.3 同族收尾）**：三侧声明点并入定义期上下文——`CompilerClass::emitMethodBody`（guard.saved.currentTypeParams ∪ 类参数 ∪ 方法参数）、`AstIRBuilder::visitClassDecl`（compilingClassTypeParams_ 并入 currentTypeParams_）、解释器 `ClassInfo.typeParams` 并入（invokeMethod/init 合并以 ClassInfo 为事实源）。此前 `fun f<T>` 内声明类的字段/方法注解四路径一致拒绝；顶层类/非泛型场景零变化。回归 2 项（复现场景 + 方法自带 U 三方合并）
+- **P3｜§3.12 记录项清偿｜JIT 块缓存键 enumInfos 全量入键（提交 38ee8fc）**：补全 name/variants（名+arity+参数类型）/typeParams 混入；`kJitCodegenVersion` 1→2（机器码逐位不变非正确性必需，保守递增承担键代际确定性隔离并为 ADR-008 阶段 3 磁盘持久化立「键结构变更同步递增」先例）。回归 `BlockCacheKeyDistinguishesEnumDeclarations`（同字节码不同 enum 声明 → 键不同）
+- **P3｜§3.12 清偿｜PkgCli 共享 CWD lockfile 竞争 flake（提交 4586759）**：根因链完整定位——lockfilePath 未设置时默认 CWD 相对 `minilang.lock`（cli/pkg_core.h:188）+ gtest_discover_tests 每用例独立进程并行共享 CWD + saveLockfile 截断写入非原子/loadLockfile 半截 JSON 解析失败 → 偶发 exitCode 2。8 处命令级用例隔离到各自临时目录（不改变被断言行为）；验证 PkgCli 38/38 × 4 轮 -j 10 全绿
+
+### 9.2 新登记（本轮子任务发现）
+
+- 协程值跨线程析构的 DeleteFiber 边界（解释器生命周期侧，超 §3.8 范围；可达性低于跨线程恢复）
+- 产品级：`saveLockfile` 改临时文件+rename 原子替换（cli/ 侧，根除所有调用方半截读；用户仓库多终端场景同构）
+
+### 9.3 剩余未修清单（更新后，已大幅收敛）
+
+- §3.2（解析器参数默认值专项轮）、§3.4/§3.5（trySkipExplicitTypeArgs 白名单 / enum 变体显式类型实参）——三者均在 parser/Parser.cpp，被写入守卫凭据启发式误判阻塞（两轮独立复现），待守卫口径修正后一轮落盘
+- §3.2 遗留小项：白名单拒绝后 synchronize 残留双重诊断噪音、宽松 harness 残缺 AST 恢复形态分歧（仅忽略诊断的 harness 可达）
+- §9.2 两条新登记
+- 早期记录项维持：JIT GVN undo-log / Token lexeme string_view / 行列元数据 RLE 等（历轮评估结论见 CHANGELOG 归档）
