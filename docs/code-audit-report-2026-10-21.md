@@ -355,3 +355,17 @@
 - 全量 ctest **4178/4178 通过**（-j 10，89s，--timeout 600，全口径），/W4+/WX 零警告；测试计数 4176 → 4178（+2 V11 四路回归）；diff_test **96/96**（V10/V11 均转绿）。
 - 实施期捕获 1 处自伤：IR fresh 栈初版漏 push（块退出 back() 空栈断言）——定向测试当即暴露、补 push 后全绿；断言路径仅 debug 构建可达，release 无影响。
 - 剩余未修收敛至：§3.2/§3.4/§3.5（守卫阻塞）+ §10.3 五项（GC 根集/REPL 线程/DeleteFiber/JIT IC 键/cli 非原子写）+ catch 遮蔽同族 + 解构绑定块内泄漏同族（bindDestructureVar 顶层分支同不入 currentLocals_，随 V11 同族下轮）。
+
+## 12. 2026-10-22 日间续作轮三（同族收尾：DeleteFiber 边界 / catch 遮蔽 / 解构泄漏）
+
+### 12.1 已修复（3 项）
+
+- **P2｜§9.2 主体清偿（提交 f6c0802）｜协程值跨线程析构 DeleteFiber 边界防御**：`~CoroutineFiberState` 增加 ownerThread 比对——同线程照常 `DeleteFiber`；非创建线程析构（IDE 可达：ReplPanel future.get() 主线程析构 worker 线程创建的挂起协程 Value / restoreReplState 同构）时**有意弃置** fiber（不调用跨线程 DeleteFiber——Windows 未文档化行为），泄漏其栈约 4MB/协程（有界、仅命中 parked fiber、无 UAF），其余成员照常析构（cd 保活语义不变），Logger::Warning 记录。ADR-007 Known Limitations #3 同步登记；语言层不可达（单线程模型 + §3.8 恢复防御）。回归 `CoroutineSuspension.CrossThreadParkedFiberDestruction`（std::thread 驱动：worker 创建并挂起 → join → 主线程析构不崩溃 → 第二个协程全链路跑通状态未损坏）。
+- **P2｜V10 同族收尾（提交 f9cbe4c）｜顶层 catch 遮蔽嵌套块恢复缺失**：顶层 catch 的 removeMapping 此前未登记 `shadowedGlobalNames_`，catch 体内嵌套块 pre-pass 既不保存也不恢复——嵌套重声明污染 catch 变量值且退出不恢复（与 V10 同机制）。修复 = removeMapping 处登记 + restoreCatchScope 及其错误路径同步解除。回归 `ConsistencyDiff.CatchVarShadowNestedBlockRestored`（四路："e3e1"）。
+- **P2｜V11 同族收尾（提交 f9cbe4c）｜解构绑定块内 fresh 泄漏**：`bindDestructureVar` 顶层分支/IR `visitDestructureBinding` 的 fresh 全局名与 visitVarDecl 同规格登记（currentLocals_ / topLevelBlockFreshGlobals_），块退出 DELETE_VAR 清理；visitBlock pre-pass 重构为候选收集 lambda，覆盖 var 声明与解构绑定两类块级声明（此前解构名完全不进 pre-pass，嵌套遮蔽/退出恢复均缺失）。回归 `ConsistencyDiff.BlockFreshDestructureScopeEndsAtBrace`（四路）。**残余登记**：pre-pass 仅扫直接子节点——嵌套块内的解构重声明若祖先为解构名，保存/恢复由 ancestorFresh（currentLocals_ 命中）覆盖；非直接子节点形态（如 if 无花括号体）与解释器一致不建作用域，无缺口。
+
+### 12.2 验证与统计
+
+- 两笔提交各自通过定向回归后合并验证：全量 ctest **4181/4181 通过**（-j 10，95s，--timeout 600，全口径），/W4+/WX 零警告；测试计数 4178 → 4181（+1 DeleteFiber +1 解构 +1 catch）。CoroutineSuspension 14/14、遮蔽/解构/catch 族 8 用例四路全绿。
+- 实施注记：Logger 方法名为 `Warning`（非 Warn，编译期发现）；跨线程析构回归的 done() 期望值笔误（78false → 78true，与既有 "2true" 口径一致）当轮修正。
+- 剩余未修收敛至：§3.2/§3.4/§3.5（守卫阻塞，方案+用例就绪）+ GC 根集七面板守卫（P1）、REPL 线程模型（P1）、JIT methodCallIC 键（待证 P2）、cli 就地截断写（P3）+ 优化机会目录（§10.4）。
