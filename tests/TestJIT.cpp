@@ -6061,6 +6061,30 @@ TEST(TestJIT, BlockCacheDistinctSourceIsSeparateEntry) {
     EXPECT_EQ(JITBackend::blockCacheHits(), hitsBefore + 1);
 }
 
+TEST(TestJIT, BlockCacheKeyDistinguishesEnumDeclarations) {
+    // 审计 §3.12 记录项清偿：同字节码指纹、不同 enum 声明 → 缓存键必须不同。
+    // enum 声明仅把 "enum:Color" marker 常量写入字节码（Compiler::visitEnumDecl），
+    // variant 列表/参数类型/泛型参数走 CompileResult.enumInfos 旁路元数据——两组源码
+    // 字节码完全一致，修复前仅 enum 名入键时 srcB 会命中 srcA 的缓存条目。
+    const std::string srcA = "enum Color { Red, Green } print(Color.Green);";
+    const std::string srcB = "enum Color { Red, Green, Blue } print(Color.Green);";
+    const uint64_t storesBefore = JITBackend::blockCacheStores();
+    const uint64_t hitsBefore = JITBackend::blockCacheHits();
+
+    CacheRunResult a = runJITForCacheTest(srcA);
+    ASSERT_EQ(a.result, JitResult::OK);
+    EXPECT_EQ(a.output, "Color.Green");
+    EXPECT_EQ(JITBackend::blockCacheStores(), storesBefore + 1) << "首次运行应写入缓存";
+
+    CacheRunResult b = runJITForCacheTest(srcB);
+    ASSERT_EQ(b.result, JitResult::OK);
+    EXPECT_EQ(b.output, "Color.Green");
+    EXPECT_EQ(JITBackend::blockCacheStores(), storesBefore + 2)
+        << "enum 声明不同（variants 集合不同）必须产生不同键，srcB 应独立入缓存";
+    EXPECT_EQ(JITBackend::blockCacheHits(), hitsBefore)
+        << "srcB 不应命中 srcA 的缓存条目（修复前仅名入键时会命中）";
+}
+
 TEST(TestJIT, BlockCacheHitWithStatefulProgram) {
     // 命中路径覆盖：方法调用 + 循环（OP_LOOP 回边/safepoint 轮询）+ 字符串输出
     const std::string src = "class Acc {"

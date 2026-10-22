@@ -721,8 +721,9 @@ private:
 
     // ---- ADR-008 阶段 2: 进程内编译块缓存 ----
     /// 字节码内容键：fnv1a64 遍历全部 chunk（名称/代码字节/常量位/元数据）+
-    /// globalSlotNames/enumInfos，最后折叠 kJitCodegenVersion。任何影响 codegen
-    /// 的字节码差异（或 codegen 版本递增）都会改变键值。
+    /// globalSlotNames + enumInfos 全量（名/variants（名+arity+参数类型）/typeParams），
+    /// 最后折叠 kJitCodegenVersion。任何影响 codegen 的字节码差异（或键结构/版本变更）
+    /// 都会改变键值。
     uint64_t computeBlockCacheKey(const CompileResult& result);
     /// per-chunk 统计数组/名称/ctx 指针初始化（依赖已填充的 chunkNames_；
     /// 全量编译与缓存命中两条路径共用）
@@ -971,8 +972,10 @@ private:
     // 单执行线程假设：GUI 一次运行一个 JITBackend；淘汰与执行不做跨线程互斥
     // （注册表互斥仅保护 map 结构）。
     // ============================================================
-    /// JIT 代码生成版本——任何 codegen 逻辑变更必须递增，使旧缓存键失效
-    static constexpr uint32_t kJitCodegenVersion = 1;
+    /// JIT 代码生成/键结构版本——任何 codegen 逻辑变更或缓存键公式/输入集变更必须
+    /// 递增，使旧缓存键确定性失效。2026-10-22：enumInfos 全量入键的键结构补全递增至
+    /// 2（非正确性必需，保守选择；评估见 JIT.cpp computeBlockCacheKey 尾部注释）
+    static constexpr uint32_t kJitCodegenVersion = 2;
 
     struct JitBlockCacheEntry {
         struct SharedBlock {

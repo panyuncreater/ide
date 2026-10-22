@@ -667,8 +667,35 @@ uint64_t JITBackend::computeBlockCacheKey(const CompileResult& result) {
     }
     mixU64(result.enumInfos.size());
     for (const auto& e : result.enumInfos) {
+        // 审计 §3.12 记录项清偿（2026-10-22）：enumInfos 全量入键。enum 声明仅把
+        // "enum:Name" marker 常量写入字节码（Compiler::visitEnumDecl），variant 列表/
+        // 参数类型/泛型参数走 CompileResult.enumInfos 旁路元数据——此前仅 name 入键时，
+        // 「同字节码指纹但 enum 声明不同」会命中同一缓存键。jitBuildEnumVariant 的运行
+        // 时校验面 = variant 名 + arity + 字段类型（含泛型擦除），故三组字段全部入键。
+        // 回归：TestJIT.BlockCacheKeyDistinguishesEnumDeclarations。
         mixStr(e.name);
+        mixU64(e.variants.size());
+        for (const auto& v : e.variants) {
+            mixStr(v.name);
+            // arity 显式入键：不依赖编译期 arity == paramTypes.size() 的构造约定，
+            // 与运行时校验面对齐
+            mixU64(static_cast<uint64_t>(v.arity));
+            mixU64(v.paramTypes.size());
+            for (const auto& t : v.paramTypes) {
+                mixStr(t);
+            }
+        }
+        mixU64(e.typeParams.size());
+        for (const auto& t : e.typeParams) {
+            mixStr(t);
+        }
     }
+    // kJitCodegenVersion 递增评估（键公式变更，2026-10-22）：本次为键结构补全，生成
+    // 机器码逐位不变，按 AGENTS §3 字面（「codegen 行为变更必须递增」）非正确性必需——
+    // 进程内 LRU 无磁盘持久化，二进制重启后缓存恒空，同进程内键公式唯一，不存在新旧
+    // 公式混用路径。保守选择仍递增至 2：键 = 指纹 ^ 版本协议中，版本承担键代际的确定
+    // 性隔离（不递增时跨公式失配仅由哈希散列差异概率性保证），并为 ADR-008 阶段 3 磁
+    // 盘持久化确立「键结构变更同步递增」的纪律先例。
     mixU64(kJitCodegenVersion);
     return h;
 }
