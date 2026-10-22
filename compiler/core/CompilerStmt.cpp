@@ -2727,14 +2727,25 @@ void Compiler::visitBlock(Block& node) {
             if (stmt && stmt->nodeType == NodeType::NODE_VAR_DECL) {
                 VarDecl* vd = static_cast<VarDecl*>(stmt.get());
                 int gsSlot = lookupGlobalSlot(vd->name);
-                if (gsSlot >= 0) {
+                // V10 fix（2026-10-22）：gsSlot < 0 但祖先块已 removeMapping（shadowedGlobalNames_
+                // 命中）时，运行时有效值仍在原槽位（globalNameToSlot_ 快路径未随编译期移除同步），
+                // 也必须保存当前有效值——否则嵌套块退出不恢复外层遮蔽值（V10 3,3,1 vs 解释器 3,2,1）。
+                // 对齐 AstIRBuilder 顶层块 CRITICAL-3 的 GLOBAL_NAME 保存路径。
+                bool ancestorShadowed = (gsSlot < 0) && (shadowedGlobalNames_.count(vd->name) > 0);
+                if (gsSlot >= 0 || ancestorShadowed) {
                     std::string saveName = "__blk_save_" + std::to_string(blockDepth_) + "_" +
                                            std::to_string(blockSaveCounter_++) + "_" + vd->name;
                     shadowedSaves.push_back({vd->name, saveName});
                     // A2: 使用槽位操作码保存全局变量值
                     uint16_t saveIdx = identifierIndex(saveName);
-                    chunk_.writeOp(OpCode::OP_GET_GLOBAL, vd->line);
-                    chunk_.writeShort(static_cast<uint16_t>(gsSlot), vd->line);
+                    if (gsSlot >= 0) {
+                        chunk_.writeOp(OpCode::OP_GET_GLOBAL, vd->line);
+                        chunk_.writeShort(static_cast<uint16_t>(gsSlot), vd->line);
+                    } else {
+                        // 祖先遮蔽名：名称 op 经运行时快路径读当前有效值（原槽位）
+                        chunk_.writeOp(OpCode::OP_GET_VAR, vd->line);
+                        chunk_.writeShort(identifierIndex(vd->name), vd->line);
+                    }
                     chunk_.writeOp(OpCode::OP_DEFINE_VAR, vd->line);
                     chunk_.writeShort(saveIdx, vd->line);
                 }
@@ -2748,6 +2759,8 @@ void Compiler::visitBlock(Block& node) {
             int slot = globalSlotAllocator_.removeMapping(varName); // B4: 临时遮蔽
             if (slot >= 0) {
                 removedSlots.push_back({varName, slot});
+                // V10 fix: 登记本块移除的映射名，供嵌套块 pre-pass 判定祖先遮蔽（本块退出时擦除）
+                shadowedGlobalNames_.insert(varName);
             }
         }
 
@@ -2771,6 +2784,7 @@ void Compiler::visitBlock(Block& node) {
         // H1 fix: 恢复被移除的全局槽位条目（必须在恢复字节码之前，使 lookupGlobalSlot 正确）
         for (auto& [name, slot] : removedSlots) {
             globalSlotAllocator_.restoreMapping(name, slot); // B4: 恢复遮蔽
+            shadowedGlobalNames_.erase(name); // V10 fix: 本块退出，祖先遮蔽登记随之解除
         }
 
         // 清理块作用域变量并恢复被遮蔽的全局变量

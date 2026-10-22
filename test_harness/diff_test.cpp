@@ -156,6 +156,10 @@ static std::vector<TestCase> buildTests() {
     T("V9","block shadow","var x = 1; { var x = 99; print(x); } print(x);");
     // 验证: 双层嵌套遮蔽在两后端一致
     T("V10","nested shadow","var x=1; { var x=2; { var x=3; print(x); } print(x); } print(x);");
+    // V11 探针（2026-10-22）：块内新名作用域——代码级推断 VM 顶层块 fresh 名落 globals_ 哈希
+    // 且块退出不清理（visitVarDecl 顶层分支不入 currentLocals_，blockVars 为空），
+    // 解释器环境链块退出丢弃 → 块外 print(y) 解释器报未定义、VM 疑似泄漏可读。待实跑定性。
+    T("V11","block fresh var scope","var a = 1; { var y = 5; print(y); } print(y);");
 
     // ═══════════ Arithmetic (A1-A15) ═══════════
     // 算术族：验证整数/浮点除法、取模、一元正负、括号分组、字符串拼接等在两后端数值完全一致。

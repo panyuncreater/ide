@@ -108,6 +108,78 @@ static std::string errMsg(const std::string& s) {
     return pos == std::string::npos ? "" : s.substr(pos + 9);
 }
 
+// V10 fix 回归专用（2026-10-22）：非 IR 栈式编译器直译路径（Compiler 不启用 IR）。
+// 顶层块遮蔽协议在 visitBlock（CompilerStmt.cpp）与 IR 路径（AstIRBuilder，CRITICAL-3）
+// 是两套独立实现，历史缺陷（顶层嵌套块遮蔽值不恢复）仅被 test_harness/diff_test V10
+// 暴露（harness 不在 ctest 口径内）：解释器 3,2,1 vs StackVM 3,3,1。遮蔽族新回归
+// 必须同时锁定：解释器 + 非 IR 直译 + IR 栈式 + IR 寄存器四路输出一致。
+static std::string runStackVM_Direct(const std::string& src) {
+    Lexer lx;
+    auto tk = lx.scan(src);
+    Parser p;
+    auto ast = p.parse(tk);
+    if (!ast)
+        return "<parse-fail>";
+    Compiler c; // 默认非 IR：AST 直接编译为栈式字节码
+    auto cr = c.compile(*ast);
+    if (c.getDiagnostics().hasErrors())
+        return "<compile:" + c.getLastError() + ">";
+    VM vm;
+    std::string out;
+    vm.setOutputCallback([&](const std::string& s) { out += s; });
+    vm.execute(cr);
+    if (vm.hasError()) {
+        if (out.empty())
+            return "<runtime:" + vm.getLastError() + ">";
+        return out + "<runtime:" + vm.getLastError() + ">";
+    }
+    return out;
+}
+
+// ============================================================
+// 0. 顶层嵌套块遮蔽（V10 fix 回归，2026-10-22）
+// ============================================================
+
+TEST(ConsistencyDiff, TopLevelNestedBlockShadowTwoLevel) {
+    // 修复前 StackVM 非 IR：3,3,1（内层块退出不恢复外层遮蔽值）
+    std::string src = "var x = 1; { var x = 2; { var x = 3; print(x); } print(x); } print(x);";
+    std::string expected = "321";
+    EXPECT_EQ(runInterp(src), expected);
+    EXPECT_EQ(runStackVM_Direct(src), expected);
+    EXPECT_EQ(runStackVM_IR(src), expected);
+    EXPECT_EQ(runRegVM_IR(src), expected);
+}
+
+TEST(ConsistencyDiff, TopLevelNestedBlockShadowThreeLevel) {
+    std::string src =
+        "var x = 1; { var x = 2; { var x = 3; { var x = 4; print(x); } print(x); } print(x); } print(x);";
+    std::string expected = "4321";
+    EXPECT_EQ(runInterp(src), expected);
+    EXPECT_EQ(runStackVM_Direct(src), expected);
+    EXPECT_EQ(runStackVM_IR(src), expected);
+    EXPECT_EQ(runRegVM_IR(src), expected);
+}
+
+TEST(ConsistencyDiff, BlockShadowAssignmentScoping) {
+    // 内层裸块（无重声明）内赋值落在外层块的遮蔽变量上，块退出后仍存续
+    std::string src = "var x = 1; { var x = 2; x = 20; { print(x); } print(x); } print(x);";
+    std::string expected = "20201";
+    EXPECT_EQ(runInterp(src), expected);
+    EXPECT_EQ(runStackVM_Direct(src), expected);
+    EXPECT_EQ(runStackVM_IR(src), expected);
+    EXPECT_EQ(runRegVM_IR(src), expected);
+}
+
+TEST(ConsistencyDiff, BlockShadowInnerReassignRestored) {
+    // 内层块内对自己遮蔽变量重赋值：内层块退出时恢复外层遮蔽值
+    std::string src = "var x = 1; { var x = 2; { var x = 3; x = 30; print(x); } print(x); } print(x);";
+    std::string expected = "3021";
+    EXPECT_EQ(runInterp(src), expected);
+    EXPECT_EQ(runStackVM_Direct(src), expected);
+    EXPECT_EQ(runStackVM_IR(src), expected);
+    EXPECT_EQ(runRegVM_IR(src), expected);
+}
+
 // ============================================================
 // 1. 算术运算隐式类型转换
 // ============================================================

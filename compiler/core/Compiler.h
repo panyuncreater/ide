@@ -456,6 +456,13 @@ private:
     // A2/B4: 全局变量整数槽位管理（委托给 GlobalSlotAllocator）
     GlobalSlotAllocator globalSlotAllocator_;
 
+    // V10 fix（2026-10-22）: 活跃顶层块已 removeMapping 的全局变量名集合。
+    // 顶层块遮蔽协议中，编译期 removeMapping 后运行时 globalNameToSlot_ 仍指向
+    // 原槽位（快路径不随编译期移除同步）——祖先遮蔽名的运行时有效值仍可经
+    // 名称 op 读写。嵌套块 pre-pass 据此判定「映射缺席但已定义」，补发保存，
+    // 修复嵌套顶层块遮蔽值不恢复（V10 3,3,1 vs 解释器 3,2,1）。对齐 AstIRBuilder CRITICAL-3。
+    std::unordered_set<std::string> shadowedGlobalNames_;
+
     /// 添加变量名到常量池，返回索引
     uint16_t identifierIndex(const std::string& name);
 
