@@ -1012,6 +1012,9 @@ TEST(PkgCliCommandTest, InstallCommandFromRegistry) {
     args.registryDir = registryPath.toStdString();
     args.packagesDir = packagesPath.toStdString();
     args.manifestPath = manifestPath.toStdString();
+    // lockfile 隔离到本用例临时目录，避免并行进程竞争共享 CWD 的 minilang.lock
+    // （同 InstallCommandAllFromManifest 的 flake 根因修复）
+    args.lockfilePath = QDir(tmpDir.path()).filePath("minilang.lock").toStdString();
 
     CommandResult result = processCommand(args);
     EXPECT_EQ(result.exitCode, 0);
@@ -1041,6 +1044,14 @@ TEST(PkgCliCommandTest, InstallCommandAllFromManifest) {
     args.registryDir = registryPath.toStdString();
     args.packagesDir = packagesPath.toStdString();
     args.manifestPath = manifestPath.toStdString();
+    // flake 根因修复（PkgCliCommandTest.InstallCommandAllFromManifest exitCode 2）：
+    // lockfilePath 未设置时默认为 CWD 相对 "minilang.lock"（cli/pkg_core.h:188），
+    // 而 gtest_discover_tests 使每个用例为独立进程并行运行且共享同一 CWD
+    // （tests/CMakeLists.txt:443 DISCOVERY_MODE PRE_TEST）。多个命令级 install/add
+    // 用例并发时，saveLockfile（pkg_core.cpp:1467，截断+写入、非原子）与另一进程的
+    // loadLockfile（pkg_core.cpp:1432，读到半截 JSON 即解析失败）竞争同一文件，
+    // 偶发 exitCode 2。隔离到本用例临时目录消除共享文件，不改变任何被断言的行为。
+    args.lockfilePath = QDir(tmpDir.path()).filePath("minilang.lock").toStdString();
 
     CommandResult result = processCommand(args);
     EXPECT_EQ(result.exitCode, 0);
@@ -1056,6 +1067,10 @@ TEST(PkgCliCommandTest, InstallCommandFailsWithoutRegistry) {
     args.command = "install";
     args.args.push_back("some-pkg");
     args.packagesDir = QDir(tmpDir.path()).filePath("packages").toStdString();
+    // lockfile 隔离到本用例临时目录，避免并行进程竞争共享 CWD 的 minilang.lock
+    // （同 InstallCommandAllFromManifest 的 flake 根因修复；本用例在 registry 检查前
+    // 仍会 loadLockfile 读该共享文件）
+    args.lockfilePath = QDir(tmpDir.path()).filePath("minilang.lock").toStdString();
 
     CommandResult result = processCommand(args);
     EXPECT_EQ(result.exitCode, 2);
@@ -1089,6 +1104,8 @@ TEST(PkgCliCommandTest, ListCommandShowsInstalledPackages) {
         args.args.push_back("math-utils");
         args.registryDir = registryPath.toStdString();
         args.packagesDir = packagesPath.toStdString();
+        // lockfile 隔离到本用例临时目录（同 InstallCommandAllFromManifest 根因修复）
+        args.lockfilePath = QDir(tmpDir.path()).filePath("minilang.lock").toStdString();
         processCommand(args);
     }
 
@@ -1127,6 +1144,8 @@ TEST(PkgCliCommandTest, AddCommandAddsDependencyAndInstalls) {
     args.registryDir = registryPath.toStdString();
     args.packagesDir = packagesPath.toStdString();
     args.manifestPath = manifestPath.toStdString();
+    // lockfile 隔离到本用例临时目录（同 InstallCommandAllFromManifest 根因修复）
+    args.lockfilePath = QDir(tmpDir.path()).filePath("minilang.lock").toStdString();
 
     CommandResult result = processCommand(args);
     EXPECT_EQ(result.exitCode, 0);
@@ -1175,6 +1194,8 @@ TEST(PkgCliCommandTest, AddCommandUpdatesExistingDependency) {
     args.registryDir = registryPath.toStdString();
     args.packagesDir = QDir(tmpDir.path()).filePath("packages").toStdString();
     args.manifestPath = manifestPath.toStdString();
+    // lockfile 隔离到本用例临时目录（同 InstallCommandAllFromManifest 根因修复）
+    args.lockfilePath = QDir(tmpDir.path()).filePath("minilang.lock").toStdString();
 
     CommandResult result = processCommand(args);
     EXPECT_EQ(result.exitCode, 0);
@@ -1776,6 +1797,8 @@ TEST(PkgCliTransitiveFlagTest, InstallCommandUsesTransitiveByDefault) {
     const char* argv[] = {"minilang-pkg",   "install",          "--registry", regArg.constData(),
                           "--packages-dir", pkgArg.constData(), "--manifest", manArg.constData()};
     CliArgs args = parseArgs(8, const_cast<char**>(argv));
+    // lockfile 隔离到本用例临时目录（同 InstallCommandAllFromManifest 根因修复）
+    args.lockfilePath = QDir(tmpDir.path()).filePath("minilang.lock").toStdString();
     CommandResult result = processInstall(args);
     EXPECT_EQ(result.exitCode, 0) << result.output;
     // 传递依赖 lib-a 应被安装
@@ -1801,6 +1824,8 @@ TEST(PkgCliTransitiveFlagTest, InstallCommandWithNoTransitiveSkipsTransitiveDeps
                           "--registry",       regArg.constData(), "--packages-dir",
                           pkgArg.constData(), "--manifest",       manArg.constData()};
     CliArgs args = parseArgs(9, const_cast<char**>(argv));
+    // lockfile 隔离到本用例临时目录（同 InstallCommandAllFromManifest 根因修复）
+    args.lockfilePath = QDir(tmpDir.path()).filePath("minilang.lock").toStdString();
     CommandResult result = processInstall(args);
     EXPECT_EQ(result.exitCode, 0) << result.output;
     // 传递依赖 lib-a 不应被安装
