@@ -8,6 +8,7 @@
 // ============================================================
 #include "cli/pkg_core.h"
 
+#include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QDirIterator>
@@ -20,6 +21,8 @@
 #include <QTextStream>
 
 #include <algorithm>
+#include <filesystem>
+#include <system_error>
 
 namespace minilang_pkg {
 
@@ -396,7 +399,44 @@ std::string PackageManager::readFile(const std::string& path) const {
 }
 
 bool PackageManager::writeFile(const std::string& path, const std::string& content, std::string* errorMessage) const {
-    QFile file(QString::fromStdString(path));
+    // 原子写（2026-10-22 §9.2 清偿）：同目录临时文件 + rename 替换。
+    // 截断写入的半截 JSON 是 PkgCli lockfile 并发读失败根因链的源头
+    // （§3.12 测试隔离只治标；多终端/并行进程共享仓库场景同构）——
+    // std::filesystem::rename 在 Windows（MSVC STL: MOVEFILE_REPLACE_EXISTING）
+    // 与 POSIX 上均原子替换已存在目标，并发读者要么读到旧内容要么读到新内容，
+    // 不再有半截。saveManifest 同享本路径，一并受益。rename 失败（异常
+    // 文件系统/权限）回退就地写，保持既有可用性。
+    const QString qPath = QString::fromStdString(path);
+    const QString tmpPath = qPath + ".tmp" + QString::number(QCoreApplication::applicationPid());
+#ifdef Q_OS_WIN
+    const std::filesystem::path tmpFsPath(tmpPath.toStdWString());
+    const std::filesystem::path dstFsPath(qPath.toStdWString());
+#else
+    const std::filesystem::path tmpFsPath(tmpPath.toStdString());
+    const std::filesystem::path dstFsPath(qPath.toStdString());
+#endif
+    {
+        QFile tmpFile(tmpPath);
+        if (!tmpFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            if (errorMessage) {
+                *errorMessage = "无法写入临时文件: " + path + " (" + tmpFile.errorString().toStdString() + ")";
+            }
+            return false;
+        }
+        QTextStream stream(&tmpFile);
+        // Qt6 QTextStream 默认 UTF-8，无需 setCodec
+        stream << QString::fromStdString(content);
+        stream.flush();
+        tmpFile.close(); // 关闭句柄后再 rename（Windows 上打开句柄会阻止替换）
+    }
+    std::error_code renameEc;
+    std::filesystem::rename(tmpFsPath, dstFsPath, renameEc);
+    if (!renameEc) {
+        return true;
+    }
+    // 回退：rename 失败时清理临时文件后就地写（旧行为）
+    QFile::remove(tmpPath);
+    QFile file(qPath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         if (errorMessage) {
             *errorMessage = "无法写入文件: " + path + " (" + file.errorString().toStdString() + ")";

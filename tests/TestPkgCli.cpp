@@ -2033,3 +2033,32 @@ TEST(PkgLockfileTest, HelpDocumentsLockfileAndVerify) {
     EXPECT_NE(h.find("verify"), std::string::npos);
     EXPECT_NE(h.find("minilang.lock"), std::string::npos);
 }
+
+TEST(PkgLockfileTest, SaveLockfileAtomicReplaceNoTempResidue) {
+    // §9.2 产品级清偿（2026-10-22）：saveLockfile/writeFile 改同目录临时文件 + rename
+    // 原子替换——并发读者不再读到截断的半截 JSON（lockfile flake 根因链源头，
+    // §3.12 测试隔离只治标；多终端共享仓库场景同构）。本用例锁定：
+    // ① 对已存在 lockfile 的原子覆盖成功；② 覆盖后 JSON 完整含新旧条目；
+    // ③ 目录无 ".tmp" 临时文件残留。
+    QTemporaryDir tmpDir;
+    ASSERT_TRUE(tmpDir.isValid());
+    LockfileTestEnv env(tmpDir);
+    createTestRegistry(env.registryPath);
+
+    ASSERT_EQ(processInstall(env.installArgs("math-utils")).exitCode, 0);
+    ASSERT_TRUE(QFile::exists(env.lockfilePath));
+
+    // 第二次安装（不同包）触发对已存在 lockfile 的原子覆盖
+    ASSERT_EQ(processInstall(env.installArgs("string-utils")).exitCode, 0);
+
+    PkgConfig config;
+    config.lockfilePath = env.lockfilePath.toStdString();
+    PackageManager pm(config);
+    ASSERT_TRUE(pm.loadLockfile());
+    EXPECT_NE(pm.lockfile().find("math-utils"), nullptr);
+    EXPECT_NE(pm.lockfile().find("string-utils"), nullptr);
+
+    // 原子写不应留下临时文件残留
+    const QStringList residues = QDir(tmpDir.path()).entryList(QStringList() << "*.tmp*", QDir::Files);
+    EXPECT_TRUE(residues.isEmpty()) << residues.join(QStringLiteral(", ")).toStdString();
+}
