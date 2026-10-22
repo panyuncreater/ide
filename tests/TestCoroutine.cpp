@@ -13,6 +13,7 @@
 #include "common/ThreeBackends.h"
 #include <gtest/gtest.h>
 #include <string>
+#include <thread>
 
 #include "interpreter/CoroutineFiber.h"
 
@@ -817,3 +818,52 @@ print(g.next());
 )";
     EXPECT_EQ(minilang_test::runInterpreter(src), "1020");
 }
+
+// ============================================================
+// §3.8 跨线程恢复防御回归（2026-10-22，仅真挂起平台）
+// ------------------------------------------------------------
+// 生成器 fiber 由首次 .next() 的线程创建（CoroutineFiberState::ownerThread 登记），
+// 非创建线程 .next() 走 runtimeError 通道报「协程不可跨线程恢复」：Windows
+// SwitchToFiber 跨线程切入为未定义行为，Linux ucontext 层 t_currentFiber 未登记
+// 时空指针解引用。
+//
+// 测试可达性说明：语言层不可达——spawn 为延迟执行模式（join 时由同一线程同步
+// 执行闭包，见 interpreter/BuiltinMethods.cpp executeSharedSpawn），不存在第二个
+// OS 线程驱动 Interpreter。本用例经 C++ std::thread 严格串行（A 挂起 → join →
+// B 报错 → join → A 恢复）驱动同一 Interpreter 确定性命中防御；重放平台（=0）
+// 无此崩溃面，用例整体门控跳过。
+// ============================================================
+#if MINILANG_CORO_FIBER
+TEST(CoroutineSuspension, CrossThreadResumeRejected) {
+    Interpreter interp;
+    std::string out;
+    interp.setOutputCallback([&](const std::string& s) { out += s; });
+    auto run = [&interp](const std::string& src) {
+        Lexer lx;
+        auto tk = lx.scan(src);
+        Parser p;
+        auto ast = p.parse(tk);
+        interp.executeRepl(*ast); // 不重置环境：变量/函数跨片段保留（REPL 同款入口）
+    };
+    // 线程 A（测试主线程）：创建生成器并首次 .next()——fiber 创建并登记 owner
+    run(R"(
+fun* gen() { yield 1; yield 2; }
+var g = gen();
+g.next();
+)");
+    // 线程 B：跨线程恢复 → RuntimeError「协程不可跨线程恢复」
+    std::string errMsg;
+    std::thread t([&run, &errMsg] {
+        try {
+            run("g.next();");
+        } catch (const RuntimeError& e) {
+            errMsg = e.what();
+        }
+    });
+    t.join();
+    EXPECT_NE(errMsg.find("协程不可跨线程恢复"), std::string::npos) << "实际错误：" << errMsg;
+    // 线程 A（owner）继续恢复：防御零副作用，单线程路径行为不变
+    run("print(g.next()); print(g.done());");
+    EXPECT_EQ(out, "2true");
+}
+#endif // MINILANG_CORO_FIBER

@@ -42,6 +42,7 @@ Value Interpreter::makeCoroutineValue(std::shared_ptr<FunDecl> generatorDecl, st
 }
 
 #if MINILANG_CORO_FIBER
+#include <thread>
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -206,6 +207,7 @@ struct Interpreter::CoroutineFiberState {
     CoroutineDataRawPtr cd = nullptr; // 仅 fiber 活跃期间由 .next() 调用方的 coroVal 引用计数保持存活
     minilang_fiber::FiberHandle fiber = nullptr;
     minilang_fiber::FiberHandle resumer = nullptr;
+    std::thread::id ownerThread; // 创建本 fiber 的线程（§3.8 跨线程恢复防御：fiber 只能由创建线程恢复）
     bool completed = false; // 生成器体执行终结（自然结束/显式 return/错误逃逸）
     bool failed = false;    // 错误逃逸（fiber 不可复用；保留至协程终结，后续 .next() 持续重抛同一错误对齐重放）
     std::exception_ptr pendingError;
@@ -433,6 +435,7 @@ Value Interpreter::callCoroutineNext(Value& coroVal) {
             fs = new CoroutineFiberState();
             fs->interp = this;
             fs->cd = cd;
+            fs->ownerThread = std::this_thread::get_id(); // §3.8：登记创建线程
             cd->interpreterFiber = {fs, [](void* p) { delete static_cast<CoroutineFiberState*>(p); }};
             fs->fiber = minilang_fiber::createFiber(&coroutineFiberTrampoline, fs);
             // P0 fix（2026-10-21）：注册挂起快照 GC 根集贡献回调。捕获裸 fs：fs 由
@@ -441,6 +444,14 @@ Value Interpreter::callCoroutineNext(Value& coroVal) {
             cd->gcRootContributor = [fs](std::vector<const void*>& roots) {
                 fs->interp->collectCoroutineFiberGcRoots(*fs, roots);
             };
+        }
+        // §3.8 跨线程恢复防御（2026-10-22）：fiber 只能由创建线程恢复——非创建线程
+        // 切入时 Windows SwitchToFiber 为跨线程未定义行为、Linux ucontext 层
+        // t_currentFiber 未登记（空指针解引用）；且挂起快照的解释器状态只与创建
+        // 线程的调用栈/上下文绑定。显式走 runtimeError 通道报错，而非进入未定义
+        // 路径（重放模式 =0 无 fiber 面，不经过本分支，天然不受影响）。
+        if (fs->ownerThread != std::this_thread::get_id()) {
+            runtimeError("协程不可跨线程恢复", 0, 0);
         }
         if (fs->failed) {
             // P1 fix（2026-10-21）：失败 fiber 不再弃用重建。原实现 reset 后下次
