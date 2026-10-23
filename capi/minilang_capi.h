@@ -54,7 +54,10 @@ typedef enum minilang_status {
 /* 创建执行上下文（默认后端 Interpreter）。失败返回 NULL。 */
 minilang_context* minilang_create(void);
 
-/* 销毁上下文（NULL 安全）。 */
+/* 销毁上下文（NULL 安全）。
+ * 先注销并释放本 context 通过 minilang_register_function 注册的宿主函数，
+ * 再卸载 minilang_load_plugin 加载的插件库。销毁前宿主须确保没有其他
+ * context/线程正在调用这些函数（注册表不提供并发注销同步）。 */
 void minilang_destroy(minilang_context* ctx);
 
 /* 选择执行后端。非法枚举值返回 MINILANG_ERR_INVALID。 */
@@ -111,8 +114,9 @@ typedef struct minilang_value {
 typedef minilang_value (*minilang_host_fn)(const minilang_value* args, int argc, void* userdata);
 
 /* 注册宿主函数，使 MiniLang 源码可用 name(...) 调用（三后端一致）。
- * 同名覆盖。全局注册表（跨 context 共享），注册在 eval 前完成。
- * ctx/name/fn 任一为 NULL 返回 MINILANG_ERR_INVALID。 */
+ * 同名覆盖。注册表为进程级：函数在注册 context 存活期间对全部 context 可见；
+ * 生命周期归属注册 context——minilang_destroy 时自动注销并释放。
+ * 注册在 eval 前完成；ctx/name/fn 任一为 NULL 返回 MINILANG_ERR_INVALID。 */
 minilang_status minilang_register_function(minilang_context* ctx, const char* name, minilang_host_fn fn,
                                            void* userdata);
 

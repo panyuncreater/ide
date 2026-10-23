@@ -56,6 +56,7 @@
 | Environment/boundInstance_ | 链式作用域中缓存实例释放 | `interpreter/Environment.h` 释放顺序；缓存失效路径 |
 | envPool_ 回收 × 闭包 env 弱引用 | `resetForReuse` 清空 weak_ptr 仍指向该 env 的闭包的可见变量（陈旧读/语义损坏） | 不变量已收口到 `Value::makeClosure`（D2 fix，2026-10-03）：工厂内统一 `markClosureEnvRef()`，回收守卫（use_count==1 + 无捕获 + 无闭包 env 引用）不再依赖各创建点手工标记；回归测试 `AuditBatch1ClosureEnv.*` |
 | JIT 上下文 | `JitContext` 邮箱持有跨线程引用 | `compiler/jit/` 上下文生命周期与 VM 停靠同步 |
+| capi 宿主函数 × 插件卸载 | registry 条目指向已卸载代码页（跨 context 调用即 UAF） | `minilang_destroy` 先按注册身份注销并释放 thunk，再 `FreeLibrary`/`dlclose`；回归 `PluginTest.CApiRegisterFunctionUnregisteredOnDestroy` / `CApiDestroyKeepsOverridingRegistration` |
 
 ## 7. 内存审计清单（配合 AGENTS.md §5 策略 4）
 

@@ -11,7 +11,11 @@
 // ============================================================
 
 #include "common/ThreeBackends.h"
+#include "gui/ReplTaskQueue.h"
+#include <atomic>
+#include <future>
 #include <gtest/gtest.h>
+#include <memory>
 #include <string>
 #include <thread>
 
@@ -864,6 +868,48 @@ g.next();
     EXPECT_NE(errMsg.find("协程不可跨线程恢复"), std::string::npos) << "实际错误：" << errMsg;
     // 线程 A（owner）继续恢复：防御零副作用，单线程路径行为不变
     run("print(g.next()); print(g.done());");
+    EXPECT_EQ(out, "2true");
+}
+
+// ============================================================
+// F2 回归（2026-10-23）：REPL 会话常驻单线程——跨行恢复生成器
+// ------------------------------------------------------------
+// 逐行 std::async 会让每行落在不同线程，跨行 .next() 必被 §3.8 防御拒绝。
+// ReplTaskQueue 为修复后的 ReplPanel 同款执行模型：全部任务固定在同一线程。
+// 本用例锁定两点：①所有任务线程 id 恒定为队列线程；②生成器跨行恢复推进。
+// ============================================================
+TEST(CoroutineSuspension, PersistentExecutorResumesGeneratorAcrossLines) {
+    ReplTaskQueue queue;
+    ASSERT_TRUE(queue.start());
+    const std::thread::id workerId = queue.workerId();
+    ASSERT_NE(workerId, std::this_thread::get_id());
+
+    Interpreter interp;
+    std::string out;
+    interp.setOutputCallback([&](const std::string& s) { out += s; });
+
+    std::atomic<bool> sawForeignThread{false};
+    auto runOnQueue = [&](const std::string& src) {
+        auto task = std::make_shared<std::packaged_task<void()>>([&interp, &sawForeignThread, workerId, src] {
+            if (std::this_thread::get_id() != workerId)
+                sawForeignThread.store(true);
+            Lexer lx;
+            auto tk = lx.scan(src);
+            Parser p;
+            auto ast = p.parse(tk);
+            interp.executeRepl(*ast); // 不重置环境：模拟 REPL 跨行保留
+        });
+        auto future = task->get_future();
+        ASSERT_TRUE(queue.post([task] { (*task)(); }));
+        future.get(); // 若跨线程恢复被拒，这里重新抛出 RuntimeError → 用例失败
+    };
+
+    runOnQueue("fun* gen() { yield 1; yield 2; }");
+    runOnQueue("var g = gen();");
+    runOnQueue("g.next();"); // fiber 创建并挂起于队列线程
+    runOnQueue("print(g.next()); print(g.done());");
+
+    EXPECT_FALSE(sawForeignThread.load());
     EXPECT_EQ(out, "2true");
 }
 #endif // MINILANG_CORO_FIBER

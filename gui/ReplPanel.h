@@ -18,6 +18,7 @@
 #include <future>
 #include <memory>
 
+#include "gui/ReplTaskQueue.h"
 #include "interpreter/Value.h" // QT-R-06 fix: std::future<Value> 需 Value 完整定义
 
 // B6 fix: ReplPanel 不再直接持有 Interpreter*，改由 IdeController（业务层）
@@ -85,6 +86,9 @@ private:
 
     // QT-R-06 fix: 异步执行支持
     // 用 std::future + QTimer 轮询替代 QtConcurrent（Qt6::Concurrent 模块未安装）
+    // F2 fix: 任务统一投递到常驻执行线程（会话级串行），保证协程 ownerThread
+    // 跨行恒定；逐行 std::async 会为每行新建线程，跨行 .next() 必被 §3.8 拒绝。
+    ReplTaskQueue replQueue_;
     std::future<Value> replFuture_;
     QTimer* pollTimer_ = nullptr;
     /// 异步执行期间禁用输入

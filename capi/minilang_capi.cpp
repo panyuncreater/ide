@@ -19,6 +19,7 @@
 #include "common/HostFunctionRegistry.h"
 #include "common/RuntimeLimits.h"
 
+#include <new>
 #include <string>
 #include <vector>
 
@@ -29,6 +30,12 @@
 #include <dlfcn.h>
 #endif
 
+/// 本 context 注册的宿主函数（F7 fix：destroy 时精确注销并释放 thunk）
+struct ContextHostFunction {
+    std::string name;
+    void* thunk = nullptr;
+};
+
 /// 不透明句柄的真实定义（仅本 TU 可见完整布局）
 struct minilang_context {
     BackendType backend = BackendType::Interpreter;
@@ -36,6 +43,10 @@ struct minilang_context {
     std::string lastError;
     // 七特性 MVP 阶段 6：沙箱模式开关（eval 时应用到全局 RuntimeConfig）
     bool sandbox = false;
+    // F7 fix: 本 context 注册的宿主函数（含插件 init 期间注册的函数）。
+    // 注册表本身为进程级共享（存活期间跨 context 可见），但生命周期归属 context：
+    // destroy 先注销再卸载插件库，消除悬垂函数指针。
+    std::vector<ContextHostFunction> hostFunctions;
     // 七特性 MVP 阶段 7：已加载的插件库句柄（destroy 时释放）
 #if defined(_WIN32)
     std::vector<HMODULE> pluginHandles;
@@ -129,8 +140,19 @@ minilang_context* minilang_create(void) {
 }
 
 void minilang_destroy(minilang_context* ctx) {
-    // 七特性 MVP 阶段 7：释放已加载的插件库句柄
     if (ctx) {
+        // F7 fix: 先注销并释放本 context 注册的宿主函数，再卸载插件库——
+        // 否则 registry 仍持有指向已卸载代码页的 HostThunk/HostFn，跨 context
+        // 调用同名函数即跳转悬垂地址。按 (fn, thunk) 精确匹配，避免误删其他
+        // context 后来注册的同名覆盖项。
+        auto& registry = minilang::HostFunctionRegistry::instance();
+        for (const auto& registered : ctx->hostFunctions) {
+            if (registry.unregisterFunction(registered.name, &hostFnShim, registered.thunk)) {
+                delete static_cast<HostThunk*>(registered.thunk);
+            }
+        }
+        ctx->hostFunctions.clear();
+        // 七特性 MVP 阶段 7：释放已加载的插件库句柄
         for (auto handle : ctx->pluginHandles) {
             if (handle) {
 #if defined(_WIN32)
@@ -225,10 +247,20 @@ minilang_status minilang_register_function(minilang_context* ctx, const char* na
                                            void* userdata) {
     if (!ctx || !name || !fn)
         return MINILANG_ERR_INVALID;
-    // 将用户 fn+userdata 打包为堆上 HostThunk（生命周期随进程；MVP 不回收，
-    // 与全局 HostFunctionRegistry 一致，注册通常在进程级一次性完成）。
-    auto* thunk = new HostThunk{fn, userdata};
-    minilang::HostFunctionRegistry::instance().registerFunction(name, &hostFnShim, thunk);
+    // 将用户 fn+userdata 打包为堆上 HostThunk；所有权登记到 context，
+    // minilang_destroy 时注销并释放（F7 fix）。
+    auto* thunk = new (std::nothrow) HostThunk{fn, userdata};
+    if (!thunk)
+        return MINILANG_ERR_INVALID;
+    try {
+        minilang::HostFunctionRegistry::instance().registerFunction(name, &hostFnShim, thunk);
+        ctx->hostFunctions.push_back(ContextHostFunction{name, thunk});
+    } catch (...) {
+        // 入队失败（如 bad_alloc）：回滚注册，不把异常抛过 C ABI
+        minilang::HostFunctionRegistry::instance().unregisterFunction(name, &hostFnShim, thunk);
+        delete thunk;
+        return MINILANG_ERR_INVALID;
+    }
     return MINILANG_OK;
 }
 

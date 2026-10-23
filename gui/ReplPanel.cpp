@@ -111,6 +111,8 @@ ReplPanel::~ReplPanel() {
             replFuture_.wait();
         }
     }
+    // F2 fix: 任务完成后停止常驻执行线程并 join（未启动时为空操作）
+    replQueue_.stop();
 }
 
 /// 阻塞等待当前 REPL 异步任务结束，避免重复执行。
@@ -482,18 +484,17 @@ void ReplPanel::executeLine(const QString& line) {
 
     // QT-R-06 fix: 异步执行解释器，避免主线程阻塞。
     // 词法/语法分析在主线程（轻量，<1ms），解释器执行可能耗时（如 while 循环）放后台。
-    // 用 std::async + QTimer 轮询替代 QtConcurrent（Qt6::Concurrent 未安装）。
+    // 用常驻执行线程 + QTimer 轮询替代 QtConcurrent（Qt6::Concurrent 未安装）。
     // 异常在异步任务中捕获，通过 QMetaObject::invokeMethod 投递到主线程信号链。
     // PANEL-02 fix: 先保留 AST 再执行，确保异常时 classRegistry_/闭包 body 指针不悬空
     Block* rawAst = ast.get();
     controller_->retainReplAst(std::move(ast));
 
     // 标记执行中，禁用输入
-    // Bug fix: std::async 可能在资源耗尽或线程数限制时抛 std::system_error，
-    // 此时若已设置 replRunning_=true / 禁用输入但未启动轮询定时器，
-    // REPL 将永久卡死（replRunning_ 早期返回守卫阻止后续输入）。
-    // 改为：先成功启动 async，再切换状态。AST 已在 replAsts_ 中保留，
-    // async 失败时该 AST 不会被使用（executeRepl 未执行），仅造成轻微内存占用。
+    // Bug fix: 线程创建或任务入队可能失败，此时若已设置 replRunning_=true /
+    // 禁用输入但未启动轮询定时器，REPL 将永久卡死（replRunning_ 早期返回守卫
+    // 阻止后续输入）。改为：先成功入队，再切换状态。AST 已在 replAsts_ 中保留，
+    // 入队失败时该 AST 不会被使用（executeRepl 未执行），仅造成轻微内存占用。
     IdeController* ctrl = controller_; // 显式捕获
     // AUDIT fix: 重置错误标志，避免上次执行的残余状态影响本次输出判断
     hadReplError_.store(false);
@@ -509,7 +510,13 @@ void ReplPanel::executeLine(const QString& line) {
     QPointer<ReplPanel> self(this);
     std::future<Value> newFuture;
     try {
-        newFuture = std::async(std::launch::async, [ctrl, rawAst, errFlag, self]() -> Value {
+        if (!replQueue_.start()) {
+            appendError("无法启动 REPL 执行线程");
+            return;
+        }
+        // F2 fix: 任务固定投递到会话常驻线程（而非逐行 std::async），
+        // 使协程 fiber 的 ownerThread 在跨行恢复时保持恒定。
+        auto task = std::make_shared<std::packaged_task<Value()>>([ctrl, rawAst, errFlag, self]() -> Value {
             try {
                 return ctrl->executeRepl(*rawAst);
             } catch (const RuntimeError& e) {
@@ -566,12 +573,17 @@ void ReplPanel::executeLine(const QString& line) {
                 return Value::nullValue();
             }
         });
+        newFuture = task->get_future();
+        if (!replQueue_.post([task] { (*task)(); })) {
+            appendError("REPL 执行队列已停止");
+            return;
+        }
     } catch (const std::exception& e) {
-        // async 启动失败：报告错误，REPL 保持可用状态（不切换 replRunning_）
+        // 任务创建/入队失败：报告错误，REPL 保持可用状态（不切换 replRunning_）
         appendError(QString("无法启动异步执行: %1").arg(e.what()));
         return;
     }
-    // async 启动成功，切换状态并启动轮询
+    // 任务入队成功，切换状态并启动轮询
     replFuture_ = std::move(newFuture);
     replRunning_ = true;
     setInputEnabled(false);

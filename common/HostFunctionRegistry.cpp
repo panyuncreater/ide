@@ -15,6 +15,14 @@ void HostFunctionRegistry::registerFunction(const std::string& name, HostFn fn, 
     functions_[name] = Entry{fn, userdata};
 }
 
+bool HostFunctionRegistry::unregisterFunction(const std::string& name, HostFn fn, void* userdata) {
+    auto it = functions_.find(name);
+    if (it == functions_.end() || it->second.fn != fn || it->second.userdata != userdata)
+        return false;
+    functions_.erase(it);
+    return true;
+}
+
 bool HostFunctionRegistry::has(const std::string& name) const {
     return functions_.find(name) != functions_.end();
 }

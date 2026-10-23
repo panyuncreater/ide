@@ -178,6 +178,12 @@ minilang_value capiTriple(const minilang_value* args, int argc, void*) {
     if (argc == 1 && args[0].type == MINILANG_VAL_INT) r.i = args[0].i * 3;
     return r;
 }
+
+minilang_value capiQuad(const minilang_value* args, int argc, void*) {
+    minilang_value r; r.type = MINILANG_VAL_INT; r.b = 0; r.i = 0; r.d = 0.0; r.s = nullptr;
+    if (argc == 1 && args[0].type == MINILANG_VAL_INT) r.i = args[0].i * 4;
+    return r;
+}
 } // namespace
 
 TEST_F(PluginTest, CApiRegisterFunction) {
@@ -198,6 +204,42 @@ TEST_F(PluginTest, CApiRegisterNullArgsRejected) {
 }
 
 // ============================================================
+// 5.1 F7 回归：context 销毁注销本 context 注册的宿主函数
+// ============================================================
+
+TEST_F(PluginTest, CApiRegisterFunctionUnregisteredOnDestroy) {
+    minilang_context* ctx = minilang_create();
+    ASSERT_NE(ctx, nullptr);
+    ASSERT_EQ(minilang_register_function(ctx, "triple", &capiTriple, nullptr), MINILANG_OK);
+    ASSERT_TRUE(minilang::HostFunctionRegistry::instance().has("triple"));
+    ASSERT_EQ(minilang_eval(ctx, "print(triple(14));"), MINILANG_OK);
+    EXPECT_EQ(std::string(minilang_get_output(ctx)), "42");
+
+    minilang_destroy(ctx);
+    // 注销后同名函数不再可见，且不残留指向已释放 thunk 的条目
+    EXPECT_FALSE(minilang::HostFunctionRegistry::instance().has("triple"));
+}
+
+TEST_F(PluginTest, CApiDestroyKeepsOverridingRegistration) {
+    minilang_context* ctxA = minilang_create();
+    minilang_context* ctxB = minilang_create();
+    ASSERT_NE(ctxA, nullptr);
+    ASSERT_NE(ctxB, nullptr);
+    ASSERT_EQ(minilang_register_function(ctxA, "shared_fn", &capiTriple, nullptr), MINILANG_OK);
+    // B 后注册同名函数覆盖 A 的条目
+    ASSERT_EQ(minilang_register_function(ctxB, "shared_fn", &capiQuad, nullptr), MINILANG_OK);
+
+    // 销毁 A 不得误删 B 的覆盖项
+    minilang_destroy(ctxA);
+    ASSERT_TRUE(minilang::HostFunctionRegistry::instance().has("shared_fn"));
+    ASSERT_EQ(minilang_eval(ctxB, "print(shared_fn(10));"), MINILANG_OK);
+    EXPECT_EQ(std::string(minilang_get_output(ctxB)), "40");
+
+    minilang_destroy(ctxB);
+    EXPECT_FALSE(minilang::HostFunctionRegistry::instance().has("shared_fn"));
+}
+
+// ============================================================
 // 6. DLL 加载：加载测试插件并调用 mini_add
 // ============================================================
 
@@ -213,7 +255,10 @@ TEST_F(PluginTest, LoadPluginAndCall) {
     // 插件注册了 mini_add(a, b)
     ASSERT_EQ(minilang_eval(ctx, "print(mini_add(40, 2));"), MINILANG_OK) << minilang_get_error(ctx);
     EXPECT_EQ(std::string(minilang_get_output(ctx)), "42");
+    ASSERT_TRUE(minilang::HostFunctionRegistry::instance().has("mini_add"));
     minilang_destroy(ctx);
+    // F7 fix: 卸载插件库前注销其注册的函数，registry 不残留悬垂代码页指针
+    EXPECT_FALSE(minilang::HostFunctionRegistry::instance().has("mini_add"));
 }
 
 // ============================================================

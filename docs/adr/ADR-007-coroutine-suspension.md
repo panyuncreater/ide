@@ -61,6 +61,10 @@ Linux ucontext 平台层要点（2026-10-07）：每个 fiber 一个堆上控制
 
 `tests/TestCoroutine.cpp` 的 `CoroutineSuspension.*` 组（`#if MINILANG_CORO_FIBER` 门控，四后端一致断言）：副作用只执行一次（`"bbb"` vs 重放的 `"bbbbbb"`）、yield 表达式恢复值、跨挂起点局部状态连续性、try/catch 跨挂起点、300 次 `.next()` 长序列值正确。既有 `CoroutineTest` 22 项与 `AsyncAwait` 11 项在挂起模式下原样通过（值语义不变）。
 
+### 宿主线程亲和契约
+
+fiber 绑定创建线程（`ownerThread`），跨线程 `.next()` 由 §3.8 防御显式拒绝。宿主嵌入层若把同一会话的多步交互分散到不同线程，合法程序也会被防御误伤（F2，2026-10-23：ReplPanel 逐行 `std::async`）。宿主必须保证同一会话的协程创建与恢复在同一线程执行——`ReplPanel` 经 `gui/ReplTaskQueue.h` 常驻单线程串行全部行任务。锁定：`CoroutineSuspension.PersistentExecutorResumesGeneratorAcrossLines`。
+
 ## Known Limitations（有意记录）
 
 1. **平台覆盖**：Windows（fiber API）与 Linux（POSIX ucontext + ASan fiber 标注，2026-10-07）三后端真挂起；macOS/其他平台统一为重放模式。macOS 启用需先补 macOS 测试门禁（发布矩阵的 mac job 仅编译不跑测试，ucontext 例程在 macOS 标记 deprecated）；bionic（Android）无 `makecontext`，不在支持范围。`tests/TestCoroutine.cpp` 顶部的平台 `static_assert` 锁定宏与平台层的对应关系（有平台层 ⟺ `=1`）。

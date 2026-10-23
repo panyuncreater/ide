@@ -12,8 +12,6 @@
 | B-001 | P2 | blocked | `trySkipExplicitTypeArgs` 白名单缺 `:`/`(`/`)`，复合类型实参回退为比较解析 | `docs/code-audit-report-2026-10-21.md` §3.4、§7.2、§10.2 | Parser.cpp 写入守卫误判解除后：白名单补配对平衡（`(` 仅允许前缀 `TK_FUN`）+ 四后端回归 |
 | B-002 | P2 | blocked | enum 变体构造携带显式类型实参时 AST 降级为 MemberAccess+FunCall | 同上 §3.5 | 在 `match(TK_LPAREN)` 前前置 `trySkipExplicitTypeArgs()` + 四后端回归 |
 | B-003 | P2 | blocked | 参数默认值为数组/字典字面量时解析脱轨或静默不绑定 | 同上 §3.2、§6.2、§10.2；`docs/audit-notes-20261022/parser-default-value-investigation.md` | 守卫解除后按调查方案改 `parseParamList` 白名单 + 常量提取 + T1-T6 用例 |
-| B-004 | P1 | open | REPL 跨行生成器恢复必然失败：每行独立 `std::async` 线程与协程 ownerThread 防御冲突 | `docs/audit-notes-20261022/robustness-gui-cli-lifetime.md` F2 | REPL 会话绑定单一执行线程；与宿主侧 `toString` 线程改造合并设计 |
-| B-005 | P1 | open | capi 插件卸载后宿主函数悬垂 | 同上 F7 | 插件句柄生命周期协议 + 卸载时注销 HostFunctionRegistry + 回归 |
 | B-006 | P2 | verifying | JIT methodCallIC 以克隆临时串 `c_str()` 地址为键，可能假命中/错误分发 | `docs/audit-notes-20261022/perf-jit-frontend.md` #2 | 改 `InstanceData*` 键；构造多态调用点差分用例证实/证伪 |
 | B-007 | P3 | open | `diff_test` 未注册进 ctest，V10/V11 曾因此逃过全量回归 | `docs/code-audit-report-2026-10-21.md` §10.5 | 将 diff_test 纳入 ctest，或把探针迁入 `ConsistencyDiff`（四路口径） |
 | B-008 | P2 | open | finally 同帧“abrupt 替换 abrupt”残留同帧续跳条目；递归同 try 站点重入时异常暂存全局可能被覆盖 | `docs/testing.md` 已知限制 #5（AUDIT-R7 残余） | 反模式叠加边角，低优先级；补四路径用例后再定级 |

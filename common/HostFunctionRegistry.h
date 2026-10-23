@@ -80,6 +80,11 @@ public:
     /// 注册宿主函数（同名覆盖）。name 为 MiniLang 侧可调用的函数名。
     void registerFunction(const std::string& name, HostFn fn, void* userdata);
 
+    /// 按注册身份精确注销：仅当当前条目仍为 (fn, userdata) 时移除。
+    /// 用于 context 销毁/插件卸载：同名条目已被他人覆盖时不误删。
+    /// @return 是否移除了条目
+    bool unregisterFunction(const std::string& name, HostFn fn, void* userdata);
+
     /// 查询是否已注册（供 isBuiltinFunction 接入）。
     bool has(const std::string& name) const;
 
@@ -87,7 +92,7 @@ public:
     /// @param found [out] 是否命中（未命中时返回值为 Null）
     HostValue call(const std::string& name, const HostValue* args, int argc, bool* found) const;
 
-    /// 清空注册表（测试 tearDown / context 销毁时调用）。
+    /// 清空注册表（测试 tearDown）。
     void clear();
 
 private:
