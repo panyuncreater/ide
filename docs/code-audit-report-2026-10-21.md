@@ -369,3 +369,38 @@
 - 两笔提交各自通过定向回归后合并验证：全量 ctest **4181/4181 通过**（-j 10，95s，--timeout 600，全口径），/W4+/WX 零警告；测试计数 4178 → 4181（+1 DeleteFiber +1 解构 +1 catch）。CoroutineSuspension 14/14、遮蔽/解构/catch 族 8 用例四路全绿。
 - 实施注记：Logger 方法名为 `Warning`（非 Warn，编译期发现）；跨线程析构回归的 done() 期望值笔误（78false → 78true，与既有 "2true" 口径一致）当轮修正。
 - 剩余未修收敛至：§3.2/§3.4/§3.5（守卫阻塞，方案+用例就绪）+ GC 根集七面板守卫（P1）、REPL 线程模型（P1）、JIT methodCallIC 键（待证 P2）、cli 就地截断写（P3）+ 优化机会目录（§10.4）。
+
+## 13. 2026-10-23 F1 清偿轮（临时 Interpreter GC 隔离 + 七面板守卫）
+
+### 13.1 已修复（1 项，根因级）
+
+- **P1｜F1 清偿｜临时 Interpreter 抢占 GC 触发回调并以不完整根集 sweep 常驻存活容器**
+  - **机制确认（实读 + 回归实证）**：`IdeController` 全程持有常驻 `interpreter_`（Run 前 `saveReplState`、结束后 `restoreReplState`，空闲期 `globalEnv_` 持有 REPL 容器）；`BackendExecutionService::execute(Interpreter)` 每次栈构造临时 Interpreter——构造覆盖 GcManager 单槽 `gcTriggerCallback_`，`execute()` 入口以临时实例根集（通常为空）执行全量 `collectCycle`，Phase 2 对未标记槽位无差别 `std::move` 清空子元素 → 常驻解释器持有的数组/字典/实例子元素被清空；临时实例析构再按 owner 令牌清除回调，常驻解释器增量 GC 永久失效。并发链（Worker 运行期点面板）另叠加根集竞态。
+  - **修复（根因）**：`Interpreter` 新增 `GcTriggerPolicy{Managed, Isolated}`（默认 `Managed`，既有行为零变化）。Isolated 实例：① 不注册触发回调；② 构造时持有 `GcManager::CallbackSuppressor` 直到析构（抑制进程级增量触发，阻断任一方向以不完整根集 collect）；③ `execute()` 跳过入口全量 `collectCycle`；④ 语句边界不消费 `pendingIncrementalGc_`。隔离期产生的循环引用延后至下一次 Managed `collectCycle` 回收（教学面板/调试沙箱均为短生命周期）；成员声明置于最前，析构最后恢复回调，覆盖全部堆 Value 析构。
+  - **接入点**：`BackendExecutionService`（七面板共同路径）、`IdeController` 四处临时沙箱（条件断点求值 / 片段评分 / 观察表达式 / 调试 REPL）、`common/ConstFunEval.h` 编译期沙箱、`cli/dap_core.cpp` 条件求值沙箱（均为与常驻解释器并存的短生命周期实例）。约束：Isolated 生命周期内不得构造新的 Managed Interpreter（会破坏回调恢复链），也不得活过被抑制回调的 Managed 实例（会恢复悬垂回调）——已写入头文件策略注释；当前接入点均为随宿主存续的叶子沙箱。
+  - **防御（最小守卫）**：七面板入口统一 `isRunning() || isVmRunning()` 拒绝执行并提示——对齐 `GcVisualizerPanel` 既有不变量，阻断并发链与引擎非线程安全访问。涉及 BackendParallelPanel / BackendComparePanel / BugHuntPanel（runVerify + tripleVerify）/ CoroutineVisualizerPanel / ExerciseGraderPanel / PerformanceRacePanel / ProfileDashboardPanel。
+  - **语义影响**：无语言层语义变化；仅宿主嵌入层的 GC 时机变化（隔离期不触发，延后回收）。
+  - **回归（确定性判别）**：`GcIsolation.ServiceTemporaryInterpreterKeepsResidentContainers`（常驻 `keep=[1,2,3]` 经服务临时执行后元素数仍为 3；修复前临时入口空根集必然清空）、`GcIsolation.ResidentIncrementalGcCallbackSurvivesTemporaryInterpreter`（阈值 1、临时实例析构后常驻 `totalGcCount` 仍随语句增长；修复前回调被抢占后不再触发）。两用例修复前均确定性失败、修复后通过。
+
+### 13.2 方案取舍
+
+- 未采用审计建议的「多槽回调 / 全部活跃 owner 根集合并」彻底方案：根集合并需在 GC 触发线程读取其他常驻解释器的 `globalEnv_/callStack_`，GUI 宿主存在 Worker 线程与主线程（REPL 异步行）并存，跨线程读根集需为全部引擎状态引入同步协议，风险大于收益。改用「显式 Isolated + 全局抑制 + 面板守卫」在 GUI 串行模型下闭环，并覆盖全部已知临时实例接入点；若未来出现多常驻解释器并存需求（非本宿主模型），再立项多槽根集。
+
+### 13.3 验证与统计
+
+- 全量 ctest **4183/4183 通过**（-j 10，92.7s，--timeout 600，全口径），`/W4+/WX` 零警告；测试计数 4181 → 4183（+2 F1 回归）。
+- 构建注记（本轮新踩坑）：`vcvars64.bat` 后接 `cmake --build` 时若对 vcvars 输出使用 `>nul` 重定向，Git Bash → cmd 通道返回「系统找不到指定的路径」（退出码 1，无编译输出）；去掉重定向或改用日志文件重定向即正常（vcvars 本身成功）。五个构建目标全量重编通过。
+- 剩余未修维持：§3.2/§3.4/§3.5（Parser.cpp 写入守卫阻塞，方案+用例就绪）；F2 REPL 线程模型（P1 推演）、F7 capi 插件卸载悬垂（P1 推演）、F8 沙箱配置非事务（P2）、JIT methodCallIC 键（待证 P2）、cli 非原子写（P2/P3）+ 优化机会目录（§10.4）。
+
+## 14. 2026-10-23 F8 + cli 原子写轮
+
+### 14.1 已修复（2 组）
+
+- **P2｜F8 清偿｜capi eval 沙箱配置非事务 + 跨 context 并发互相污染**：原实现 eval 前保存/设置全局 `RuntimeConfig`、eval 后恢复——`BackendExecutionService::execute` 抛异常（bad_alloc 等）时跳过恢复，沙箱配置泄漏到后续 eval；且不同线程各自 context 并发 eval 共享同一组全局开关，互相覆盖（头文件却宣称并发安全）。修复 = `RuntimeConfig::SandboxScope` 线程局部 RAII：构造保存并覆盖当前线程沙箱策略、析构按栈序恢复；读取点（`sandboxEnabled`/`sandboxAllowInput`/`sandboxAllowImport`）优先消费 TLS 覆盖、无覆盖回落全局 atomic。capi eval 以 `SandboxScope(ctx->sandbox, false, false)` 包裹整次执行——异常安全、嵌套安全、跨线程隔离，不再改写全局单例（GUI/CLI 的全局配置路径零变化，Worker 线程无 TLS 覆盖仍读全局值）；capi eval 的沙箱策略自此完全由 `ctx` 决定（不再继承全局开关）。回归 `SandboxModeTest.SandboxScopeIsThreadLocal`（双线程相反策略 + barrier 并发 1000 次读）、`SandboxScopeNestedRestores`、`CApiSandboxParseErrorDoesNotLeakGlobalConfig`；既有 `CApiSandboxToggleRestoresGlobalConfig` 保持通过。
+- **P2/P3｜F10–F13 清偿｜cli 非原子写**：fmt `--write` / lint `--fix` / doc `-o` / 统一入口 doc `-o` / fuzz `crash-*.ml` 五处就地截断写统一改用新增头文件 `cli/AtomicWrite.h` 的 `atomicWriteFile`——同目录临时文件（pid + 进程内原子序号）+ flush/close 后 `std::filesystem::rename` 替换，rename 失败清理临时文件并回退就地写；文本模式保持既有换行语义；替换前复制目标权限位；符号链接解析到真实目标后再替换（不把链接本身替换成普通文件）；硬链接会因 inode 替换断开（已知取舍，注释登记）。fmt/lint 顺带补齐写失败检测（lint 原实现写后不检查流状态）。回归 `AtomicWriteFile.WritesContentAndLeavesNoTempFile / OverwritesExistingFile / FailsWhenParentDirectoryMissing`、`FmtCliProcessFile.WriteModeLeavesNoTempFile`、`LintCliProcessFileFix.WritesAtomicallyAndLeavesNoTempFile`、POSIX 专用 `AtomicWriteFile.PreservesSymlink`（Windows 编译排除，Linux CI 覆盖）。
+
+### 14.2 验证与统计
+
+- 全量 ctest **4191/4191 通过**（-j 10，110.8s，--timeout 600，全口径），`/W4+/WX` 零警告；测试计数 4183 → 4191（+8：3 SandboxScope + 3 AtomicWrite + 1 Fmt 原子写 + 1 Lint 原子写；POSIX 额外 +1 symlink 用例）。
+- `cli/AtomicWrite.h` 为头文件工具，未改构建系统；CLI 各可执行目标随源码重编验证。
+- 剩余未修：F2 REPL 线程模型（P1 推演）、F7 capi 插件卸载悬垂（P1 推演，需插件回归）、JIT methodCallIC 键（待证 P2）、§3.2/§3.4/§3.5（Parser.cpp 写入守卫阻塞）+ 优化机会目录（§10.4）。
