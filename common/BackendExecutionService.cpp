@@ -209,7 +209,10 @@ BackendExecResult BackendExecutionService::execute(const std::string& src, Backe
 
     if (backend == BackendType::Interpreter) {
         // Interpreter 直接执行 AST，无字节码
-        Interpreter interp;
+        // F1 fix: 临时解释器以 Isolated 模式构造——不注册/不触发 GC，并抑制进程级
+        // 增量回调。否则其构造会抢占常驻 Worker 解释器的回调，execute() 入口的
+        // 全量 collectCycle 还会以自身空根集清空常驻解释器持有的存活容器。
+        Interpreter interp(Interpreter::GcTriggerPolicy::Isolated);
         // PERF-DETAIL: 输出回调顺带采样 tracked 峰值（对齐原两遍 detail 路径）
         interp.setOutputCallback([&](const std::string& s) {
             out += s;

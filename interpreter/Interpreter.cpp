@@ -47,7 +47,8 @@
 // RefCounted.h、GcManager.cpp：本文件在这些运行时基础设施之上组合出语言语义。
 // ============================================================
 
-Interpreter::Interpreter() : globalEnv_(std::make_shared<Environment>()), currentEnv_(globalEnv_), recursionDepth_(0) {
+Interpreter::Interpreter(GcTriggerPolicy gcPolicy)
+    : gcPolicy_(gcPolicy), globalEnv_(std::make_shared<Environment>()), currentEnv_(globalEnv_), recursionDepth_(0) {
     outputCallback_ = std::make_shared<const std::function<void(const std::string&)>>([](const std::string&) {});
     // BUG-003 fix: 注册增量 GC 触发回调。GcManager 在 registerTracked 累计到阈值时
     // 调用此回调，由 Interpreter 收集当前根集并触发 collectCycle。
@@ -56,7 +57,13 @@ Interpreter::Interpreter() : globalEnv_(std::make_shared<Environment>()), curren
     // 会调用悬垂 this 指针导致 UAF。
     // AUDIT-R3 P2-9 fix: 以 this 为 owner 令牌注册——多实例并存时后构造者覆盖
     // 前者回调，前者析构时仅清除属于自己的回调，不再误清存活实例的回调。
-    GcManager::instance().setGcTriggerCallback([this]() { this->triggerIncrementalGc(); }, this);
+    // F1 fix: Isolated 沙箱不注册回调，并抑制既有回调——否则临时实例会以自身
+    // 根集执行全量 collectCycle，清空常驻解释器持有的存活容器（反之亦然）。
+    if (gcPolicy_ == GcTriggerPolicy::Managed) {
+        GcManager::instance().setGcTriggerCallback([this]() { this->triggerIncrementalGc(); }, this);
+    } else {
+        gcIsolation_ = std::make_unique<GcManager::CallbackSuppressor>();
+    }
 }
 
 Interpreter::~Interpreter() {
@@ -66,7 +73,10 @@ Interpreter::~Interpreter() {
     // 本实例时才清除；若已被后构造的实例覆盖，不得清掉存活实例的回调
     // （原无条件 setGcTriggerCallback(nullptr) 会误清后构造者回调，使其丢失增量 GC）。
     // 安全性：析构仅在 execute() 返回后发生，此时无 collectCycle 在进行中。
-    GcManager::instance().clearGcTriggerCallbackIfOwner(this);
+    if (gcPolicy_ == GcTriggerPolicy::Managed) {
+        GcManager::instance().clearGcTriggerCallbackIfOwner(this);
+    }
+    // Isolated：gcIsolation_ 成员析构时恢复被抑制的常驻回调（见成员声明顺序）。
 }
 
 // PERF-GC: 只读遍历 env 本层变量收集 GC 根指针（零拷贝）。
@@ -126,51 +136,55 @@ Value Interpreter::execute(Block& program) {
     // 和 savedModuleCache。类字段默认值（如 var data = [1,2,3]）和模块顶层变量
     // 可能持有堆对象引用，若不作为根集传入，GC 会误判为循环引用孤岛并清空 elements，
     // 导致 restoreReplState 后类字段默认值丢失、模块变量变成空容器。
-    std::vector<const void*> gcRoots;
-    // AUDIT-P2-CORRECT fix: 无论 REPL 是否激活，都应将 globalEnv_ 顶层变量纳入 GC roots。
-    // 原实现仅 REPL 模式收集 roots，非 REPL 模式传入空根集。若 Interpreter 被复用
-    // （如测试场景），上一轮残留的循环引用容器仍在登记表中，空根集会导致 Phase 2
-    // 误判所有 tracked 容器为不可达孤岛并清空子元素。即使 IdeController 每次 Run
-    // 创建新 Interpreter（登记表为空，collectCycle 提前返回），此处防御性收集
-    // 可保证复用场景的正确性。
-    if (!replState_.active) {
-        if (globalEnv_) {
-            collectEnvLocalGcRoots(globalEnv_.get(), gcRoots);
-        }
-    }
-    if (replState_.active) {
-        // (1) savedGlobalEnv 顶层变量
-        if (replState_.savedGlobalEnv) {
-            collectEnvLocalGcRoots(replState_.savedGlobalEnv.get(), gcRoots);
-        }
-        // (2) savedClassRegistry 中每个 ClassInfo.fields 的默认值 + closureEnv
-        for (const auto& clsPair : replState_.savedClassRegistry) {
-            for (const auto& fldPair : clsPair.second.fields) {
-                const void* ptr = fldPair.second.gcRootPtr();
-                if (ptr)
-                    gcRoots.push_back(ptr);
-            }
-            if (clsPair.second.closureEnv) {
-                collectEnvLocalGcRoots(clsPair.second.closureEnv.get(), gcRoots);
+    // F1 fix: Isolated 沙箱跳过入口全量 GC——其根集只覆盖自身环境，与常驻解释器
+    // 并存时会把常驻实例持有的存活容器当作不可达孤岛清空。
+    if (gcPolicy_ == GcTriggerPolicy::Managed) {
+        std::vector<const void*> gcRoots;
+        // AUDIT-P2-CORRECT fix: 无论 REPL 是否激活，都应将 globalEnv_ 顶层变量纳入 GC roots。
+        // 原实现仅 REPL 模式收集 roots，非 REPL 模式传入空根集。若 Interpreter 被复用
+        // （如测试场景），上一轮残留的循环引用容器仍在登记表中，空根集会导致 Phase 2
+        // 误判所有 tracked 容器为不可达孤岛并清空子元素。即使 IdeController 每次 Run
+        // 创建新 Interpreter（登记表为空，collectCycle 提前返回），此处防御性收集
+        // 可保证复用场景的正确性。
+        if (!replState_.active) {
+            if (globalEnv_) {
+                collectEnvLocalGcRoots(globalEnv_.get(), gcRoots);
             }
         }
-        // (3) savedModuleCache 中每个 Environment 的顶层变量
-        for (const auto& modPair : replState_.savedModuleCache) {
-            if (modPair.second) {
-                collectEnvLocalGcRoots(modPair.second.get(), gcRoots);
+        if (replState_.active) {
+            // (1) savedGlobalEnv 顶层变量
+            if (replState_.savedGlobalEnv) {
+                collectEnvLocalGcRoots(replState_.savedGlobalEnv.get(), gcRoots);
+            }
+            // (2) savedClassRegistry 中每个 ClassInfo.fields 的默认值 + closureEnv
+            for (const auto& clsPair : replState_.savedClassRegistry) {
+                for (const auto& fldPair : clsPair.second.fields) {
+                    const void* ptr = fldPair.second.gcRootPtr();
+                    if (ptr)
+                        gcRoots.push_back(ptr);
+                }
+                if (clsPair.second.closureEnv) {
+                    collectEnvLocalGcRoots(clsPair.second.closureEnv.get(), gcRoots);
+                }
+            }
+            // (3) savedModuleCache 中每个 Environment 的顶层变量
+            for (const auto& modPair : replState_.savedModuleCache) {
+                if (modPair.second) {
+                    collectEnvLocalGcRoots(modPair.second.get(), gcRoots);
+                }
             }
         }
-    }
-    // AUDIT-P3-CORRECT fix: 防御性收集 callStack_ 中的环境变量作为 GC roots。
-    // 当前 callStack_ 在行 71 已 clear()，此处为空，但防御性收集保证未来安全——
-    // 若未来在 callStack_ 非空时触发 collectCycle（如条件断点求值中添加 GC 触发，
-    // 或 REPL 模式添加 GC），栈上闭包引用的循环容器需被标记为可达，否则会被误回收。
-    for (const auto& frame : callStack_) {
-        if (frame.env) {
-            collectEnvLocalGcRoots(frame.env.get(), gcRoots);
+        // AUDIT-P3-CORRECT fix: 防御性收集 callStack_ 中的环境变量作为 GC roots。
+        // 当前 callStack_ 在行 71 已 clear()，此处为空，但防御性收集保证未来安全——
+        // 若未来在 callStack_ 非空时触发 collectCycle（如条件断点求值中添加 GC 触发，
+        // 或 REPL 模式添加 GC），栈上闭包引用的循环容器需被标记为可达，否则会被误回收。
+        for (const auto& frame : callStack_) {
+            if (frame.env) {
+                collectEnvLocalGcRoots(frame.env.get(), gcRoots);
+            }
         }
+        GcManager::instance().collectCycle(gcRoots);
     }
-    GcManager::instance().collectCycle(gcRoots);
 
     // BUG-DBG-5 fix: 压入顶层 main 帧，与 VM 的 mainFrame 对齐。
     // 原实现 callStack_ 在顶层为空，导致调试暂停在顶层代码时调用栈面板无显示，
@@ -234,7 +248,10 @@ Value Interpreter::runStatementsWithExceptionHandling(Block& program) {
             // P0 fix: 语句边界安全触发延迟的增量 GC。
             // registerTracked 在容器构造期间仅设置 pendingIncrementalGc_ 标志，
             // 此处语句执行完毕、容器已加入 roots 后安全触发回收。
-            GcManager::instance().checkPendingGc();
+            // F1 fix: Isolated 沙箱不消费全局 pending——其根集不完整，触发即误回收。
+            if (gcPolicy_ == GcTriggerPolicy::Managed) {
+                GcManager::instance().checkPendingGc();
+            }
         }
     } catch (const ReturnException&) {
         runtimeError("return 只能在函数体内使用", 0, 0);
@@ -2463,7 +2480,10 @@ void Interpreter::executeFunctionBody(Block& body) {
             runtimeError(msg, stmt ? stmt->line : 0, stmt ? stmt->column : 0);
         }
         // P0 fix: 语句边界安全触发延迟的增量 GC（同 runStatementsWithExceptionHandling）
-        GcManager::instance().checkPendingGc();
+        // F1 fix: Isolated 沙箱跳过（同前，根集不完整）。
+        if (gcPolicy_ == GcTriggerPolicy::Managed) {
+            GcManager::instance().checkPendingGc();
+        }
     }
 }
 

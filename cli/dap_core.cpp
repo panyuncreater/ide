@@ -427,7 +427,8 @@ bool DebugSession::evalBreakpointCondition(const std::string& cond) const {
         auto parsed = ps.parse(tokens);
         if (!parsed || parsed->statements.empty() || ps.getDiagnostics().hasErrors())
             return false;
-        Interpreter tempInterp;
+        // F1 fix: 临时解释器与调试宿主解释器并存，以 Isolated 模式隔离 GC。
+        Interpreter tempInterp(Interpreter::GcTriggerPolicy::Isolated);
         auto env = std::make_shared<Environment>();
         // 注入顺序：先全局后栈顶帧 locals（locals 遮蔽同名全局，与 VM 作用域一致）
         for (const auto& kv : vm_.getGlobals())

@@ -109,7 +109,8 @@ IdeController::IdeController(QObject* parent)
                 cacheList->emplace_front(condExpr, ast);
                 (*cacheLookup)[condExpr] = cacheList->begin();
             }
-            Interpreter tempInterp;
+            // F1 fix: 条件求值沙箱与常驻解释器并存，隔离 GC。
+            Interpreter tempInterp(Interpreter::GcTriggerPolicy::Isolated);
             auto env = std::make_shared<Environment>();
             // BUG-IDE-12 fix: 先注入全局变量，再注入当前帧局部变量（局部变量遮蔽同名全局）
             for (const auto& kv : stepptr->getGlobals()) {
@@ -389,7 +390,8 @@ std::string IdeController::runStringCaptureOutput(const std::string& source) {
         if (!ast || parser.hasErrors()) {
             return std::string("!ERROR: Parse error");
         }
-        Interpreter interp;
+        // F1 fix: 代码片段评分执行与常驻解释器并存，隔离 GC。
+        Interpreter interp(Interpreter::GcTriggerPolicy::Isolated);
         std::string captured;
         // R62-4 fix: 每个 print 语句的输出后追加换行，对齐 IDE 主输出面板
         // (QTextEdit::append) 的行为。此前回调仅拼接 raw text，多条 print
@@ -492,7 +494,8 @@ IdeController::WatchResult IdeController::evaluateWatchExpression(const std::str
         }
 
         // ---- 2. 创建临时 Interpreter + 注入变量 ----
-        Interpreter tempInterp;
+        // F1 fix: 观察表达式沙箱与常驻解释器并存，隔离 GC。
+        Interpreter tempInterp(Interpreter::GcTriggerPolicy::Isolated);
         auto env = std::make_shared<Environment>();
         if (vmMode) {
             // VM 模式：注入 VM globals + 所选帧 locals（局部变量遮蔽同名全局）
@@ -602,7 +605,8 @@ IdeController::WatchResult IdeController::evaluateDebuggerRepl(const std::string
         }
 
         // ---- 2. 创建临时 Interpreter + 注入变量（与 evaluateWatchExpression 一致）----
-        Interpreter tempInterp;
+        // F1 fix: 调试 REPL 沙箱与常驻解释器并存，隔离 GC。
+        Interpreter tempInterp(Interpreter::GcTriggerPolicy::Isolated);
         auto env = std::make_shared<Environment>();
         if (vmMode) {
             for (const auto& kv : vmStepper_.getGlobals()) {

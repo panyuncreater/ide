@@ -521,6 +521,11 @@ void ProfileDashboardPanel::runProfile(int scenarioIndex) {
     // 可能触发间接调用 runProfile，导致 lastResults_ 被覆盖、状态混乱。
     if (profiling_)
         return;
+    // F1 fix: 运行期拒绝面板执行——临时解释器与 Worker 并发会破坏 GC 根集/引擎状态。
+    if (controller_ && (controller_->isRunning() || controller_->isVmRunning())) {
+        statusLabel_->setText(QString::fromUtf8("程序正在运行，请先停止后再运行性能分析"));
+        return;
+    }
     profiling_ = true;
     const auto& scenario = items[scenarioIndex];
 

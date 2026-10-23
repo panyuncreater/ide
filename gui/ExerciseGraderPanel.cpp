@@ -13,6 +13,8 @@
 
 #include "gui/ExerciseGraderPanel.h"
 
+#include "app/IdeController.h" // F1 fix: 运行期守卫读取 isRunning/isVmRunning
+
 #include "common/BackendExecutionService.h" // ARCH-10: 后端执行服务中间层
 
 #include <QApplication>
@@ -459,6 +461,12 @@ void ExerciseGraderPanel::onSubmitGrade() {
     // 快速双击「提交评分」会触发重复评分与结果错乱。
     if (grading_)
         return;
+    // F1 fix: 运行期拒绝面板执行——临时解释器与 Worker 并发会破坏 GC 根集/引擎状态。
+    if (controller_ && (controller_->isRunning() || controller_->isVmRunning())) {
+        feedbackBrowser_->setHtml(
+            QString::fromUtf8("<p style='color:red;'>程序正在运行，请先停止后再提交评分。</p>"));
+        return;
+    }
     grading_ = true;
     // UX：评分期间禁用按钮 + 文案提示，避免误认为无响应
     const QString submitOrigText = submitBtn_ ? submitBtn_->text() : QString();

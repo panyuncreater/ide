@@ -68,7 +68,9 @@ inline std::optional<Value> tryEvaluate(const std::unordered_map<std::string, Fu
     }
 
     try {
-        Interpreter sandbox;
+        // F1 fix: 编译期沙箱与宿主解释器并存——隔离增量 GC，避免以不完整根集
+        // 执行 collectCycle 清空宿主存活容器（隔离期循环引用延后回收）。
+        Interpreter sandbox(Interpreter::GcTriggerPolicy::Isolated);
         bool impure = false;
         sandbox.setOutputCallback([&](const std::string&) { impure = true; });
         sandbox.setInputCallback([&](const std::string&) -> std::string {

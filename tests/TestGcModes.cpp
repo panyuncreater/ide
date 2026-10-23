@@ -19,6 +19,7 @@
 // 仅使用简单数组操作验证 GC 行为。
 // ============================================================
 #include "common/ThreeBackends.h"
+#include "common/BackendExecutionService.h"
 #include "interpreter/GcManager.h"
 #include "interpreter/Value.h"
 
@@ -272,4 +273,70 @@ TEST(GcModes, AllModes_GcStatsAvailable) {
     EXPECT_EQ(GcManager::instance().currentPhase(), GcPhase::Idle);
 
     GcManager::instance().setGcMode(GcMode::RefCountWithCycleGc);
+}
+
+// ============================================================
+// F1 回归（2026-10-23）：临时 Interpreter 的 GC 隔离
+// ============================================================
+
+// 面板服务内的临时解释器不得以自身不完整根集清空常驻解释器的存活容器。
+TEST(GcIsolation, ServiceTemporaryInterpreterKeepsResidentContainers) {
+    GcManager::instance().reset();
+    {
+        Interpreter resident;
+        Lexer lx;
+        auto tokens = lx.scan("var keep = [1, 2, 3];");
+        Parser parser;
+        auto ast = parser.parse(tokens);
+        ASSERT_TRUE(ast != nullptr);
+        ASSERT_FALSE(parser.hasErrors());
+        resident.executeRepl(*ast);
+
+        auto env = resident.getGlobalEnvironment();
+        ASSERT_TRUE(env != nullptr);
+        const Value* keepPtr = env->get("keep");
+        ASSERT_NE(keepPtr, nullptr);
+        ASSERT_TRUE(keepPtr->isArray());
+        EXPECT_EQ(keepPtr->arrayVal().size(), 3u);
+
+        auto result =
+            BackendExecutionService::execute("var tmp = [4, 5]; var n = tmp.len();", BackendType::Interpreter);
+        EXPECT_TRUE(result.success) << result.errorPrefix << ": " << result.errorMsg;
+        EXPECT_EQ(keepPtr->arrayVal().size(), 3u)
+            << "临时 Interpreter 的入口 collectCycle 不得清空常驻解释器持有的容器";
+    }
+    GcManager::instance().reset();
+}
+
+// 临时解释器析构后，常驻解释器的增量 GC 触发回调仍须有效（不被抢占/清除）。
+TEST(GcIsolation, ResidentIncrementalGcCallbackSurvivesTemporaryInterpreter) {
+    GcManager::instance().reset();
+    GcManager::instance().setGcAllocationThreshold(1);
+    {
+        Interpreter resident;
+        auto runRepl = [&](const char* src) {
+            Lexer lx;
+            auto tokens = lx.scan(src);
+            Parser parser;
+            auto ast = parser.parse(tokens);
+            ASSERT_TRUE(ast != nullptr);
+            resident.executeRepl(*ast);
+        };
+        runRepl("var a = [1];");
+        const size_t afterFirst = GcManager::instance().totalGcCount();
+        ASSERT_GE(afterFirst, 1u);
+        {
+            Interpreter temp(Interpreter::GcTriggerPolicy::Isolated);
+            Lexer lx;
+            auto tokens = lx.scan("var b = [2];");
+            Parser parser;
+            auto ast = parser.parse(tokens);
+            ASSERT_TRUE(ast != nullptr);
+            temp.executeRepl(*ast);
+        }
+        runRepl("var c = [3];");
+        EXPECT_GT(GcManager::instance().totalGcCount(), afterFirst)
+            << "临时解释器析构后，常驻解释器的增量 GC 回调应仍有效";
+    }
+    GcManager::instance().reset();
 }

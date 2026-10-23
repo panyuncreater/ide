@@ -11,6 +11,8 @@
 // ============================================================
 
 #include "gui/CoroutineVisualizerPanel.h"
+
+#include "app/IdeController.h" // F1 fix: 运行期守卫读取 isRunning/isVmRunning
 #include "gui/GuidedTour.h"
 
 #include "common/BackendExecutionService.h" // ARCH-10: 后端执行服务中间层
@@ -223,6 +225,12 @@ CoroutineVisualizerPanel::CoroutineVisualizerPanel(QWidget* parent) : QWidget(pa
 /// 运行三后端：串行执行 Interpreter / StackVM(IR) / RegisterVM(IR)，
 /// 渲染表格行与执行轨迹，并检查协程输出一致性。
 void CoroutineVisualizerPanel::onRunAllBackends() {
+    // F1 fix: 运行期拒绝面板执行——临时解释器与 Worker 并发会破坏 GC 根集/引擎状态。
+    if (controller_ && (controller_->isRunning() || controller_->isVmRunning())) {
+        consistencyLabel_->setText(mlTr("程序正在运行，请先停止后再执行协程面板任务"));
+        consistencyLabel_->setStyleSheet(QStringLiteral("color:#C0392B;"));
+        return;
+    }
     std::string src = sourceEdit_->text().toStdString();
     if (src.empty()) {
         consistencyLabel_->setText(mlTr("❌ 源码为空，请输入 MiniLang 协程源码"));

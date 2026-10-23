@@ -105,7 +105,18 @@ struct EnumInfo {
 /// 访问者模式解释执行器
 class Interpreter : public Visitor, public IBackend {
 public:
-    Interpreter();
+    /// 增量 GC 集成策略。
+    /// Managed：注册 GcManager 触发回调，参与全量 sweep 根集（常驻解释器）。
+    /// Isolated：临时沙箱实例（教学面板执行、调试求值等）——不注册/不触发 GC，
+    ///   且生命周期内持有 CallbackSuppressor 抑制进程级增量触发，避免以自身不完整
+    ///   根集 sweep 常驻解释器的存活容器，或反之被对方以不完整根集误回收。
+    ///   约束：Isolated 生命周期内不得构造新的 Managed Interpreter（抑制器析构恢复
+    ///   会覆盖后者的注册），也不得活过被抑制回调的 Managed 实例（会恢复悬垂回调）；
+    ///   当前接入点均为随宿主存续的叶子沙箱，无嵌套。
+    ///   代价：隔离期间产生的循环引用延后至下一次 Managed collectCycle 回收。
+    enum class GcTriggerPolicy { Managed, Isolated };
+
+    explicit Interpreter(GcTriggerPolicy gcPolicy = GcTriggerPolicy::Managed);
     ~Interpreter();
 
     /// ARCH-09 fix: IBackend 实现 — 后端名称
@@ -382,6 +393,11 @@ private:
     static constexpr int MAX_RECURSION_DEPTH = RuntimeLimits::MAX_RECURSION_DEPTH;
     static constexpr int MAX_INHERITANCE_DEPTH = RuntimeLimits::MAX_INHERITANCE_DEPTH;
     static constexpr int64_t MAX_LOOP_ITERATIONS = RuntimeLimits::MAX_LOOP_ITERATIONS;
+
+    // F1 fix: GC 集成策略与隔离守卫。声明在最先——析构时最后释放，
+    // 保证本实例所有堆 Value 析构完毕后才恢复进程级 gcTriggerCallback_。
+    GcTriggerPolicy gcPolicy_ = GcTriggerPolicy::Managed;
+    std::unique_ptr<GcManager::CallbackSuppressor> gcIsolation_;
 
     std::shared_ptr<Environment> globalEnv_;  // 全局环境
     std::shared_ptr<Environment> currentEnv_; // 当前环境

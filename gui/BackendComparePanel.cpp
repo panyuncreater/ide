@@ -74,6 +74,11 @@ void BackendComparePanel::runComparison() {
         diffLabel_->setText(QString::fromUtf8("未绑定控制器"));
         return;
     }
+    // F1 fix: 运行期拒绝面板执行——临时解释器与 Worker 并发会破坏 GC 根集/引擎状态。
+    if (controller_->isRunning() || controller_->isVmRunning()) {
+        diffLabel_->setText(QString::fromUtf8("程序正在运行，请先停止后再执行对比"));
+        return;
+    }
     // R51-1 fix: 重入守卫——processEvents 期间可能有其他代码路径触发 runComparison，
     // comparing_ 三段式（入口检查 + 置位 + 出口恢复）防止三后端被并发执行。
     if (comparing_) {

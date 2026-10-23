@@ -11,6 +11,8 @@
 
 #include "gui/PerformanceRacePanel.h"
 
+#include "app/IdeController.h" // F1 fix: 运行期守卫读取 isRunning/isVmRunning
+
 #include "common/BackendExecutionService.h" // ARCH-10: 后端执行服务中间层
 
 #include <QApplication>
@@ -197,6 +199,12 @@ PerformanceRacePanel::PerformanceRacePanel(QWidget* parent) : QWidget(parent) {
 /// 开始竞赛：对三后端各运行 N 次，汇总平均/最小/最大耗时，渲染表格、
 /// 柱状图、分析报告与一致性标签。三后端在主线程串行执行。
 void PerformanceRacePanel::onRunRace() {
+    // F1 fix: 运行期拒绝面板执行——临时解释器与 Worker 并发会破坏 GC 根集/引擎状态。
+    if (controller_ && (controller_->isRunning() || controller_->isVmRunning())) {
+        consistencyLabel_->setText(QString::fromUtf8("❌ 程序正在运行，请先停止后再开始竞赛"));
+        consistencyLabel_->setStyleSheet(QStringLiteral("color:#C0392B;"));
+        return;
+    }
     std::string src = sourceEdit_->text().toStdString();
     if (src.empty()) {
         consistencyLabel_->setText(QString::fromUtf8("❌ 源码为空，请输入 MiniLang 源码"));

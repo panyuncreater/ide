@@ -503,6 +503,11 @@ void BugHuntPanel::onRunVerify() {
     // AUDIT-P2 fix: 防重复守卫——快速双击会触发两次完整 Lexer→Parser→VM 链
     if (verifying_)
         return;
+    // F1 fix: 运行期拒绝面板执行——临时解释器与 Worker 并发会破坏 GC 根集/引擎状态。
+    if (controller_ && (controller_->isRunning() || controller_->isVmRunning())) {
+        statusLabel_->setText(mlTr("程序正在运行，请先停止后再验证"));
+        return;
+    }
     if (currentItemIndex_ < 0) {
         statusLabel_->setText(mlTr("请先选择题目"));
         return;
@@ -695,6 +700,11 @@ void BugHuntPanel::onTripleVerify() {
     // AUDIT-P2 fix: 防重复守卫——三后端验证执行 3 条串行链，快速双击触发 6 次执行
     if (tripleVerifying_)
         return;
+    // F1 fix: 运行期拒绝面板执行——临时解释器与 Worker 并发会破坏 GC 根集/引擎状态。
+    if (controller_ && (controller_->isRunning() || controller_->isVmRunning())) {
+        statusLabel_->setText(mlTr("程序正在运行，请先停止后再执行三后端验证"));
+        return;
+    }
     // 变体模式下验证当前变体；标准模式下验证当前题目
     if (variantMode_) {
         if (currentVariantIndex_ < 0) {
