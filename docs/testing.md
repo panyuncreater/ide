@@ -176,9 +176,7 @@ test_harness 使用独立的 DebugController stub，不依赖 Qt Widgets，通�
 
 ## 测试统计
 
-项目当前包含 **113 个测试 .cpp 文件**，`minilang_tests` 目标总计 **4069 个测试用例 / 511 个测试套件**（`--gtest_list_tests` 计数），全量 ctest（含 minilang_app_tests / minilang_gui_smoke / minilang_perf_test）共 **4160 个测试全部通过**（截至 2026-10-22）。测试覆盖多后端语义一致性、新语言特性（运算符重载、宏模板、trait/mixin、async/await、`?` 错误传播、泛型擦除与显式类型实参、插件/沙箱/C API）、教学面板数据完整性、前端组件、IR 优化（含 SSA 基础设施）、调试器（含 DAP pause 同步暂停 + Interpreter 状态回滚）、JIT、模块系统、并发原语、TCO 尾调用优化、try/catch 异常捕获等全部核心模块。
-
----
+计数是易漂移事实：以 `ctest --test-dir out/build/debug -N` 与 `minilang_tests --gtest_list_tests` 为准；快照与刷新命令见 [docs/generated/test-inventory.md](generated/test-inventory.md)。本文件不复制数字。
 
 ## 测试编写指南
 
@@ -247,18 +245,11 @@ TEST(TeachingPanelsXxx, IdUnique) {
 
 ## 已知限制
 
-1. **槽位复用**：兄弟作用域的局部变量复用同一栈槽时，slot→name 映射中后声明的变量名覆盖先前的
-2. **IR 优化与栈式 VM**：复制传播和 CSE 在栈式 VM 后端默认禁用，因为与栈操作语义冲突
-3. **Ninja 依赖追踪**：修改 `Bytecode.h` 等核心头文件的符号签名（含追加默认参数）后，unity batch 可能残留 stale obj 导致 LNK2019/LNK1120。处置：运行 `scripts/fix_stale_objs.bat`（定向删除四个核心子库 obj + minilang_core.lib，无需全量重建）；`scripts/build.bat` 与 `scripts/run_tests.bat` 已内置链接失败自动清理+重试一次
-4. **测试污染**（已澄清，2026-07-25 P3-A6）：原以为是模块缓存污染，CHANGELOG 2026-07-24 条目确认实际是 `build_debug` 目录 stale binary 假失败，重新构建后通过。但审查发现 `Compiler::compileViaIR` 的状态重置不完整（缺 `moduleLoadingStack_` / `moduleExports_` 清理），与 `compileViaRegisterIR` 的 P2-B fix 不对称——P3-A6 已补齐该缺陷，三路径状态重置一致
-5. **VM 闭包 upvalue 解析缺口**（已修复，2026-07-24 W3-2-Bug）：原 StackVM/IR/RegisterVM 路径的两个 upvalue 缺口已修复——(a) 闭包内对捕获变量执行方法调用链（`b.data.push(4)`）的 upvalue 接收者写回；(b) 函数内定义的类方法捕获外层函数变量。修复方案：Compiler `emitMethodCallWriteback`/`visitMemberAssign`/`visitIndexAssign` 对 upvalue 基变量发射 `OP_WRITEBACK_MEMBER_UPVALUE`/`OP_WRITEBACK_INDEX_UPVALUE`；`emitMethodBody` 存储 upvalue 描述符，VM `OP_DEFINE_CLASS` 与 RegisterVM `REG_DEFINE_CLASS` 执行 `captureMethodUpvalues` 为有 upvalue 的方法创建 `VMClosureData`。详见 CHANGELOG.md W3-2-Bug 条目
-6. **闭包关闭后的快照语义**（AUDIT-R5 R2，已核实为三后端一致）：闭包返回/逃逸定义作用域后（只能经数组索引 `cs[0]()` 调用，因全局闭包变量调用 `var c=f(); c()` 不被 VM/IR 支持），**三后端均为快照语义**：多个闭包共享同一被捕获变量时，关闭后经一个闭包的写入不会对另一个闭包可见（Interpreter/StackVM/RegisterVM 均输出初值快照 `0`）。与 Lua/JS/Python 的共享闭包语义不同，但**三后端一致**——项目核心不变量是三后端一致而非匹配特定主流语言。（注：AUDIT-R5 初版曾误认为“Interpreter 快照 vs VM 共享”；实测推翻——该可运行模式下三后端本就一致（均 `0`），若将 Interpreter 单边改为共享（得 `2`）反而破坏一致性。由 `ConsistencyDiff.AuditUpvalue_R2_MultiClosureSharedCounterAfterClose` 回归锁。若今后需对齐 Lua/JS 共享语义，需**三后端同步**引入真共享 upvalue cell，属架构级改动。）
-7. **可变导出量的导入可见性差异**（AUDIT-R5 R5，已修复）：历史上 Interpreter 将导出值按值拷贝进导入方环境（快照语义），而 VM/IR 将模块内联编译进主程序、导出名直接共享同一全局槽（共享/实时语义）——实测确认三后端不一致：模块导出整型变量 `counter` 和修改它的函数 `inc`，主程序导入两者后调 `inc` 再打印 `counter`，Interpreter 输出导入时旧值 `0`，而 StackVM/StackVM-IR/RegisterVM-IR 输出修改后新值 `2`。**已统一到 Interpreter 基准（快照语义）**：VM/IR 在模块内联后记录导出「可变变量」的模块槽位并 `detachName` 释放其名称（`common` 之外的 `GlobalSlotAllocator::detachName`），导入方另分配新槽位并在导入点 emit `OP_GET_GLOBAL(模块槽)+OP_DEFINE_GLOBAL(新槽)` 拷贝快照（IR 路径同时更新 `varMap_`）；模块内部引用按槽位索引固化不受影响，模块内变异不再经导入方名称可见。**快照仅适用于变量导出**——函数/类导出经名称解析（`functionChunks_`/类注册），不拷贝不 detach（否则类实例化 `OP_CLASS_NEW`/函数调用会因 varMap_ 重定向而损坏），且函数/类不被重新赋值，共享与快照观测等价。命名空间导入（`import * as`）本就是快照字典，三后端一致。由 `VME2EImportSnapshot.*`（4 后端配置回归锁）守护。残余：循环导入的可变变量（未 detach，保持共享）与预编译 `.minic` 模块（无 AST 类别信息，变量集为空→快照无操作，保持共享）——均为极边缘/IDE 专用场景，且现有测试未覆盖该可观差异。
-8. **模块路径规范化与大小写去重**（AUDIT-R5 R6/BUG-M4/M5，已修复）：连续斜杠/`./`/`/./` 规范化已统一到 `common/ModulePath.h::normalizeModulePathKey` 单一事实源（Interpreter/Compiler/AstIRBuilder/pathHash/clearModuleCache 五处共用），修复 `a//b` 与 `a/b` 双重加载（BUG-M5）。大小写去重（BUG-M4）通过分离“缓存去重键”与“loader 请求路径”修复：`moduleCacheKey`（Windows 上 ASCII 小写折叠）作所有缓存/去重 map 键与 `pathHash` 输入，`normalizeModulePathKey`（保留大小写）供 `moduleLoader_`/`mtimeChecker`/预编译解析器。三后端（Interpreter/StackVM/RegisterVM）均已分离两个字段：Windows 上同一文件的不同大小写拼写去重为同一模块（避免双重加载），而大小写敏感的 loader（测试用 `std::unordered_map`、Linux/macOS 文件系统）仍收到原大小写路径。由 `VME2EImport.CaseInsensitiveDedupOnWindows`（Windows guarded）回归锁。
-9. **finally 内 break/continue 与待处理异常的交互**（AUDIT-R6 实证确认，**已修复** AUDIT-R6 B1）：原三后端行为均不正确且互不一致——Interpreter：异常继续传播且 break 标志残留，外层 catch 被截断；StackVM 非-IR：每轮泄漏异常值至“栈溢出”；IR 路径：finally 自链死循环。现已统一为 Java 式“finally 的控制流转移丢弃待处理异常/return”：Interpreter 在异常路径 runFinallyBlock 后若 loopFlow_ 被置位则吞掉异常；两个编译器的 emitFinallyBlock 在发射 finally 体期间暂时弹出自身 tryFinallyStack_ 条目（消除自链），异常副本用唯一临时全局暂存异常值（break 跳出时跳过 reload+rethrow 即丢弃，且无栈残留）。由 `AuditR6FinallyAbrupt` 套件 5 个四路径回归锁。**AUDIT-R7 F1 补充修复**：原残余限制①（“abrupt 替换 abrupt”时 pendingJumpStack_ 残留陈旧续跳目标）已实证为 P0（`try{break}finally{return}` 致 StackVM 常量池索引越界、RegisterVM 寄存器越界 C++ 异常逃逸宿主）并修复：三 VM + JIT 的 pendingJumpStack_ 条目附带 frameIndex（仿 tryStack_），FINALLY_END 只消费本帧条目、惰性丢弃已返回深帧残留、不碰更浅帧在途目标（同时修复 finally 体内调用含 try-finally 函数时被调函数误弹调用方目标的场景）。由 `AuditR7Regression.AbruptReplaceAbruptNoStaleJumpTarget` 与 `CalleeFinallyDoesNotStealCallerJumpTarget` 四路径回归锁。**残余窄化限制（P2）**：同帧内“abrupt 替换 abrupt”（如 `while{try{break}finally{continue}}`）仍可能残留同帧条目；递归中同一 try 站点 finally 体重入时异常暂存临时全局可能被内层覆盖。均为反模式叠加边角，优先级低。
-10. **Interpreter 无 TCO（尾调用优化）**（AUDIT-R7 确认的已知设计差异，**已修复 B1 2026-07-28**）：原深尾递归（`return f(n-1)` 形态）在三条 VM 路径经 TCO 帧复用恒定栈深完成，而 Interpreter 无帧复用机制，超过 256 层报“递归深度超过限制”。**B1 修复**：Interpreter 在 `visitReturnStmt` 引入蹦床（trampoline）——识别自尾调用（与 VM 共享 `TCO::identifyTailCall` 单一事实源）后抛 `TailCallSignal`，由 `callNamedFunction`/`invokeMethod` 的蹦床循环捕获并帧复用执行，SelfFunction/SelfMethod 均支持，四后端深尾递归行为一致。安全不变量：① 仅蹦床调用点启用上下文，init/生成器/闭包变量/高阶回调执行点显式禁用（信号不跨边界逃逸）；② try/catch/finally 内不 TCO（finally 语义保留，与 VM tryDepth 判据一致）；③ 运行时重绑定校验（名称遮蔽回退普通调用；子类 override 保持虚分派）。**连带修复 B1-Shadow（P1）**：三条 VM 路径编译期 TCO 判据缺少“函数名被局部变量遮蔽”检查（`fun f(n){ var f = other; return f(x); }` 被误判自递归 → 死循环至指令预算耗尽），Compiler 用 `currentLocals_`、AstIRBuilder 用 `varMap_` Kind::LOCAL 检查后回退普通调用。由 `InterpreterTCO.*`（13 个四后端用例）与更新后的 `TCOBasic/TCOApplied` 回归锁。
-
----
+1. **槽位复用**：兄弟作用域的局部变量复用同一栈槽时，slot→name 映射中后声明的变量名覆盖先前的。
+2. **栈式 VM 优化默认禁用**：复制传播与 CSE 在栈式 VM 后端与栈操作语义冲突；DCE 经 `isPureCompute` 守卫安全启用。见 [rejected-decisions](specs/rejected-decisions.md) R-15。
+3. **Ninja 陈旧 unity obj**：核心头文件变更后可能出现 LNK2019/LNK1120；处置见 [getting-started](getting-started.md)「构建问题排查」。
+4. **闭包快照语义**：作用域关闭后各闭包持有独立 capturedVars（三后端一致）；若要改为共享单元格，需三后端同步的架构级 ADR。见 R-08。
+5. **残余边角**：finally 同帧 abrupt 替换、循环导入/预编译模块可变导出共享，见 [BACKLOG](BACKLOG.md) B-008 与 R-14。
 
 ## 覆盖率基线与提升路线图
 

@@ -3,7 +3,6 @@
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-blue)
 ![Qt6](https://img.shields.io/badge/Qt-6-green)
 ![Build](https://img.shields.io/badge/build-passing-brightgreen)
-![Tests](https://img.shields.io/badge/tests-4109-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 一个用 C++20 / Qt6 构建的轻量级教学型编程语言集成开发环境。通过从零实现一门完整编程语言（词法分析 → 解析 → 解释/编译 → 虚拟机）来教授编译原理与运行时设计的核心概念。
@@ -105,7 +104,7 @@ try {
 | `cli/` | 命令行工具（10 个）：minilang-fmt/lint/coverage/doc/fuzz/lsp/dap/pkg/compile + minilang 统一子命令入口 |
 | `capi/` | 嵌入式 C API（minilang_capi 静态库，稳定 C ABI：eval/沙箱/宿主函数注册/插件加载） |
 | `editors/vscode/` | VS Code 扩展（语法高亮 + LSP 客户端 + DAP 调试器） |
-| `tests/` | GoogleTest 单元测试（全量 4109 个，其中 minilang_tests 4029 个 / 507 套件） |
+| `tests/` | GoogleTest 单元测试（计数见 [`docs/generated/test-inventory.md`](docs/generated/test-inventory.md)） |
 | `docs/` | 架构文档、开发指南、设计决策记录 |
 
 ## 测试
@@ -121,7 +120,7 @@ try {
 cd out/build/debug && ctest -R LexerTest.* --verbose
 ```
 
-项目包含 **4160 个 GoogleTest 测试**（minilang_tests 4069 个 / 511 套件 + App 编排层 / GUI 冒烟 / 性能基准），覆盖前端（Lexer/Parser）、解释器、编译器与虚拟机、IR 中间层（含 SSA 基础设施）、四后端一致性（Interpreter/StackVM/RegisterVM/JIT，含 JIT try/catch/throw 异常处理、try/catch 捕获 runtimeError、TCO 尾调用优化、enum variant 校验、match 无 default 抛异常、break/continue 循环外报错、循环导入延迟加载、spawn 异常传播、泛型复合注解擦除）、新语言特性（运算符重载、宏模板、trait/mixin、async/await、`?` 错误传播、泛型显式类型实参、插件/沙箱/C API）、格式化器、LSP 语言服务器、DAP 调试适配器（含 pause 同步暂停）、包管理器（含 SemVer 版本约束 + 传递依赖）、教学面板数据完整性、教学面板 GUI 交互级 E2E（边界选择/按钮幂等/跨面板定时器隔离）、反向调试状态回滚、IR lowering 栈平衡校验器、Formatter 往返 AST 等价（samples/mini 数据驱动）、fuzz 语料（异常/继承/字典三类）等。覆盖率门槛 75%（Windows OpenCppCoverage + Linux gcovr）。
+测试清单与计数见 [`docs/generated/test-inventory.md`](docs/generated/test-inventory.md)。测试覆盖前端（Lexer/Parser）、解释器、编译器与虚拟机、IR 中间层（含 SSA 基础设施）、四后端一致性（Interpreter/StackVM/RegisterVM/JIT，含 JIT try/catch/throw 异常处理、try/catch 捕获 runtimeError、TCO 尾调用优化、enum variant 校验、match 无 default 抛异常、break/continue 循环外报错、循环导入延迟加载、spawn 异常传播、泛型复合注解擦除）、新语言特性（运算符重载、宏模板、trait/mixin、async/await、`?` 错误传播、泛型显式类型实参、插件/沙箱/C API）、格式化器、LSP 语言服务器、DAP 调试适配器（含 pause 同步暂停）、包管理器（含 SemVer 版本约束 + 传递依赖）、教学面板数据完整性、教学面板 GUI 交互级 E2E（边界选择/按钮幂等/跨面板定时器隔离）、反向调试状态回滚、IR lowering 栈平衡校验器、Formatter 往返 AST 等价（samples/mini 数据驱动）、fuzz 语料（异常/继承/字典三类）等。覆盖率门槛 75%（Windows OpenCppCoverage + Linux gcovr）。
 
 ## 文档
 

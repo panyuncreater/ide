@@ -215,7 +215,7 @@ cmake --build out/build/debug --target minilang_tests docs
 # 方式 2：通过 CTest（可筛选）
 cd out/build/debug
 ctest                                  # 运行全部
-ctest -j 10                            # 并行运行全部（4100+ 用例约 100s，串行 20 分钟+）
+ctest -j 10                            # 并行运行全部用例（约 100s，串行 20 分钟+）
 ctest -R LexerTest.* --verbose         # 筛选指定套件
 ctest -R "VME2E\..*" --output-on-failure
 ```
