@@ -1,6 +1,7 @@
 # 轮末知识维护仪式（ROUND-END）
 
 > 每个工作轮结束前执行；5 分钟内完成。目的是让下一轮从“权威 + 待办”开工，而不是从历史叙事里考古。
+> 每次改动先走 `CHANGE-PROTOCOL.md`；本文件只做轮末聚合检查。
 
 ## 1. 五步清单
 
@@ -20,7 +21,7 @@
    - 评估后不实施：进 `docs/specs/rejected-decisions.md`，必须带重启条件。
 5. **跑门禁**
    - `python docs/knowledge/tools/knowledge_lint.py`
-   - 可选硬门禁：`cp docs/knowledge/tools/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit`（仅本地，不改 CI）。
+   - 安装本地钩子：`cp docs/knowledge/tools/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit`；`cp docs/knowledge/tools/commit-msg .git/hooks/commit-msg && chmod +x .git/hooks/commit-msg`（仅本地，不改 CI）。
    - 代码有改动时按 `AGENTS.md` §6 构建 + 全量 ctest；未通过不进入下一轮。
 
 ## 2. 强制蒸馏触发条件（满足任一）
@@ -43,5 +44,6 @@
 - [ ] CHANGELOG 有本轮用户可见变更（纯文档轮可省略）
 - [ ] 新审计报告为独立文件，旧报告未被追加
 - [ ] 语义变更已同步 spec/ADR，旧规则已删除
+- [ ] 每个提交带 `Knowledge-Impact` 尾注，且映射文件已入库
 - [ ] `knowledge_lint.py` 通过
 - [ ] 代码改动已通过构建 + 全量 ctest

@@ -15,6 +15,7 @@
 | 缺陷模式与审计入口 | `docs/specs/defect-taxonomy.md` | `AGENTS.md` §1/§4、bughunt skill | CHANGELOG |
 | 已否决方案与重启条件 | `docs/specs/rejected-decisions.md` | `docs/BACKLOG.md`（只引用 ID） | CHANGELOG |
 | 开放缺陷/阻塞/优化候选 | `docs/BACKLOG.md` | 审计报告（只引用 ID） | 任何其他“剩余清单” |
+| 单次改动的经验归宿 | `docs/knowledge/CHANGE-PROTOCOL.md` | `AGENTS.md` §5/§7、commit-msg hook | 任何“先记着以后整理”的暂存 |
 | 构建命令与验证标准 | `AGENTS.md` §6 | `minilang-build` skill | development、FAQ |
 | 构建排错与环境差异 | `docs/getting-started.md`、`docs/faq.md` | `AGENTS.md` §6（链接） | skill（只写步骤） |
 | 测试策略与矩阵 | `docs/testing.md` | `minilang-diffcheck` skill | README |
@@ -43,9 +44,11 @@
 5. **只发生一次** → `CHANGELOG.md`/审计报告；不升级。
 6. **重复 ≥2 次 / 曾致 P0/P1 / 改变不变量** → 升级为 spec 规则或 taxonomy 条目，并配可执行检查。
 7. **被取代/证伪/评估后不实施** → 删除（git 保留）或进 `rejected-decisions.md`。
+8. **每次改动** → 按 `CHANGE-PROTOCOL.md` 判定归宿并写 `Knowledge-Impact` 尾注；无影响也必须显式 `none`。
 
 ## 4. 退役规则
 
 - 被取代的规则直接删除，禁止保留“已废弃但供参考”段落；git 与 CHANGELOG 保留历史。
 - 同一事实第三次出现在不同文件时，必须合并到权威源并删除副本。
 - 指针必须可解析；失效路径由 `docs/knowledge/tools/knowledge_lint.py` 检出。
+- **硬上限**：AGENTS 10 条不变量、taxonomy 20 类、rejected 25 条、BACKLOG 40 行；到顶必须先退役/合并，lint 阻断超限。

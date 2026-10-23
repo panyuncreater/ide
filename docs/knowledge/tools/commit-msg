@@ -1,0 +1,47 @@
+#!/bin/sh
+# 微蒸馏提交门禁：校验 Knowledge-Impact 尾注与暂存文件匹配。
+# 安装：cp docs/knowledge/tools/commit-msg .git/hooks/commit-msg && chmod +x .git/hooks/commit-msg
+# 规则：docs/knowledge/CHANGE-PROTOCOL.md
+
+msg_file="$1"
+[ -n "$msg_file" ] || exit 0
+
+impact=$(sed -n 's/^Knowledge-Impact:[[:space:]]*\([a-z][a-z-]*\).*$/\1/p' "$msg_file" | tail -n 1)
+
+if [ -z "$impact" ]; then
+    cat <<'EOF'
+[knowledge] 提交信息缺少 Knowledge-Impact 尾注。
+先按 docs/knowledge/CHANGE-PROTOCOL.md 归位，然后在提交信息末尾加：
+  Knowledge-Impact: spec|adr|taxonomy|rejected|backlog|changelog|knowledge|none
+EOF
+    exit 1
+fi
+
+case "$impact" in
+    spec|adr|taxonomy|rejected|backlog|changelog|knowledge|none) ;;
+    *)
+        echo "[knowledge] 非法的 Knowledge-Impact 值：$impact"
+        exit 1
+        ;;
+esac
+
+staged=$(git diff --cached --name-only)
+[ -n "$staged" ] || exit 0
+
+case "$impact" in
+    none) exit 0 ;;
+    spec) need='^docs/(specs|adr)/' ;;
+    taxonomy) need='^docs/specs/defect-taxonomy\.md$' ;;
+    rejected) need='^docs/specs/rejected-decisions\.md$' ;;
+    backlog) need='^docs/BACKLOG\.md$' ;;
+    changelog) need='^CHANGELOG\.md$' ;;
+    knowledge) need='^(AGENTS\.md|docs/knowledge/)' ;;
+esac
+
+if ! printf '%s\n' "$staged" | grep -Eq "$need"; then
+    echo "[knowledge] Knowledge-Impact: $impact，但暂存文件不匹配（需要 $need）"
+    echo "要么补上对应文件，要么改成实际的知识归宿。"
+    exit 1
+fi
+
+exit 0

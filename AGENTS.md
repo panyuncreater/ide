@@ -61,6 +61,7 @@
 
 - 审计流程、输出格式、回归锁定以 `minilang-bughunt` 为流程权威；本文件只规定结果。
 - 每次修复交付必须含：①Bug 报告（位置/严重性/类型/复现/根因/修复建议）②最小化修复 ③构建 + 测试结果 ④经验落点（无 / spec §X / BACKLOG ID / ADR）。
+- 提交信息必须带 `Knowledge-Impact:` 尾注；每条改动先按 `docs/knowledge/CHANGE-PROTOCOL.md` 归位。
 - 仅审计未修复时交付纯报告；报告中的开放项只写 BACKLOG ID。
 
 ## 6. 构建与验证
@@ -85,5 +86,6 @@ ctest --test-dir out/build/debug --output-on-failure
 4. **预算**：AGENTS ≤ 8 KB / 120 行；spec ≤ 160 行；skill ≤ 150 行；BACKLOG ≤ 200 行。超限先拆分或退役。
 5. **升级门槛**：单次事件只进 CHANGELOG；只有“复发 ≥2 次 / 曾致 P0/P1 / 改变不变量”才升级为 spec 规则，且必须配回归测试、编译期断言或脚本检查。
 6. **触碰即修**：发现文档与代码不符，在同一次提交内修正或删除，禁止追加剧中注记。
-7. **轮末仪式**：按 `docs/knowledge/ROUND-END.md` 执行；每 5 轮或 AGENTS 超预算或发生 P0/P1，强制先蒸馏再开工。
-8. **记忆边界**：项目事实不进 auto-memory；只存用户偏好与外部入口。
+7. **每次改动即微蒸馏**：改完即按 `docs/knowledge/CHANGE-PROTOCOL.md` 判定归宿、跑 lint、写尾注；禁止把经验暂存到轮末。
+8. **轮末仪式**：按 `docs/knowledge/ROUND-END.md` 执行；每 5 轮或 AGENTS 超预算或发生 P0/P1，强制先蒸馏再开工。
+9. **记忆边界**：项目事实不进 auto-memory；只存用户偏好与外部入口。

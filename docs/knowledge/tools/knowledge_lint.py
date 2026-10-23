@@ -30,6 +30,7 @@ LIVE = [
     "docs/BACKLOG.md",
     "docs/knowledge/INDEX.md",
     "docs/knowledge/ROUND-END.md",
+    "docs/knowledge/CHANGE-PROTOCOL.md",
 ]
 
 SKILLS = sorted(str(p.relative_to(ROOT)).replace("\\", "/") for p in ROOT.glob(".qoder/skills/*/SKILL.md"))
@@ -41,6 +42,8 @@ REQUIRED = [
     "docs/specs/rejected-decisions.md",
     "docs/knowledge/INDEX.md",
     "docs/knowledge/ROUND-END.md",
+    "docs/knowledge/CHANGE-PROTOCOL.md",
+    "docs/knowledge/tools/commit-msg",
     "docs/generated/test-inventory.md",
 ]
 
@@ -54,8 +57,18 @@ BUDGETS = {
     "docs/specs/rejected-decisions.md": (None, 160),
     "docs/knowledge/INDEX.md": (None, 160),
     "docs/knowledge/ROUND-END.md": (None, 160),
+    "docs/knowledge/CHANGE-PROTOCOL.md": (None, 160),
 }
 SKILL_LINE_BUDGET = 150
+WARN_RATIO = 0.95
+
+# 反叠加硬上限：到顶必须先退役/合并
+CAPS = {
+    "agents_invariants": 10,
+    "taxonomy": 20,
+    "rejected": 25,
+    "backlog": 40,
+}
 
 AGENTS_BANNED = [
     (re.compile(r"\b20\d{2}-\d{2}-\d{2}\b"), "L0 禁止日期"),
@@ -118,13 +131,19 @@ def check_budgets() -> None:
         lines = raw.decode("utf-8", errors="replace").count("\n") + 1
         if byte_limit is not None and len(raw) > byte_limit:
             add_error("budget", f"{rel}: {len(raw)} 字节 > {byte_limit}")
+        elif byte_limit is not None and len(raw) >= byte_limit * WARN_RATIO:
+            add_warning("budget", f"{rel}: {len(raw)}/{byte_limit} 字节，接近上限")
         if line_limit is not None and lines > line_limit:
             add_error("budget", f"{rel}: {lines} 行 > {line_limit}")
+        elif line_limit is not None and lines >= line_limit * WARN_RATIO:
+            add_warning("budget", f"{rel}: {lines}/{line_limit} 行，接近上限")
     for rel in SKILLS:
         p = ROOT / rel
         lines = p.read_text(encoding="utf-8", errors="replace").count("\n") + 1
         if lines > SKILL_LINE_BUDGET:
             add_error("budget", f"{rel}: {lines} 行 > {SKILL_LINE_BUDGET}")
+        elif lines >= SKILL_LINE_BUDGET * WARN_RATIO:
+            add_warning("budget", f"{rel}: {lines}/{SKILL_LINE_BUDGET} 行，接近上限")
 
 
 def check_agents() -> None:
@@ -138,6 +157,8 @@ def check_agents() -> None:
             add_error("history", f"{rel}: {label}：`{m.group(0)}`")
     if "## 8. 变更记录" in text or "## 7. 记忆归档" in text:
         add_error("history", f"{rel}: 仍含已退役章节（变更记录/记忆归档）")
+    if "CHANGE-PROTOCOL.md" not in text:
+        add_error("protocol", f"{rel}: 未链接 docs/knowledge/CHANGE-PROTOCOL.md")
 
 
 def check_count_sources() -> None:
@@ -228,6 +249,51 @@ def check_backlog() -> None:
             add_error("backlog", f"{rel}:{lineno}: 证据/下一步不得为空")
 
 
+def check_caps() -> None:
+    labels = {
+        "agents_invariants": "AGENTS 不变量",
+        "taxonomy": "taxonomy 条目",
+        "rejected": "rejected 条目",
+        "backlog": "BACKLOG 行",
+    }
+    counts = {
+        "agents_invariants": 0,
+        "taxonomy": len(re.findall(r"^## K\d+", read("docs/specs/defect-taxonomy.md"), re.M)),
+        "rejected": len(re.findall(r"^\| R-\d+", read("docs/specs/rejected-decisions.md"), re.M)),
+        "backlog": len(re.findall(r"^\| (?:B|OPT)-\d+", read("docs/BACKLOG.md"), re.M)),
+    }
+    m = re.search(r"\n## 3\.[^\n]*\n(.*?)\n## 4\.", read("AGENTS.md"), re.S)
+    if m:
+        counts["agents_invariants"] = len(re.findall(r"^\d+\. \*\*", m.group(1), re.M))
+    for key, cap in CAPS.items():
+        n = counts[key]
+        if n > cap:
+            add_error("cap", f"{labels[key]} {n} > 上限 {cap}，必须先退役/合并")
+
+
+def check_taxonomy() -> None:
+    rel = "docs/specs/defect-taxonomy.md"
+    parts = re.split(r"^## (K\d+)[^\n]*\n", read(rel), flags=re.M)
+    for i in range(1, len(parts), 2):
+        kid, body = parts[i], parts[i + 1]
+        for label in ("**触发**", "**不变量**", "**入口**", "**锁定**"):
+            if label not in body:
+                add_error("taxonomy", f"{rel}: {kid} 缺少 {label}")
+
+
+def check_rejected() -> None:
+    rel = "docs/specs/rejected-decisions.md"
+    for lineno, line in enumerate(read(rel).splitlines(), 1):
+        if not re.match(r"^\| R-\d+", line):
+            continue
+        parts = [p.strip() for p in line.strip().strip("|").split("|")]
+        if len(parts) != 4:
+            add_error("rejected", f"{rel}:{lineno}: 期望 4 列，实际 {len(parts)}")
+            continue
+        if not parts[3] or parts[3] in {"-", "—"}:
+            add_error("rejected", f"{rel}:{lineno}: 缺少重启条件")
+
+
 def check_legacy_sections() -> None:
     rel = "docs/development.md"
     if (ROOT / rel).exists() and "## 最近变更摘要" in read(rel):
@@ -245,6 +311,9 @@ def main() -> int:
     check_paths()
     check_duplicates()
     check_backlog()
+    check_caps()
+    check_taxonomy()
+    check_rejected()
     check_legacy_sections()
 
     for line in errors + warnings:
