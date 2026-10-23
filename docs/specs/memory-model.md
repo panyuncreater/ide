@@ -55,7 +55,7 @@
 | 回调持引用 | `this` 泄漏进单例/回调（GC 回调、输出回调） | 构造注册 vs 析构清理配对审计 |
 | Environment/boundInstance_ | 链式作用域中缓存实例释放 | `interpreter/Environment.h` 释放顺序；缓存失效路径 |
 | envPool_ 回收 × 闭包 env 弱引用 | `resetForReuse` 清空 weak_ptr 仍指向该 env 的闭包的可见变量（陈旧读/语义损坏） | 不变量已收口到 `Value::makeClosure`（D2 fix，2026-10-03）：工厂内统一 `markClosureEnvRef()`，回收守卫（use_count==1 + 无捕获 + 无闭包 env 引用）不再依赖各创建点手工标记；回归测试 `AuditBatch1ClosureEnv.*` |
-| JIT 上下文 | `JitContext` 邮箱持有跨线程引用 | `compiler/JIT*.cpp` 上下文生命周期与 VM 停靠同步 |
+| JIT 上下文 | `JitContext` 邮箱持有跨线程引用 | `compiler/jit/` 上下文生命周期与 VM 停靠同步 |
 
 ## 7. 内存审计清单（配合 AGENTS.md §5 策略 4）
 
@@ -65,3 +65,10 @@
 4. COW 写路径是否全部经过独占检查（§4）。
 5. 栈/帧分配是否符合 §5 约束（无界分配禁止）。
 6. 修改头文件 struct 布局后，必须全量重编译验证（SEH 0xc0000005 风险，`docs/getting-started.md` 构建问题排查）。
+
+## 8. 宿主嵌入与 GC 隔离（GcTriggerPolicy）
+
+- 与常驻 `Interpreter` 并存的短生命周期实例（教学面板执行服务、调试沙箱、编译期 `ConstFunEval`、DAP 条件求值）必须使用 `GcTriggerPolicy::Isolated`：不注册进程级触发回调、生命周期内持有 `CallbackSuppressor`、跳过 `execute()` 入口全量 `collectCycle` 与语句边界 pending 消费。
+- **生命周期约束**：Isolated 实例内不得构造新的 Managed `Interpreter`（会破坏回调恢复链），也不得活过被抑制回调的 Managed 实例（会恢复悬垂回调）。接入点必须是随宿主存续的叶子沙箱。
+- 隔离期产生的循环引用延后至下一次 Managed `collectCycle` 回收；宿主面板入口必须 `isRunning()/isVmRunning()` 守卫，阻断并发执行链。
+- 回归：`GcIsolation.ServiceTemporaryInterpreterKeepsResidentContainers`、`GcIsolation.ResidentIncrementalGcCallbackSurvivesTemporaryInterpreter`。

@@ -29,6 +29,9 @@
 | 无限循环防护 | 循环回边注入迭代计数，超限报错（对齐 Interpreter） | R166、`compiler/jit/JIT.cpp` OP_LOOP safepoint |
 | 生成器挂起语义 | `MINILANG_CORO_FIBER=1` 平台三执行后端真挂起（副作用只执行一次），`=0` 统一重放；yield 表达式恢复值 = 自身 yield 值，最终 yield 即 done | 单边启用禁令、快照相对化/returnIp 重定基/嵌套上下文 checklist、`CoroutineSuspension.*` 锁定测试——见 §9 与 [ADR-007](../adr/ADR-007-coroutine-suspension.md) |
 | 字典 NaN 键 | **SameValueZero**（2026-10-22）：所有 NaN 键归一（DictKeyHash 规范化到 quiet_NaN 同一模式 + DictKeyEqual 判 NaN 互等，对齐 JS Map/Set）——可写、可查、重复写覆盖 | `ConsistencyDiff.DictNaNKeySameValueZero`（三后端 `21`）；四后端共享 DictMap 自动一致；共享 DictMap 的 JIT 运行时 helper 同语义 |
+| 泛型注解擦除 | 复合注解只要引用类型参数即整体跳过校验；擦除点共七处（Interpreter `checkType`/枚举载荷、`Compiler::emitTypeCheck`、`AstIRBuilder::emitTypeCheckIR`、StackVM/RegisterVM 枚举载荷、JIT `jitBuildEnumVariant`） | 新增注解形态（`T[]`/`T?`/`dict[..T..]`/`fun(T):T`）必须七处同步；判定统一用 `annotationReferencesTypeParam`；JIT 通道单独回归 |
+| 块作用域 fresh / 遮蔽 | 顶层块内新声明在块退出后不可见；祖先遮蔽名在嵌套块重声明时保存/恢复；catch 变量与解构绑定同规格 | 直译与 IR 双路径同规格登记（fresh 栈/DELETE_VAR/shadowedGlobalNames_）；`ConsistencyDiff.BlockFresh*`、`CatchVarShadow*` 四路锁定 |
+| 宿主嵌入 GC 隔离 | 与常驻 Interpreter 并存的短生命周期实例必须 `GcTriggerPolicy::Isolated`；隔离期不触发进程级增量 GC | 见 `docs/specs/memory-model.md` §8；`GcIsolation.*` |
 
 > 表中每项的新增/修改都必须在三后端同步实现（含 IR 双出口），并以一致性测试锁定（§5）。
 
@@ -46,7 +49,7 @@
 - **判定表**：新特性按「JIT 已支持场景清单」（`tests/TestJIT.cpp`、`TestJITCoverageGaps.cpp` 14 用例锁定：闭包、模块系统、并发原语、字符串方法、enum variant 等当前为「StackVM 正确 + JIT 优雅降级」）。
 - **降级断言写法**：已支持场景断言「与 StackVM 严格一致」；未支持场景断言「不崩溃、不错值」（运行结果正确或显式降级信号），**不得断言 JIT 支持未实现特性**。
 - JIT 补全实现后，`TestJITCoverageGaps` 对应断言自动收紧为一致性断言（该文件设计意图即「缺口清单即降级断言清单」）。
-- 涉及 JIT 上下文/邮箱模式（`compiler/JIT*.cpp`：`JitContext` 持有 `r12` 上下文指针）的改动必须同步验证 JIT 与 VM 停靠/反优化路径。
+- 涉及 JIT 上下文/邮箱模式（`compiler/jit/`：`JitContext` 持有 `r12` 上下文指针）的改动必须同步验证 JIT 与 VM 停靠/反优化路径。
 
 ## 5. 一致性测试编写规则
 

@@ -1,0 +1,14 @@
+#!/bin/sh
+# MiniLang 知识卫生门禁（可选）
+# 安装：cp docs/knowledge/tools/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+# 卸载：rm .git/hooks/pre-commit
+set -e
+if command -v python >/dev/null 2>&1; then
+    PY=python
+elif command -v py >/dev/null 2>&1; then
+    PY=py
+else
+    echo "[knowledge-lint] 未找到 python，跳过检查"
+    exit 0
+fi
+"$PY" docs/knowledge/tools/knowledge_lint.py
