@@ -58,7 +58,9 @@ CMakeUserPresets.json
 .trae-html-share-packages/
 .idea/
 .vscode/
-.qoder/
+.qoder/*
+!.qoder/skills/
+!.qoder/skills/**
 *.swp
 *.swo
 *~
