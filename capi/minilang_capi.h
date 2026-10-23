@@ -14,7 +14,8 @@
  *
  * 线程模型：一个 minilang_context 只能被一个线程使用；
  * 不同线程各自持有独立 context 并发调用是安全的
- * （eval 内部每次执行创建独立引擎对象，无跨 context 共享可变态）。
+ * （eval 内部每次执行创建独立引擎对象；沙箱策略经线程局部 SandboxScope 应用，
+ * 不同 context 的并发 eval 互不污染）。
  *
  * 字符串生命周期：minilang_get_output / minilang_get_error /
  * minilang_version 返回的指针由 context（或静态存储）持有，

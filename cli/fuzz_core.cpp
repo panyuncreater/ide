@@ -16,6 +16,7 @@
 // ============================================================
 #include "cli/fuzz_core.h"
 
+#include "cli/AtomicWrite.h" // F13 fix: crash 用例原子导出
 #include "compiler/core/Compiler.h"
 #include "compiler/backend-reg/RegisterVM.h"
 #include "compiler/backend-stack/VM.h"
@@ -1136,12 +1137,12 @@ std::string formatSummaryJson(const FuzzSummary& summary) {
 
 std::string saveCrashCase(const FuzzResult& result, int index) {
     std::string filename = "crash-" + std::to_string(index) + ".ml";
-    std::ofstream ofs(filename);
-    if (ofs) {
-        ofs << "// crash-" << index << " phase=" << result.errorPhase << "\n";
-        ofs << "// errorMessage=" << result.errorMessage << "\n";
-        ofs << result.source;
-    }
+    // F13 fix: 原子写，崩溃复现文件不会半截。
+    std::string content = "// crash-" + std::to_string(index) + " phase=" + result.errorPhase + "\n";
+    content += "// errorMessage=" + result.errorMessage + "\n";
+    content += result.source;
+    std::string writeError;
+    (void)minilang_cli::atomicWriteFile(filename, content, &writeError);
     return filename;
 }
 

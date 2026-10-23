@@ -53,6 +53,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 namespace RuntimeLimits {
 
@@ -163,6 +164,20 @@ constexpr uint8_t NO_SLOT = 0xFF;     ///< uint8 receiverLocalSlot 哨兵：无�
 //   5. 测试场景可通过 setter 临时调小验证触发逻辑
 // ============================================================
 class RuntimeConfig {
+private:
+    // F8 fix: 线程局部沙箱策略覆盖。C API 各 context 的 eval 通过 SandboxScope
+    // 在当前线程设置覆盖，读取点无需改写全局单例——异常安全且不同线程并发
+    // eval 互不污染（全局值仍供 GUI/CLI 的跨线程读写使用）。
+    struct SandboxPolicy {
+        bool enabled;
+        bool allowInput;
+        bool allowImport;
+    };
+    static std::optional<SandboxPolicy>& threadSandboxPolicy() {
+        static thread_local std::optional<SandboxPolicy> policy;
+        return policy;
+    }
+
 public:
     static RuntimeConfig& instance() {
         static RuntimeConfig cfg;
@@ -197,14 +212,44 @@ public:
     // 拦截点：input（共享层 executeSharedInput）、import（三后端 import 路径
     //   仅放行 std/ 内建模块）、插件加载（C API）。
     // atomic 存储保证线程安全（GUI 主线程设置 vs Worker 线程读取）。
+    // F8 fix：读取点优先消费当前线程的 SandboxScope 覆盖（见类顶 threadSandboxPolicy）；
+    //   无覆盖时回落到全局 atomic 值。
     // ============================================================
-    bool sandboxEnabled() const { return sandboxEnabled_.load(std::memory_order_relaxed); }
-    bool sandboxAllowInput() const { return sandboxAllowInput_.load(std::memory_order_relaxed); }
-    bool sandboxAllowImport() const { return sandboxAllowImport_.load(std::memory_order_relaxed); }
+    bool sandboxEnabled() const {
+        const auto& policy = threadSandboxPolicy();
+        return policy ? policy->enabled : sandboxEnabled_.load(std::memory_order_relaxed);
+    }
+    bool sandboxAllowInput() const {
+        const auto& policy = threadSandboxPolicy();
+        return policy ? policy->allowInput : sandboxAllowInput_.load(std::memory_order_relaxed);
+    }
+    bool sandboxAllowImport() const {
+        const auto& policy = threadSandboxPolicy();
+        return policy ? policy->allowImport : sandboxAllowImport_.load(std::memory_order_relaxed);
+    }
 
     void setSandboxEnabled(bool v) { sandboxEnabled_.store(v, std::memory_order_relaxed); }
     void setSandboxAllowInput(bool v) { sandboxAllowInput_.store(v, std::memory_order_relaxed); }
     void setSandboxAllowImport(bool v) { sandboxAllowImport_.store(v, std::memory_order_relaxed); }
+
+    /// F8 fix: 线程局部沙箱策略 RAII。构造时保存并覆盖当前线程策略，析构恢复；
+    /// 支持嵌套。用于 C API 按 context 应用沙箱，不触碰全局单例。
+    class SandboxScope {
+    public:
+        explicit SandboxScope(bool enabled, bool allowInput = true, bool allowImport = true) {
+            auto& slot = RuntimeConfig::threadSandboxPolicy();
+            saved_ = slot;
+            slot = SandboxPolicy{enabled, allowInput, allowImport};
+        }
+        ~SandboxScope() { RuntimeConfig::threadSandboxPolicy() = saved_; }
+        SandboxScope(const SandboxScope&) = delete;
+        SandboxScope& operator=(const SandboxScope&) = delete;
+        SandboxScope(SandboxScope&&) = delete;
+        SandboxScope& operator=(SandboxScope&&) = delete;
+
+    private:
+        std::optional<SandboxPolicy> saved_;
+    };
 
     /// 便捷查询：沙箱启用且 input 被禁。
     bool sandboxBlocksInput() const { return sandboxEnabled() && !sandboxAllowInput(); }

@@ -7,6 +7,7 @@
 // ============================================================
 #include "cli/fmt_core.h"
 
+#include "cli/AtomicWrite.h" // F10 fix: 原子回写用户源文件
 #include "common/Diagnostic.h"
 #include "formatter/Formatter.h"
 #include "lexer/Lexer.h"
@@ -97,21 +98,15 @@ ProcessResult processFile(const std::string& path, ProcessMode mode, const Forma
         break;
     case ProcessMode::Write:
         // 写回文件（仅当需要格式化时）
+        // F10 fix: 原子写（临时文件 + rename），进程崩溃/磁盘满不再截断用户源码。
         if (result.needsFormat) {
-            std::ofstream ofs(path, std::ios::trunc);
-            if (!ofs.is_open()) {
+            std::string writeError;
+            if (!minilang_cli::atomicWriteFile(path, fmtResult.output, &writeError)) {
                 result.ok = false;
                 result.errorPhase = "io";
                 result.errorMessage = "无法写入文件: " + path;
-                return result;
-            }
-            ofs << fmtResult.output;
-            // P1 #33 fix: 检测写入失败（磁盘满/权限等），flush 后检查流状态
-            ofs.flush();
-            if (!ofs.good()) {
-                result.ok = false;
-                result.errorPhase = "io";
-                result.errorMessage = "写入文件失败: " + path;
+                if (!writeError.empty())
+                    result.errorMessage += " (" + writeError + ")";
                 return result;
             }
         }

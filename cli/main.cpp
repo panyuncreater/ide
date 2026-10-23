@@ -25,6 +25,7 @@
 #include "cli/fuzz_core.h"
 #include "cli/lint_core.h"
 #include "cli/pkg_core.h"
+#include "cli/AtomicWrite.h" // F12 fix: doc -o 原子导出
 
 // LSP/DAP 需要 QCoreApplication，延迟到子命令内部创建
 // 前向声明子命令入口函数（定义在各自独立编译单元中避免 QCoreApplication 污染）
@@ -292,12 +293,12 @@ static int runDoc(const minilang_doc::CliArgs& args) {
     if (args.outputFile.empty()) {
         std::fputs(output.c_str(), stdout);
     } else {
-        std::ofstream ofs(args.outputFile, std::ios::trunc);
-        if (!ofs.is_open()) {
+        // F12 fix: 原子写，崩溃/磁盘满不留下半截导出文件。
+        std::string writeError;
+        if (!minilang_cli::atomicWriteFile(args.outputFile, output, &writeError)) {
             std::fprintf(stderr, "错误: 无法写入文件: %s\n", args.outputFile.c_str());
             return 2;
         }
-        ofs << output;
     }
 
     std::fprintf(stderr, "已生成 %d 个条目的文档\n", totalEntries);

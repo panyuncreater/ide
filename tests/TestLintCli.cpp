@@ -729,3 +729,29 @@ TEST(LintExhaustiveMatch, RuleCanBeDisabled) {
     // parseRuleName 同步支持新规则名
     EXPECT_EQ(minilang_lint::parseRuleName("NonExhaustiveMatch"), minilang_lint::LintRule::NonExhaustiveMatch);
 }
+
+// ============================================================
+// F11 回归：--fix 原子回写
+// ============================================================
+TEST(LintCliProcessFileFix, WritesAtomicallyAndLeavesNoTempFile) {
+    auto path = makeTempFile("var unused = 1;\nvar x = 2;\nprint(x);\n");
+    minilang_lint::LintOptions opts;
+    auto r = minilang_lint::processFileFix(path, opts, false);
+    EXPECT_TRUE(r.ok) << r.errorMessage;
+
+    std::ifstream ifs(path);
+    std::string rewritten((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(rewritten.find("unused"), std::string::npos);
+    EXPECT_NE(rewritten.find("print(x)"), std::string::npos);
+
+    const fs::path target(path);
+    const std::string prefix = target.filename().string() + ".tmp";
+    int tempCount = 0;
+    std::error_code ec;
+    for (const auto& entry : fs::directory_iterator(target.parent_path(), ec)) {
+        if (entry.path().filename().string().rfind(prefix, 0) == 0)
+            ++tempCount;
+    }
+    EXPECT_EQ(tempCount, 0);
+    removeTempFile(path);
+}

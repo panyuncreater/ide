@@ -174,24 +174,12 @@ minilang_status minilang_eval(minilang_context* ctx, const char* source) {
     ctx->lastOutput.clear();
     ctx->lastError.clear();
 
-    // 七特性 MVP 阶段 6：沙箱模式——eval 前设置全局 RuntimeConfig、eval 后恢复。
-    // RuntimeConfig 是单例（跨 context 共享），保存旧值保证不污染其他同线程 context。
-    auto& cfg = RuntimeLimits::RuntimeConfig::instance();
-    bool savedEnabled = cfg.sandboxEnabled();
-    bool savedInput = cfg.sandboxAllowInput();
-    bool savedImport = cfg.sandboxAllowImport();
-    if (ctx->sandbox) {
-        cfg.setSandboxEnabled(true);
-        cfg.setSandboxAllowInput(false);
-        cfg.setSandboxAllowImport(false);
-    }
+    // 七特性 MVP 阶段 6 / F8 fix：沙箱策略通过线程局部 SandboxScope 应用——
+    // RAII 保证异常路径恢复；thread_local 使不同 context 的并发 eval 互不污染，
+    // 也不再改写全局 RuntimeConfig（无覆盖的线程仍读全局值）。
+    RuntimeLimits::RuntimeConfig::SandboxScope sandboxScope(ctx->sandbox, false, false);
 
     BackendExecResult result = BackendExecutionService::execute(source, ctx->backend);
-
-    // 恢复沙箱开关（无论是否启用，均回写旧值，确保幂等）
-    cfg.setSandboxEnabled(savedEnabled);
-    cfg.setSandboxAllowInput(savedInput);
-    cfg.setSandboxAllowImport(savedImport);
 
     ctx->lastOutput = result.output;
     if (result.success) {

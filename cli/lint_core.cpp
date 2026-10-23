@@ -7,6 +7,7 @@
 // ============================================================
 #include "cli/lint_core.h"
 
+#include "cli/AtomicWrite.h" // F11 fix: 原子回写用户源文件
 #include "ast/ASTNode.h"          // 拓展二期：--fix 结构化修复遍历 AST
 #include "formatter/Formatter.h" // 拓展二期：修复后 Formatter 重输出
 #include "lexer/Lexer.h"
@@ -333,14 +334,16 @@ LintProcessResult processFileFix(const std::string& path, const LintOptions& opt
             << " 处（副作用保守）\n";
     } else if (fix.removedCount > 0) {
         // 仅当确有删除时回写（避免纯格式化扰动无关文件）
-        std::ofstream ofs(path, std::ios::trunc);
-        if (!ofs.is_open()) {
+        // F11 fix: 原子写（临时文件 + rename），不再就地截断用户源码。
+        std::string writeError;
+        if (!minilang_cli::atomicWriteFile(path, fix.fixedSource, &writeError)) {
             result.ok = false;
             result.errorPhase = "io";
             result.errorMessage = "无法写入文件: " + path;
+            if (!writeError.empty())
+                result.errorMessage += " (" + writeError + ")";
             return result;
         }
-        ofs << fix.fixedSource;
         out << path << ": 已修复 " << fix.removedCount << " 处，跳过 " << fix.skippedCount << " 处（副作用保守）\n";
     } else {
         out << path << ": 无可自动修复项（跳过 " << fix.skippedCount << " 处）\n";

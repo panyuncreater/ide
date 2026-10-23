@@ -18,6 +18,8 @@
 #include "interpreter/Interpreter.h"
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
+#include <atomic>
+#include <thread>
 #include <gtest/gtest.h>
 #include <string>
 
@@ -247,4 +249,77 @@ TEST_F(SandboxModeTest, CApiSandboxToggleRestoresGlobalConfig) {
     // eval 结束后全局开关应已恢复为 false
     EXPECT_FALSE(RuntimeLimits::RuntimeConfig::instance().sandboxEnabled());
     minilang_destroy(ctx);
+}
+
+// F8 fix: 解析失败路径同样不得泄漏沙箱配置（RAII 恢复）。
+TEST_F(SandboxModeTest, CApiSandboxParseErrorDoesNotLeakGlobalConfig) {
+    minilang_context* ctx = minilang_create();
+    ASSERT_NE(ctx, nullptr);
+    minilang_set_sandbox(ctx, 1);
+    minilang_status st = minilang_eval(ctx, "var x = ;");
+    EXPECT_NE(st, MINILANG_OK);
+    EXPECT_FALSE(RuntimeLimits::RuntimeConfig::instance().sandboxEnabled());
+    EXPECT_TRUE(RuntimeLimits::RuntimeConfig::instance().sandboxAllowInput());
+    EXPECT_TRUE(RuntimeLimits::RuntimeConfig::instance().sandboxAllowImport());
+    minilang_destroy(ctx);
+}
+
+// F8 fix: SandboxScope 为线程局部覆盖——两个线程以相反策略并存互不污染。
+TEST_F(SandboxModeTest, SandboxScopeIsThreadLocal) {
+    std::atomic<int> arrived{0};
+    std::atomic<bool> sandboxOk{true};
+    std::atomic<bool> openOk{true};
+    auto sync = [&]() {
+        arrived.fetch_add(1, std::memory_order_acq_rel);
+        while (arrived.load(std::memory_order_acquire) < 2)
+            std::this_thread::yield();
+    };
+    std::thread sandboxThread([&]() {
+        RuntimeLimits::RuntimeConfig::SandboxScope scope(true, false, false);
+        sync();
+        auto& cfg = RuntimeLimits::RuntimeConfig::instance();
+        for (int i = 0; i < 1000; ++i) {
+            if (!cfg.sandboxEnabled() || cfg.sandboxAllowInput() || cfg.sandboxAllowImport() ||
+                !cfg.sandboxBlocksInput() || !cfg.sandboxBlocksImport()) {
+                sandboxOk.store(false, std::memory_order_relaxed);
+            }
+        }
+    });
+    std::thread openThread([&]() {
+        RuntimeLimits::RuntimeConfig::SandboxScope scope(false, true, true);
+        sync();
+        auto& cfg = RuntimeLimits::RuntimeConfig::instance();
+        for (int i = 0; i < 1000; ++i) {
+            if (cfg.sandboxEnabled() || !cfg.sandboxAllowInput() || !cfg.sandboxAllowImport() ||
+                cfg.sandboxBlocksInput() || cfg.sandboxBlocksImport()) {
+                openOk.store(false, std::memory_order_relaxed);
+            }
+        }
+    });
+    sandboxThread.join();
+    openThread.join();
+    EXPECT_TRUE(sandboxOk.load());
+    EXPECT_TRUE(openOk.load());
+    EXPECT_FALSE(RuntimeLimits::RuntimeConfig::instance().sandboxEnabled());
+}
+
+// F8 fix: 嵌套 SandboxScope 按栈序恢复。
+TEST_F(SandboxModeTest, SandboxScopeNestedRestores) {
+    auto& cfg = RuntimeLimits::RuntimeConfig::instance();
+    EXPECT_FALSE(cfg.sandboxEnabled());
+    {
+        RuntimeLimits::RuntimeConfig::SandboxScope outer(true, false, false);
+        EXPECT_TRUE(cfg.sandboxEnabled());
+        EXPECT_FALSE(cfg.sandboxAllowInput());
+        {
+            RuntimeLimits::RuntimeConfig::SandboxScope inner(false, true, true);
+            EXPECT_FALSE(cfg.sandboxEnabled());
+            EXPECT_TRUE(cfg.sandboxAllowInput());
+        }
+        EXPECT_TRUE(cfg.sandboxEnabled());
+        EXPECT_FALSE(cfg.sandboxAllowImport());
+    }
+    EXPECT_FALSE(cfg.sandboxEnabled());
+    EXPECT_TRUE(cfg.sandboxAllowInput());
+    EXPECT_TRUE(cfg.sandboxAllowImport());
 }

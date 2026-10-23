@@ -11,6 +11,7 @@
 // 通过 parseArgs + processFile 的组合测试间接验证。
 // ============================================================
 #include "cli/fmt_core.h"
+#include "cli/AtomicWrite.h"
 
 #include <gtest/gtest.h>
 
@@ -392,4 +393,88 @@ TEST(FmtCliVersion, VersionString) {
     auto v = minilang_fmt::versionString();
     EXPECT_NE(v.find("minilang-fmt"), std::string::npos);
     EXPECT_NE(v.find("1.0.0"), std::string::npos);
+}
+
+// ============================================================
+// F10-F13 回归：CLI 原子写工具
+// ============================================================
+
+namespace {
+int countTempSiblings(const std::string& path) {
+    const fs::path target(path);
+    const std::string prefix = target.filename().string() + ".tmp";
+    int count = 0;
+    std::error_code ec;
+    for (const auto& entry : fs::directory_iterator(target.parent_path(), ec)) {
+        if (entry.path().filename().string().rfind(prefix, 0) == 0)
+            ++count;
+    }
+    return count;
+}
+} // namespace
+
+TEST(AtomicWriteFile, WritesContentAndLeavesNoTempFile) {
+    auto path = makeTempFile("");
+    const std::string content = "var x = 1;\nvar y = 2;\n";
+    std::string error;
+    ASSERT_TRUE(minilang_cli::atomicWriteFile(path, content, &error)) << error;
+
+    std::ifstream ifs(path);
+    std::string read((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(read, content);
+    EXPECT_EQ(countTempSiblings(path), 0);
+    removeTempFile(path);
+}
+
+TEST(AtomicWriteFile, OverwritesExistingFile) {
+    auto path = makeTempFile("old content\n");
+    std::string error;
+    ASSERT_TRUE(minilang_cli::atomicWriteFile(path, "new content\n", &error)) << error;
+
+    std::ifstream ifs(path);
+    std::string read((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(read, "new content\n");
+    EXPECT_EQ(countTempSiblings(path), 0);
+    removeTempFile(path);
+}
+
+TEST(AtomicWriteFile, FailsWhenParentDirectoryMissing) {
+    static const std::string base =
+        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto path = (fs::temp_directory_path() / ("minilang_atomic_missing_" + base) / "a.ml").string();
+    std::string error;
+    EXPECT_FALSE(minilang_cli::atomicWriteFile(path, "x", &error));
+    EXPECT_FALSE(error.empty());
+    EXPECT_FALSE(fs::exists(path));
+}
+
+#ifndef _WIN32
+// 符号链接目标应被原子替换，链接本身保持为链接。
+TEST(AtomicWriteFile, PreservesSymlink) {
+    auto target = makeTempFile("old\n");
+    const auto link = target + ".link";
+    std::error_code ec;
+    fs::create_symlink(target, link, ec);
+    if (ec)
+        GTEST_SKIP() << "symlink unsupported: " << ec.message();
+
+    std::string error;
+    ASSERT_TRUE(minilang_cli::atomicWriteFile(link, "new\n", &error)) << error;
+    EXPECT_TRUE(fs::is_symlink(link));
+    std::ifstream ifs(target);
+    std::string read((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(read, "new\n");
+    std::error_code rmEc;
+    fs::remove(link, rmEc);
+    removeTempFile(target);
+}
+#endif
+
+// fmt --write 走原子写后不得残留临时文件（用户源码目录洁净）
+TEST(FmtCliProcessFile, WriteModeLeavesNoTempFile) {
+    auto path = makeTempFile("var  x=1;\n");
+    auto r = minilang_fmt::processFile(path, minilang_fmt::ProcessMode::Write, FormatOptions());
+    EXPECT_TRUE(r.ok) << r.errorMessage;
+    EXPECT_EQ(countTempSiblings(path), 0);
+    removeTempFile(path);
 }
