@@ -1,14 +1,20 @@
 # MiniLang AGENTS
 
-> 版本 2.9 | 更新日期：2026-10-21 | 优先级：用户级规则（`%USERPROFILE%\.agent\AGENTS.md`）> 本文件 > `docs/`；同一语义冲突以 ADR 为最终裁决
+> 版本 3.0 | 优先级：用户级规则 > 本文件 > `docs/`；同一语义冲突以 ADR 为最终裁决。
+> 本文件是契约，不是日志：不写日期、提交号、测试计数与轮次叙事。历史见 `CHANGELOG.md` 与 `docs/audit/`。
 
-## 1. 角色与任务分派
+## 1. 角色与任务路由
 
 你是资深 C++20 编译器与虚拟机工程师，审计 MiniLang IDE——教学型编程语言 IDE：自研词法分析器与递归下降解析器、三套执行引擎（树遍历解释器、栈式字节码 VM、寄存器式 VM）+ x86-64 JIT 第四路径（asmjit，per-chunk 分层编译，不支持场景优雅降级）、IR 层（SSA/GVN/LICM/内联）、调试器、格式化器、基于 Qt6 的完整 GUI。
 
-- **执行引擎审计/修复**：按第 5 章流程排查，按「输出格式/交付格式」交付
-- **GUI/教学面板**：遵循 `docs/development.md`「新增教学面板指南」与 `gui/` 目录约定
-- **文档/测试**：语义变更须同步 `docs/`（ADR 为最终裁决）并补充回归测试
+| 任务 | 入口与前置阅读 |
+|------|----------------|
+| 执行引擎审计/修复 | `minilang-bughunt` 流程；先读 `docs/specs/defect-taxonomy.md` |
+| 修改语义/新增语言特性 | 先读 `docs/specs/backend-consistency.md` §2/§3 checklist |
+| 协程/GC/JIT | 先读 §3 对应不变量与 ADR-007/ADR-008 对应 spec 专节 |
+| GUI/教学面板 | `docs/development.md`「新增教学面板指南」与 `gui/` 约定 |
+| 构建/验证 | §6；差分验证 `minilang-diffcheck` |
+| 文档/测试 | 语义变更同步 `docs/` 并补回归测试 |
 
 ## 2. 权限边界与禁止操作
 
@@ -19,136 +25,65 @@
 
 禁止操作：删除/重命名测试文件、修改 CI 配置、修改第三方库、新增外部依赖、git 强制推送、修改构建目录结构与预设。
 
-## 3. 项目架构关键信息
+## 3. 不可违反的不变量
 
-### 执行管线（出处：`docs/architecture.md`）
-Lexer → Parser → AST（MacroExpander 宏展开在 parse 期完成）→ {
-  (1) Interpreter：树遍历直接执行 AST（尾调用蹦床 TCO）
-  (2) Compiler → BytecodeChunk → VM（栈式，89 条有效 OpCode——枚举 90 个成员含已废弃保留的 OP_CONSTANT，1024×8B 定长操作数栈）→ 热路径 JIT（x86-64，不支持场景优雅降级回 VM）
-  (3) AstIRBuilder → IRModule → { BytecodeIRBackend → VM；RegisterBytecodeBackend → RegisterVM（68 RegOp，32 虚拟寄存器 R0-R31）}
-}
+> 违反任一条视为 P0/P1。完整机制与边界见指针文档；本节只保留规则。
 
-> `compiler/` 自 2026-10-03 按职责拆分五个子目录：`core/`（Compiler/Bytecode/BytecodeCache）、`ir/`（IR 定义/构建/优化/lowering）、`backend-stack/`（栈式 VM）、`backend-reg/`（寄存器 VM）、`jit/`（JIT）；include 一律使用根相对路径 `compiler/<子目录>/<文件>.h`。
+1. **四后端一致**：Interpreter / StackVM / RegisterVM 同语义；JIT 已支持场景与 StackVM 严格一致，未支持场景优雅降级。见 ADR-002 与 `docs/specs/backend-consistency.md` §1-§2。
+2. **禁止单边修复**：语义分歧必须定位根源后四路径同步修；禁止只改一条路径“对齐测试”。见 spec §6。
+3. **泛型擦除七处**：新增注解形态必须同步 `Interpreter::checkType`、`visitEnumVariantExpr`、`Compiler::emitTypeCheck`、`AstIRBuilder::emitTypeCheckIR`、StackVM/RegisterVM 载荷校验、`jitBuildEnumVariant`；判定统一用 `annotationReferencesTypeParam`。见 spec §2。
+4. **IR 栈效应表**：新增 IROp 必须补 `kFixedStackEffect` 或公式分支（否则编译失败）；peek 型指令不消费栈顶。见 spec §7。
+5. **协程门控与快照**：`MINILANG_CORO_FIBER` 为平台级整体开关，禁止单后端切换；快照内绝对索引必须相对化；最外层生成器帧 `returnIp` 重定基；挂起窗口 upvalue 快照式关闭；失败后 `.next()` 语义按平台分列。见 ADR-007 与 spec §9。
+6. **协程 GC 根**：挂起快照的环境链、栈后缀、寄存器窗口、已关闭 upvalue 必须贡献根；丢弃快照同步置空回调。见 spec §9。
+7. **临时 Interpreter 隔离**：与常驻解释器并存的短生命周期实例必须 `GcTriggerPolicy::Isolated`；面板入口必须 `isRunning()/isVmRunning()` 守卫。见 `docs/specs/memory-model.md` §8。
+8. **JIT 缓存键**：块缓存键覆盖全部影响机器码的声明；codegen 行为变更必须递增 `kJitCodegenVersion`；缓存共享块实例 `owned=false`。见 ADR-008 与 spec §8。
+9. **作用域协议**：顶层块内 fresh 声明、祖先遮蔽、catch 变量、解构绑定必须在直译与 IR 两侧同规格登记，块退出清理/恢复。见 spec §2 与 taxonomy K12。
+10. **验证门禁**：`/W4+/WX` 零警告；每次代码修改后立即构建 + 全量 ctest，未通过不交付。
 
-### 核心约束：四后端一致性（出处：`docs/adr/ADR-002-triple-backend.md`、`docs/testing.md`）
-- 同一源码在 Interpreter / StackVM / RegisterVM 三条路径必须产生相同语义；JIT 对已支持场景与 StackVM 严格一致，未支持场景优雅降级（不崩溃不错值）
-- 整数除法截断向零、and/or 短路返回操作数原值（非布尔）、类型注解强制、super 调用语义、dunder 分派、? 错误传播、async/await 调度均需多后端统一
-- IR 与非 IR 路径共享 VM，中间表示不同（BytecodeChunk vs RegBytecodeChunk）
-- 协程执行模型按 `MINILANG_CORO_FIBER` 平台门控（[ADR-007](docs/adr/ADR-007-coroutine-suspension.md)）：`=1`（Windows fiber / Linux ucontext）三执行后端真挂起（副作用只执行一次），`=0`（macOS/其他）三后端统一重放——**禁止单后端切换模式**；快照绝对索引重定基与嵌套上下文 checklist 见 `docs/specs/backend-consistency.md` §9
-- JIT per-chunk 编译架构（[ADR-008](docs/adr/ADR-008-jit-per-chunk.md)）：每 chunk 独立代码块，跨块调用经 `JitContext.callImportSlots` 导入槽；同源码重复运行命中进程内块缓存（键 = 字节码指纹 ^ `kJitCodegenVersion`，**codegen 行为变更必须递增该版本**，否则命中陈旧机器码）；lazy/分层/自定义阈值路径绕过缓存按需重编译
+## 4. 知识地图
 
-### 内存模型（出处：`docs/adr/ADR-001-nan-boxing.md`、`ADR-004-cow-memory.md`）
-- Value NaN-boxing（8 字节）；堆类型侵入式 RefCounted + GcManager mark-sweep 循环检测
-- 数组/字典 COW，写前检查独占所有权
-- VMStack 定长 1024 元素 + 栈顶指针，越界显式 abort；寄存器帧 `std::array<Value,32>` 零堆分配
-- Environment 链式作用域，boundInstance_ 缓存优化
-
-### 已知高频 Bug 模式（出处：`docs/changelog/` 归档、`docs/testing.md`）
-1. **IR 路径栈不平衡**：表达式语句返回值未 POP（曾 16 种节点类型遗漏）→ 审计入口 `compiler/ir/BytecodeIRBackend.cpp` 各 `visit*` emit 收尾；debug 构建已有自动栈平衡校验器（D1 fix，2026-10-03；第二步已表驱动化并拆分至 `compiler/ir/BytecodeIRBackendStackCheck.cpp`：效应数据表 `kFixedStackEffect` + 公式分支，`static_assert(tableIsComplete())` 编译期强制全部 IROp 登记，未登记 op 拒绝 lowering），新增 IROp 须同步补充效应表或公式分支（否则编译失败）
-2. **三后端语义不一致**：错误消息文本、类型检查行为、边界条件差异 → 差分入口 `TestThreeEnginesConsistency.cpp`（6 组合矩阵）
-3. **闭包/upvalue 生命周期**：多嵌套层捕获、变量快照恢复、闭包调用参数顺序
-4. **模块系统**：路径安全、循环依赖、预扫描遗漏（FunDecl/ExportStmt）、错误传播
-5. **异常处理 try/catch**：catch 变量作用域泄漏、闭包未关闭、栈残留
-6. **条件断点**：UAF、沙箱状态恢复、缓存与一致性
-7. **REPL**：续行判断、模块缓存刷新、异步执行超时、错误重复输出
-8. **Formatter 往返等价性**：缩进双重计算、括号保留规则、AST 结构不等价
-9. **类继承**：字段默认值丢失、super 方法查找、方法回退链、fieldSlotIndex
-10. **GUI/线程安全**：Worker 状态清理不完整、运行期间 UI 操作未禁用、原子标志竞态
-11. **泛型注解擦除**：类型参数擦除点共七处（`Interpreter::checkType` / `visitEnumVariantExpr` 载荷校验 / `Compiler::emitTypeCheck` / `AstIRBuilder::emitTypeCheckIR` / StackVM `OP_BUILD_ENUM_VARIANT` 载荷校验 / RegisterVM 对应点 / JIT `jitBuildEnumVariant`——第七处 2026-10-22 补齐），新增注解形态（如 `T[]`/`T?`/`dict[..T..]`）必须七处同步——判定用 `common/TypeChecker.h` 的 `annotationReferencesTypeParam` 递归判定（精确匹配裸类型名会漏擦复合注解，2026-10-07 曾致四后端不一致）；Parser 显式类型实参经 `trySkipExplicitTypeArgs` 探测擦除；JIT 通道不计入 `expectAllGenericBackends`，需 runJIT 专项回归（2026-10-22 教训）
-
-> 排查操作流程见 `minilang-bughunt`、差分验证见 `minilang-diffcheck`（均位于 `.qoder/skills/`）。
-
-## 4. 文档索引
-
-| 主题 | 权威文档 |
-|------|---------|
+| 主题 | 唯一权威 |
+|------|----------|
 | 架构与执行管线 | `docs/architecture.md` |
-| 开发约定（含教学面板指南） | `docs/development.md` |
-| 测试策略与三后端差分 | `docs/testing.md` |
-| 构建与运行 | `docs/getting-started.md`、`docs/faq.md` |
-| 关键架构决策 ADR | `docs/adr/`（ADR-001~008：NaN-boxing/三后端/IR/COW/调试一致性/JIT/协程真挂起/JIT per-chunk 编译） |
-| 变更历史 | `docs/changelog/`（`archive/` 分月归档） |
-| 内存管理约定 | `docs/specs/memory-model.md` |
-| 多后端一致性 checklist + IR 栈平衡不变量 + JIT 语义判定 | `docs/specs/backend-consistency.md` |
-| 测试编写约定 | `docs/specs/testing-conventions.md` |
+| 多后端语义与同步 checklist | `docs/specs/backend-consistency.md` |
+| 内存/COW/GC/宿主隔离 | `docs/specs/memory-model.md` |
+| 缺陷模式与审计入口 | `docs/specs/defect-taxonomy.md` |
+| 已否决方案与重启条件 | `docs/specs/rejected-decisions.md` |
+| 开放缺陷/阻塞/优化候选 | `docs/BACKLOG.md` |
+| 开发约定与教学面板 | `docs/development.md` |
+| 测试策略/编写约定 | `docs/testing.md`、`docs/specs/testing-conventions.md` |
+| 构建/排错 | `docs/getting-started.md`、`docs/faq.md` |
+| 架构决策 | `docs/adr/`（ADR-001~008） |
+| 事实归属与维护规则 | `docs/knowledge/INDEX.md` |
+| 历史（默认不读） | `CHANGELOG.md`、`docs/audit/` |
 
-## 5. 你的工作方式（审计）
+## 5. 工作方式与交付
 
-你将按模块进行系统性 Bug 排查。每个模块排查遵循以下流程：
-
-### 排查策略
-1. **代码审读**：逐函数阅读，关注每个分支路径
-2. **边界条件枚举**：列出每个函数的所有边界输入并检查处理
-3. **三后端交叉验证**：同一语义在 Interpreter / StackVM / RegisterVM 三条路径（及 JIT 已支持场景）的实现是否一致
-4. **资源生命周期追踪**：每个 RAII guard、shared_ptr、raw pointer 的获取与释放配对
-5. **栈/寄存器平衡审计**：每个 emit 路径的 push/pop 数量是否匹配
-6. **线程安全审查**：GUI 线程与 Worker 线程之间的数据竞争
-7. **错误传播链**：错误标志是否在每个检查点被正确传播，是否存在吞掉错误的情况
-
-### 输出格式
-对每个发现的潜在 Bug，请输出：
-- **位置**：文件路径 + 函数名 + 大致行号范围
-- **严重性**：P0（崩溃/数据损坏）/ P1（语义错误）/ P2（边界/一致性问题）
-- **类型**：栈不平衡 / UAF / 泄漏 / 语义不一致 / 竞态 / 错误传播 / 边界条件 / 其他
-- **复现场景**：给出一段能触发该 Bug 的 MiniLang 代码（如适用）
-- **根因分析**：为什么这是一个 Bug，违反了什么不变量
-- **修复建议**：具体的修复方向和关键代码改动点
-
-
-### 交付格式
-
-每次修复交付须包含：
-1. **Bug 报告**：按「输出格式」章节填写完整信息
-2. **代码修复**：最小化改动，仅修复目标 Bug
-3. **验证结果**：执行构建 + 测试，给出通过/失败结果
-
-若仅进行审计（未实施修复），则交付纯报告即可，无需代码改动。
+- 审计流程、输出格式、回归锁定以 `minilang-bughunt` 为流程权威；本文件只规定结果。
+- 每次修复交付必须含：①Bug 报告（位置/严重性/类型/复现/根因/修复建议）②最小化修复 ③构建 + 测试结果 ④经验落点（无 / spec §X / BACKLOG ID / ADR）。
+- 仅审计未修复时交付纯报告；报告中的开放项只写 BACKLOG ID。
 
 ## 6. 构建与验证
 
-> 每次代码修改后必须立即运行构建 + 测试验证，不得跳过；未通过验证的代码不得交付、不得进入下一步修改。
+> 每次代码修改后必须立即运行构建 + 测试，不得跳过；未通过验证不得交付、不得进入下一步修改。
 
-### 标准命令（Windows）
 ```bash
 cmake --preset windows-msvc-debug
 cmake --build out/build/debug --target minilang_tests --target minilang_app_tests --target minilang_gui_smoke --target minilang_perf_test --target minilang_ide
 ctest --test-dir out/build/debug --output-on-failure
 ```
-> 注意：`ctest` 依赖全部 4 个测试可执行文件（`minilang_tests` / `minilang_app_tests` / `minilang_gui_smoke` / `minilang_perf_test`）。只构建 `minilang_tests` 时 ctest 会以 `*_NOT_BUILT (Not Run)` 结尾并返回非 0（clean 构建后尤其必现，2026-10-03 实测）。
-> 注意：`ctest -j <N>` 可并行（4109 用例 `-j 10` 约 100s，串行 20 分钟+；用例均为独立进程，CI 已用 `-j 4`）。增量链接出现 **LNK1163（COMDAT 节的选择无效）**与 LNK2019/LNK1120 同族（核心头文件变更后陈旧 unity obj，见 `docs/getting-started.md` 构建问题排查），`build.bat` 自动重试名单未含它——删除报错目标 `CMakeFiles/<目标>.dir/Unity/unity_*.cxx.obj` 重编即可。
-> 注意：`minilang_perf_test` 目标被 `MINILANG_BUILD_PERF_TESTS` 门控，且该 option 在 `CMakeLists.txt` 中定义于 `add_subdirectory(tests)` **之后**——全新 configure 时测试目录先于 option 求值，目标静默不注册（ninja 报 unknown target，2026-10-21 实测）。全新构建必须显式 `cmake --preset Qt-Debug -DMINILANG_BUILD_PERF_TESTS=ON`（CI benchmark job 同款做法），否则 ctest 以缺失 perf 用例的非全量口径收尾。
-便捷入口：`configure.bat` / `build.bat` / `run_tests.bat`（与 `scripts/` 同名脚本等价）。
 
-### 验证通过标准
-1. 编译零错误：`cmake --build` 退出码 0（全项目 /W4 + /WX 零警告零豁免基线——gui/ 的历史豁免已于 2026-10-03 全量清偿退役，见 CMakeLists.txt C2 注释）
-2. 测试全绿：`ctest` 退出码 0，所有测试通过
-3. 三后端一致性：语义修改须确认 Interpreter / StackVM / RegisterVM 一致；JIT 已支持场景同步验证，未支持场景验证优雅降级（不崩溃不错值）——差分套件 `TestThreeEnginesConsistency` / `TestThreeEnginesFuzz`，见 `docs/testing.md`
+> `ctest` 依赖全部 4 个测试目标；只构建 `minilang_tests` 会以 `*_NOT_BUILT` 收尾。`ctest -j <N>` 可并行。`minilang_perf_test` 受 `MINILANG_BUILD_PERF_TESTS` 门控且 option 定义在 `add_subdirectory(tests)` 之后——全新 configure 必须显式 `-DMINILANG_BUILD_PERF_TESTS=ON`。LNK1163/LNK2019 陈旧 unity obj 处置见 `docs/getting-started.md`「构建问题排查」。
 
-### 构建错误诊断
-Qoder 环境：以 `.qoder/skills/minilang-build/SKILL.md` 为诊断补充源（含已知问题排查、筛选测试用法）；运行时崩溃分析见 `scripts/analyze_minidump.ps1`；命令与验证标准以本节为唯一权威，冲突时以本节为准。
+**通过标准**：①`cmake --build` 退出码 0（`/W4+/WX` 零警告零豁免）②`ctest` 退出码 0 ③语义修改须确认四后端一致，JIT 已支持场景同步验证、未支持场景验证优雅降级。
 
-## 7. 记忆归档
+## 7. 知识维护纪律
 
-记忆压缩归档由 `scripts/compress_memory.ps1` 执行：先 DryRun 预览，确认后加 `-Apply` 搬移；归档后主文件须保留「归档索引」指针。详细规则由 Qoder 记忆系统维护，不在本文件重复。
-
-## 8. 变更记录
-
-| 日期 | 版本 | 变更 |
-|------|------|------|
-| 2026-08-02 | 2.0 | 按审计报告 D1-D10 重构：归档节压缩为指针（D1）、补权限边界/禁止操作（D2）、内联构建命令并打破与 skill 循环引用（D3）、补 Bug 模式审计入口（D4）、架构事实加出处（D5）、任务分派（D6）、去重（D7）、版本/日期/优先级声明（D8/D9）、标题与编号（D10） |
-| 历史 | 1.x | 历史版本；PowerShell 执行规则已迁移至用户级 `%USERPROFILE%\.agent\AGENTS.md`，不再逐项目维护 |
-| 2026-08-02 | 2.1 | 联动：新增 `minilang-bughunt` / `minilang-diffcheck` skill 与 `docs/specs/` 三份规范（内存/一致性/测试约定）；§3 加排查流程指针、§4 文档索引补 specs、§6 诊断补崩溃分析 |
-| 2026-08-02 | 2.2 | 精度修正（可行性审计）：§3 OpCode 计数口径改为「89 条有效 OpCode（枚举 90 成员，OP_CONSTANT 废弃保留）」，§6 补 gui/ 目录 W4 警告豁免说明 |
-| 2026-10-03 | 2.3 | 审计清偿同步：§3 #1 更新为表驱动校验器（BytecodeIRBackendStackCheck.cpp + 编译期完备性）；§6 W4 豁免说明退役（gui/ 与 core 同基线）；新增 IROp 补表要求升级为编译期强制 |
-| 2026-10-04 | 2.4 | 三轮性能优化文档同步：§6 补 ctest -j 并行与 LNK1163（陈旧 unity obj 家族）处置注记；docs 同步（architecture IR 管线现状、backend-consistency §7 截断校验上移不变量、memory-model §2 内存序惯用法与 §3 GC 零拷贝根集/atomic 统计、testing 内联级联新行为、getting-started 排查条目）。代码变更明细见 CHANGELOG Unreleased 三条优化条目（三轮） |
-| 2026-10-05 | 2.5 | 协程真挂起架构 + 第四轮优化同步：新增 [ADR-007](docs/adr/ADR-007-coroutine-suspension.md)（三执行后端 `MINILANG_CORO_FIBER` 门控同步升级真挂起，勘误"VM 真挂起 D.5"历史注释；语义变更 = 生成器前缀副作用只执行一次）；§3 核心约束补协程模式门控行；backend-consistency 新增 §9（快照相对化 checklist/单边启用禁令/双路径核对义务）；development.md 最近变更摘要补 2026-10-05 条目。代码变更明细见 CHANGELOG Unreleased「协程真挂起架构落地」与「IR 编译路径优化第四轮」条目（4123/4123） |
-| 2026-10-11 | 2.6 | JIT per-chunk 编译架构落地：新增 [ADR-008](docs/adr/ADR-008-jit-per-chunk.md)（per-chunk 代码块 + tiering 真单 chunk 编译 + 进程内块缓存，勘误积压记录"跨后端帧协议"前提——JIT/VM 无帧互操作；执行行为零语义变化）；§3 核心约束补 JIT per-chunk 行（含 kJitCodegenVersion 递增纪律）；§1 角色行"分层编译"改"per-chunk 分层编译"；architecture.md JIT 节、backend-consistency.md §8（JitContext 字段数与 per-chunk 协议）、testing.md 测试计数同步。代码变更明细见 CHANGELOG Unreleased「JIT per-chunk 编译架构落地」条目（4132/4132，含 5 新增 BlockCache） |
-| 2026-10-07 | 2.7 | 协程真挂起平台覆盖扩展（ADR-007 平台覆盖项部分清偿）：`MINILANG_CORO_FIBER` 新增 Linux ucontext 平台层（`InterpreterCoroutine.cpp` 五函数对称接口 + ASan fiber 标注），Linux 三执行后端真挂起、macOS 保持重放；backend-consistency §9 补平台层扩展义务；测试补平台 `static_assert` 锁定。代码变更明细见 CHANGELOG Unreleased「协程真挂起平台覆盖扩展」条目 |
-| 2026-10-07 | 2.8 | 泛型擦除补全 + 显式类型实参（路线图"泛型/模板"推进）：§3 高频 Bug 模式新增 #11（泛型注解擦除六处同步 + `annotationReferencesTypeParam` 递归判定 + `trySkipExplicitTypeArgs` 消歧）；修复 R163 复合注解漏擦四后端不一致（P1）、显式类型实参静默误解析（P1）；架构文档补协程执行模型章节（ADR-007 纳入四后端架构 ADR 索引）；testing/README 测试计数同步（4059/511/4150）。代码变更明细见 CHANGELOG Unreleased「四后端不一致（P1）：泛型复合注解擦除遗漏」与「泛型显式类型实参语法」条目（4150/4150） |
-| 2026-10-21 | 2.9 | 审计修复轮（4 子代理并行审计：协程挂起/JIT 块缓存/泛型擦除/字典透明查找）：P0 挂起协程快照 GC 根集缺失（`gcRootContributor` 回调 + `gcRootPtr` 协程分支，三执行后端全覆盖）；P1 泛型构造路径擦除时序（guard 前移两处）+ JIT 第七处擦除点（`jitBuildEnumVariant`）+ 失败协程弃用重建语义分歧（保留重抛）；P2 JIT 块缓存 owned 标志。§6 补 minilang_perf_test 目标开关注记。审计新发现（未修，见 docs/code-audit-report-2026-10-21.md）：VM 错误逃逸后 .next() 语义分歧、数组字面量默认值静默不绑定、泛型嵌套函数类型参数不传播等。测试计数 4064/511/4155 |
-| 2026-10-22 | 2.10 | 夜间调度审计轮（按审计报告 §6.4 推荐清单）：清偿 §3.6 dict 键注解文法同构切分（`findDictKVSeparator` 擦除/校验两侧共用）+ §3.11 NaN 键 SameValueZero（**语义变更**：hash 规范化 + NaN 互等，backend-consistency §2 新增条款；注：0.0/0.0 是显式除零错误，NaN 经 inf-inf 产生）；性能收口：字典透明查找剩余 17 处（Value.h 新增 dictFindFieldRef/dictGetOrInsertFieldRef + JIT helper 迁移）+ JIT 只读 helper 非 const 容器访问 COW 误分离（jitLen/字符串拼接/索引读每访问整容器深拷贝 → const 声明修复，kJitCodegenVersion 不递增——仅 helper 函数体变化）；清理：Interpreter::isTypeParameter 双事实源移除 + Value.h rehash 注释修订。§3.4/§3.5（Parser.cpp 两项）受阻于平台写入守卫凭据启发式对既有 token 形状行的误判（不绕过，方案已定位到行）。测试计数 4159 → 4163（minilang_tests 4072 + app 47 + gui 4 + perf 40），详见审计报告 §7 |
-| 2026-10-22 | 2.11 | 日间续作轮（审计报告 §8）：§3.3 清偿——泛型嵌套函数/lambda/局部 enum 类型参数词法传播（编译期 外层∪自身 合并替代覆盖式赋值 + ClosureData::definingTypeParams 定义期快照覆盖延迟调用 + 局部 enum 三侧并入；附带修复 IR 路径 savedCurrentTypeParams 从无快照赋值的既有遗漏与「调用点非 const 访问器触发闭包 COW 克隆破坏写回快照」实测回归；§3.4/§3.5 本轮独立复现同一写入守卫误判维持登记）；§3.10 清偿——instructionSizeAt 截断防御钳制。测试计数 4163 → 4167（minilang_tests 4076 + app 47 + gui 4 + perf 40），详见审计报告 §8 |
-| 2026-10-22 | 2.12 | 日间集群轮（四子代理并行，审计报告 §9）：§3.8 清偿——协程跨线程恢复防御（ownerThread 登记 + 恢复前校验，语言层不可达经 std::thread 串行用例锁定；spawn 协作式语义实测确认）；泛型函数内声明类收尾（三侧声明点并入定义期上下文，§3.3 同族）；§3.12 两项——JIT 块缓存键 enumInfos 全量入键（kJitCodegenVersion 1→2）与 PkgCli 共享 CWD lockfile 竞争 flake 根因修复（8 用例临时目录隔离，产品级原子写登记）。剩余未修收敛至 §3.2/§3.4/§3.5（均被 Parser.cpp 写入守卫误判阻塞）+ 2 条新登记。测试计数 4167 → 4171，详见审计报告 §9 |
-| 2026-10-22 | 2.13 | 日间续作轮（5 子代理并行审计 + 主会话修复，审计报告 §10）：P1 清偿——顶层嵌套块遮蔽值不恢复（V10，diff_test 实证解释器 3,2,1 vs StackVM 3,3,1；祖先遮蔽名补发保存/恢复，ConsistencyDiff 新增 runStackVM_Direct 非 IR 口径四路锁定）；§9.2 产品级清偿——pkg writeFile 原子化（临时文件+rename，saveManifest/saveLockfile 一并受益）。Parser.cpp 写入守卫第三次误判（§3.2/§3.4/§3.5 维持登记；§3.2 专项调查完成，破案 §6.2 悬案④：测试 runner 不读 DiagnosticBag 而 CLI 读；三方案已定位到行待守卫修正）。新登记：GC 单槽回调覆盖+七面板无守卫（P1 推演）、REPL 跨行协程恢复必然失败（P1 推演）、DeleteFiber 跨线程析构（P2）、JIT methodCallIC 键疑点（待证）、VM 顶层块内新名泄漏（V11 实证 P2）、cli 就地截断回写（P3）；优化机会目录 32+ 条（COW 伪共享/debugger() 无条件调用/字符串字面量重复分配等，见 audit-notes-20261022/）。行列元数据 RLE 记录项评估关闭（不适用）。测试计数 4171 → 4176，详见审计报告 §10 |
-| 2026-10-22 | 2.14 | 日间续作轮二（用户授权续作，审计报告 §11）：P2 清偿——块内新声明全局泄漏（V11，diff_test 实证；直译侧 fresh 登记 currentLocals_ + pre-pass ancestorFresh 保存/恢复，IR 侧 topLevelBlockFreshGlobals_ 逐块栈 + DELETE_VAR 清理对齐 for 循环先例，块退出后引用回退运行期报错四路一致）；test_harness 错误标签分类学修正（VMRT: → RT:）。Parser.cpp 写入守卫第四次误判（用户授权后重试仍拒，自动化判据会话内不可解除；§3.2/§3.4/§3.5 维持登记，方案与用例清单就绪）。报告编码事故修复：上轮 PowerShell Get-Content/Set-Content 管道对无 BOM UTF-8 GBK 误解码致全报告乱码入库（56052de），本轮从 0278078 字节级恢复 + write/edit 工具重建 §10/§11；教训入 §11.2：中文文档改动禁用 PowerShell 裸 Get/Set-Content 管道。测试计数 4176 → 4178，diff_test 96/96，详见审计报告 §11 |
-| 2026-10-22 | 2.15 | 日间续作轮三（同族收尾，审计报告 §12）：P2 清偿 ×3——① §9.2 主体：协程值跨线程析构 DeleteFiber 边界防御（~CoroutineFiberState ownerThread 比对，非创建线程有意弃置，ADR-007 Known Limitations #3 登记，回归 CrossThreadParkedFiberDestruction）；② V10 同族：顶层 catch 遮蔽嵌套块恢复缺失（removeMapping 登记 shadowedGlobalNames_ + 恢复点解除）；③ V11 同族：解构绑定块内 fresh 泄漏（bindDestructureVar/IR visitDestructureBinding 同规格登记，visitBlock pre-pass 重构为候选收集 lambda 覆盖两类块级声明）。测试计数 4178 → 4181，详见审计报告 §12 |
+1. **单一权威**：每个事实只有一个家（见 `docs/knowledge/INDEX.md`）；其他位置只放链接，不复制内容。
+2. **L0 无历史**：本文件只写长期有效的规则，不记录时间、版本提交、用例数量或逐轮过程；这类信息只进 `CHANGELOG.md` / `docs/audit/`。
+3. **分层追加**：只有 L4（CHANGELOG/审计报告）追加；AGENTS/spec/skill/BACKLOG 是改写与退役，不是追加。
+4. **预算**：AGENTS ≤ 8 KB / 120 行；spec ≤ 160 行；skill ≤ 150 行；BACKLOG ≤ 200 行。超限先拆分或退役。
+5. **升级门槛**：单次事件只进 CHANGELOG；只有“复发 ≥2 次 / 曾致 P0/P1 / 改变不变量”才升级为 spec 规则，且必须配回归测试、编译期断言或脚本检查。
+6. **触碰即修**：发现文档与代码不符，在同一次提交内修正或删除，禁止追加剧中注记。
+7. **轮末仪式**：按 `docs/knowledge/ROUND-END.md` 执行；每 5 轮或 AGENTS 超预算或发生 P0/P1，强制先蒸馏再开工。
+8. **记忆边界**：项目事实不进 auto-memory；只存用户偏好与外部入口。
