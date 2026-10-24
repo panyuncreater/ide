@@ -53,6 +53,9 @@ qrc_*.cpp
 # --- 用户本地配置 ---
 CMakeUserPresets.json
 
+# --- 本地嵌入式 Python 运行时（CMake 的 Python3 解释器来源，不入库）---
+/Python/
+
 # --- IDE/编辑器 ---
 .trae/
 .trae-html-share-packages/
