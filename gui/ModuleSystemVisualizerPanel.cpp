@@ -33,6 +33,7 @@
 #include "gui/GuiTextUtils.h"
 #include "gui/I18n.h"
 #include "gui/TeachingSubPageBar.h"
+#include "gui/TeachingTheme.h" // OPT-11: 颜色语义化
 
 // ============================================================
 // 匿名命名空间 — 辅助函数
@@ -48,18 +49,18 @@ QString htmlEscape(const std::string& s) {
 /// 根据状态返回对应的显示颜色
 QString statusColor(const std::string& status) {
     if (status == "成功") {
-        return QStringLiteral("#0a7a28");
+        return TeachingTheme::moduleOkFg().name();
     }
     if (status == "循环") {
-        return QStringLiteral("#b8860b");
+        return TeachingTheme::moduleCycleFg().name();
     }
     if (status == "失败") {
-        return QStringLiteral("#c0392b");
+        return TeachingTheme::dangerRed().name();
     }
     if (status == "跳过(已缓存)") {
-        return QStringLiteral("#666666");
+        return TeachingTheme::textAuxiliary().name();
     }
-    return QStringLiteral("#333333");
+    return TeachingTheme::textDefault().name();
 }
 
 /// 构造一个模块节点 HTML 盒子（用 table 单元格 +
@@ -351,7 +352,7 @@ void ModuleSystemVisualizerPanel::populateTheory() {
         // 失败行高亮
         if (p.resolved == "(失败)") {
             for (int col = 0; col < 3; ++col) {
-                pathTable_->item(i, col)->setForeground(QColor("#c0392b"));
+                pathTable_->item(i, col)->setForeground(QColor(TeachingTheme::dangerRed().name()));
             }
         }
     }
@@ -369,9 +370,9 @@ void ModuleSystemVisualizerPanel::populateTheory() {
         prescanTable_->item(i, 1)->setToolTip(desc);
         // 「否」行用警告色提示不预扫描
         if (ck.prescanned == "否") {
-            prescanTable_->item(i, 1)->setForeground(QColor("#b8860b"));
+            prescanTable_->item(i, 1)->setForeground(QColor(TeachingTheme::moduleCycleFg().name()));
         } else {
-            prescanTable_->item(i, 1)->setForeground(QColor("#0a7a28"));
+            prescanTable_->item(i, 1)->setForeground(QColor(TeachingTheme::moduleOkFg().name()));
         }
     }
 }
@@ -483,13 +484,13 @@ ModuleSimResult ModuleSystemVisualizerPanel::runScenario(int idx) {
                          "预扫描使函数支持前向引用。";
         // 依赖图：a → b → c（绿色节点表示成功）
         result.dependencyGraphHtml = (QStringLiteral("<table cellpadding='0' cellspacing='0'><tr>") +
-                                      moduleNodeHtml("a.ml", "#e8f5e9", "#0a7a28") + arrowCell("→") +
-                                      moduleNodeHtml("b.ml", "#e3f2fd", "#1565c0") + arrowCell("→") +
-                                      moduleNodeHtml("c.ml", "#fff3e0", "#ef6c00") +
-                                      QStringLiteral("</tr></table>"
-                                                     "<p style='color:#0a7a28;font-size:small;'>"
-                                                     "绿色边框=成功加载，箭头=import 依赖方向（加载顺序），"
-                                                     "执行顺序为 c→b→a（后序）</p>"))
+                                      moduleNodeHtml("a.ml", TeachingTheme::moduleNodeGreenBg().name(), TeachingTheme::moduleOkFg().name()) + arrowCell("→") +
+                                      moduleNodeHtml("b.ml", TeachingTheme::moduleNodeBlueBg().name(), TeachingTheme::moduleNodeBlueBorder().name()) + arrowCell("→") +
+                                      moduleNodeHtml("c.ml", TeachingTheme::moduleNodeOrangeBg().name(), TeachingTheme::moduleNodeOrangeBorder().name()) +
+                                      (QStringLiteral("</tr></table>")
+                                                     + QStringLiteral("<p style='color:") + TeachingTheme::moduleOkFg().name() + QStringLiteral(";font-size:small;'>")
+                                                     + QStringLiteral("绿色边框=成功加载，箭头=import 依赖方向（加载顺序），")
+                                                     + QStringLiteral("执行顺序为 c→b→a（后序）</p>")))
                                          .toStdString();
         break;
     }
@@ -511,12 +512,12 @@ ModuleSimResult ModuleSystemVisualizerPanel::runScenario(int idx) {
                          "语义参考 ES Modules + Python。";
         // 依赖图：a ⇄ b（橙色高亮表示循环延迟加载）
         result.dependencyGraphHtml = (QStringLiteral("<table cellpadding='0' cellspacing='0'><tr>") +
-                                      moduleNodeHtml("a.ml", "#fff3e0", "#ef6c00") + arrowCell("⇄") +
-                                      moduleNodeHtml("b.ml", "#fff3e0", "#ef6c00") +
-                                      QStringLiteral("</tr></table>"
-                                                     "<p style='color:#ef6c00;font-size:small;'>"
-                                                     "橙色边框=循环导入延迟加载，⇄ 表示双向 import。"
-                                                     "加载栈 [a.ml, b.ml] 中再次遇到 a.ml 返回部分 env</p>"))
+                                      moduleNodeHtml("a.ml", TeachingTheme::moduleNodeOrangeBg().name(), TeachingTheme::moduleNodeOrangeBorder().name()) + arrowCell("⇄") +
+                                      moduleNodeHtml("b.ml", TeachingTheme::moduleNodeOrangeBg().name(), TeachingTheme::moduleNodeOrangeBorder().name()) +
+                                      (QStringLiteral("</tr></table>")
+                                                     + QStringLiteral("<p style='color:") + TeachingTheme::moduleNodeOrangeBorder().name() + QStringLiteral(";font-size:small;'>")
+                                                     + QStringLiteral("橙色边框=循环导入延迟加载，⇄ 表示双向 import。")
+                                                     + QStringLiteral("加载栈 [a.ml, b.ml] 中再次遇到 a.ml 返回部分 env</p>")))
                                          .toStdString();
         break;
     }
@@ -533,14 +534,14 @@ ModuleSimResult ModuleSystemVisualizerPanel::runScenario(int idx) {
         // 依赖图：a → nonexist（红色虚线边框表示未找到）
         result.dependencyGraphHtml =
             (QStringLiteral("<table cellpadding='0' cellspacing='0'><tr>") +
-             moduleNodeHtml("a.ml", "#e8f5e9", "#0a7a28") + arrowCell("→") +
-             QStringLiteral("<td style='border:2px dashed #c0392b;background:#ffebee;padding:8px 14px;"
-                            "font-family:%1;font-size:13px;font-weight:bold;color:#c0392b;'>nonexist.ml ✗</td>")
+             moduleNodeHtml("a.ml", TeachingTheme::moduleNodeGreenBg().name(), TeachingTheme::moduleOkFg().name()) + arrowCell("→") +
+             (QStringLiteral("<td style='border:2px dashed ") + TeachingTheme::dangerRed().name() + QStringLiteral(";background:") + TeachingTheme::moduleNodeErrorBg().name() + QStringLiteral(";padding:8px 14px;")
+                            + QStringLiteral("font-family:%1;font-size:13px;font-weight:bold;color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";'>nonexist.ml ✗</td>"))
                  .arg(GuiTextUtils::monoFontFamilyQss()) +
-             QStringLiteral("</tr></table>"
-                            "<p style='color:#c0392b;font-size:small;'>"
-                            "虚线红边框=文件未找到，→ import 依赖方向。"
-                            "路径解析失败立即抛错并沿 import 链传播</p>"))
+             (QStringLiteral("</tr></table>")
+                            + QStringLiteral("<p style='color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";font-size:small;'>")
+                            + QStringLiteral("虚线红边框=文件未找到，→ import 依赖方向。")
+                            + QStringLiteral("路径解析失败立即抛错并沿 import 链传播</p>")))
                 .toStdString();
         break;
     }
@@ -559,15 +560,15 @@ ModuleSimResult ModuleSystemVisualizerPanel::runScenario(int idx) {
         // 依赖图：单节点 badprescan（橙色警告）
         result.dependencyGraphHtml =
             (QStringLiteral("<table cellpadding='0' cellspacing='0'><tr>") +
-             moduleNodeHtml("badprescan.ml", "#fff8e1", "#b8860b") +
-             QStringLiteral("</tr></table>"
-                            "<table cellpadding='0' cellspacing='0' style='margin-top:8px;'><tr>"
-                            "<td style='border:1px solid #bbb;background:#f7f7f7;padding:6px 10px;"
-                            "font-family:%1;font-size:12px;'>export fun main() { helper(); }"
-                            "  →  <span style='color:#c0392b;'>helper() 未预扫描收集</span>"
-                            "  → 运行时失败</td></tr></table>"
-                            "<p style='color:#b8860b;font-size:small;'>"
-                            "橙色边框=预扫描异常。漏收集 FunDecl 导致前向引用失败</p>")
+             moduleNodeHtml("badprescan.ml", TeachingTheme::moduleNodeYellowBg().name(), TeachingTheme::moduleCycleFg().name()) +
+             (QStringLiteral("</tr></table>")
+                            + QStringLiteral("<table cellpadding='0' cellspacing='0' style='margin-top:8px;'><tr>")
+                            + QStringLiteral("<td style='border:1px solid #bbb;background:") + TeachingTheme::surfaceSunken().name() + QStringLiteral(";padding:6px 10px;")
+                            + QStringLiteral("font-family:%1;font-size:12px;'>export fun main() { helper(); }")
+                            + QStringLiteral("  →  <span style='color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";'>helper() 未预扫描收集</span>")
+                            + QStringLiteral("  → 运行时失败</td></tr></table>")
+                            + QStringLiteral("<p style='color:") + TeachingTheme::moduleCycleFg().name() + QStringLiteral(";font-size:small;'>")
+                            + QStringLiteral("橙色边框=预扫描异常。漏收集 FunDecl 导致前向引用失败</p>"))
                  .arg(GuiTextUtils::monoFontFamilyQss()))
                 .toStdString();
         break;
@@ -606,7 +607,7 @@ void ModuleSystemVisualizerPanel::renderScenarioResult(const ModuleSimResult& re
     html += QStringLiteral("<h2>%1</h2>").arg(htmlEscape(result.scenarioTitle));
 
     if (!result.summary.empty()) {
-        QString color = result.success ? QStringLiteral("#0a7a28") : QStringLiteral("#c0392b");
+        QString color = result.success ? TeachingTheme::moduleOkFg().name() : TeachingTheme::dangerRed().name();
         html += QStringLiteral("<p style='color:%1;font-weight:bold;'>%2</p>").arg(color, htmlEscape(result.summary));
     }
 
@@ -622,8 +623,8 @@ void ModuleSystemVisualizerPanel::renderScenarioResult(const ModuleSimResult& re
         html += QStringLiteral("<table border='1' cellpadding='5' cellspacing='0' "
                                "style='font-family:%1;font-size:12px;border-collapse:collapse;'>")
                     .arg(monoFamily);
-        html += QStringLiteral("<tr style='background:#f0f0f0;'><th>步骤</th><th>模块</th>"
-                               "<th>操作</th><th>状态</th></tr>");
+        html += (QStringLiteral("<tr style='background:") + TeachingTheme::tableHeaderBg().name() + QStringLiteral(";'><th>步骤</th><th>模块</th>")
+                               + QStringLiteral("<th>操作</th><th>状态</th></tr>"));
         for (const auto& s : result.steps) {
             html += QStringLiteral("<tr><td style='text-align:center;'>%1</td><td>%2</td><td>%3</td>"
                                    "<td style='text-align:center;color:%4;'>%5</td></tr>")
@@ -636,8 +637,8 @@ void ModuleSystemVisualizerPanel::renderScenarioResult(const ModuleSimResult& re
     // 模拟代码片段
     if (!result.scenarioCode.empty()) {
         html += QStringLiteral("<h3>场景代码</h3>");
-        html += QStringLiteral("<pre style='background:#f7f7f7;padding:8px;border:1px solid #ddd;"
-                               "font-family:%1;font-size:12px;white-space:pre-wrap;'>")
+        html += (QStringLiteral("<pre style='background:") + TeachingTheme::surfaceSunken().name() + QStringLiteral(";padding:8px;border:1px solid #ddd;")
+                               + QStringLiteral("font-family:%1;font-size:12px;white-space:pre-wrap;'>"))
                     .arg(monoFamily);
         html += htmlEscape(result.scenarioCode);
         html += QStringLiteral("</pre>");

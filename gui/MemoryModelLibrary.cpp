@@ -11,6 +11,7 @@
 // ============================================================
 
 #include "gui/MemoryModelPanel.h"
+#include "gui/TeachingTheme.h" // OPT-11: 颜色语义化
 
 #include "interpreter/NaNBox.h"
 
@@ -279,27 +280,27 @@ const std::vector<MemoryAnimPhase>& MemoryAnimLibrary::gcAnimPhases() {
             "🟢 Mark 阶段：从根集（VM 操作数栈、globals、调用帧）出发，"
             "递归标记所有可达的容器节点（ArrayData/DictData/InstanceData）。"
             "已标记节点 marked=true，避免重复遍历；环形引用在第二次相遇时跳过。",
-            "#3079C0" // 蓝色：标记中
+            TeachingTheme::memoryStateMarking().name().toStdString() // 蓝色：标记中
         },
         {
             "sweep",
             "🧹 Sweep 阶段：迭代 slots_ 登记表，对槽位仍被占用但 marked 未标记的节点"
             "（即不可达的循环孤岛）清空其子元素打破循环，refCount 自然降为 0 触发析构。"
             "存活节点重置 marked=false 为下一轮做准备。",
-            "#C03030" // 红色：回收中
+            TeachingTheme::memoryStateReclaim().name().toStdString() // 红色：回收中
         },
         {
             "reset",
             "🔄 Reset 阶段：存活节点的 marked 标志复位为 false，slots_ 登记表压缩后仅保留存活对象。"
             "新一轮 collectCycle 触发前，所有节点状态干净，避免上一轮残留影响。",
-            "#709030" // 绿色：复位
+            TeachingTheme::memoryStateReset().name().toStdString() // 绿色：复位
         },
         {
             "idle",
             "💤 Idle 阶段：GC 空闲。当前 collectCycle 已结束，下一次触发时机为"
             "Interpreter::execute() 起点（resetState 之后、runStatements 之前）。"
             "期间 refCount 正常管理对象生命周期，仅循环孤岛等待下轮回收。",
-            "#909090" // 灰色：空闲
+            TeachingTheme::memoryStateIdle().name().toStdString() // 灰色：空闲
         },
     };
     return kPhases;

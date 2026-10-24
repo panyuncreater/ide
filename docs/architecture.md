@@ -28,6 +28,12 @@ MiniLang 采用可选的三段式编译管线（外加 JIT 热路径分层编译
 
 > `compiler/` 自 2026-10-03 起按职责拆分为五个子目录：`core/`（Compiler/Bytecode/BytecodeCache 等共享基础设施）、`ir/`（IR 定义、AstIRBuilder、优化 pass、BytecodeIRBackend lowering 与栈平衡校验器）、`backend-stack/`（栈式 VM）、`backend-reg/`（寄存器 VM）、`jit/`（JIT 各层）。拆分对应 2026-08-03 审计报告问题 1（compiler/ 单模块超 4.5 万行）；源码 include 均使用根相对路径 `compiler/<子目录>/<文件>.h`。
 
+### 性能关键实现约定（2026-10-23）
+
+- **Formatter 单输出缓冲**：`formatter/Formatter` 的全部 `visit*`/`format*` 只向成员 `out_` 追加文本；父节点不再接收/拼接子节点临时串（线性 append，消除深表达式 O(深度×长度) 拷贝）。公共 `format(Block&)` 负责 swap 取结果与重入保护。
+- **字节码行列元数据**：`BytecodeChunk`/`RegBytecodeChunk` 以 `BytecodeLineColumnMap` 打包存储（每字节 4B，`line<<16|column`），错误/调试路径经 `getLine`/`getColumn` 读取；磁盘缓存格式 v4。
+- **COW 快路径与后端缓存**：解释器单节点 VarRef 原位变异、StackVM/JIT 接收者整体写回、RegisterVM 名称版全局缓存与 JIT init 缓存的失效/回退条件分别见 `docs/specs/memory-model.md` §4 与 `docs/specs/backend-consistency.md` §10；修改前必须核对这些不变量。
+
 ---
 
 ## 值表示：NaN-boxing

@@ -176,6 +176,7 @@ void jitPushTryHandler(JitContext* ctx, void* catchAddr, int64_t* stackBase);
 void jitPopTryHandler(JitContext* ctx);
 void jitPushJumpTarget(JitContext* ctx, void* targetAddr);
 void* jitPopJumpTarget(JitContext* ctx);
+void jitDropPendingJumps(JitContext* ctx, int64_t count);
 void* jitThrow(JitContext* ctx, uint64_t thrownValueBits, int64_t* currentR13);
 void* jitRuntimeThrow(JitContext* ctx, const char* msg, int64_t* currentR13);
 void* jitCheckAndRethrow(JitContext* ctx, int64_t* currentR13);

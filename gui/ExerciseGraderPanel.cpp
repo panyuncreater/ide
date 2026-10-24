@@ -12,6 +12,7 @@
 // ============================================================
 
 #include "gui/ExerciseGraderPanel.h"
+#include "gui/TeachingTheme.h" // OPT-11: 颜色语义化
 
 #include "app/IdeController.h" // F1 fix: 运行期守卫读取 isRunning/isVmRunning
 
@@ -511,7 +512,7 @@ void ExerciseGraderPanel::onSubmitGrade() {
         auto* statusItem = new QTableWidgetItem(pass ? QString::fromUtf8("✅ 通过") : QString::fromUtf8("❌ 失败"));
         statusItem->setTextAlignment(Qt::AlignCenter);
         if (pass) {
-            statusItem->setForeground(QColor(QStringLiteral("#27AE60")));
+            statusItem->setForeground(QColor(TeachingTheme::successGreen().name()));
             ++passed;
             // 拓展二期：隐藏用例通过时也不泄漏期望/实际值
             if (tc.hidden) {
@@ -523,7 +524,7 @@ void ExerciseGraderPanel::onSubmitGrade() {
                                    .arg(actual);
             }
         } else {
-            statusItem->setForeground(QColor(QStringLiteral("#C0392B")));
+            statusItem->setForeground(QColor(TeachingTheme::dangerRed().name()));
             QString actualForDetail = actual.isEmpty() ? QString::fromUtf8("（无输出）") : actual;
             // 拓展二期：隐藏用例失败时不泄漏期望值（防针对性硬编码）
             if (tc.hidden) {
@@ -609,14 +610,14 @@ void ExerciseGraderPanel::onSubmitGrade() {
     feedback += QStringLiteral("<p style='font-size:16px;'><b>总分：%1 / 100</b></p>").arg(totalScore);
     feedback += QStringLiteral("<h3>测试用例详情</h3>");
     if (!passDetails.isEmpty()) {
-        feedback += QStringLiteral("<p style='color:#27AE60;'><b>通过：</b></p><ul>");
+        feedback += (QStringLiteral("<p style='color:") + TeachingTheme::successGreen().name() + QStringLiteral(";'><b>通过：</b></p><ul>"));
         for (const auto& d : passDetails) {
             feedback += QStringLiteral("<li>") + d + QStringLiteral("</li>");
         }
         feedback += QStringLiteral("</ul>");
     }
     if (!failDetails.isEmpty()) {
-        feedback += QStringLiteral("<p style='color:#C0392B;'><b>失败：</b></p><ul>");
+        feedback += (QStringLiteral("<p style='color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";'><b>失败：</b></p><ul>"));
         for (const auto& d : failDetails) {
             feedback += QStringLiteral("<li>") + d + QStringLiteral("</li>");
         }
@@ -768,11 +769,11 @@ void ExerciseGraderPanel::renderGradeReport(const std::vector<GradeItem>& items,
 
         // 着色：满分绿色，零分红色，部分分橙色
         if (it.score == it.maxScore) {
-            scoreItem->setForeground(QColor(QStringLiteral("#27AE60")));
+            scoreItem->setForeground(QColor(TeachingTheme::successGreen().name()));
         } else if (it.score == 0) {
-            scoreItem->setForeground(QColor(QStringLiteral("#C0392B")));
+            scoreItem->setForeground(QColor(TeachingTheme::dangerRed().name()));
         } else {
-            scoreItem->setForeground(QColor(QStringLiteral("#E67E22")));
+            scoreItem->setForeground(QColor(TeachingTheme::orangeAccent().name()));
         }
 
         gradeTable_->setItem(i, 0, nameItem);

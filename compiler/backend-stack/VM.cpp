@@ -122,9 +122,8 @@ VMResult VM::fatalError(const std::string& msg) {
     int col = 0;
     if (!frames_.empty()) {
         const auto& frame = frames_.back();
-        if (frame.chunk && frame.ip < frame.chunk->columns.size()) {
-            col = frame.chunk->columns[frame.ip];
-        }
+        if (frame.chunk)
+            col = frame.chunk->getColumn(frame.ip);
     }
     diagnostics_.addError(msg, errorLine, col, DiagSource::VM);
     Logger::Error(ErrorFormat::formatWithLine(msg, errorLine), "VM");
@@ -153,9 +152,8 @@ VMResult VM::runtimeError(const std::string& msg, const std::string& diagCode) {
     int col = 0;
     if (!frames_.empty()) {
         const auto& frame = frames_.back();
-        if (frame.chunk && frame.ip < frame.chunk->columns.size()) {
-            col = frame.chunk->columns[frame.ip];
-        }
+        if (frame.chunk)
+            col = frame.chunk->getColumn(frame.ip);
     }
     // P2 fix (错误码优先匹配): 透传稳定诊断码到 addError，供 ErrorHintEngine 按 code 精确匹配
     diagnostics_.addError(msg, errorLine, col, DiagSource::VM, diagCode);
@@ -368,16 +366,13 @@ int VM::getCurrentLine() const {
     if (frames_.empty())
         return 0;
     const BytecodeChunk& chunk = *frames_.back().chunk;
-    size_t ip = frames_.back().ip;
-    if (ip >= chunk.lines.size())
-        return 0;
-    return chunk.lines[ip];
+    return chunk.getLine(frames_.back().ip);
 }
 
 std::string VM::getCurrentChunkName() const {
     if (frames_.empty())
         return "";
-    return frames_.back().functionName;
+    return frames_.back().functionName();
 }
 
 // R104 Function Breakpoint：在 OP_CALL/OP_CALL_EXPR 执行前查询被调用函数名
@@ -590,14 +585,10 @@ std::vector<VM::VMCallStackEntry> VM::getCallStack() const {
     result.reserve(frames_.size());
     for (const auto& frame : frames_) {
         VMCallStackEntry entry;
-        entry.functionName = frame.functionName;
+        entry.functionName = frame.functionName();
         entry.ip = frame.ip;
         // 获取该帧当前行号
-        if (frame.chunk && frame.ip < frame.chunk->lines.size()) {
-            entry.line = frame.chunk->lines[frame.ip];
-        } else {
-            entry.line = 0;
-        }
+        entry.line = frame.chunk ? frame.chunk->getLine(frame.ip) : 0;
         result.push_back(entry);
     }
     return result;
@@ -756,7 +747,7 @@ void VM::setStepCallbackEnabled(bool enabled) {
     stepCallbackEnabled_ = enabled;
 }
 
-VMCallFrame& VM::currentFrame() {
+VMCallFrame& VM::currentFrameSlow() {
     // 调用方契约：execute/stepOnce 在调用前已检查 frames_.empty()
     // B3 fix: 越界时调用 runtimeError（设置 hasError_ + 诊断）后抛 std::runtime_error，
     // 替代原 std::abort()。调用方（VmStepper::stepByMode / runBatch）已用 try/catch 包裹，
@@ -771,7 +762,7 @@ VMCallFrame& VM::currentFrame() {
 }
 
 // D3 fix: const 重载——只读路径（调试器检视面板/UI 显示）使用 const 引用避免误改帧状态
-const VMCallFrame& VM::currentFrame() const {
+const VMCallFrame& VM::currentFrameSlow() const {
     // 调用方契约：与上面非 const 版本一致，调用前应检查 frames_.empty()
     // const 路径不调用 runtimeError（runtimeError 修改 hasError_/diagnostics_），
     // 仅记录日志后抛异常。
@@ -907,15 +898,13 @@ bool VM::tryOperatorOverload(size_t& ip, OpCode op, VMResult& outResult) {
                                                         dunderName, targetChunk.localCount, preAllocated));
         return true;
     }
-    for (int i = 0; i < extraSlots; ++i) {
-        push(Value::nullValue());
-    }
+    pushNulls(static_cast<size_t>(extraSlots));
 
     VMCallFrame newFrame;
     newFrame.chunk = targetChunkPtr;
     newFrame.returnIp = ip + 1; // OP_ADD 系列均为单字节指令
     newFrame.basePointer = stack_.size() - targetChunk.localCount;
-    newFrame.functionName = targetChunk.name;
+    newFrame.setFunctionName(targetChunk.name);
     newFrame.ip = 0;
     newFrame.isMethodCall = true;
     newFrame.isInitCall = false;
@@ -1507,7 +1496,8 @@ void VM::initExecution(const CompileResult& result) {
     mainFrame.chunk = &mainChunk_; // 指向 VM 自持的副本
     mainFrame.ip = 0;
     mainFrame.basePointer = 0;
-    mainFrame.functionName = "main";
+    static const std::string kMainFunctionName = "main";
+    mainFrame.setFunctionName(kMainFunctionName);
     frames_.push_back(std::move(mainFrame));
 
     // IR 路径主帧局部槽预留：IR 的 AND/OR 短路等在顶层代码用 STORE_LOCAL/LOAD_LOCAL
@@ -1876,6 +1866,9 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_SUB_INT_SPEC:
     case OpCode::OP_MUL_INT_SPEC:
     case OpCode::OP_LT_INT_SPEC:
+    case OpCode::OP_GT_INT_SPEC:
+    case OpCode::OP_GTE_INT_SPEC:
+    case OpCode::OP_LTE_INT_SPEC:
         return executeArithOps(op, ip);
 
     // 比较与逻辑运算类
@@ -1959,6 +1952,7 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_TYPE_CHECK:
     case OpCode::OP_PUSH_JUMP_TARGET:
     case OpCode::OP_FINALLY_END:
+    case OpCode::OP_DROP_PENDING_JUMPS: // B-008: finally 内 abrupt 替换清理
     case OpCode::OP_SWAP:      // R99 match 表达式：交换栈顶两个值
     case OpCode::OP_LEN:       // R134 模式匹配扩展：获取容器长度
     case OpCode::OP_TYPE_TEST: // R134 模式匹配扩展：软类型测试
@@ -2048,12 +2042,14 @@ VMResult VM::executeArithOps(OpCode op, size_t& ip) {
     // 二元运算统一约定：栈顶两个操作数(right 在上、left 在下)被消费，
     // 运算结果写回 left 原位并弹出 right（详见 numericOp），最终栈高度 -1。
     // 此处每个 case 仅做"分派 + 推进 ip + 通知单步"，真正的运算委托 numericOp。
+    // OPT-17: dunder 分派仅当左操作数为实例时有意义，纯标量/字符串算术跳过探测。
+    const bool maybeOperatorOverload = stack_.size() >= 2 && stack_[stack_.size() - 2].isInstance();
 
     switch (op) {
     case OpCode::OP_ADD: {
         // 拓展二期：instance dunder 分派（__add），未分派回退 numericOp
         VMResult ovr;
-        if (tryOperatorOverload(ip, op, ovr))
+        if (maybeOperatorOverload && tryOperatorOverload(ip, op, ovr))
             return ovr;
         VMResult r = numericOp(OP_ADD_INT);
         if (r != VMResult::VM_OK)
@@ -2065,7 +2061,7 @@ VMResult VM::executeArithOps(OpCode op, size_t& ip) {
 
     case OpCode::OP_SUBTRACT: {
         VMResult ovr;
-        if (tryOperatorOverload(ip, op, ovr))
+        if (maybeOperatorOverload && tryOperatorOverload(ip, op, ovr))
             return ovr;
         VMResult r = numericOp(OP_SUB_INT);
         if (r != VMResult::VM_OK)
@@ -2077,7 +2073,7 @@ VMResult VM::executeArithOps(OpCode op, size_t& ip) {
 
     case OpCode::OP_MULTIPLY: {
         VMResult ovr;
-        if (tryOperatorOverload(ip, op, ovr))
+        if (maybeOperatorOverload && tryOperatorOverload(ip, op, ovr))
             return ovr;
         VMResult r = numericOp(OP_MUL_INT);
         if (r != VMResult::VM_OK)
@@ -2089,7 +2085,7 @@ VMResult VM::executeArithOps(OpCode op, size_t& ip) {
 
     case OpCode::OP_DIVIDE: {
         VMResult ovr;
-        if (tryOperatorOverload(ip, op, ovr))
+        if (maybeOperatorOverload && tryOperatorOverload(ip, op, ovr))
             return ovr;
         VMResult r = numericOp(OP_DIV_INT);
         if (r != VMResult::VM_OK)
@@ -2101,7 +2097,7 @@ VMResult VM::executeArithOps(OpCode op, size_t& ip) {
 
     case OpCode::OP_MODULO: {
         VMResult ovr;
-        if (tryOperatorOverload(ip, op, ovr))
+        if (maybeOperatorOverload && tryOperatorOverload(ip, op, ovr))
             return ovr;
         VMResult r = numericOp(OP_MOD_INT);
         if (r != VMResult::VM_OK)
@@ -2178,6 +2174,29 @@ VMResult VM::executeArithOps(OpCode op, size_t& ip) {
         Value& right = stack_.back();
         Value& left = stack_[stack_.size() - 2];
         left = Value(left.intVal() < right.intVal());
+        stack_.pop_back();
+        notifyStep(ip, op);
+        ip += 1;
+        break;
+    }
+    // OPT-18 B6: GT/GTE/LTE int 特化（编译器保证两侧为 int）
+    case OpCode::OP_GT_INT_SPEC:
+    case OpCode::OP_GTE_INT_SPEC:
+    case OpCode::OP_LTE_INT_SPEC: {
+        if (stack_.size() < 2)
+            return runtimeError("栈下溢：比较运算需要两个操作数");
+        Value& right = stack_.back();
+        Value& left = stack_[stack_.size() - 2];
+        const int64_t l = left.intVal();
+        const int64_t r = right.intVal();
+        bool result = false;
+        if (op == OpCode::OP_GT_INT_SPEC)
+            result = l > r;
+        else if (op == OpCode::OP_GTE_INT_SPEC)
+            result = l >= r;
+        else
+            result = l <= r;
+        left = Value(result);
         stack_.pop_back();
         notifyStep(ip, op);
         ip += 1;

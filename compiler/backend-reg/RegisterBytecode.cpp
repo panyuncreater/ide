@@ -83,6 +83,7 @@ constexpr RegOpInfo kRegOpInfo[] = {
     /* REG_LEN                     */ {"REG_LEN", 3, false},       // R134: op(1B) + dst(1B) + src(1B)
     /* REG_TYPE_TEST               */ {"REG_TYPE_TEST", 5, false}, // R134: op(1B) + dst(1B) + src(1B) + typeIdx(2B)
     /* REG_TAIL_CALL               */ {"REG_TAIL_CALL", 5, true},  // L18: 变长 5 + argCount（布局同 REG_CALL）
+    /* REG_DROP_PENDING_JUMPS      */ {"REG_DROP_PENDING_JUMPS", 2, false}, // B-008: op(1B) + count(1B)
 };
 } // anonymous namespace
 
@@ -118,36 +119,28 @@ uint16_t RegBytecodeChunk::addConstant(const Value& value) {
 
 void RegBytecodeChunk::writeOp(RegOp op, int line, int column) {
     code.push_back(static_cast<uint8_t>(op));
-    while (static_cast<int>(lines.size()) < static_cast<int>(code.size())) {
-        lines.push_back(line);
-        columns.push_back(column); // BUG-IBACKEND-2
-    }
+    while (lineColumn.size() < code.size())
+        lineColumn.push(line, column);
 }
 
 void RegBytecodeChunk::writeReg(uint8_t reg, int line, int column) {
     assert(reg < 32 && "寄存器号超出 32 上限");
     code.push_back(reg);
-    while (static_cast<int>(lines.size()) < static_cast<int>(code.size())) {
-        lines.push_back(line);
-        columns.push_back(column); // BUG-IBACKEND-2
-    }
+    while (lineColumn.size() < code.size())
+        lineColumn.push(line, column);
 }
 
 void RegBytecodeChunk::writeShort(uint16_t v, int line, int column) {
     code.push_back(static_cast<uint8_t>(v & 0xFF));
     code.push_back(static_cast<uint8_t>((v >> 8) & 0xFF));
-    while (static_cast<int>(lines.size()) < static_cast<int>(code.size())) {
-        lines.push_back(line);
-        columns.push_back(column); // BUG-IBACKEND-2
-    }
+    while (lineColumn.size() < code.size())
+        lineColumn.push(line, column);
 }
 
 void RegBytecodeChunk::writeByte(uint8_t v, int line, int column) {
     code.push_back(v);
-    while (static_cast<int>(lines.size()) < static_cast<int>(code.size())) {
-        lines.push_back(line);
-        columns.push_back(column); // BUG-IBACKEND-2
-    }
+    while (lineColumn.size() < code.size())
+        lineColumn.push(line, column);
 }
 
 // ---- 指令长度表 ----

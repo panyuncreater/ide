@@ -368,7 +368,7 @@ void MemoryModelPanel::renderNanBoxDetail(const NaNBoundingBox& b) {
             if (bitIdx < 16) {
                 item->setBackground(on ? QColor(0xCC, 0x66, 0x66) : QColor(0xFF, 0xEE, 0xEE));
             } else {
-                item->setBackground(on ? QColor(0x66, 0x99, 0xCC) : QColor(0xEE, 0xF5, 0xFF));
+                item->setBackground(on ? TeachingTheme::tableRowHighlight() : QColor(0xEE, 0xF5, 0xFF));
             }
         }
     }
@@ -1025,9 +1025,9 @@ void MemoryModelPanel::renderHeapObjectDetail(const Value& v) {
                     os << "<tr>";
                     os << "<td>" << i << "</td>";
                     if (uv->isClosed) {
-                        os << "<td style='color:#2A7A2A;font-weight:bold;'>✅ closed</td>";
+                        os << (QStringLiteral("<td style='color:") + TeachingTheme::upvalueClosedFg().name() + QStringLiteral(";font-weight:bold;'>✅ closed</td>")).toStdString();
                     } else {
-                        os << "<td style='color:#C07030;font-weight:bold;'>🟢 open</td>";
+                        os << (QStringLiteral("<td style='color:") + TeachingTheme::upvalueOpenFg().name() + QStringLiteral(";font-weight:bold;'>🟢 open</td>")).toStdString();
                     }
                     os << "<td>" << uv->stackSlot << "</td>";
                     os << "<td>" << uv->owningFrameIdx << "</td>";

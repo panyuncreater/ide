@@ -26,6 +26,7 @@
 // ============================================================
 
 #include "gui/MarkdownRenderer.h"
+#include "gui/TeachingTheme.h" // OPT-11: 颜色语义化
 
 #include <QRegularExpression>
 #include <QRegularExpressionMatch>
@@ -213,45 +214,59 @@ static QString renderInline(const QString& s) {
 static QString buildStylesheet(const QString& codeBlockBg) {
     static const QString kStylesheet = QStringLiteral(R"(
         <style>
-        body { font-family: 'Microsoft YaHei','PingFang SC','Noto Sans CJK SC','Source Han Sans SC','Segoe UI','SF Pro Text','Arial Unicode MS','Arial',sans-serif; font-size: 14px; color: #1E1E1E; line-height: 1.6; }
-        h1 { font-size: 22px; color: #268BD2; border-bottom: 2px solid #E0E0E0; padding-bottom: 6px; margin: 16px 0 10px; font-weight: 600; }
-        h2 { font-size: 18px; color: #0078d4; border-bottom: 1px solid #E0E0E0; padding-bottom: 4px; margin: 14px 0 8px; font-weight: 600; }
-        h3 { font-size: 16px; color: #0078d4; margin: 12px 0 6px; font-weight: 600; }
-        h4 { font-size: 14px; color: #073642; margin: 10px 0 4px; font-weight: 600; }
-        h5, h6 { font-size: 13px; color: #5A5A5A; margin: 8px 0 4px; font-weight: 600; }
+        body { font-family: 'Microsoft YaHei','PingFang SC','Noto Sans CJK SC','Source Han Sans SC','Segoe UI','SF Pro Text','Arial Unicode MS','Arial',sans-serif; font-size: 14px; color: %2; line-height: 1.6; }
+        h1 { font-size: 22px; color: %4; border-bottom: 2px solid %3; padding-bottom: 6px; margin: 16px 0 10px; font-weight: 600; }
+        h2 { font-size: 18px; color: %5; border-bottom: 1px solid %3; padding-bottom: 4px; margin: 14px 0 8px; font-weight: 600; }
+        h3 { font-size: 16px; color: %5; margin: 12px 0 6px; font-weight: 600; }
+        h4 { font-size: 14px; color: %6; margin: 10px 0 4px; font-weight: 600; }
+        h5, h6 { font-size: 13px; color: %7; margin: 8px 0 4px; font-weight: 600; }
         p { margin: 6px 0; }
         ul, ol { margin: 6px 0; padding-left: 24px; }
         li { margin: 3px 0; }
-        code { background: #F5F5F5; color: #DC322F; padding: 2px 5px; border-radius: 3px; font-family: 'Cascadia Code','Cascadia Mono','Consolas','JetBrains Mono','Source Code Pro','Menlo','DejaVu Sans Mono','Courier New',monospace; font-size: 13px; }
-        pre { background: %1; padding: 10px 12px; border-radius: 6px; border: 1px solid #E0E0E0; font-family: 'Cascadia Code','Cascadia Mono','Consolas','JetBrains Mono','Source Code Pro','Menlo','DejaVu Sans Mono','Courier New',monospace; font-size: 13px; white-space: pre-wrap; margin: 8px 0; }
-        pre code { background: transparent; color: #1E1E1E; padding: 0; border-radius: 0; font-size: 13px; }
-        blockquote { border-left: 4px solid #268BD2; background: #F5F5F5; padding: 8px 12px; margin: 8px 0; color: #5A5A5A; border-radius: 0 4px 4px 0; }
+        code { background: %8; color: %9; padding: 2px 5px; border-radius: 3px; font-family: 'Cascadia Code','Cascadia Mono','Consolas','JetBrains Mono','Source Code Pro','Menlo','DejaVu Sans Mono','Courier New',monospace; font-size: 13px; }
+        pre { background: %1; padding: 10px 12px; border-radius: 6px; border: 1px solid %3; font-family: 'Cascadia Code','Cascadia Mono','Consolas','JetBrains Mono','Source Code Pro','Menlo','DejaVu Sans Mono','Courier New',monospace; font-size: 13px; white-space: pre-wrap; margin: 8px 0; }
+        pre code { background: transparent; color: %2; padding: 0; border-radius: 0; font-size: 13px; }
+        blockquote { border-left: 4px solid %4; background: %8; padding: 8px 12px; margin: 8px 0; color: %7; border-radius: 0 4px 4px 0; }
         blockquote p { margin: 4px 0; }
-        hr { border: none; border-top: 1px solid #E0E0E0; margin: 12px 0; }
+        hr { border: none; border-top: 1px solid %3; margin: 12px 0; }
         table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 13px; }
-        th { background: #F5F5F5; border: 1px solid #E0E0E0; padding: 6px 10px; text-align: left; font-weight: 600; color: #1E1E1E; }
-        td { border: 1px solid #E0E0E0; padding: 6px 10px; vertical-align: top; }
-        tr:nth-child(even) td { background: #FFFFFF; }
+        th { background: %8; border: 1px solid %3; padding: 6px 10px; text-align: left; font-weight: 600; color: %2; }
+        td { border: 1px solid %3; padding: 6px 10px; vertical-align: top; }
+        tr:nth-child(even) td { background: %11; }
         .task-list-item { list-style: none; margin-left: -18px; }
-        .task-checkbox { display: inline-block; width: 14px; height: 14px; border: 1.5px solid #8C8C8C; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
-        .task-checkbox.checked { background: #859900; border-color: #859900; color: white; text-align: center; font-size: 10px; line-height: 14px; }
-        b, strong { color: #1E1E1E; font-weight: 600; }
-        i, em { color: #5A5A5A; }
+        .task-checkbox { display: inline-block; width: 14px; height: 14px; border: 1.5px solid %10; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+        .task-checkbox.checked { background: %12; border-color: %12; color: white; text-align: center; font-size: 10px; line-height: 14px; }
+        b, strong { color: %2; font-weight: 600; }
+        i, em { color: %7; }
         /* P2-2 fix (F4): MiniLang 语法高亮配色（中性风格） */
-        .ml-keyword { color: #859900; font-weight: 600; }
-        .ml-string { color: #2AA198; }
-        .ml-comment { color: #6A9955; font-style: italic; }
-        .ml-number { color: #D33682; }
+        .ml-keyword { color: %12; font-weight: 600; }
+        .ml-string { color: %13; }
+        .ml-comment { color: %14; font-style: italic; }
+        .ml-number { color: %15; }
         /* P2-2 fix (F3): 章节锚点目录样式 */
-        .toc-box { background: #F5F5F5; border-left: 3px solid #268BD2; padding: 8px 12px; margin: 8px 0; border-radius: 0 4px 4px 0; }
-        .toc-title { font-weight: 600; color: #073642; margin-bottom: 4px; font-size: 13px; }
+        .toc-box { background: %8; border-left: 3px solid %4; padding: 8px 12px; margin: 8px 0; border-radius: 0 4px 4px 0; }
+        .toc-title { font-weight: 600; color: %6; margin-bottom: 4px; font-size: 13px; }
         .toc-list { margin: 0; padding-left: 16px; font-size: 13px; }
         .toc-list li { margin: 2px 0; }
-        .toc-list a { color: #268BD2; text-decoration: none; }
+        .toc-list a { color: %4; text-decoration: none; }
         .toc-list a:hover { text-decoration: underline; }
         </style>
     )");
-    return kStylesheet.arg(codeBlockBg.isEmpty() ? QStringLiteral("#F5F5F5") : codeBlockBg);
+    return kStylesheet.arg(codeBlockBg.isEmpty() ? TeachingTheme::codeBlockBg().name() : codeBlockBg)
+        .arg(TeachingTheme::textPrimary().name())
+        .arg(TeachingTheme::border().name())
+        .arg(TeachingTheme::info().name())
+        .arg(TeachingTheme::markdownHeading().name())
+        .arg(TeachingTheme::markdownInk().name())
+        .arg(TeachingTheme::textSecondary().name())
+        .arg(TeachingTheme::codeBlockBg().name())
+        .arg(TeachingTheme::error().name())
+        .arg(TeachingTheme::textHint().name())
+        .arg(TeachingTheme::surface().name())
+        .arg(TeachingTheme::success().name())
+        .arg(TeachingTheme::syntaxString().name())
+        .arg(TeachingTheme::syntaxComment().name())
+        .arg(TeachingTheme::syntaxNumber().name());
 }
 
 // ---- 公共 API ----
@@ -261,14 +276,14 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
         return QStringLiteral("<html><head></head><body></body></html>");
     }
 
-    const QString bg = codeBlockBg.isEmpty() ? QStringLiteral("#F5F5F5") : codeBlockBg;
+    const QString bg = codeBlockBg.isEmpty() ? TeachingTheme::surfaceHover().name() : codeBlockBg;
     const QString codeBlockStyle =
-        QStringLiteral("background:%1; padding:10px 12px; border-radius:6px; "
-                       "border:1px solid #E0E0E0; "
-                       "font-family:'Cascadia Code','Cascadia Mono','Consolas','JetBrains Mono','Source Code "
-                       "Pro','Menlo','DejaVu Sans Mono','Courier New',monospace; "
-                       "font-size:13px; "
-                       "white-space:pre-wrap;")
+        (QStringLiteral("background:%1; padding:10px 12px; border-radius:6px; ")
+                       + QStringLiteral("border:1px solid ") + TeachingTheme::border().name() + QStringLiteral("; ")
+                       + QStringLiteral("font-family:'Cascadia Code','Cascadia Mono','Consolas','JetBrains Mono','Source Code ")
+                       + QStringLiteral("Pro','Menlo','DejaVu Sans Mono','Courier New',monospace; ")
+                       + QStringLiteral("font-size:13px; ")
+                       + QStringLiteral("white-space:pre-wrap;"))
             .arg(bg);
 
     // 按行扫描，识别块级结构
@@ -373,7 +388,7 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
                 }
                 // 代码块语言标签（仅作为注释显示在代码上方，不渲染为单独元素）
                 if (!codeBlockLang.isEmpty()) {
-                    html << QStringLiteral("<div style=\"font-size:11px;color:#6E6E6E;margin-bottom:2px;\">")
+                    html << (QStringLiteral("<div style=\"font-size:11px;color:") + TeachingTheme::textMuted().name() + QStringLiteral(";margin-bottom:2px;\">"))
                          << escapeHtml(codeBlockLang) << QStringLiteral("</div>");
                 }
                 html << QStringLiteral("<pre style=\"%1\">").arg(codeBlockStyle) << escaped << QStringLiteral("</pre>");

@@ -579,7 +579,7 @@ VMResult RegisterVM::tryCallBuiltinOrClass(size_t& ip, const std::string& funNam
     }
     // AUDIT-BUG-F9 fix: 传入实际源码行号，对齐 StackVM 路径（VMCalls.cpp:380-386）。
     const RegBytecodeChunk& curChunk = *currentFrame().chunk;
-    int line = (ip < curChunk.lines.size()) ? curChunk.lines[ip] : 0;
+    int line = curChunk.getLine(ip);
 
     // BUG-IBACKEND-1 fix: input() 函数特殊处理（镜像 VMCalls.cpp:343-367）。
     // 原实现 inputCallback_ 字段仅在 setInputCallback 赋值，无任何调用点（死代码），
@@ -1288,6 +1288,7 @@ VMResult RegisterVM::executeClassNewImpl(size_t& ip, const std::string& classNam
         info.flattenedComputed = true;
     }
     Value instance = Value::makeInstance(className);
+    instance.fields().reserve(info.flattenedFieldOrder.size());
     for (size_t i = 0; i < info.flattenedFieldOrder.size(); ++i) {
         instance.fields()[info.flattenedFieldOrder[i]] = info.flattenedFieldDefaults[i];
     }

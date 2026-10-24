@@ -40,7 +40,9 @@ bool Compiler::isExprKnownInt(const ASTNode* expr) const {
     }
     case NodeType::NODE_UNARY_OP: {
         const auto* unary = static_cast<const UnaryOp*>(expr);
-        if (unary->opType == UnaryOp::UnaryOpType::UOP_NEGATE)
+        // OPT-18 B6: 一元 + 为恒等运算，不改变 int 类型
+        if (unary->opType == UnaryOp::UnaryOpType::UOP_NEGATE ||
+            unary->opType == UnaryOp::UnaryOpType::UOP_PLUS)
             return isExprKnownInt(unary->operand.get());
         return false;
     }
@@ -143,13 +145,13 @@ void Compiler::visitBinaryOp(BinaryOp& node) {
         op = bothInt ? OpCode::OP_LT_INT_SPEC : OpCode::OP_LESS;
         break;
     case BinOpType::BIN_GT:
-        op = OpCode::OP_GREATER;
+        op = bothInt ? OpCode::OP_GT_INT_SPEC : OpCode::OP_GREATER;
         break;
     case BinOpType::BIN_LTE:
-        op = OpCode::OP_LESS_EQUAL;
+        op = bothInt ? OpCode::OP_LTE_INT_SPEC : OpCode::OP_LESS_EQUAL;
         break;
     case BinOpType::BIN_GTE:
-        op = OpCode::OP_GREATER_EQUAL;
+        op = bothInt ? OpCode::OP_GTE_INT_SPEC : OpCode::OP_GREATER_EQUAL;
         break;
     default:
         error("不支持的运算符: " + std::string(BinaryOp::opTypeStr(node.opType)), node.line, node.column);

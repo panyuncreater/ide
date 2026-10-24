@@ -128,19 +128,18 @@ VMResult VM::executeReturn(size_t& ip) {
             size_t callerBp = callerFrame.basePointer;
 
             // 路径 A：接收者是全局变量 → 写回 globals_ 或 globalSlots_
+            // OPT-05: 整体赋值替代逐字段哈希写回。COW 别名论证：方法内字段写入
+            // 已在共享时 detach 出独立实例，整体赋值仅移动该实例引用；其他别名
+            // 仍持有旧实例，与逐字段写回时 ensureUnique 的分离结果一致。
             if (!recvVarName.empty() && modifiedThisC.isInstance()) {
                 auto gsIt = globalNameToSlot_.find(recvVarName);
                 if (gsIt != globalNameToSlot_.end() && gsIt->second >= 0 &&
                     gsIt->second < static_cast<int>(globalSlots_.size()) && globalSlots_[gsIt->second].isInstance()) {
-                    for (const auto& field : modifiedThisC.fields()) {
-                        globalSlots_[gsIt->second].fields()[field.first] = field.second;
-                    }
+                    globalSlots_[gsIt->second] = modifiedThisC;
                 } else {
                     auto it = globals_.find(recvVarName);
                     if (it != globals_.end() && it->second.isInstance()) {
-                        for (const auto& field : modifiedThisC.fields()) {
-                            it->second.fields()[field.first] = field.second;
-                        }
+                        it->second = modifiedThisC;
                     }
                 }
             }
@@ -157,11 +156,12 @@ VMResult VM::executeReturn(size_t& ip) {
                     // 字段，写入 caller this.fields()；若该字段在 caller 的 fieldOrder 中，
                     // 额外写入对应栈槽。
                     if (callerBp < stack_.size() && stack_[callerBp].isInstance()) {
-                        Value& callerThis = stack_[callerBp];
+                        // OPT-05: 整体替换调用者 this（消除 fieldCount 次哈希写）；
+                        // 字段槽仍按 fieldSlotIndex 逐个同步（槽读取不经过 fields map）。
+                        stack_[callerBp] = modifiedThisC;
                         const bool hasCallerFieldOrder = callerFrame.chunk && !callerFrame.chunk->fieldOrder.empty();
-                        for (const auto& field : modifiedThisC.fields()) {
-                            callerThis.fields()[field.first] = field.second;
-                            if (hasCallerFieldOrder) {
+                        if (hasCallerFieldOrder) {
+                            for (const auto& field : modifiedThisC.fields()) {
                                 size_t fi = callerFrame.chunk->fieldSlotIndex(field.first);
                                 if (fi != SIZE_MAX) {
                                     size_t slotPos = callerBp + 1 + fi;
@@ -340,15 +340,13 @@ VMResult VM::executeTailCall(size_t& ip) {
                                                    static_cast<int>(argCount)));
     }
     stack_.resize(frame.basePointer + argCount);
-    for (int i = 0; i < extraSlots; ++i) {
-        push(Value::nullValue());
-    }
+    pushNulls(static_cast<size_t>(extraSlots));
 
     // 切换帧目标（保留 returnIp/basePointer：调用者信息不变）
     size_t savedIp = ip;
     frame.chunk = &target;
     frame.ip = 0;
-    frame.functionName = funName;
+    frame.setFunctionName(target.name);
     frame.upvalues.clear();
     auto closureIt = functionClosures_.find(funName);
     if (closureIt != functionClosures_.end() && closureIt->second.vmClosure()) {
@@ -507,15 +505,13 @@ VMResult VM::executeCallConstructor(size_t& ip, OpCode op, VMClassInfo& cls, con
 
                                                        funName, initChunk.localCount, preAllocated));
         }
-        for (int i = 0; i < extraSlots; ++i) {
-            push(Value::nullValue());
-        }
+        pushNulls(static_cast<size_t>(extraSlots));
 
         VMCallFrame newFrame;
         newFrame.chunk = initChunkPtr;
         newFrame.returnIp = ip + 4;
         newFrame.basePointer = stack_.size() - initChunk.localCount;
-        newFrame.functionName = initChunkPtr->name;
+        newFrame.setFunctionName(initChunkPtr->name);
         newFrame.ip = 0;
         newFrame.isMethodCall = true; // 使 OP_RETURN 同步字段到 this
         newFrame.isInitCall = true;   // init 返回 this 而非 null
@@ -553,10 +549,7 @@ VMResult VM::executeCallBuiltinInput(size_t& ip, OpCode op, uint8_t argCount, co
         args[i] = pop();
     }
 
-    int line = 0;
-    if (!chunk.lines.empty() && ip < chunk.lines.size()) {
-        line = chunk.lines[ip];
-    }
+    int line = chunk.getLine(ip);
 
     // E3 fix: 改用共享层 executeSharedInput，统一与 Interpreter 的 input() 语义。
     // WorkerManager 超时回调会抛 std::runtime_error，被 executeSharedInput
@@ -589,10 +582,7 @@ VMResult VM::executeCallHigherOrder(size_t& ip, OpCode op, const std::string& fu
         args[i] = pop();
     }
     // 构造闭包调用回调
-    int hoLine = 0;
-    if (!chunk.lines.empty() && savedIp < chunk.lines.size()) {
-        hoLine = chunk.lines[savedIp];
-    }
+    int hoLine = chunk.getLine(savedIp);
     ClosureInvoker invoke = [this, hoLine](const Value& closure, const Value* a, size_t ac, int /*ln*/,
                                            int /*col*/) -> Result<Value> {
         Value res;
@@ -665,10 +655,7 @@ VMResult VM::executeCallSpawn(size_t& ip, OpCode op, uint8_t argCount, const Byt
     for (int i = argCount - 1; i >= 0; --i) {
         args[i] = pop();
     }
-    int spawnLine = 0;
-    if (!chunk.lines.empty() && savedIp < chunk.lines.size()) {
-        spawnLine = chunk.lines[savedIp];
-    }
+    int spawnLine = chunk.getLine(savedIp);
     // 构造闭包调用回调：通过 spawnMutex_ 序列化，避免栈/帧数据竞争
     ClosureInvoker invoke = [this, spawnLine](const Value& closure, const Value* a, size_t ac, int /*ln*/,
                                               int /*col*/) -> Result<Value> {
@@ -714,10 +701,7 @@ VMResult VM::executeCallBuiltinFunction(size_t& ip, OpCode op, const std::string
         args[i] = pop();
     }
 
-    int line = 0;
-    if (!chunk.lines.empty() && ip < chunk.lines.size()) {
-        line = chunk.lines[ip];
-    }
+    int line = chunk.getLine(ip);
 
     auto r = executeSharedBuiltinFunction(funName, args.begin(), argCount, line, 0);
 
@@ -768,7 +752,8 @@ VMResult VM::executeCallFunction(size_t& ip, OpCode op, const std::string& funNa
     }
 
     // OP_CALL 是 4 字节指令：opcode + idx(2B) + argCount(1B)
-    return setupFunctionCallFrame(targetChunk, funName, argCount, ip + 4, ip, op, upvalues);
+    return setupFunctionCallFrame(targetChunk, funName, argCount, ip + 4, ip, op, /*functionNameStable=*/true,
+                                  upvalues);
 }
 
 // ============================================================
@@ -848,7 +833,8 @@ VMResult VM::executeCallExprValue(size_t& ip, OpCode op) {
     }
 
     // OP_CALL_EXPR 是 2 字节指令：opcode + argCount(1B)
-    return setupFunctionCallFrame(targetChunk, callee.closureName(), argCount, ip + 2, ip, op, upvalues);
+    return setupFunctionCallFrame(targetChunk, callee.closureName(), argCount, ip + 2, ip, op, /*functionNameStable=*/false,
+                                  upvalues);
 }
 
 // ============================================================
@@ -860,6 +846,7 @@ VMResult VM::executeCallExprValue(size_t& ip, OpCode op) {
 // ============================================================
 VMResult VM::setupFunctionCallFrame(const BytecodeChunk& targetChunk, const std::string& functionName,
                                     uint8_t& argCount, size_t returnIp, size_t savedIp, OpCode op,
+                                    bool functionNameStable,
                                     const std::vector<std::shared_ptr<VMUpvalue>>& upvalues) {
     // F10: 为缺失的尾部参数填充默认值
     if (argCount < static_cast<uint8_t>(targetChunk.arity)) {
@@ -909,15 +896,16 @@ VMResult VM::setupFunctionCallFrame(const BytecodeChunk& targetChunk, const std:
 
                                                    targetChunk.localCount, static_cast<int>(argCount)));
     }
-    for (int i = 0; i < extraSlots; ++i) {
-        push(Value::nullValue());
-    }
+    pushNulls(static_cast<size_t>(extraSlots));
 
     VMCallFrame newFrame;
     newFrame.chunk = &targetChunk;
     newFrame.returnIp = returnIp;
     newFrame.basePointer = stack_.size() - targetChunk.localCount;
-    newFrame.functionName = functionName;
+    if (functionNameStable)
+        newFrame.setFunctionName(functionName);
+    else
+        newFrame.setOwnedFunctionName(functionName);
     newFrame.ip = 0;
     newFrame.upvalues = upvalues; // 拷贝
 
@@ -1099,14 +1087,17 @@ VMResult VM::executeInstanceMethodCall(size_t& ip, OpCode op, Value obj, const s
         // IR 路径方法不预留字段槽（见 executeClassNew 同名分支注释）
         fieldCount = 0;
     } else {
-        for (const auto& fieldName : targetChunk.fieldOrder) {
-            auto fieldIt = objCopy.fields().find(fieldName);
-            if (fieldIt != objCopy.fields().end()) {
-                push(fieldIt->second);
-            } else {
-                push(Value::nullValue());
-            }
+        // OPT-06: 单次遍历实例字段 + fieldSlotIndex 定位槽位，替代 fieldCount 次
+        // fields().find（字符串哈希查找）；未命中槽位的多余字段（子类字段）忽略，
+        // 缺失字段保持 null，顺序与 targetChunk.fieldOrder 一致。
+        SmallArgs<Value, 16> fieldValues(targetChunk.fieldOrder.size());
+        for (const auto& field : objCopy.fields()) {
+            size_t fi = targetChunk.fieldSlotIndex(field.first);
+            if (fi < fieldValues.size())
+                fieldValues[fi] = field.second;
         }
+        for (size_t fi = 0; fi < fieldValues.size(); ++fi)
+            push(fieldValues[fi]);
         fieldCount = static_cast<int>(targetChunk.fieldOrder.size());
     }
     // 推入参数
@@ -1156,15 +1147,13 @@ VMResult VM::executeInstanceMethodCall(size_t& ip, OpCode op, Value obj, const s
 
                                                    methodName, targetChunk.localCount, preAllocated));
     }
-    for (int i = 0; i < extraSlots; ++i) {
-        push(Value::nullValue());
-    }
+    pushNulls(static_cast<size_t>(extraSlots));
 
     VMCallFrame newFrame;
     newFrame.chunk = targetChunkPtr;
     newFrame.returnIp = ip + instrLen; // B1 fix: SUPER_CALL 是 9 字节
     newFrame.basePointer = stack_.size() - targetChunk.localCount;
-    newFrame.functionName = targetChunk.name;
+    newFrame.setFunctionName(targetChunk.name);
     newFrame.ip = 0;
     newFrame.isMethodCall = true;
     newFrame.isInitCall = (methodName == "init"); // init 返回 this 而非 null
@@ -1367,15 +1356,13 @@ VMResult VM::executeClassNew(size_t& ip, OpCode op) {
 
                                                        className, initChunk.localCount, preAllocated));
         }
-        for (int i = 0; i < extraSlots; ++i) {
-            push(Value::nullValue());
-        }
+        pushNulls(static_cast<size_t>(extraSlots));
 
         VMCallFrame newFrame;
         newFrame.chunk = initChunkPtr;
         newFrame.returnIp = ip + 4;
         newFrame.basePointer = stack_.size() - initChunk.localCount;
-        newFrame.functionName = initChunkPtr->name;
+        newFrame.setFunctionName(initChunkPtr->name);
         newFrame.ip = 0;
         newFrame.isMethodCall = true; // 使 OP_RETURN 同步字段到 this
         newFrame.isInitCall = true;   // init 返回 this 而非 null
@@ -1666,9 +1653,7 @@ VMResult VM::invokeClosureSync(const Value& closure, const Value* args, size_t a
         popN(effectiveArgCount);
         return runtimeError("闭包调用帧布局损坏");
     }
-    for (int i = 0; i < extraSlots; ++i) {
-        push(Value::nullValue());
-    }
+    pushNulls(static_cast<size_t>(extraSlots));
 
     // 构造调用帧
     VMCallFrame newFrame;
@@ -1682,7 +1667,8 @@ VMResult VM::invokeClosureSync(const Value& closure, const Value* args, size_t a
     // 不受影响。设置 returnIp = currentFrame().ip 让 OP_RETURN 自动恢复调用者帧 ip。
     newFrame.returnIp = currentFrame().ip;
     newFrame.basePointer = stack_.size() - targetChunk.localCount;
-    newFrame.functionName = closure.closureName();
+    // 闭包名来源于 ClosureData，生命周期不保证覆盖帧（callee 值随后出栈），持副本
+    newFrame.setOwnedFunctionName(closure.closureName());
     newFrame.ip = 0;
     if (closure.vmClosure()) {
         newFrame.upvalues = closure.vmClosure()->upvalues;
@@ -2137,16 +2123,14 @@ Value VM::callCoroutineNext(Value& coroVal) {
             runtimeError("生成器 " + genChunk->name + " 帧布局损坏");
             return Value::nullValue();
         }
-        for (int i = 0; i < extraSlots; ++i) {
-            push(Value::nullValue());
-        }
+        pushNulls(static_cast<size_t>(extraSlots));
 
         // 构造调用帧
         VMCallFrame newFrame;
         newFrame.chunk = genChunk;
         newFrame.returnIp = currentFrame().ip;
         newFrame.basePointer = stack_.size() - genChunk->localCount;
-        newFrame.functionName = genChunk->name;
+        newFrame.setFunctionName(genChunk->name);
         newFrame.ip = 0;
         // 绑定闭包 upvalues
         // R164 fixup: vmClosure 改为单元素容器（绕开 Value 不完整类型 C2079），

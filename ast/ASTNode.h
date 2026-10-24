@@ -289,13 +289,20 @@ public:
 class StringLiteral : public ASTNode {
 public:
     std::string value;
+    // OPT-03: 首次 getValue() 构造并缓存，后续返回共享缓存值（仅一次 addRef）。
+    // 原子指针支持同一 AST 跨线程求值（C++20 shared_ptr 原子自由函数已弃用，
+    // libc++ 又不支持 atomic<shared_ptr>；指针 CAS 无锁且可移植）。
+    mutable std::atomic<Value*> cachedValue_{nullptr};
 
     StringLiteral(std::string v, int ln = 0, int col = 0) : ASTNode(ln, col), value(std::move(v)) {
         nodeType = NodeType::NODE_STRING_LITERAL;
     }
+    ~StringLiteral();
 
     /// 获取 Value（A1 fix: 按需构造，非破坏性，可安全多次遍历同一 AST）
     // A1 fix: 实现移至 ASTNode.cpp（构造 Value 需其完整定义）
+    // OPT-03: 首次求值后缓存 Value，后续仅一次 addRef；COW 保证写操作自动隔离。
+    // 与 cachedFreeVars_ 同为 AST 级 mutable 缓存（AST 构造后不再变异）。
     Value getValue() const;
 
     void accept(Visitor& visitor) override;

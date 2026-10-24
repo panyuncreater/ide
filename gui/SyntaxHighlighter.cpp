@@ -6,6 +6,7 @@
  * 为代码编辑器中的每一文本块着色，并支持亮/暗主题切换。
  */
 #include "gui/SyntaxHighlighter.h"
+#include "gui/TeachingTheme.h" // OPT-11: 颜色语义化
 #include "lexer/Lexer.h"
 #include <algorithm> // R54-17 fix: std::min
 
@@ -48,7 +49,7 @@ void SyntaxHighlighter::initRules() {
         numberFormat_.setForeground(QColor(0xb5, 0x89, 0x00));  // 绿色数字
         commentFormat_.setForeground(QColor(0x58, 0x6e, 0x75)); // 绿色注释
         commentFormat_.setFontItalic(true);
-        operatorFormat_.setForeground(QColor(0x65, 0x7b, 0x83)); // 深灰色运算符
+        operatorFormat_.setForeground(TeachingTheme::syntaxPunctuation()); // 深灰色运算符
     }
 
     // ---- 添加高亮规则 ----

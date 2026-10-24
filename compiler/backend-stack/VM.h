@@ -157,7 +157,19 @@ struct VMCallFrame {
     size_t ip = 0;                        // 当前帧的指令指针
     size_t returnIp = 0;                  // 返回后的 ip
     size_t basePointer = 0;               // 帧基指针（栈中参数起始位置）
-    std::string functionName;             // 函数名
+    // OPT-17: 帧名默认引用 chunk 名称（functionChunks_/constants 节点稳定），
+    // 避免每次调用复制常超 SSO 的函数名；仅闭包动态名等非稳定来源使用 owned 副本。
+    const std::string* functionNamePtr = nullptr;
+    std::string ownedFunctionName;
+    const std::string& functionName() const { return functionNamePtr ? *functionNamePtr : ownedFunctionName; }
+    void setFunctionName(const std::string& name) {
+        functionNamePtr = &name;
+        ownedFunctionName.clear();
+    }
+    void setOwnedFunctionName(const std::string& name) {
+        ownedFunctionName = name;
+        functionNamePtr = nullptr;
+    }
     bool isMethodCall = false;            // 是否为方法调用（需要 writeBack）
     bool isInitCall = false;              // 是否为 init 构造函数调用（返回 this 而非 null）
     std::string receiverVarName;          // 方法调用时，接收者的全局变量名（用于 writeBack 到 globals_）
@@ -236,6 +248,15 @@ public:
             std::abort();
         }
         data_[top_++] = v;
+    }
+    /// OPT-17: 批量压入 null（extraSlots 预分配），消除逐槽 push 调用开销。
+    void pushNulls(size_t count) {
+        if (top_ + count > CAPACITY) [[unlikely]] {
+            std::abort();
+        }
+        while (count-- > 0) {
+            data_[top_++] = Value::nullValue();
+        }
     }
     void push_back(Value&& v) {
         if (top_ >= CAPACITY) [[unlikely]] {
@@ -594,6 +615,7 @@ private:
     /// 栈操作
     void push(const Value& val);
     void push(Value&& val);
+    void pushNulls(size_t count) { stack_.pushNulls(count); } // OPT-17: 批量 null 预分配
     Value pop();
     const Value& peek(size_t distance = 0) const;
     // PERF-12 fix: 引用语义 + 栈槽复用优化
@@ -765,8 +787,19 @@ private:
 
     /// 获取当前帧
     // D3 fix: 补 const 重载，对齐 RegisterVM::currentFrame() const，便于调试器只读访问
-    VMCallFrame& currentFrame();
-    const VMCallFrame& currentFrame() const;
+    // OPT-17: 热路径内联快路径；空帧异常处理留在冷路径（VM.cpp）。
+    VMCallFrame& currentFrameSlow();
+    const VMCallFrame& currentFrameSlow() const;
+    VMCallFrame& currentFrame() {
+        if (frames_.empty()) [[unlikely]]
+            return currentFrameSlow();
+        return frames_.back();
+    }
+    const VMCallFrame& currentFrame() const {
+        if (frames_.empty()) [[unlikely]]
+            return currentFrameSlow();
+        return frames_.back();
+    }
 
     /// 获取当前 chunk
     // D3 fix: 标记为 const（已返回 const 引用，方法本身应 const，与 findMethodChunk 一致）
@@ -890,6 +923,7 @@ private:
     /// 被 executeCallFunction 和 executeCallExprValue 共享，统一两路径的帧构造逻辑
     VMResult setupFunctionCallFrame(const BytecodeChunk& targetChunk, const std::string& functionName,
                                     uint8_t& argCount, size_t returnIp, size_t savedIp, OpCode op,
+                                    bool functionNameStable,
                                     const std::vector<std::shared_ptr<VMUpvalue>>& upvalues);
     /// OP_SUPER_CALL / OP_METHOD_CALL 执行：方法调用（thin dispatcher，按接收者类型分发到
     /// dispatchArrayBuiltin/dispatchDictBuiltin/dispatchStringBuiltin/executeInstanceMethodCall）

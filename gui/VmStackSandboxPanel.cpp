@@ -430,10 +430,12 @@ void VmStackSandboxPanel::loadLevel(int index) {
     currentLevelIndex_ = index;
     const auto& lv = levels[index];
 
-    goalLabel_->setText(QString::fromStdString("<b>目标：</b>" + lv.goal + "　<font color='#707070'>难度：" +
+    goalLabel_->setText(QString::fromStdString("<b>目标：</b>" + lv.goal + "　<font color='" +
+                                               TeachingTheme::textSubtle().name().toStdString() + "'>难度：" +
                                                std::string(lv.difficulty, '*') + "</font>"));
-    teachingPointLabel_->setText(QString::fromStdString("<b>教学点：</b>" + lv.teachingPoint +
-                                                        "　<font color='#707070'>提示：" + lv.hint + "</font>"));
+    teachingPointLabel_->setText(QString::fromStdString("<b>教学点：</b>" + lv.teachingPoint + "　<font color='" +
+                                                        TeachingTheme::textSubtle().name().toStdString() + "'>提示：" +
+                                                        lv.hint + "</font>"));
 
     stack_.clear();
     history_.clear();
@@ -474,10 +476,10 @@ void VmStackSandboxPanel::rebuildOpButtons() {
 
     for (const auto& op : ops) {
         auto* btn = new QPushButton(opButtonText(op), host);
-        btn->setStyleSheet("QPushButton { padding: 6px; text-align: left; font-family: \"Cascadia Code\",\"Cascadia "
-                           "Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code Pro\",\"Menlo\",\"DejaVu Sans "
-                           "Mono\",\"Courier New\",monospace; }"
-                           "QPushButton:hover { background: #d0e0ff; }");
+        btn->setStyleSheet((QStringLiteral("QPushButton { padding: 6px; text-align: left; font-family: \"Cascadia Code\",\"Cascadia ")
+                           + QStringLiteral("Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code Pro\",\"Menlo\",\"DejaVu Sans ")
+                           + QStringLiteral("Mono\",\"Courier New\",monospace; }")
+                           + QStringLiteral("QPushButton:hover { background: ") + TeachingTheme::buttonHoverBg().name() + QStringLiteral("; }")));
         connect(btn, &QPushButton::clicked, this, [this, op]() { executeOp(op); });
         layout->addWidget(btn);
     }
@@ -938,9 +940,9 @@ void VmStackSandboxPanel::refreshOutputView() {
 void VmStackSandboxPanel::setFeedback(const QString& text, bool isError) {
     feedbackLabel_->setText(text);
     if (isError) {
-        feedbackLabel_->setStyleSheet("padding: 4px; background: #fff0f0; border-left: 3px solid #c03030;");
+        feedbackLabel_->setStyleSheet((QStringLiteral("padding: 4px; background: ") + TeachingTheme::feedbackErrorBg().name() + QStringLiteral("; border-left: 3px solid ") + TeachingTheme::dangerDeep().name() + QStringLiteral(";")));
     } else {
-        feedbackLabel_->setStyleSheet("padding: 4px; background: #f0fff0; border-left: 3px solid #30a030;");
+        feedbackLabel_->setStyleSheet((QStringLiteral("padding: 4px; background: ") + TeachingTheme::feedbackOkBg().name() + QStringLiteral("; border-left: 3px solid ") + TeachingTheme::feedbackOkBorder().name() + QStringLiteral(";")));
     }
 }
 

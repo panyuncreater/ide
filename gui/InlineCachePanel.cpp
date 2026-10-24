@@ -9,6 +9,7 @@
 // ============================================================
 
 #include "gui/InlineCachePanel.h"
+#include "gui/TeachingTheme.h" // OPT-11: 颜色语义化
 
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -465,9 +466,9 @@ void InlineCachePanel::renderSimSteps() {
 
         auto* hitItem = new QTableWidgetItem(s.hit ? tr("命中") : tr("未命中"));
         if (s.hit) {
-            hitItem->setForeground(QColor("#2E7D32"));
+            hitItem->setForeground(QColor(TeachingTheme::deepGreen().name()));
         } else {
-            hitItem->setForeground(QColor("#C62828"));
+            hitItem->setForeground(QColor(TeachingTheme::deepRed().name()));
         }
         simStepTable_->setItem(i, 4, hitItem);
 
@@ -484,13 +485,13 @@ void InlineCachePanel::renderSimSummary() {
         stateColor = QStringLiteral("#666");
         break;
     case IcSimState::Monomorphic:
-        stateColor = QStringLiteral("#2E7D32"); // 绿
+        stateColor = TeachingTheme::deepGreen().name(); // 绿
         break;
     case IcSimState::Polymorphic:
-        stateColor = QStringLiteral("#F57F17"); // 橙
+        stateColor = TeachingTheme::amberDeep().name(); // 橙
         break;
     case IcSimState::Megamorphic:
-        stateColor = QStringLiteral("#C62828"); // 红
+        stateColor = TeachingTheme::deepRed().name(); // 红
         break;
     }
 

@@ -2,7 +2,6 @@
 #include "ast/MacroExpander.h"    // 七特性 MVP 阶段 2：宏展开器
 #include "common/ErrorMessages.h" // P2-12: DiagCodes 常量
 #include "common/Logger.h"
-#include "interpreter/StringIntern.h"
 #include <unordered_set>
 
 // ============================================================
@@ -125,6 +124,57 @@ static void collectVarRefs(ASTNode* node, std::unordered_set<std::string>& names
                         "，默认参数前向引用检查可能不完整",
                     "Parser");
         break;
+    }
+}
+
+// BUG-DEF-1 白名单（B-003 扩展）：默认参数值必须是纯字面量表达式。
+// 数组/字典字面量递归判定元素/键值，使 `a: int[] = [1, 2]` 与
+// `d: dict[string:int] = {"k": 1}` 通过解析；编译器常量提取器同步支持
+// （Compiler::emitDefaultValues / AstIRBuilder::extractConstant）。
+static bool isLiteralDefaultExpr(const ASTNode* node) {
+    if (!node)
+        return false;
+    switch (node->nodeType) {
+    case NodeType::NODE_NUMBER_LITERAL:
+    case NodeType::NODE_STRING_LITERAL:
+    case NodeType::NODE_BOOL_LITERAL:
+    case NodeType::NODE_NULL_LITERAL:
+    case NodeType::NODE_INTERPOLATED_STRING:
+        return true;
+    case NodeType::NODE_UNARY_OP: {
+        // 支持负数字面量: -42, -3.14, --5（双重否定）
+        const auto* unary = static_cast<const UnaryOp*>(node);
+        if (unary->opType != UnaryOp::UnaryOpType::UOP_NEGATE)
+            return false;
+        const ASTNode* cur = unary->operand.get();
+        int negateCount = 1;
+        while (cur && cur->nodeType == NodeType::NODE_UNARY_OP) {
+            const auto* inner = static_cast<const UnaryOp*>(cur);
+            if (inner->opType != UnaryOp::UnaryOpType::UOP_NEGATE)
+                return false;
+            ++negateCount;
+            cur = inner->operand.get();
+        }
+        return cur != nullptr && cur->nodeType == NodeType::NODE_NUMBER_LITERAL && negateCount > 0;
+    }
+    case NodeType::NODE_ARRAY_LITERAL: {
+        const auto* arr = static_cast<const ArrayLiteral*>(node);
+        for (const auto& elem : arr->elements) {
+            if (!isLiteralDefaultExpr(elem.get()))
+                return false;
+        }
+        return true;
+    }
+    case NodeType::NODE_DICT_LITERAL: {
+        const auto* dict = static_cast<const DictLiteral*>(node);
+        for (const auto& kv : dict->pairs) {
+            if (!isLiteralDefaultExpr(kv.first.get()) || !isLiteralDefaultExpr(kv.second.get()))
+                return false;
+        }
+        return true;
+    }
+    default:
+        return false;
     }
 }
 
@@ -426,20 +476,31 @@ bool Parser::trySkipExplicitTypeArgs() {
     // `id<int>(5)` 报"未定义的变量: int"（探针实测，四后端一致的误导性错误）。
     // 现按 C#/Java 同型消歧：探测式扫描平衡 <>，命中 `> (` 才按类型实参消费
     // （R163 擦除语义：解析后即擦除，AST 不携带）；否则完整回退保持比较解析。
-    // 安全性：类型形态 token 白名单（标识符/类型关键字/逗号/嵌套 <>/[]/?），
-    // 字面量与运算符即回退；词法无移位运算符（`>>` 为两个 TK_GT），嵌套天然安全。
+    // 白名单覆盖 parseTypeAnnotation 可生成的形态：标识符/类型关键字/逗号/
+    // 嵌套 <>、[]、?，以及 dict[K:V]（':' 仅在方括号内）与 fun(...):ret
+    // （'(' 仅在 fun 后出现，')' 配对平衡；':' 仅在括号内或 fun 参数表之后）。
+    // 该配对守卫防误吃 `a < (b) > (c)` 一类比较分组。
     int save = current_;
     advance(); // 消耗 '<'
     int depth = 1;
+    int parenDepth = 0;
+    int bracketDepth = 0;
     bool sawType = false;
+    bool lastWasFun = false;
+    bool justClosedFunParen = false;
     while (!isAtEnd()) {
-        if (check(TokenType::TK_LT)) {
+        const TokenType tokenType = peek().type;
+        if (tokenType == TokenType::TK_LT) {
             ++depth;
             advance();
             sawType = false; // 新嵌套层需重新出现类型名
-        } else if (check(TokenType::TK_GT)) {
+            lastWasFun = false;
+            justClosedFunParen = false;
+        } else if (tokenType == TokenType::TK_GT) {
             --depth;
             advance();
+            lastWasFun = false;
+            justClosedFunParen = false;
             if (depth == 0) {
                 // 命中：> 后紧跟 ( 才是显式类型实参的调用/实例化
                 if (sawType && check(TokenType::TK_LPAREN)) {
@@ -448,17 +509,72 @@ bool Parser::trySkipExplicitTypeArgs() {
                 current_ = save;
                 return false;
             }
-        } else if (check(TokenType::TK_COMMA)) {
+        } else if (tokenType == TokenType::TK_COMMA) {
             advance();
             sawType = false; // 逗号后必须再来一个类型
-        } else if (check(TokenType::TK_LBRACKET) || check(TokenType::TK_RBRACKET) || check(TokenType::TK_FUNC) ||
-                   check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY) || check(TokenType::TK_ENUM) ||
-                   check(TokenType::TK_FUN)) {
-            // 类型后缀 []、可选 ?（TK_FUNC 槽位）与 dict/array/enum/fun 基础类型关键字
+            lastWasFun = false;
+            justClosedFunParen = false;
+        } else if (tokenType == TokenType::TK_LPAREN) {
+            // 仅 fun(...) 参数表允许 '('；普通分组/比较回退
+            if (!lastWasFun) {
+                current_ = save;
+                return false;
+            }
+            ++parenDepth;
             advance();
+            sawType = false;
+            lastWasFun = false;
+            justClosedFunParen = false;
+        } else if (tokenType == TokenType::TK_RPAREN) {
+            if (parenDepth == 0) { // 无配对 '('：不是 fun 类型参数表
+                current_ = save;
+                return false;
+            }
+            --parenDepth;
+            advance();
+            lastWasFun = false;
+            justClosedFunParen = true;
+        } else if (tokenType == TokenType::TK_COLON) {
+            // dict[K:V] 的 ':'（方括号内）或 fun(...):ret 的 ':'（参数表之后）。
+            // MiniLang 无三元运算符，裸 ':' 仍回退以保持保守。
+            if (bracketDepth == 0 && parenDepth == 0 && !justClosedFunParen) {
+                current_ = save;
+                return false;
+            }
+            advance();
+            sawType = false;
+            lastWasFun = false;
+            justClosedFunParen = false;
+        } else if (tokenType == TokenType::TK_LBRACKET) {
+            ++bracketDepth;
+            advance();
+            lastWasFun = false;
+            justClosedFunParen = false;
+        } else if (tokenType == TokenType::TK_RBRACKET) {
+            if (bracketDepth == 0) {
+                current_ = save;
+                return false;
+            }
+            --bracketDepth;
+            advance();
+            lastWasFun = false;
+            justClosedFunParen = false;
+        } else if (tokenType == TokenType::TK_FUN) {
+            advance();
+            lastWasFun = true; // fun 类型必须跟随 '('
+            justClosedFunParen = false;
+        } else if (tokenType == TokenType::TK_FUNC || tokenType == TokenType::TK_DICT ||
+                   tokenType == TokenType::TK_ARRAY || tokenType == TokenType::TK_ENUM) {
+            // 类型后缀 ?（TK_FUNC 槽位）与 dict/array/enum 基础类型关键字
+            advance();
+            sawType = true;
+            lastWasFun = false;
+            justClosedFunParen = false;
         } else if (isIdentifierOrType()) {
             advance();
             sawType = true;
+            lastWasFun = false;
+            justClosedFunParen = false;
         } else {
             current_ = save; // 字面量/运算符等：不是类型实参，回退
             return false;
@@ -706,7 +822,7 @@ std::unique_ptr<ASTNode> Parser::varDecl() {
     }
     consume(TokenType::TK_SEMICOLON, "期望 ';' 结束变量声明");
 
-    return std::make_unique<VarDecl>(StringIntern::intern(name.lexeme), typeAnn, std::move(init), varTok.line,
+    return std::make_unique<VarDecl>(name.lexeme, typeAnn, std::move(init), varTok.line,
                                      varTok.column);
 }
 
@@ -719,7 +835,7 @@ std::unique_ptr<VarDecl> Parser::typedVarDecl(const std::string& typeAnn) {
     }
     consume(TokenType::TK_SEMICOLON, "期望 ';' 结束变量声明");
 
-    return std::make_unique<VarDecl>(StringIntern::intern(name.lexeme), typeAnn, std::move(init), name.line,
+    return std::make_unique<VarDecl>(name.lexeme, typeAnn, std::move(init), name.line,
                                      name.column);
 }
 
@@ -802,7 +918,7 @@ std::unique_ptr<FunDecl> Parser::funDecl(bool isAsync) {
     consume(TokenType::TK_LBRACE, "期望 '{'");
     auto body = block();
 
-    auto decl = std::make_unique<FunDecl>(StringIntern::intern(name.lexeme), std::move(params), std::move(paramTypes),
+    auto decl = std::make_unique<FunDecl>(name.lexeme, std::move(params), std::move(paramTypes),
                                           returnType, std::move(body), funTok.line, funTok.column);
     decl->typeParams = std::move(typeParams);
     // R164 协程/生成器：标记生成器函数（fun*），供 Interpreter/VM 在调用时
@@ -853,7 +969,7 @@ std::unique_ptr<FunDecl> Parser::typedFunDecl(const std::string& returnType) {
     consume(TokenType::TK_LBRACE, "期望 '{'");
     auto body = block();
 
-    auto decl = std::make_unique<FunDecl>(StringIntern::intern(name.lexeme), std::move(params), std::move(paramTypes),
+    auto decl = std::make_unique<FunDecl>(name.lexeme, std::move(params), std::move(paramTypes),
                                           returnType, std::move(body), name.line, name.column);
     // F10: 计算必需参数个数
     int reqCount = 0;
@@ -932,43 +1048,15 @@ void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::s
                             std::vector<std::shared_ptr<ASTNode>>& defaultValues) {
     // BUG-DEF-1 fix: 默认参数值必须是字面量（数字/字符串/布尔/null/负数字面量）。
     // 三后端一致性：Interpreter 支持任意表达式默认值（b=a+1 在闭包环境求值），
-    // 但 StackVM/RegisterVM 仅支持字面量（复杂表达式记录 0xFFFF 哨兵运行时报错）。
-    // 在 Parser 层统一拒绝复杂表达式，确保三后端行为一致。
+    // 但 StackVM/RegisterVM 仅支持常量提取器可折叠的字面量（复杂表达式记录 0xFFFF
+    // 哨兵运行时报错）。在 Parser 层统一拒绝复杂表达式，确保三后端行为一致。
+    // B-003: 白名单递归覆盖数组/字典字面量（元素/键值仍须为字面量）；
+    //   编译器常量提取器同步支持，未覆盖形态仍以 NO_INDEX 哨兵保留原协议。
     // 支持的类型：NumberLiteral / StringLiteral / BoolLiteral / NullLiteral /
     //   UnaryOp(NEGATE) 嵌套包装 NumberLiteral（如 -42, --5）/
-    //   InterpolatedString（字面量片段+表达式，表达式部分由 collectVarRefs 检查前向引用；
-    //   VM 路径记录 0xFFFF 哨兵，运行时调用使用默认值会报错，但 Parser 层接受以保持
-    //   BUG-LPA-03 回归测试语义——该测试验证 collectVarRefs 覆盖 InterpolatedString）。
-    auto isLiteralDefaultExpr = [](const ASTNode* node) -> bool {
-        if (!node)
-            return false;
-        switch (node->nodeType) {
-        case NodeType::NODE_NUMBER_LITERAL:
-        case NodeType::NODE_STRING_LITERAL:
-        case NodeType::NODE_BOOL_LITERAL:
-        case NodeType::NODE_NULL_LITERAL:
-        case NodeType::NODE_INTERPOLATED_STRING:
-            return true;
-        case NodeType::NODE_UNARY_OP: {
-            // 支持负数字面量: -42, -3.14, --5（双重否定）
-            const auto* unary = static_cast<const UnaryOp*>(node);
-            if (unary->opType != UnaryOp::UnaryOpType::UOP_NEGATE)
-                return false;
-            const ASTNode* cur = unary->operand.get();
-            int negateCount = 1;
-            while (cur && cur->nodeType == NodeType::NODE_UNARY_OP) {
-                const auto* inner = static_cast<const UnaryOp*>(cur);
-                if (inner->opType != UnaryOp::UnaryOpType::UOP_NEGATE)
-                    return false;
-                ++negateCount;
-                cur = inner->operand.get();
-            }
-            return cur != nullptr && cur->nodeType == NodeType::NODE_NUMBER_LITERAL && negateCount > 0;
-        }
-        default:
-            return false;
-        }
-    };
+    //   InterpolatedString（VM 路径记录 0xFFFF 哨兵，运行时使用默认值会报错，
+    //   但 Parser 层接受以保持 BUG-LPA-03 回归测试语义）/
+    //   ArrayLiteral / DictLiteral（递归判定纯字面量）。
     if (check(TokenType::TK_RPAREN))
         return;
     bool seenDefault = false; // F10: 一旦出现默认参数，后续都必须有默认值
@@ -1026,7 +1114,7 @@ void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::s
         if (!paramSet.insert(paramName).second) {
             throw ParseError("重复的参数名 '" + paramName + "'", peek().line, peek().column);
         }
-        params.push_back(StringIntern::intern(paramName));
+        params.push_back(paramName);
         paramTypes.push_back(pType);
 
         // F10: 解析默认参数值 = expr
@@ -1034,14 +1122,16 @@ void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::s
             seenDefault = true;
             auto defaultExpr = expression();
             // BUG-DEF-1 fix: 三后端一致性——仅支持字面量默认值。
-            // StackVM/RegisterVM 无法在函数入口求值复杂表达式（闭包环境访问、
-            // 参数间引用等），Interpreter 虽支持但会造成三后端行为不一致。
-            // 在 Parser 层统一拒绝，给出清晰的编译期错误而非 VM 运行时错误。
+            // B-003 恢复加固：非法默认值记录诊断后降级为“无默认值”继续解析，
+            // 不抛 ParseError——抛出会穿透到 synchronize()，吞掉参数表收尾与
+            // 函数体 '{'，导致函数体语句泄漏为顶层语句/类成员静默丢失。
             if (!isLiteralDefaultExpr(defaultExpr.get())) {
-                throw ParseError("默认参数值必须是字面量（数字/字符串/布尔/null/负数字面量）", defaultExpr->line,
-                                 defaultExpr->column);
+                diagnostics_.addError("默认参数值必须是字面量（数字/字符串/布尔/null/负数字面量/数组/字典字面量）",
+                                      defaultExpr->line, defaultExpr->column, DiagSource::Parser);
+                defaultValues.push_back(nullptr);
+            } else {
+                defaultValues.push_back(std::move(defaultExpr));
             }
-            defaultValues.push_back(std::move(defaultExpr));
         } else {
             if (seenDefault) {
                 throw ParseError("默认参数后的参数都必须有默认值: '" + paramName + "'", peek().line, peek().column);
@@ -1122,7 +1212,7 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
         mergeTraitMethods(traits, members, classTok.line, classTok.column);
     }
 
-    auto decl = std::make_unique<ClassDecl>(StringIntern::intern(name.lexeme), superClassName, std::move(members),
+    auto decl = std::make_unique<ClassDecl>(name.lexeme, superClassName, std::move(members),
                                             classTok.line, classTok.column);
     decl->closingBraceLine = closingBraceLine;
     decl->typeParams = std::move(typeParams);
@@ -1219,7 +1309,7 @@ std::string Parser::parseClassExtends() {
     if (match(TokenType::TK_EXTENDS) || match(TokenType::TK_COLON)) {
         // PARSE-03 fix: 父类名支持类型关键字（与类名声明一致）
         const Token& superName = consumeIdentifierOrType("期望父类名");
-        superClassName = StringIntern::intern(superName.lexeme);
+        superClassName = superName.lexeme;
     }
     return superClassName;
 }
@@ -1301,7 +1391,7 @@ void Parser::parseClassMembers(std::vector<std::shared_ptr<ASTNode>>& members) {
                     consume(TokenType::TK_LBRACE, "期望 '{'");
                     auto body = block();
 
-                    auto decl = std::make_unique<FunDecl>(StringIntern::intern(firstTok.lexeme), std::move(params),
+                    auto decl = std::make_unique<FunDecl>(firstTok.lexeme, std::move(params),
                                                           std::move(paramTypes), returnType, std::move(body),
                                                           firstTok.line, firstTok.column);
                     // F10: 计算必需参数个数
@@ -2491,6 +2581,11 @@ std::unique_ptr<ASTNode> Parser::call() {
             if (expr->nodeType == NodeType::NODE_VAR_REF) {
                 auto* varRef = static_cast<VarRef*>(expr.get());
                 if (knownEnums_.find(varRef->name) != knownEnums_.end()) {
+                    // B-002: 变体构造可携带显式类型实参（Box.some<int>(5)）。
+                    // 必须在 match(TK_LPAREN) 之前探测，否则降级为 MemberAccess+FunCall。
+                    if (check(TokenType::TK_LT) && trySkipExplicitTypeArgs()) {
+                        // 类型实参已擦除（R163）
+                    }
                     // 收集可选的构造参数
                     std::vector<std::shared_ptr<ASTNode>> args;
                     if (match(TokenType::TK_LPAREN)) {
@@ -2509,6 +2604,11 @@ std::unique_ptr<ASTNode> Parser::call() {
             }
 
             // 检查是否是方法调用: obj.method(args)
+            // B-002 同族：obj.method<T>(args) 的类型实参在此处探测，避免降级为
+            // MemberAccess + 高阶调用（运行时"表达式调用需要函数值"）。
+            if (check(TokenType::TK_LT) && trySkipExplicitTypeArgs()) {
+                // 类型实参已擦除（R163）
+            }
             if (match(TokenType::TK_LPAREN)) {
                 std::vector<std::shared_ptr<ASTNode>> args;
                 args.reserve(4); // Perf-Finding4: 避免常见 1-3 参方法调用的 1-2 次 realloc
@@ -2519,11 +2619,11 @@ std::unique_ptr<ASTNode> Parser::call() {
                 }
                 consume(TokenType::TK_RPAREN, "期望 ')' 结束方法参数列表");
 
-                expr = std::make_unique<MethodCall>(std::move(expr), StringIntern::intern(fieldName.lexeme),
+                expr = std::make_unique<MethodCall>(std::move(expr), fieldName.lexeme,
                                                     std::move(args), dot.line, dot.column);
             } else {
                 // 普通成员访问: obj.field
-                expr = std::make_unique<MemberAccess>(std::move(expr), StringIntern::intern(fieldName.lexeme), dot.line,
+                expr = std::make_unique<MemberAccess>(std::move(expr), fieldName.lexeme, dot.line,
                                                       dot.column);
             }
             continue;
@@ -2704,14 +2804,14 @@ std::unique_ptr<ASTNode> Parser::primary() {
             DepthGuard guard{parseDepth_};
             return macroCall(tok);
         }
-        return std::make_unique<VarRef>(StringIntern::intern(tok.lexeme), tok.line, tok.column);
+        return std::make_unique<VarRef>(tok.lexeme, tok.line, tok.column);
     }
 
     // 类型关键字作为标识符使用（如 dict(), array(), int(), string() 等函数调用）
     if (match(TokenType::TK_DICT) || match(TokenType::TK_ARRAY) || match(TokenType::TK_INT) ||
         match(TokenType::TK_FLOAT) || match(TokenType::TK_BOOL) || match(TokenType::TK_STRING_TYPE)) {
         const Token& tok = previous();
-        return std::make_unique<VarRef>(StringIntern::intern(tok.lexeme), tok.line, tok.column);
+        return std::make_unique<VarRef>(tok.lexeme, tok.line, tok.column);
     }
 
     // 数组字面量 [e1, e2, e3]

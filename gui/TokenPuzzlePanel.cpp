@@ -13,6 +13,7 @@
 #include "gui/LearnerProgress.h"      // P0-2 fix (F7): 关卡星级持久化
 #include "gui/ProgressSaveFeedback.h" // P2-UX fix: save 失败 toast 通知
 #include "gui/TokenPuzzleData.h"
+#include "gui/TeachingTheme.h" // OPT-11: 颜色语义化
 
 #include <QBrush>
 #include <QColor>
@@ -144,8 +145,8 @@ void TokenPuzzlePanel::buildUi() {
     mainLayout->addWidget(new QLabel(mlTr("目标语句:")));
     targetCodeLabel_ = new QLabel(this);
     targetCodeLabel_->setFont(GuiTextUtils::monospaceFont(12));
-    targetCodeLabel_->setStyleSheet("background-color: #f5f5f5; padding: 8px; border: 1px solid #ddd;"
-                                    "border-radius: 4px;");
+    targetCodeLabel_->setStyleSheet((QStringLiteral("background-color: ") + TeachingTheme::surfaceHover().name() + QStringLiteral("; padding: 8px; border: 1px solid #ddd;")
+                                    + QStringLiteral("border-radius: 4px;")));
     targetCodeLabel_->setTextFormat(Qt::PlainText);
     mainLayout->addWidget(targetCodeLabel_);
 
@@ -157,7 +158,7 @@ void TokenPuzzlePanel::buildUi() {
     // ---- 中部中：打乱的 token 按钮 ----
     mainLayout->addWidget(new QLabel(mlTr("打乱的 token（点击添加到答案区）:")));
     shuffledContainer_ = new QWidget(this);
-    shuffledContainer_->setStyleSheet("background-color: #fafafa; border: 1px solid #eee;");
+    shuffledContainer_->setStyleSheet((QStringLiteral("background-color: ") + TeachingTheme::shuffledAreaBg().name() + QStringLiteral("; border: 1px solid #eee;")));
     shuffledContainer_->setMinimumHeight(50);
     mainLayout->addWidget(shuffledContainer_);
 
@@ -189,7 +190,7 @@ void TokenPuzzlePanel::buildUi() {
 
     feedbackLabel_ = new QLabel(this);
     feedbackLabel_->setWordWrap(true);
-    feedbackLabel_->setStyleSheet("color: #2c3e50; padding: 4px;");
+    feedbackLabel_->setStyleSheet((QStringLiteral("color: ") + TeachingTheme::midnight().name() + QStringLiteral("; padding: 4px;")));
     mainLayout->addWidget(feedbackLabel_);
 
     // ---- 信号连接 ----
@@ -208,16 +209,16 @@ void TokenPuzzlePanel::buildUi() {
     // ---- 中性浅色风格 QSS（QComboBox + 关卡芯片按钮）（R74: 回退 Solarized）----
     // 动态属性 [current='true'] / [locked='true'] 在 refreshLevelChips() 中
     // 通过 setProperty + style()->polish() 触发重新评估
-    setStyleSheet(QString::fromUtf8("QComboBox#levelCombo { background: #FFFFFF; border: 1px solid #E0E0E0; "
-                                    "border-radius: 4px; padding: 4px 8px; }"
-                                    "QComboBox#levelCombo:hover { border-color: #268BD2; }"
-                                    "QPushButton#levelChip { background: #F5F5F5; border: 1px solid #E0E0E0; "
-                                    "border-radius: 4px; font-size: 11px; }"
-                                    "QPushButton#levelChip:hover { border-color: #268BD2; background: #E5F3FB; }"
-                                    "QPushButton#levelChip[current='true'] { background: #268BD2; color: white; "
-                                    "border-color: #1E6FA3; font-weight: bold; }"
-                                    "QPushButton#levelChip[locked='true'] { background: #EDEDED; color: #6E6E6E; "
-                                    "border-color: #CCC; }"));
+    setStyleSheet((QStringLiteral("QComboBox#levelCombo { background: ") + TeachingTheme::surface().name() + QStringLiteral("; border: 1px solid ") + TeachingTheme::border().name() + QStringLiteral("; ")
+                                    + QStringLiteral("border-radius: 4px; padding: 4px 8px; }")
+                                    + QStringLiteral("QComboBox#levelCombo:hover { border-color: ") + TeachingTheme::info().name() + QStringLiteral("; }")
+                                    + QStringLiteral("QPushButton#levelChip { background: ") + TeachingTheme::surfaceHover().name() + QStringLiteral("; border: 1px solid ") + TeachingTheme::border().name() + QStringLiteral("; ")
+                                    + QStringLiteral("border-radius: 4px; font-size: 11px; }")
+                                    + QStringLiteral("QPushButton#levelChip:hover { border-color: ") + TeachingTheme::info().name() + QStringLiteral("; background: ") + TeachingTheme::primaryHoverBg().name() + QStringLiteral("; }")
+                                    + QStringLiteral("QPushButton#levelChip[current='true'] { background: ") + TeachingTheme::info().name() + QStringLiteral("; color: white; ")
+                                    + QStringLiteral("border-color: ") + TeachingTheme::primaryDeep().name() + QStringLiteral("; font-weight: bold; }")
+                                    + QStringLiteral("QPushButton#levelChip[locked='true'] { background: ") + TeachingTheme::lockedBg().name() + QStringLiteral("; color: ") + TeachingTheme::textMuted().name() + QStringLiteral("; ")
+                                    + QStringLiteral("border-color: #CCC; }")));
 }
 
 // ============================================================
@@ -373,7 +374,7 @@ void TokenPuzzlePanel::onCheckAnswer() {
         // 高亮所有错误位置
         for (int i = 0; i < answerList_->count(); ++i) {
             if (answer[i] != QString::fromUtf8(tokens[i].c_str())) {
-                answerList_->item(i)->setBackground(QColor(255, 200, 200));
+                answerList_->item(i)->setBackground(TeachingTheme::answerWrongBg());
             }
         }
         setFeedback(mlTr("❌ 第 %1 个 token 不对：你填了「%2」，应该是「%3」")
@@ -556,9 +557,9 @@ int TokenPuzzlePanel::computeStars(int hintUsed) const {
 void TokenPuzzlePanel::setFeedback(const QString& text, bool isError) {
     feedbackLabel_->setText(text);
     if (isError) {
-        feedbackLabel_->setStyleSheet("color: #c0392b; font-weight: bold; padding: 4px;");
+        feedbackLabel_->setStyleSheet((QStringLiteral("color: ") + TeachingTheme::dangerRed().name() + QStringLiteral("; font-weight: bold; padding: 4px;")));
     } else {
-        feedbackLabel_->setStyleSheet("color: #2c3e50; padding: 4px;");
+        feedbackLabel_->setStyleSheet((QStringLiteral("color: ") + TeachingTheme::midnight().name() + QStringLiteral("; padding: 4px;")));
     }
 }
 

@@ -6,6 +6,7 @@
 #include "app/IdeController.h"
 #include "gui/GuidedTour.h"
 #include "gui/MarkdownRenderer.h"
+#include "gui/TeachingTheme.h" // OPT-11: 颜色语义化
 #include "interpreter/Value.h"
 
 #include <QHBoxLayout>
@@ -437,7 +438,7 @@ void BytecodeTracePanel::onClearTrace() {
     stackDetail_->clear();
     // R54-14 fix: 空状态占位提示
     stackDetail_->setHtml(
-        QString::fromUtf8("<div style='color:#6E6E6E; padding:8px;'><i>（轨迹已清空，捕获后将显示栈快照）</i></div>"));
+        (QStringLiteral("<div style='color:") + TeachingTheme::textMuted().name() + QStringLiteral("; padding:8px;'><i>（轨迹已清空，捕获后将显示栈快照）</i></div>")));
     liveStatusLabel_->setText(tr("状态：未运行（轨迹已清空）"));
 }
 

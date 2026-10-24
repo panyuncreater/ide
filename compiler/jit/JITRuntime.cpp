@@ -1319,21 +1319,26 @@ extern "C" void jitClassNew(JitContext* ctx, const char* className, uint8_t argC
     Value instance = Value::makeInstance(cls.name);
     instance.fields() = cls.fieldDefaults; // 拷贝默认值（含继承字段）
 
-    // 3. 沿继承链查找 init 方法
-    const JitMethodInfo* initMethod = nullptr;
-    std::string searchClassName = cls.name;
-    for (int guard = 0; guard < 64 && !searchClassName.empty(); ++guard) {
-        std::string key = searchClassName + ".init";
-        auto it = ctx->methodEntriesPtr->find(key);
-        if (it != ctx->methodEntriesPtr->end()) {
-            initMethod = &it->second;
-            break;
+    // 3. 沿继承链查找 init 方法（OPT-16: 每个类只解析一次，消除每次构造的
+    //    类名 + ".init" 字符串拼接与哈希查找；类条目替换时缓存自动重置）
+    if (!cls.initResolved) {
+        const JitMethodInfo* resolved = nullptr;
+        std::string searchClassName = cls.name;
+        for (int guard = 0; guard < 64 && !searchClassName.empty(); ++guard) {
+            auto it = ctx->methodEntriesPtr->find(searchClassName + ".init");
+            if (it != ctx->methodEntriesPtr->end()) {
+                resolved = &it->second;
+                break;
+            }
+            auto clsIt2 = ctx->classInfoPtr->find(searchClassName);
+            if (clsIt2 == ctx->classInfoPtr->end())
+                break;
+            searchClassName = clsIt2->second.superClassName;
         }
-        auto clsIt2 = ctx->classInfoPtr->find(searchClassName);
-        if (clsIt2 == ctx->classInfoPtr->end())
-            break;
-        searchClassName = clsIt2->second.superClassName;
+        cls.cachedInit = resolved;
+        cls.initResolved = true;
     }
+    const JitMethodInfo* initMethod = cls.cachedInit;
 
     // 4. 决定是否调用 init（与 StackVM executeClassNew 一致）
     bool shouldCallInit = false;
@@ -1888,12 +1893,8 @@ extern "C" int64_t jitMethodReturn(JitContext* ctx, JitFrame* framePtr, int64_t 
         Value modifiedThis = bitsToValue(methodBp[0]); // 借用修改后的 this
         if (modifiedThis.isInstance()) {
             int64_t* slotPtr = framePtr->receiverSlotPtr;
-            Value receiver = bitsToValue(*slotPtr); // 借用接收者
+            Value receiver = bitsToValue(*slotPtr); // 借用接收者（析构时释放槽位旧引用）
             if (receiver.isInstance()) {
-                // 同步所有字段（COW detach）
-                for (const auto& field : modifiedThis.fields()) {
-                    receiver.fields()[field.first] = field.second;
-                }
                 // R149 fix: 如果 receiver 是 caller 的 this slot（slotPtr == callerBp），
                 // 必须同步 caller frame 的字段槽，否则 caller return 时字段槽（旧值）
                 // 会覆盖 this.fields()（新值）。
@@ -1904,12 +1905,7 @@ extern "C" int64_t jitMethodReturn(JitContext* ctx, JitFrame* framePtr, int64_t 
                 //   4. Derived.init 继续 b=bv → 字段槽 b=20
                 //   5. Derived.init return 时字段槽 a=0, b=20 同步回 this → this.a=0（覆盖了 10）
                 // 修复：writeBack 后同步更新 caller frame 的字段槽
-                // 必须在 *slotPtr = valueToBits(receiver) detach 之前进行（detach 后 receiver 为 null）
                 if (slotPtr == framePtr->callerBp && framePtr->callerBp) {
-                    // receiver 是 caller 的 this slot（slot 0），同步 caller frame 的字段槽
-                    // caller 帧 = framePtr - 1（JitFrame 指针算术，减 72 字节）
-                    // 安全性：slotPtr == callerBp 且 callerBp 非 null → caller 是方法调用（有 this slot）
-                    // → caller 帧存在（idx > 0），framePtr - 1 有效
                     JitFrame* callerFrame = framePtr - 1;
                     if (callerFrame->methodFieldOrder && callerFrame->fieldCount > 0) {
                         int64_t* callerMethodBp = framePtr->callerBp;
@@ -1917,15 +1913,20 @@ extern "C" int64_t jitMethodReturn(JitContext* ctx, JitFrame* framePtr, int64_t 
                                             i < static_cast<int64_t>(callerFrame->methodFieldOrder->size());
                              ++i) {
                             const std::string& fieldName = (*callerFrame->methodFieldOrder)[static_cast<size_t>(i)];
-                            auto fieldIt = receiver.fields().find(fieldName);
-                            if (fieldIt != receiver.fields().end()) {
+                            auto fieldIt = modifiedThis.fields().find(fieldName);
+                            if (fieldIt != modifiedThis.fields().end()) {
                                 Value fieldCopy = fieldIt->second;                 // 拷贝（addRef）
                                 callerMethodBp[-(i + 1)] = valueToBits(fieldCopy); // detach
                             }
                         }
                     }
                 }
-                *slotPtr = valueToBits(receiver); // 写回
+                // OPT-13: 整体替换接收者，跳过第二次整实例 COW 克隆与逐字段哈希写回。
+                // modifiedThis 已包含方法内全部字段修改；别名持有者仍持旧实例，
+                // 与逐字段写回时 ensureUnique 的分离结果一致。receiver 析构释放
+                // 槽位旧引用，newRef detach 后槽位获得新实例引用，净引用计数正确。
+                Value newRef = modifiedThis;
+                *slotPtr = valueToBits(newRef);
             }
         }
     }
@@ -2025,12 +2026,15 @@ extern "C" void jitMethodCall(JitContext* ctx, const char* methodName, int64_t p
     //    烘焙 backendPtr 参数——块缓存命中时它是已析构的创建实例（ADR-008 C 类）
     auto* backend = ctx ? static_cast<JITBackend*>(ctx->backendPtr) : nullptr;
     const JitMethodInfo* foundMethod = nullptr;
+    // B-006/OPT-04: 经 const 视图访问类名——非 const className() 触发 ensureUnique
+    // 整实例 COW 克隆；克隆随本函数结束析构，其 c_str() 不能作为 IC 键。
+    const Value& receiverView = receiver;
+    const std::string& receiverClassName = receiverView.className();
 
     if (!isSuperCall && backend && callSiteId < backend->methodCallIC_.size()) {
         auto& icEntry = backend->methodCallIC_[callSiteId];
-        const char* classPtr = receiver.className().c_str();
         if (!icEntry.megamorphic) {
-            foundMethod = icEntry.lookup(classPtr);
+            foundMethod = icEntry.lookup(receiverClassName);
             if (foundMethod) {
                 backend->methodIcHitCount_++;
                 // IC 命中：跳过继承链查找，直接进入参数校验
@@ -2056,7 +2060,7 @@ extern "C" void jitMethodCall(JitContext* ctx, const char* methodName, int64_t p
             }
             searchClassName = clsIt->second.superClassName;
         } else {
-            searchClassName = receiver.className();
+            searchClassName = receiverClassName;
         }
 
         for (int guard = 0; guard < 64 && !searchClassName.empty(); ++guard) {
@@ -2075,7 +2079,7 @@ extern "C" void jitMethodCall(JitContext* ctx, const char* methodName, int64_t p
         if (!foundMethod) {
             if (ctx->hasError && ctx->errorBuffer) {
                 *ctx->hasError = true;
-                *ctx->errorBuffer = "类 " + receiver.className() + " 没有方法 " + std::string(methodName);
+                *ctx->errorBuffer = "类 " + receiverClassName + " 没有方法 " + std::string(methodName);
             }
             ctx->stackTop = callerSpAfterPop;
             return;
@@ -2083,7 +2087,7 @@ extern "C" void jitMethodCall(JitContext* ctx, const char* methodName, int64_t p
 
         // 更新方法调用 IC（仅非 super 调用）
         if (!isSuperCall && backend && callSiteId < backend->methodCallIC_.size()) {
-            backend->methodCallIC_[callSiteId].insert(receiver.className().c_str(), foundMethod);
+            backend->methodCallIC_[callSiteId].insert(receiverClassName, foundMethod);
         }
     }
 
@@ -2095,11 +2099,11 @@ method_found:
     if (foundMethod->entryPtr == nullptr) {
         if (backend) {
             // 用完整 key（"Class.method"）触发 lazy compilation
-            std::string fullKey = receiver.className() + "." + methodName;
+            std::string fullKey = receiverClassName + "." + methodName;
             JitEntryFn lazyEntry = backend->triggerLazyCompile(fullKey);
             if (lazyEntry) {
                 // 编译成功，重新查找（entryPtr 已更新）
-                std::string rekey = receiver.className() + "." + methodName;
+                std::string rekey = receiverClassName + "." + methodName;
                 auto reIt = ctx->methodEntriesPtr->find(rekey);
                 if (reIt != ctx->methodEntriesPtr->end()) {
                     foundMethod = &reIt->second;
@@ -2512,6 +2516,21 @@ extern "C" void* jitPopJumpTarget(JitContext* ctx) {
     return target;
 }
 
+/// B-008 fix: 丢弃被替换的续跳链（OP_DROP_PENDING_JUMPS）。
+/// finally 内的 break/continue/return 覆盖挂起的 abrupt 完成，至多移除 count 个
+/// 当前帧条目；遇到其他帧条目立即停止（不跨帧消费）。
+extern "C" void jitDropPendingJumps(JitContext* ctx, int64_t count) {
+    if (!ctx || !ctx->backendPtr || count <= 0)
+        return;
+    auto* backend = static_cast<JITBackend*>(ctx->backendPtr);
+    size_t curFrameIdx = ctx->frameCount ? *ctx->frameCount : 0;
+    while (count > 0 && !backend->pendingJumpStack_.empty() &&
+           backend->pendingJumpStack_.back().frameIndex == curFrameIdx) {
+        backend->pendingJumpStack_.pop_back();
+        --count;
+    }
+}
+
 /// R162: 抛出异常 — 搜索 tryStack_、截断操作数栈、跨帧传播
 ///
 /// 算法（与 StackVM VM::throwException 对齐）：
@@ -2702,7 +2721,7 @@ extern "C" void jitDefineVar(JitContext* ctx, const char* name) {
     // 检查 slot 快速路径（使用访问器避免 private 成员访问问题）
     auto& globalNameToSlot = backend->globalNameToSlotMut();
     auto& globalSlots = backend->globalSlotsMut();
-    auto gsIt = globalNameToSlot.find(name);
+    auto gsIt = globalNameToSlot.find(std::string_view(name));
     if (gsIt != globalNameToSlot.end() && gsIt->second < static_cast<int>(globalSlots.size())) {
         globalSlots[gsIt->second] = static_cast<int64_t>(bits);
     } else {
@@ -2723,7 +2742,7 @@ extern "C" uint64_t jitGetVar(JitContext* ctx, const char* name) {
     // slot 快速路径（使用访问器避免 private 成员访问问题）
     auto& globalNameToSlot = backend->globalNameToSlotMut();
     auto& globalSlots = backend->globalSlotsMut();
-    auto gsIt = globalNameToSlot.find(name);
+    auto gsIt = globalNameToSlot.find(std::string_view(name));
     if (gsIt != globalNameToSlot.end() && gsIt->second < static_cast<int>(globalSlots.size())) {
         return static_cast<uint64_t>(globalSlots[gsIt->second]);
     }
@@ -2770,7 +2789,7 @@ extern "C" void jitSetVar(JitContext* ctx, const char* name) {
     // slot 快速路径（使用访问器避免 private 成员访问问题）
     auto& globalNameToSlot = backend->globalNameToSlotMut();
     auto& globalSlots = backend->globalSlotsMut();
-    auto gsIt = globalNameToSlot.find(name);
+    auto gsIt = globalNameToSlot.find(std::string_view(name));
     if (gsIt != globalNameToSlot.end() && gsIt->second < static_cast<int>(globalSlots.size())) {
         globalSlots[gsIt->second] = static_cast<int64_t>(bits);
         return;
@@ -2799,7 +2818,7 @@ extern "C" void jitDeleteVar(JitContext* ctx, const char* name) {
     // 使用访问器避免 private 成员访问问题
     auto& globalNameToSlot = backend->globalNameToSlotMut();
     auto& globalSlots = backend->globalSlotsMut();
-    auto gsIt = globalNameToSlot.find(name);
+    auto gsIt = globalNameToSlot.find(std::string_view(name));
     if (gsIt != globalNameToSlot.end() && gsIt->second < static_cast<int>(globalSlots.size())) {
         globalSlots[gsIt->second] = static_cast<int64_t>(JIT_NULL_BITS);
     } else {

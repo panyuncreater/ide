@@ -379,23 +379,23 @@ void WatchPanel::refreshAll() {
             QString color = TeachingTheme::textPrimary().name();
             if (result.typeName == "int" || result.typeName == "float" || result.typeName == "bool" ||
                 result.typeName == "null") {
-                color = "#859900"; // Solarized green
+                color = TeachingTheme::success().name(); // Solarized green
             } else if (result.typeName == "string") {
-                color = "#B58900"; // Solarized yellow
+                color = TeachingTheme::warning().name(); // Solarized yellow
             } else if (result.typeName == "array" || result.typeName == "dict") {
-                color = "#268BD2"; // Solarized blue
+                color = TeachingTheme::info().name(); // Solarized blue
             } else if (result.typeName == "instance") {
-                color = "#6C71C4"; // Solarized violet
+                color = TeachingTheme::solarizedViolet().name(); // Solarized violet
             } else if (result.typeName == "closure" || result.typeName == "function" ||
                        result.typeName == "bound-method") {
-                color = "#CB4B16"; // Solarized orange
+                color = TeachingTheme::solarizedOrange().name(); // Solarized orange
             }
             typeItem->setForeground(QColor(color));
         } else {
             typeItem->setText(QString::fromUtf8("—"));
             valueItem->setText(QString::fromUtf8("—"));
             statusItem->setText(QString::fromUtf8(result.error.c_str()));
-            statusItem->setForeground(QColor("#DC322F")); // Solarized red
+            statusItem->setForeground(QColor(TeachingTheme::error().name())); // Solarized red
         }
     }
     editingGuard_ = false;

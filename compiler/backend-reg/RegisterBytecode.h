@@ -163,6 +163,10 @@ enum class RegOp : uint8_t {
     // REG_RETURN dst。运行时目标可帧复用则 TCO（跳过后随 REG_RETURN），
     // 否则降级为 REG_CALL 语义（结果写 dst，返回后执行 REG_RETURN）。
     REG_TAIL_CALL, // dst(1B), nameIdx(2B), argCount(1B), arg1, ...
+
+    // B-008 fix: finally 内 abrupt 替换 abrupt 时丢弃被替换的续跳链。
+    // 操作数: count(1B)；至多丢弃 count 个当前帧条目（遇其他帧停止）。
+    REG_DROP_PENDING_JUMPS,
 };
 
 // ============================================================
@@ -197,8 +201,8 @@ inline bool isRegOpVariableLength(RegOp op) {
 struct RegBytecodeChunk {
     std::vector<uint8_t> code;    // 指令字节流
     std::vector<Value> constants; // 常量池
-    std::vector<int> lines;       // 每条指令对应的行号（按字节偏移索引）
-    std::vector<int> columns;     // BUG-IBACKEND-2: 每条指令对应的列号（与 lines 平行，默认 0）
+    // OPT-10: 行/列元数据紧凑存储（每字节 4B）
+    BytecodeLineColumnMap lineColumn;
     std::string name;             // chunk 名称
     int arity = 0;                // 参数个数
     int requiredArity = 0;        // 必需参数个数
@@ -224,6 +228,15 @@ struct RegBytecodeChunk {
 
     // R164 协程/生成器：标记此 chunk 为生成器函数体（fun* 声明）。
     // RegisterVM 在 REG_CALL 时检测此标志：若为 true，创建协程值而非直接调用。
+    // OPT-07: 名称版全局变量解析缓存（平坦数组，按常量池索引寻址），
+    // 与 StackVM BytecodeChunk::varCache_ 同型；globalsVersion_ 失效。
+    struct GlobalVarCacheEntry {
+        int resolvedSlot = -2;     // >=0: globalSlots_ 下标; -1: globals_ 中的变量; -2: 未解析
+        Value* valuePtr = nullptr; // resolvedSlot == -1 时指向 globals_ 的值
+        uint32_t version = 0;
+    };
+    mutable std::vector<GlobalVarCacheEntry> globalVarCache_;
+
     bool isGenerator = false;
     // R164 协程/生成器：yield 总数（从 IRFunction.yieldCount 复制）。
     // 静态 yield 数或 kDynamicYieldCount（INT_MAX，表示存在循环内 yield）。
@@ -266,6 +279,10 @@ struct RegBytecodeChunk {
 
     /// 构建字节偏移 → 指令索引映射（调试器用）
     void buildIpMap();
+
+    /// OPT-10: 行/列元数据读取（越界返回 0）
+    int getLine(size_t offset) const { return lineColumn.lineAt(offset); }
+    int getColumn(size_t offset) const { return lineColumn.columnAt(offset); }
 
     /// 获取操作码的指令长度（字节数）
     // Bug fix: 返回 size_t 而非 uint8_t——变长指令（REG_BUILD_DICT/REG_MAKE_CLOSURE/

@@ -695,25 +695,7 @@ bool copyPropagationPass(IRFunction& ir) {
 // 算术指令（含副作用：除零/溢出）即使 dest 已被替换，仍保留原指令执行。
 bool commonSubexpressionEliminationPass(IRFunction& ir) {
     bool modified = false;
-    // 值编号 key：将 (op, operands) 编码为字符串
-    auto encodeKey = [](const IRInstruction& instr) -> std::string {
-        std::string key;
-        key.push_back(static_cast<char>(instr.op));
-        key.push_back('|');
-        for (size_t idx = 0; idx < instr.operands.size(); ++idx) {
-            const auto& op = instr.operands[idx];
-            // BUGFIX-P1 (#23): 跳过 dest vreg（operands[0]）。SSA 下每条指令 dest 唯一，
-            // 若编入 key 会导致相同表达式永远无法匹配，CSE 完全失效。
-            // 与 IRSSA.cpp gvnPass 的 encodeValueKey 保持一致。
-            if (idx == 0 && op.kind == IROperandKind::VIRTUAL)
-                continue;
-            key.push_back(static_cast<char>(op.kind));
-            key.push_back(':');
-            key.append(std::to_string(op.index));
-            key.push_back(',');
-        }
-        return key;
-    };
+    // OPT-08: 结构化值编号键（零分配），替代逐指令字符串拼接 + to_string。
     // 判断指令是否可参与 CSE（纯计算 + 有 dest vreg）
     auto isCSEable = [](const IRInstruction& instr) -> bool {
         if (instr.operands.empty())
@@ -747,7 +729,7 @@ bool commonSubexpressionEliminationPass(IRFunction& ir) {
 
     for (auto& block : ir.blocks) {
         // 块内值编号表：key → 已记录的 dest vreg
-        std::unordered_map<std::string, uint32_t> valueMap;
+        std::unordered_map<IRValueKey, uint32_t, IRValueKeyHash> valueMap;
         // 替换映射：被替换的 dest vreg → 替代 vreg
         std::unordered_map<uint32_t, uint32_t> replacements;
         // 待标记为"dest 已替换"的指令索引（保留指令以触发副作用，但 dest 不再被引用）
@@ -776,7 +758,7 @@ bool commonSubexpressionEliminationPass(IRFunction& ir) {
                 continue;
             // 二元/一元运算的 dest vreg
             uint32_t destVReg = instr.operands[0].index;
-            std::string key = encodeKey(instr);
+            IRValueKey key = makeIRValueKey(instr);
             auto it = valueMap.find(key);
             if (it != valueMap.end()) {
                 // 已存在相同表达式：本指令 dest 引用替换为已存在的 vreg

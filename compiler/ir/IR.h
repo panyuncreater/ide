@@ -387,6 +387,9 @@ enum class IROp : uint8_t {
     // AUDIT-P1.1 fix: break/continue finally 续跳机制
     PUSH_JUMP_TARGET, // push 跳转目标到 pendingJumpStack_  operands: [label_idx]
     FINALLY_END,      // 从 pendingJumpStack_ pop 目标并跳转；栈空则继续执行
+    // B-008 fix: finally 内 abrupt 替换 abrupt 时丢弃被替换的续跳链。
+    // operands: [count(IMM_UINT)]；至多丢弃 count 个当前帧条目。
+    DROP_PENDING_JUMPS,
 
     // R134 模式匹配扩展：获取容器长度（与 OP_LEN 对应）。
     // operands: [dest_vreg, src_vreg]  dest = len(src)
@@ -445,6 +448,74 @@ struct IRInstruction {
     IRInstruction(IROp o, IROperandList ops, int ln = 0, int col = 0)
         : op(o), operands(std::move(ops)), line(ln), column(col) {}
 };
+
+// ============================================================
+// OPT-08: 结构化值编号键（CSE/GVN 共用）
+// 以定长字段编码 (op, 源操作数)，替代每条指令 std::to_string 拼接 key，
+// 值编号查找零分配。首操作数为 VIRTUAL dest 时跳过（SSA 下 dest 唯一）。
+// 现有参与值编号的纯计算指令最多三个源操作数（三地址码 + 常量索引）。
+// ============================================================
+struct IRValueKey {
+    IROp op = static_cast<IROp>(0);
+    IROperandKind kind0 = static_cast<IROperandKind>(0);
+    IROperandKind kind1 = static_cast<IROperandKind>(0);
+    IROperandKind kind2 = static_cast<IROperandKind>(0);
+    uint32_t a = 0;
+    uint32_t b = 0;
+    uint32_t c = 0;
+    uint8_t count = 0;
+
+    bool operator==(const IRValueKey& o) const {
+        return op == o.op && count == o.count && kind0 == o.kind0 && kind1 == o.kind1 && kind2 == o.kind2 &&
+               a == o.a && b == o.b && c == o.c;
+    }
+};
+
+struct IRValueKeyHash {
+    size_t operator()(const IRValueKey& k) const noexcept {
+        size_t h = static_cast<size_t>(k.op) * 0x9E3779B1u;
+        auto mix = [&h](size_t v) {
+            h ^= v + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2);
+        };
+        mix(static_cast<size_t>(k.kind0));
+        mix(k.a);
+        if (k.count > 1) {
+            mix(static_cast<size_t>(k.kind1));
+            mix(k.b);
+        }
+        if (k.count > 2) {
+            mix(static_cast<size_t>(k.kind2));
+            mix(k.c);
+        }
+        return h;
+    }
+};
+
+inline IRValueKey makeIRValueKey(const IRInstruction& instr) {
+    IRValueKey key;
+    key.op = instr.op;
+    const size_t start =
+        (!instr.operands.empty() && instr.operands[0].kind == IROperandKind::VIRTUAL) ? 1 : 0;
+    for (size_t i = start; i < instr.operands.size() && key.count < 3; ++i) {
+        const IROperand& op = instr.operands[i];
+        switch (key.count) {
+        case 0:
+            key.kind0 = op.kind;
+            key.a = op.index;
+            break;
+        case 1:
+            key.kind1 = op.kind;
+            key.b = op.index;
+            break;
+        default:
+            key.kind2 = op.kind;
+            key.c = op.index;
+            break;
+        }
+        ++key.count;
+    }
+    return key;
+}
 
 // ============================================================
 // IR 基本块与函数
@@ -930,6 +1001,10 @@ private:
     };
     std::vector<LoopContext> loopStack_;
     int tryDepth_ = 0; // 当前 try 嵌套深度（BUG-EXC-2 fix）
+
+    // B-008 fix: 当前是否在 finally 体内发射（两份副本均计入）。finally 内 abrupt
+    // 覆盖挂起的 abrupt 完成，需发射 DROP_PENDING_JUMPS 丢弃被替换的续跳链。
+    int finallyBodyDepth_ = 0;
     // AUDIT-P1.1 fix: try-finally 编译期上下文栈（IR 路径，用 label 而非 ip）
     struct TryFinallyContext {
         bool hasFinally = false;
@@ -972,6 +1047,7 @@ private:
         std::vector<BlockScope> savedBlockScopes;
         int savedBlockDepth = 0;
         int savedTryDepth = 0;
+        int savedFinallyBodyDepth = 0; // B-008: finally 体内 abrupt 替换上下文
         // L4 fix: tryFinallyStack_ 必须跨函数边界保存/恢复，否则嵌套函数（如
         // try-finally 内声明的闭包）的 return 语句会误引用外层函数的 finallyEntryLabel，
         // 导致 patchJumps 找不到 label（finallyEntryLabel 在外层函数 IR 中）→ IR lowering 失败。

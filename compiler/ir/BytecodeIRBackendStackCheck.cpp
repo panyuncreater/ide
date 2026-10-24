@@ -101,6 +101,7 @@ constexpr FixedStackEffectEntry kFixedStackEffect[] = {
     {IROp::LOAD_EXCEPTION, 0, 0},   // 不发射字节码：throwException 已将异常值压在栈顶
     {IROp::PUSH_JUMP_TARGET, 0, 0}, // pendingJumpStack_（控制栈）
     {IROp::FINALLY_END, 0, 0},      // pendingJumpStack_（控制栈）
+    {IROp::DROP_PENDING_JUMPS, 0, 0}, // B-008: pendingJumpStack_（控制栈）
     // ---- 写回：全部不碰操作数栈（消费 VM 成员 lastMutatedReceiver_）----
     {IROp::WRITEBACK_MEMBER_VAR, 0, 0},
     {IROp::WRITEBACK_MEMBER_LOCAL, 0, 0},
@@ -360,6 +361,8 @@ const char* BytecodeIRBackend::irOpName(IROp op) {
         return "PUSH_JUMP_TARGET";
     case IROp::FINALLY_END:
         return "FINALLY_END";
+    case IROp::DROP_PENDING_JUMPS:
+        return "DROP_PENDING_JUMPS";
     case IROp::WRITEBACK_MEMBER_VAR:
         return "WRITEBACK_MEMBER_VAR";
     case IROp::WRITEBACK_MEMBER_LOCAL:

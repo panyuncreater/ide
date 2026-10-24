@@ -134,6 +134,18 @@ target_link_libraries(diff_test PRIVATE
     minilang_core
     minilang_compile_options
 )
+# B-007: diff_test 此前仅构建、未注册进 ctest，V10/V11 曾因此逃过全量回归。
+# 部署 Qt 运行时到可执行文件同目录（与 tests/ 的 gtest 目标一致），否则
+# ctest 直接运行时缺少 Qt6Core.dll 会以 0xc0000135 失败。
+if(NOT COMMAND minilang_deploy_qt_runtime)
+    include(${MINILANG_ROOT_DIR}/cmake/windeployqt.cmake)
+endif()
+minilang_deploy_qt_runtime(diff_test)
+add_test(NAME test_harness.diff_test COMMAND diff_test)
+set_tests_properties(test_harness.diff_test PROPERTIES
+    LABELS "differential;harness"
+    TIMEOUT 300
+)
 
 # ================================================================
 # ast_test：AST 双向解析一致性校验

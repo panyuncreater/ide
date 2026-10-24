@@ -947,6 +947,7 @@ VMResult VM::executeMiscOps(OpCode op, size_t& ip) {
     case OpCode::OP_THROW:
     case OpCode::OP_PUSH_JUMP_TARGET:
     case OpCode::OP_FINALLY_END:
+    case OpCode::OP_DROP_PENDING_JUMPS:
         return executeMiscExceptionOps(op, ip);
     default:
         return runtimeError(ErrorFormat::formatStd("未知操作码: {}", static_cast<int>(op)));
@@ -1277,6 +1278,19 @@ VMResult VM::executeMiscExceptionOps(OpCode op, size_t& ip) {
         } else {
             ip += 1;
         }
+        break;
+    }
+
+    case OpCode::OP_DROP_PENDING_JUMPS: {
+        // B-008 fix: 丢弃被替换的续跳链（至多 count 个本帧条目；遇其他帧停止）。
+        uint8_t count = chunk.code[ip + 1];
+        notifyStep(ip, op);
+        size_t curFrameIdx = frames_.size() - 1;
+        while (count > 0 && !pendingJumpStack_.empty() && pendingJumpStack_.back().frameIndex == curFrameIdx) {
+            pendingJumpStack_.pop_back();
+            --count;
+        }
+        ip += 2;
         break;
     }
 

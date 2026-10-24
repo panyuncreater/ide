@@ -30,7 +30,7 @@ IrViewer::IrViewer(QWidget* parent) : QWidget(parent) {
     browser_->setVerticalScrollBar(new ScrollBar(browser_));
     browser_->setHorizontalScrollBar(new ScrollBar(browser_));
     // 第八轮：背景色跟随 TeachingTheme 主题（亮色 #ffffff / 暗色 #2d2d2d）
-    browser_->setStyleSheet(QString("QTextBrowser { background: #FFFFFF; border: none; padding: 8px; }")
+    browser_->setStyleSheet((QStringLiteral("QTextBrowser { background: ") + TeachingTheme::surface().name() + QStringLiteral("; border: none; padding: 8px; }"))
                                 .arg(TeachingTheme::surface().name()));
     mainLayout->addWidget(browser_, 1);
 }
@@ -128,28 +128,28 @@ QString IrViewer::formatIRLineHtml(const std::string& text) const {
 
         QString esc = htmlEscape(core);
         if (isIROpcode(core)) {
-            html += "<span style=\"color:#268BD2;font-weight:bold;\">" + esc + "</span>";
+            html += (QStringLiteral("<span style=\"color:") + TeachingTheme::syntaxOpcode().name() + QStringLiteral(";font-weight:bold;\">")) + esc + "</span>";
         } else if (isRegister(core)) {
-            html += "<span style=\"color:#2AA198;\">" + esc + "</span>";
+            html += (QStringLiteral("<span style=\"color:") + TeachingTheme::syntaxRegister().name() + QStringLiteral(";\">")) + esc + "</span>";
         } else if (isStringLiteral(core)) {
-            html += "<span style=\"color:#CB4B16;\">" + esc + "</span>";
+            html += (QStringLiteral("<span style=\"color:") + TeachingTheme::syntaxLiteral().name() + QStringLiteral(";\">")) + esc + "</span>";
         } else if (isNumericConst(core)) {
-            html += "<span style=\"color:#CB4B16;\">" + esc + "</span>";
+            html += (QStringLiteral("<span style=\"color:") + TeachingTheme::syntaxLiteral().name() + QStringLiteral(";\">")) + esc + "</span>";
         } else if (core == "=" || core == "->" || core == "|" || core == "&") {
-            html += "<span style=\"color:#8C8C8C;\">" + esc + "</span>";
+            html += (QStringLiteral("<span style=\"color:") + TeachingTheme::syntaxOperator().name() + QStringLiteral(";\">")) + esc + "</span>";
         } else {
             // 标识符（函数名、标签等）默认色
-            html += "<span style=\"color:#1E1E1E;\">" + esc + "</span>";
+            html += (QStringLiteral("<span style=\"color:") + TeachingTheme::syntaxIdentifier().name() + QStringLiteral(";\">")) + esc + "</span>";
         }
         if (!suffix.empty()) {
-            html += "<span style=\"color:#8C8C8C;\">" + QString::fromStdString(suffix).toHtmlEscaped() + "</span>";
+            html += (QStringLiteral("<span style=\"color:") + TeachingTheme::syntaxOperator().name() + QStringLiteral(";\">")) + QString::fromStdString(suffix).toHtmlEscaped() + "</span>";
         }
     }
 
     if (!comment.empty()) {
         if (!html.isEmpty())
             html += "&nbsp;";
-        html += "<span style=\"color:#5A5A5A;font-style:italic;\">" + htmlEscape(comment) + "</span>";
+        html += (QStringLiteral("<span style=\"color:") + TeachingTheme::textSecondary().name() + QStringLiteral(";font-style:italic;\">")) + htmlEscape(comment) + "</span>";
     }
 
     return html;
@@ -167,12 +167,12 @@ void IrViewer::setIR(const IRFunction* ir) {
 
         if (!ir) {
             browser_->setHtml(
-                "<div style='color:#8C8C8C;padding:8px;'>(未启用 IR 编译 — 在视图菜单勾选编译分析面板后查看)</div>");
+                (QStringLiteral("<div style='color:") + TeachingTheme::syntaxOperator().name() + QStringLiteral(";padding:8px;'>(未启用 IR 编译 — 在视图菜单勾选编译分析面板后查看)</div>")));
             return;
         }
 
         if (ir->blocks.empty()) {
-            browser_->setHtml("<div style='color:#8C8C8C;padding:8px;'>(空 IR — 无基本块)</div>");
+            browser_->setHtml((QStringLiteral("<div style='color:") + TeachingTheme::syntaxOperator().name() + QStringLiteral(";padding:8px;'>(空 IR — 无基本块)</div>")));
             return;
         }
 
@@ -192,7 +192,7 @@ void IrViewer::setIR(const IRFunction* ir) {
                 << "constants=" << ir->constants.size() << "  "
                 << "globals=" << ir->globalNames.size() << "  "
                 << "vregs=" << ir->nextVReg;
-            html += QString("<div style='color:#6C71C4;font-weight:bold;padding:2px 0;'>%1</div>")
+            html += (QStringLiteral("<div style='color:") + TeachingTheme::syntaxBlockLabel().name() + QStringLiteral(";font-weight:bold;padding:2px 0;'>%1</div>"))
                         .arg(htmlEscape(oss.str()));
             rowToSourceLine_.push_back(0);
             rowToInstrIndex_.push_back(SIZE_MAX);
@@ -204,7 +204,7 @@ void IrViewer::setIR(const IRFunction* ir) {
             const auto& block = ir->blocks[bi];
 
             if (static_cast<size_t>(rowToSourceLine_.size()) > MAX_IR_ROWS) {
-                html += QString("<div style='color:#8C8C8C;padding:2px 0;'>... (IR 超过 %1 行，已截断显示)</div>")
+                html += (QStringLiteral("<div style='color:") + TeachingTheme::syntaxOperator().name() + QStringLiteral(";padding:2px 0;'>... (IR 超过 %1 行，已截断显示)</div>"))
                             .arg(MAX_IR_ROWS);
                 rowToSourceLine_.push_back(0);
                 rowToInstrIndex_.push_back(SIZE_MAX);
@@ -215,7 +215,7 @@ void IrViewer::setIR(const IRFunction* ir) {
             {
                 std::ostringstream oss;
                 oss << "  BB" << bi << " (label=" << block.labelIndex << "):";
-                html += QString("<div style='color:#6C71C4;font-weight:bold;padding:2px 0;'>%1</div>")
+                html += (QStringLiteral("<div style='color:") + TeachingTheme::syntaxBlockLabel().name() + QStringLiteral(";font-weight:bold;padding:2px 0;'>%1</div>"))
                             .arg(htmlEscape(oss.str()));
                 rowToSourceLine_.push_back(0);
                 rowToInstrIndex_.push_back(SIZE_MAX);
@@ -237,13 +237,13 @@ void IrViewer::setIR(const IRFunction* ir) {
         rowToSourceLine_.clear();
         rowToInstrIndex_.clear();
         highlightedRow_ = -1;
-        browser_->setHtml(QString("<div style='color:#DC322F;padding:8px;'>(IR 渲染失败: %1)</div>")
+        browser_->setHtml((QStringLiteral("<div style='color:") + TeachingTheme::error().name() + QStringLiteral(";padding:8px;'>(IR 渲染失败: %1)</div>"))
                               .arg(QString::fromUtf8(e.what())));
     } catch (...) {
         rowToSourceLine_.clear();
         rowToInstrIndex_.clear();
         highlightedRow_ = -1;
-        browser_->setHtml("<div style='color:#DC322F;padding:8px;'>(IR 渲染失败: 未知错误)</div>");
+        browser_->setHtml((QStringLiteral("<div style='color:") + TeachingTheme::error().name() + QStringLiteral(";padding:8px;'>(IR 渲染失败: 未知错误)</div>")));
     }
 }
 
@@ -255,9 +255,9 @@ void IrViewer::clearIR() {
     highlightedRow_ = -1;
     // R53-UX1 fix: 空状态提示。原 clearIR 后 browser 完全空白，
     // 用户无法区分"尚未编译"与"编译产物为空"。提供占位提示提升可发现性。
-    browser_->setText(QString::fromUtf8("<div style='color:#6E6E6E; padding:8px;'>"
-                                        "尚无 IR 输出。请先点击「编译分析」或运行程序，再切换到 IR 视图查看。"
-                                        "</div>"));
+    browser_->setText((QStringLiteral("<div style='color:") + TeachingTheme::textMuted().name() + QStringLiteral("; padding:8px;'>")
+                                        + QStringLiteral("尚无 IR 输出。请先点击「编译分析」或运行程序，再切换到 IR 视图查看。")
+                                        + QStringLiteral("</div>")));
 }
 
 /// 按源码行号高亮对应 IR 指令行。
@@ -286,7 +286,7 @@ void IrViewer::highlightBySourceLine(int line) {
             if (block.isValid()) {
                 QTextCursor c(block);
                 QTextBlockFormat fmt;
-                fmt.setBackground(QColor("#F5F5F5"));
+                fmt.setBackground(QColor(TeachingTheme::surfaceHover().name()));
                 c.setBlockFormat(fmt);
                 browser_->setTextCursor(c);
                 browser_->scrollToAnchor(QString::number(i));
@@ -337,7 +337,7 @@ void IrViewer::highlightByBytecodeOffset(const std::vector<std::pair<size_t, siz
             if (block.isValid()) {
                 QTextCursor c(block);
                 QTextBlockFormat fmt;
-                fmt.setBackground(QColor("#dcd0b0"));
+                fmt.setBackground(QColor(TeachingTheme::irHighlightBg().name()));
                 c.setBlockFormat(fmt);
                 browser_->setTextCursor(c);
             }

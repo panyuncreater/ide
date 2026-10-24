@@ -22,9 +22,25 @@ std::string NumberLiteral::nodeName() const {
     return "Number(" + getValue().toString() + ")";
 }
 
+StringLiteral::~StringLiteral() {
+    delete cachedValue_.load(std::memory_order_relaxed);
+}
+
 Value StringLiteral::getValue() const {
-    // 字符串字面量直接封装为字符串语义的 Value（A1 fix: 按需构造，非破坏性）。
-    return Value(value);
+    // OPT-03: 缓存首次构造的 Value，循环内字符串字面量不再每轮堆分配 StringData。
+    // 共享同一 AST 的解释器可能在不同线程求值；CAS 发布指针，竞态失败方丢弃自建副本。
+    // 缓存对象随 AST 节点销毁，返回的 Value 各自持 StringData 引用（COW 隔离）。
+    Value* cached = cachedValue_.load(std::memory_order_acquire);
+    if (!cached) {
+        auto* candidate = new Value(value);
+        if (!cachedValue_.compare_exchange_strong(cached, candidate, std::memory_order_acq_rel,
+                                                  std::memory_order_acquire)) {
+            delete candidate;
+        } else {
+            cached = candidate;
+        }
+    }
+    return *cached;
 }
 
 Value BoolLiteral::getValue() const {

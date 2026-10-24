@@ -6,7 +6,7 @@
 ## 刷新命令
 
 ```bash
-# 全量 ctest 计数（需先构建 4 个测试目标）
+# 全量 ctest 计数（需先构建 4 个 gtest 测试目标 + test_harness/diff_test）
 ctest --test-dir out/build/debug -N
 
 # minilang_tests 用例/套件计数
@@ -17,8 +17,8 @@ out/build/debug/tests/minilang_tests.exe --gtest_list_tests
 
 | 项目 | 数值 | 口径 |
 |------|------|------|
-| 全量 ctest | 4194 | 最近一次全量通过（F2/F7 轮，4194/4194；以命令输出为准） |
-| 通过率 | 4194/4194 | `/W4+/WX` 零警告 |
+| 全量 ctest | 4221 | 最近一次全量通过（BACKLOG §2 优化清偿轮，4221/4221；以命令输出为准） |
+| 通过率 | 4221/4221 | `/W4+/WX` 零警告 |
 
 ## 说明
 

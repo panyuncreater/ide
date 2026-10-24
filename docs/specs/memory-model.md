@@ -38,6 +38,7 @@
 
 - **约定**：修改容器元素前必须走「独占检查 → 需要时深拷贝」路径；直接写共享缓冲是数据竞争/别名错误。
 - 新增可变容器 API 时，写路径必须复用既有 COW 检查，禁止绕过。
+- **单节点 VarRef 原位变异快路径（OPT-01，2026-10-23）**：写目标为直接变量且链长 1 时，必须在 RHS/索引/参数求值**之后**重新取环境槽位指针，并用 `Value::sharesStorageWith` 确认槽位仍持有求值时捕获的对象；不满足即回退旧写回路径。RHS 副作用可重绑定变量、SmallMap 晋升可使旧指针失效；无别名时释放链求值副本令 rc==1 跳过 COW 克隆，真别名仍由 `ensureUnique` 分离。锁定：`BacklogRegression.OPT01InPlaceMutationPreservesCowIsolation`。
 - 审计点：所有 `visit*`/内建方法的写路径逐一核对 COW 检查存在。
 
 ## 5. 栈与帧约束
@@ -56,6 +57,8 @@
 | Environment/boundInstance_ | 链式作用域中缓存实例释放 | `interpreter/Environment.h` 释放顺序；缓存失效路径 |
 | envPool_ 回收 × 闭包 env 弱引用 | `resetForReuse` 清空 weak_ptr 仍指向该 env 的闭包的可见变量（陈旧读/语义损坏） | 不变量已收口到 `Value::makeClosure`（D2 fix，2026-10-03）：工厂内统一 `markClosureEnvRef()`，回收守卫（use_count==1 + 无捕获 + 无闭包 env 引用）不再依赖各创建点手工标记；回归测试 `AuditBatch1ClosureEnv.*` |
 | JIT 上下文 | `JitContext` 邮箱持有跨线程引用 | `compiler/jit/` 上下文生命周期与 VM 停靠同步 |
+| 解释器原位变异快路径 | RHS 重绑定或 SmallMap 晋升使槽位指针失效/指向新对象 | 求值后重取槽位 + `sharesStorageWith` 身份校验，失败回退；`BacklogRegression.OPT01*` |
+| RegisterVM 名称版全局缓存 | 全局表结构变更后缓存的 `Value*` 悬垂 | `globalsVersion_` 在所有结构变更点递增；`BacklogRegression.OPT07*` |
 | capi 宿主函数 × 插件卸载 | registry 条目指向已卸载代码页（跨 context 调用即 UAF） | `minilang_destroy` 先按注册身份注销并释放 thunk，再 `FreeLibrary`/`dlclose`；回归 `PluginTest.CApiRegisterFunctionUnregisteredOnDestroy` / `CApiDestroyKeepsOverridingRegistration` |
 
 ## 7. 内存审计清单（配合 AGENTS.md §5 策略 4）

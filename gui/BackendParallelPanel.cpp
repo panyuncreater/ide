@@ -8,6 +8,7 @@
 // ============================================================
 
 #include "gui/BackendParallelPanel.h"
+#include "gui/TeachingTheme.h" // OPT-11: 颜色语义化
 
 #include "app/IdeController.h"              // F1 fix: 运行期守卫读取 isRunning/isVmRunning
 #include "common/BackendExecutionService.h" // ARCH-10: 后端执行服务中间层
@@ -161,7 +162,7 @@ BackendParallelPanel::BackendParallelPanel(QWidget* parent) : QWidget(parent) {
     auto* bottomBar = new QHBoxLayout;
     loadSampleBtn_ = new QPushButton(tr("加载样例代码到主编辑器"));
     auto* hintLabel = new QLabel(QString::fromUtf8("三后端输出应完全一致（语义等价性验证）"));
-    hintLabel->setStyleSheet(QStringLiteral("color:#6E6E6E;"));
+    hintLabel->setStyleSheet((QStringLiteral("color:") + TeachingTheme::textMuted().name() + QStringLiteral(";")));
     bottomBar->addWidget(loadSampleBtn_);
     bottomBar->addStretch();
     bottomBar->addWidget(hintLabel);
@@ -198,13 +199,13 @@ void BackendParallelPanel::onRunAllBackends() {
     // F1 fix: 运行期拒绝面板执行——临时解释器与 Worker 并发会破坏 GC 根集/引擎状态。
     if (controller_ && (controller_->isRunning() || controller_->isVmRunning())) {
         consistencyLabel_->setText(QString::fromUtf8("❌ 程序正在运行，请先停止后再执行面板任务"));
-        consistencyLabel_->setStyleSheet(QStringLiteral("color:#C0392B;"));
+        consistencyLabel_->setStyleSheet((QStringLiteral("color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";")));
         return;
     }
     std::string src = sourceEdit_->text().toStdString();
     if (src.empty()) {
         consistencyLabel_->setText(QString::fromUtf8("❌ 源码为空，请输入 MiniLang 源码"));
-        consistencyLabel_->setStyleSheet(QStringLiteral("color:#C0392B;"));
+        consistencyLabel_->setStyleSheet((QStringLiteral("color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";")));
         return;
     }
 
@@ -244,9 +245,9 @@ void BackendParallelPanel::renderResult(int row, const QString& backendName, con
 
     // 状态着色：成功绿色，失败红色
     if (r.success) {
-        statusItem->setForeground(QColor(QStringLiteral("#27AE60")));
+        statusItem->setForeground(QColor(TeachingTheme::successGreen().name()));
     } else {
-        statusItem->setForeground(QColor(QStringLiteral("#C0392B")));
+        statusItem->setForeground(QColor(TeachingTheme::dangerRed().name()));
     }
 
     resultTable_->setItem(row, 0, nameItem);
@@ -263,10 +264,10 @@ void BackendParallelPanel::renderConsistency(const BackendExecResult& interp, co
     bool outputEqual = (interp.output == stackvm.output) && (stackvm.output == regvm.output);
     if (allSuccess && outputEqual) {
         consistencyLabel_->setText(QString::fromUtf8("✅ 三后端输出一致，语义等价性验证通过"));
-        consistencyLabel_->setStyleSheet(QStringLiteral("color:#27AE60; font-weight:bold;"));
+        consistencyLabel_->setStyleSheet((QStringLiteral("color:") + TeachingTheme::successGreen().name() + QStringLiteral("; font-weight:bold;")));
     } else {
         consistencyLabel_->setText(QString::fromUtf8("❌ 三后端输出不一致，存在语义差异！"));
-        consistencyLabel_->setStyleSheet(QStringLiteral("color:#C0392B; font-weight:bold;"));
+        consistencyLabel_->setStyleSheet((QStringLiteral("color:") + TeachingTheme::dangerRed().name() + QStringLiteral("; font-weight:bold;")));
     }
 }
 

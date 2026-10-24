@@ -68,9 +68,9 @@ QString formatBitPatternHtml(const std::string& bitPatternHex, bool isPointer) {
         std::string byteStr = hex.substr(i * 2, 2);
         QString color;
         if (isPointer && i < 2) {
-            color = QStringLiteral("#FFB3BA"); // tag — 粉红
+            color = TeachingTheme::memoryTagBg().name(); // tag — 粉红
         } else {
-            color = QStringLiteral("#BAE1FF"); // payload — 浅蓝
+            color = TeachingTheme::memoryPayloadBg().name(); // payload — 浅蓝
         }
         html += QStringLiteral("<td bgcolor='%1' style='font-weight:bold;text-align:center;'>%2</td>")
                     .arg(color)
@@ -80,17 +80,17 @@ QString formatBitPatternHtml(const std::string& bitPatternHex, bool isPointer) {
 
     // 图例
     if (isPointer) {
-        html += QStringLiteral("<p style='margin-top:8px;'>"
-                               "<span style='background:#FFB3BA;padding:2px 8px;'>&nbsp;tag&nbsp;</span> "
-                               "高 16 位类型标签 &nbsp;&nbsp;"
-                               "<span style='background:#BAE1FF;padding:2px 8px;'>&nbsp;payload&nbsp;</span> "
-                               "低 48 位数据（指针 / 整数 / 布尔值）"
-                               "</p>");
+        html += (QStringLiteral("<p style='margin-top:8px;'>")
+                               + QStringLiteral("<span style='background:") + TeachingTheme::memoryTagBg().name() + QStringLiteral(";padding:2px 8px;'>&nbsp;tag&nbsp;</span> ")
+                               + QStringLiteral("高 16 位类型标签 &nbsp;&nbsp;")
+                               + QStringLiteral("<span style='background:") + TeachingTheme::memoryPayloadBg().name() + QStringLiteral(";padding:2px 8px;'>&nbsp;payload&nbsp;</span> ")
+                               + QStringLiteral("低 48 位数据（指针 / 整数 / 布尔值）")
+                               + QStringLiteral("</p>"));
     } else {
-        html += QStringLiteral("<p style='margin-top:8px;'>"
-                               "<span style='background:#BAE1FF;padding:2px 8px;'>&nbsp;payload&nbsp;</span> "
-                               "全 64 位为 IEEE 754 double 编码（无 tag）"
-                               "</p>");
+        html += (QStringLiteral("<p style='margin-top:8px;'>")
+                               + QStringLiteral("<span style='background:") + TeachingTheme::memoryPayloadBg().name() + QStringLiteral(";padding:2px 8px;'>&nbsp;payload&nbsp;</span> ")
+                               + QStringLiteral("全 64 位为 IEEE 754 double 编码（无 tag）")
+                               + QStringLiteral("</p>"));
     }
 
     return html;

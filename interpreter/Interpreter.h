@@ -414,6 +414,10 @@ private:
     // 短路，仅调试模式启用时才进入加锁读，热路径无锁开销。
     std::shared_ptr<DebugController> debugger_; // 调试控制器（可为 nullptr）
     mutable std::mutex debuggerMutex_;          // 保护 debugger_ 的读写
+    // OPT-02: 无调试器时对 debugger() 的原子短路，避免每语句/每调用 mutex + 引用计数。
+    // setDebugger() 在持锁状态下同步置位/清零；读取端 relaxed 即可（若读到陈旧 false，
+    // 等价于附加尚未完成，随后 checkBreak 的 debugMode_ 路径照常生效）。
+    std::atomic<bool> debuggerAttached_{false};
     // QT-R-02 fix: debugMode_ 改为 atomic，消除主线程 setDebugMode() 与 worker 线程
     // checkBreak() 读操作之间的数据竞争。A6 fix 已确保主线程不在 worker 运行时
     // 调用 setDebugMode，但 atomic 提供额外的内存可见性保证和防御性保护。

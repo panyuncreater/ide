@@ -219,11 +219,30 @@ struct JitFrame {
 };
 
 /// R148 JIT 运行时类信息
+struct JitMethodInfo;
+
+// OPT-15: 透明字符串哈希/相等——extern "C" helper 以 const char* 查名称表时
+// 直接以 string_view 查找，免去每次 jitGetVar/jitSetVar 的临时 std::string 构造。
+struct JitTransparentStringHash {
+    using is_transparent = void;
+    size_t operator()(std::string_view sv) const noexcept { return std::hash<std::string_view>{}(sv); }
+};
+struct JitTransparentStringEqual {
+    using is_transparent = void;
+    bool operator()(std::string_view a, std::string_view b) const noexcept { return a == b; }
+};
+using JitGlobalNameToSlotMap =
+    std::unordered_map<std::string, int, JitTransparentStringHash, JitTransparentStringEqual>;
+
 struct JitClassInfo {
     std::string name;                                     ///< 类名
     std::string superClassName;                           ///< 父类名（空表示无父类）
     std::vector<std::string> fieldOrder;                  ///< 字段声明顺序（含继承字段）
     std::unordered_map<std::string, Value> fieldDefaults; ///< 字段默认值（含继承字段）
+    // OPT-16: init 方法入口缓存。methodEntries_ 节点在编译期构建后稳定（tiering 原地
+    // 更新 entryPtr），classInfo_ 条目在 OP_DEFINE_CLASS 时整体替换，缓存随之失效。
+    mutable const JitMethodInfo* cachedInit = nullptr;
+    mutable bool initResolved = false;
 };
 
 /// R149 JIT 方法元信息（编译期收集，运行时 jitMethodCall 沿继承链查找用）
@@ -470,7 +489,11 @@ struct MethodCallICEntry {
     static constexpr int kSlots = 4;
 
     struct Slot {
-        const char* classNamePtr = nullptr;    ///< cache key: receiver.className() 的内部指针
+        // B-006: 键必须是稳定存储——原实现保存 receiver.className().c_str()，
+        // 而非 const className() 会触发 ensureUnique COW 克隆，键指向调用结束即
+        // 析构的临时 InstanceData；地址复用后可假命中并错误分发。IC 自持类名
+        // 字符串，生命周期与 IC 一致，比较按内容进行。
+        std::string className;
         const JitMethodInfo* method = nullptr; ///< cache value: 解析到的方法信息
     };
 
@@ -478,19 +501,19 @@ struct MethodCallICEntry {
     uint8_t slotCount = 0;
     bool megamorphic = false;
 
-    const JitMethodInfo* lookup(const char* classNamePtr) const {
+    const JitMethodInfo* lookup(const std::string& className) const {
         for (uint8_t i = 0; i < slotCount; ++i) {
-            if (slots[i].classNamePtr == classNamePtr)
+            if (slots[i].className == className)
                 return slots[i].method;
         }
         return nullptr;
     }
 
-    bool insert(const char* classNamePtr, const JitMethodInfo* method) {
+    bool insert(const std::string& className, const JitMethodInfo* method) {
         if (megamorphic)
             return false;
         for (uint8_t i = 0; i < slotCount; ++i) {
-            if (slots[i].classNamePtr == classNamePtr) {
+            if (slots[i].className == className) {
                 slots[i].method = method;
                 return true;
             }
@@ -499,7 +522,7 @@ struct MethodCallICEntry {
             megamorphic = true;
             return false;
         }
-        slots[slotCount].classNamePtr = classNamePtr;
+        slots[slotCount].className = className;
         slots[slotCount].method = method;
         ++slotCount;
         return true;
@@ -699,10 +722,10 @@ public:
     /// extern "C" helper 访问 private 成员，避免 friend 与 extern "C" 链接规范冲突）
     ///@{
     std::vector<int64_t>& globalSlotsMut() { return globalSlots_; }
-    std::unordered_map<std::string, int>& globalNameToSlotMut() { return globalNameToSlot_; }
+    JitGlobalNameToSlotMap& globalNameToSlotMut() { return globalNameToSlot_; }
     std::unordered_map<std::string, Value>& globalsMut() { return globals_; }
     const std::vector<int64_t>& globalSlotsRef() const { return globalSlots_; }
-    const std::unordered_map<std::string, int>& globalNameToSlotRef() const { return globalNameToSlot_; }
+    const JitGlobalNameToSlotMap& globalNameToSlotRef() const { return globalNameToSlot_; }
     const std::unordered_map<std::string, Value>& globalsRef() const { return globals_; }
     ///@}
 
@@ -1280,7 +1303,7 @@ public:
 
     /// R162: extern "C" helper（jitDefineVar 等）通过 backendPtr 访问，故声明在 public 区
     std::vector<int64_t> globalSlots_; ///< R139: 全局变量 slot 存储（与 StackVM globalSlots_ 等价）
-    std::unordered_map<std::string, int> globalNameToSlot_; ///< R147: 名称→slot 映射
+    JitGlobalNameToSlotMap globalNameToSlot_; ///< R147: 名称→slot 映射（OPT-15 透明查找）
 
     /// 闭包同步调用跳板入口（compileAllChunks 末尾发射，runtime_.add 后解析地址）。
     /// jitInvokeClosureSync（JITRuntime.cpp）用它从 C++ 同步调用 JIT 编译的闭包：

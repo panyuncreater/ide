@@ -82,23 +82,6 @@ uint32_t getDestVReg(const IRInstruction& instr) {
     return instr.operands[0].index;
 }
 
-/// 将指令编码为值编号 key（用于 GVN/CSE）
-std::string encodeValueKey(const IRInstruction& instr) {
-    std::string key;
-    key.push_back(static_cast<char>(instr.op));
-    key.push_back('|');
-    for (const auto& op : instr.operands) {
-        // dest vreg 不编码进 key（同表达式不同 dest 应合并）
-        if (&op == &instr.operands[0] && op.kind == IROperandKind::VIRTUAL)
-            continue;
-        key.push_back(static_cast<char>(op.kind));
-        key.push_back(':');
-        key.append(std::to_string(op.index));
-        key.push_back(',');
-    }
-    return key;
-}
-
 } // namespace
 
 // ============================================================
@@ -941,15 +924,15 @@ bool gvnPass(IRFunction& ir) {
     // 支配树 DFS，维护值编号表（继承自父块）
     // valueTable: (op, operands) → dest vreg
     // replacements: 被替换的 dest vreg → 替代 vreg（沿支配树向下传播）
-    std::function<void(uint32_t, std::unordered_map<std::string, uint32_t>&,
+    std::function<void(uint32_t, std::unordered_map<IRValueKey, uint32_t, IRValueKeyHash>&,
                        const std::unordered_map<uint32_t, uint32_t>&)>
-        dfs = [&](uint32_t blockId, std::unordered_map<std::string, uint32_t>& parentTable,
+        dfs = [&](uint32_t blockId, std::unordered_map<IRValueKey, uint32_t, IRValueKeyHash>& parentTable,
                   const std::unordered_map<uint32_t, uint32_t>& parentReplacements) {
             const auto& node = cfg.node(blockId);
             auto& blk = ir.blocks[node.sourceBlockIdx]; // 非 const：GVN 需修改操作数 vreg 引用
 
             // 拷贝父表（scoped）
-            std::unordered_map<std::string, uint32_t> table = parentTable;
+            std::unordered_map<IRValueKey, uint32_t, IRValueKeyHash> table = parentTable;
             // 继承父块替换映射并添加本块新替换
             std::unordered_map<uint32_t, uint32_t> replacements = parentReplacements;
 
@@ -984,7 +967,7 @@ bool gvnPass(IRFunction& ir) {
                     continue;
 
                 uint32_t destVReg = getDestVReg(instr);
-                std::string key = encodeValueKey(instr);
+                IRValueKey key = makeIRValueKey(instr); // OPT-08: 结构化键，零分配
                 auto it = table.find(key);
                 if (it != table.end()) {
                     // 相同表达式已存在：替换 dest 引用
@@ -1000,7 +983,7 @@ bool gvnPass(IRFunction& ir) {
             }
         };
 
-    std::unordered_map<std::string, uint32_t> emptyTable;
+    std::unordered_map<IRValueKey, uint32_t, IRValueKeyHash> emptyTable;
     std::unordered_map<uint32_t, uint32_t> emptyReplacements;
     dfs(cfg.entryId(), emptyTable, emptyReplacements);
 

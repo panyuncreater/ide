@@ -576,6 +576,17 @@ bool Compiler::emitFinallyJump(int line, std::vector<size_t>& realTargetPatches)
             finallyIndices.push_back(i - 1);
         }
     }
+    if (finallyIndices.empty() && finallyBodyDepth_ == 0)
+        return false;
+
+    // B-008 fix: finally 体内的 abrupt 覆盖挂起的 abrupt 完成——先丢弃被替换链的
+    // 全部续跳条目（数量 = 1 个本 finally 条目 + 每个仍在场的更外层 finally 条目）。
+    // 正常进入 finally（无挂起链）时该指令为空操作（按帧边界截断）。
+    if (finallyBodyDepth_ > 0) {
+        size_t dropCount = 1 + finallyIndices.size();
+        chunk_.writeOp(OpCode::OP_DROP_PENDING_JUMPS, line);
+        chunk_.write(static_cast<uint8_t>(std::min<size_t>(dropCount, 255)), line);
+    }
     if (finallyIndices.empty())
         return false;
 
@@ -640,6 +651,8 @@ Compiler::CompileContext Compiler::saveCompileContext() {
     ctx.currentUpvalueNames = std::move(currentUpvalueNames_);
     ctx.loopStack = std::move(loopStack_);
     ctx.tryDepth = tryDepth_;
+    ctx.finallyBodyDepth = finallyBodyDepth_;
+    finallyBodyDepth_ = 0; // 嵌套函数/类方法从全新 finally 上下文开始
     ctx.tryFinallyStack = std::move(tryFinallyStack_);          // AUDIT-P1.1 fix
     ctx.currentFunctionReturnType = currentFunctionReturnType_; // BUG-TYPE-1 fix
     ctx.currentTypeParams = currentTypeParams_;                 // R163 泛型扩展
@@ -672,6 +685,7 @@ void Compiler::restoreCompileContext(CompileContext&& ctx) {
     currentUpvalueNames_ = std::move(ctx.currentUpvalueNames);
     loopStack_ = std::move(ctx.loopStack);
     tryDepth_ = ctx.tryDepth;
+    finallyBodyDepth_ = ctx.finallyBodyDepth;
     tryFinallyStack_ = std::move(ctx.tryFinallyStack);                     // AUDIT-P1.1 fix
     currentFunctionReturnType_ = std::move(ctx.currentFunctionReturnType); // BUG-TYPE-1 fix
     currentTypeParams_ = std::move(ctx.currentTypeParams);                 // R163 泛型扩展

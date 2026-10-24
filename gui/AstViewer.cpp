@@ -1,6 +1,7 @@
 #include "gui/AstViewer.h"
 #include "ast/ASTNode.h"
 #include "gui/GuiTextUtils.h" // Dedup-4A: monospaceFont()
+#include "gui/TeachingTheme.h" // OPT-11: 颜色语义化
 #include <QGraphicsLineItem>
 #include <QGraphicsRectItem>
 #include <QGraphicsTextItem>
@@ -367,7 +368,7 @@ QColor AstViewer::nodeBgColor(const QString& name) const {
     } else if (name.startsWith("Return") || name.startsWith("Print")) {
         return isDarkTheme_ ? QColor(0x2a, 0x55, 0x55) : QColor(0xd5, 0xf0, 0xec);
     }
-    return isDarkTheme_ ? QColor(0x38, 0x38, 0x38) : QColor(0xF5, 0xF5, 0xF5);
+    return isDarkTheme_ ? QColor(0x38, 0x38, 0x38) : TeachingTheme::surfaceHover();
 }
 
 // ============================================================

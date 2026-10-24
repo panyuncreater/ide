@@ -18,6 +18,7 @@
 #include "common/BackendExecutionService.h" // ARCH-10: 后端执行服务中间层
 #include "gui/GuiTextUtils.h"
 #include "gui/I18n.h"
+#include "gui/TeachingTheme.h" // OPT-11: 颜色语义化
 
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -192,7 +193,7 @@ CoroutineVisualizerPanel::CoroutineVisualizerPanel(QWidget* parent) : QWidget(pa
     auto* bottomBar = new QHBoxLayout;
     loadSampleBtn_ = new QPushButton(mlTr("加载样例代码到主编辑器"));
     auto* hintLabel = new QLabel(mlTr("三后端 yield 重放输出应完全一致（协程语义等价性验证）"));
-    hintLabel->setStyleSheet(QStringLiteral("color:#6E6E6E;"));
+    hintLabel->setStyleSheet((QStringLiteral("color:") + TeachingTheme::textMuted().name() + QStringLiteral(";")));
     bottomBar->addWidget(loadSampleBtn_);
     bottomBar->addStretch();
     bottomBar->addWidget(hintLabel);
@@ -228,13 +229,13 @@ void CoroutineVisualizerPanel::onRunAllBackends() {
     // F1 fix: 运行期拒绝面板执行——临时解释器与 Worker 并发会破坏 GC 根集/引擎状态。
     if (controller_ && (controller_->isRunning() || controller_->isVmRunning())) {
         consistencyLabel_->setText(mlTr("程序正在运行，请先停止后再执行协程面板任务"));
-        consistencyLabel_->setStyleSheet(QStringLiteral("color:#C0392B;"));
+        consistencyLabel_->setStyleSheet((QStringLiteral("color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";")));
         return;
     }
     std::string src = sourceEdit_->text().toStdString();
     if (src.empty()) {
         consistencyLabel_->setText(mlTr("❌ 源码为空，请输入 MiniLang 协程源码"));
-        consistencyLabel_->setStyleSheet(QStringLiteral("color:#C0392B;"));
+        consistencyLabel_->setStyleSheet((QStringLiteral("color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";")));
         return;
     }
 
@@ -400,9 +401,9 @@ void CoroutineVisualizerPanel::renderResult(int row, const QString& backendName,
 
     // 状态着色：成功绿色，失败红色
     if (r.success) {
-        statusItem->setForeground(QColor(QStringLiteral("#27AE60")));
+        statusItem->setForeground(QColor(TeachingTheme::successGreen().name()));
     } else {
-        statusItem->setForeground(QColor(QStringLiteral("#C0392B")));
+        statusItem->setForeground(QColor(TeachingTheme::dangerRed().name()));
     }
 
     resultTable_->setItem(row, 0, nameItem);
@@ -419,10 +420,10 @@ void CoroutineVisualizerPanel::renderConsistency(const BackendExecResult& interp
     bool outputEqual = (interp.output == stackvm.output) && (stackvm.output == regvm.output);
     if (allSuccess && outputEqual) {
         consistencyLabel_->setText(mlTr("✅ 三后端协程输出一致，yield 重放语义等价性验证通过"));
-        consistencyLabel_->setStyleSheet(QStringLiteral("color:#27AE60; font-weight:bold;"));
+        consistencyLabel_->setStyleSheet((QStringLiteral("color:") + TeachingTheme::successGreen().name() + QStringLiteral("; font-weight:bold;")));
     } else {
         consistencyLabel_->setText(mlTr("❌ 三后端协程输出不一致，存在 yield 重放语义差异！"));
-        consistencyLabel_->setStyleSheet(QStringLiteral("color:#C0392B; font-weight:bold;"));
+        consistencyLabel_->setStyleSheet((QStringLiteral("color:") + TeachingTheme::dangerRed().name() + QStringLiteral("; font-weight:bold;")));
     }
 }
 

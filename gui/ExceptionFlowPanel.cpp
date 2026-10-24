@@ -5,6 +5,7 @@
 #include "gui/ExceptionFlowPanel.h"
 #include "gui/MarkdownRenderer.h"
 #include "gui/PanelAnimator.h"
+#include "gui/TeachingTheme.h" // OPT-11: 颜色语义化
 
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -320,8 +321,8 @@ void ExceptionFlowPanel::populateScenarioDetail(int index) {
 
     // 示例代码（HTML 转义）
     oss << "<h3>💻 示例代码</h3>";
-    oss << "<pre style='background:#F8F9FA;border-left:4px solid #3498DB;padding:8px 12px;"
-           "font-size:12px;white-space:pre-wrap;'>";
+    oss << (QStringLiteral("<pre style='background:") + TeachingTheme::surfaceAlt().name() + QStringLiteral(";border-left:4px solid ") + TeachingTheme::infoBlue().name() + QStringLiteral(";padding:8px 12px;")
+           + QStringLiteral("font-size:12px;white-space:pre-wrap;'>")).toStdString();
     {
         std::string code = s.sampleCode;
         for (size_t i = 0; (i = code.find('<', i)) != std::string::npos;)
@@ -338,28 +339,28 @@ void ExceptionFlowPanel::populateScenarioDetail(int index) {
     for (size_t i = 0; i < s.propagationPath.size(); ++i) {
         const std::string& step = s.propagationPath[i];
         // 根据步骤内容自动着色
-        const char* bg = "#ECF0F1";
-        const char* border = "#BDC3C7";
+        std::string bg = TeachingTheme::exceptionNeutralBg().name().toStdString();
+        std::string border = TeachingTheme::exceptionNeutralBorder().name().toStdString();
         const char* icon = "▶";
         if (step.find("throw") != std::string::npos || step.find("异常创建") != std::string::npos) {
-            bg = "#FADBD8";
-            border = "#E74C3C";
+            bg = TeachingTheme::exceptionThrowBg().name().toStdString();
+            border = TeachingTheme::redLight().name().toStdString();
             icon = "⚡";
         } else if (step.find("catch") != std::string::npos) {
-            bg = "#D5F5E3";
-            border = "#27AE60";
+            bg = TeachingTheme::exceptionCatchBg().name().toStdString();
+            border = TeachingTheme::successGreen().name().toStdString();
             icon = "🛡️";
         } else if (step.find("unwinding") != std::string::npos || step.find("展开") != std::string::npos) {
-            bg = "#FDEBD0";
-            border = "#F39C12";
+            bg = TeachingTheme::exceptionUnwindBg().name().toStdString();
+            border = TeachingTheme::amberBorder().name().toStdString();
             icon = "🌊";
         } else if (step.find("TERMINATED") != std::string::npos || step.find("终止") != std::string::npos) {
-            bg = "#E8DAEF";
-            border = "#9B59B6";
+            bg = TeachingTheme::exceptionTerminateBg().name().toStdString();
+            border = TeachingTheme::exceptionTerminateBorder().name().toStdString();
             icon = "🚨";
         } else if (step.find("finally") != std::string::npos) {
-            bg = "#D6EAF8";
-            border = "#3498DB";
+            bg = TeachingTheme::exceptionFinallyBg().name().toStdString();
+            border = TeachingTheme::infoBlue().name().toStdString();
             icon = "✨";
         }
         // 步骤号
@@ -368,12 +369,12 @@ void ExceptionFlowPanel::populateScenarioDetail(int index) {
             << ";border-right:none;padding:6px 8px;width:30px;text-align:center;color:" << border
             << ";font-weight:bold;font-size:14px;'>" << (i + 1) << "</td>";
         oss << "<td style='background:" << bg << ";border:1px solid " << border
-            << ";border-left:none;padding:6px 10px;color:#2C3E50;font-family:monospace;font-size:12px;'>" << icon << " "
+            << (QStringLiteral(";border-left:none;padding:6px 10px;color:") + TeachingTheme::midnight().name() + QStringLiteral(";font-family:monospace;font-size:12px;'>")).toStdString() << icon << " "
             << step << "</td>";
         oss << "</tr>";
         if (i < s.propagationPath.size() - 1) {
-            oss << "<tr><td colspan='2' style='text-align:center;color:#6E6E6E;padding:1px "
-                   "0;font-size:12px;'>↓</td></tr>";
+            oss << (QStringLiteral("<tr><td colspan='2' style='text-align:center;color:") + TeachingTheme::textMuted().name() + QStringLiteral(";padding:1px ")
+                   + QStringLiteral("0;font-size:12px;'>↓</td></tr>")).toStdString();
         }
     }
     oss << "</table>";
@@ -381,8 +382,8 @@ void ExceptionFlowPanel::populateScenarioDetail(int index) {
     oss << "<h3>📖 教学注释</h3>";
     oss << MarkdownRenderer::markdownToHtmlFragment(s.teachingNote).toStdString();
 
-    oss << "<hr><p><a href=\"#load\" style='background:#27AE60;color:white;padding:6px 16px;border-radius:4px;"
-           "text-decoration:none;font-weight:bold;'>📥 载入到编辑器</a></p>";
+    oss << (QStringLiteral("<hr><p><a href=\"#load\" style='background:") + TeachingTheme::successGreen().name() + QStringLiteral(";color:white;padding:6px 16px;border-radius:4px;")
+           + QStringLiteral("text-decoration:none;font-weight:bold;'>📥 载入到编辑器</a></p>")).toStdString();
 
     scenarioDetail_->setHtml(QString::fromStdString(oss.str()));
 
@@ -485,13 +486,13 @@ void ExceptionFlowPanel::populatePhaseDetail(int index) {
 
     // ---- 生成流程条 HTML ----
     // 6 个阶段彩色节点 + 箭头，当前阶段高亮（加粗 + 边框 + 放大）
-    static const char* kPhaseColors[] = {
-        "#E74C3C", // throw - 红
-        "#F39C12", // search - 橙
-        "#27AE60", // catch - 绿
-        "#3498DB", // finally - 蓝
-        "#9B59B6", // unwind - 紫
-        "#1ABC9C", // recovery - 青
+    static const std::string kPhaseColors[] = {
+        TeachingTheme::redLight().name().toStdString(),                 // throw - 红
+        TeachingTheme::amberBorder().name().toStdString(),              // search - 橙
+        TeachingTheme::successGreen().name().toStdString(),             // catch - 绿
+        TeachingTheme::infoBlue().name().toStdString(),                 // finally - 蓝
+        TeachingTheme::exceptionTerminateBorder().name().toStdString(), // unwind - 紫
+        TeachingTheme::exceptionResolvedBorder().name().toStdString(),  // recovery - 青
     };
     static const char* kPhaseIcons[] = {"⚡", "🔍", "🛡️", "✨", "🌊", "✅"};
 
@@ -504,7 +505,9 @@ void ExceptionFlowPanel::populatePhaseDetail(int index) {
         bool isCurrent = (i == index);
         bool isPast = (i < index);
         const char* opacity = isCurrent ? "1.0" : (isPast ? "0.5" : "0.3");
-        const char* border = isCurrent ? "3px solid #2C3E50" : "1px solid #BDC3C7";
+        const std::string border = isCurrent
+            ? std::string("3px solid ") + TeachingTheme::midnight().name().toStdString()
+            : std::string("1px solid ") + TeachingTheme::silver().name().toStdString();
         const char* fontWeight = isCurrent ? "bold" : "normal";
         const char* padding = isCurrent ? "10px 6px" : "6px 4px";
         const char* fontSize = isCurrent ? "13px" : "11px";
@@ -513,7 +516,7 @@ void ExceptionFlowPanel::populatePhaseDetail(int index) {
             << ";font-weight:" << fontWeight << ";font-size:" << fontSize << ";'>" << kPhaseIcons[i] << "<br>"
             << phases[i].phase << "</td>";
         if (i < 5) {
-            oss << "<td style='color:#6E6E6E;padding:0 2px;text-align:center;font-size:14px;'>→</td>";
+            oss << (QStringLiteral("<td style='color:") + TeachingTheme::textMuted().name() + QStringLiteral(";padding:0 2px;text-align:center;font-size:14px;'>→</td>")).toStdString();
         }
     }
     oss << "</tr></table>";
@@ -530,35 +533,35 @@ void ExceptionFlowPanel::populatePhaseDetail(int index) {
     oss << "<table cellspacing='0' cellpadding='0' style='width:100%;margin:8px 0;border:1px solid #DDD;'>";
     // 栈从顶到底（高地址 → 低地址）
     for (auto it = meta.frames.rbegin(); it != meta.frames.rend(); ++it) {
-        const char* bg = "#ECF0F1";
-        const char* border = "#BDC3C7";
-        const char* textColor = "#2C3E50";
+        std::string bg = TeachingTheme::exceptionNeutralBg().name().toStdString();
+        std::string border = TeachingTheme::exceptionNeutralBorder().name().toStdString();
+        std::string textColor = TeachingTheme::midnight().name().toStdString();
         if (std::string(it->state) == "throw-point") {
-            bg = "#FADBD8";
-            border = "#E74C3C";
+            bg = TeachingTheme::exceptionThrowBg().name().toStdString();
+            border = TeachingTheme::redLight().name().toStdString();
         } else if (std::string(it->state) == "unwinding") {
-            bg = "#FDEBD0";
-            border = "#F39C12";
+            bg = TeachingTheme::exceptionUnwindBg().name().toStdString();
+            border = TeachingTheme::amberBorder().name().toStdString();
         } else if (std::string(it->state) == "caught") {
-            bg = "#D5F5E3";
-            border = "#27AE60";
+            bg = TeachingTheme::exceptionCatchBg().name().toStdString();
+            border = TeachingTheme::successGreen().name().toStdString();
         } else if (std::string(it->state) == "cleanup") {
-            bg = "#D6EAF8";
-            border = "#3498DB";
+            bg = TeachingTheme::exceptionFinallyBg().name().toStdString();
+            border = TeachingTheme::infoBlue().name().toStdString();
         } else if (std::string(it->state) == "destroyed") {
-            bg = "#F2F3F4";
-            border = "#BDC3C7";
-            textColor = "#95A5A6";
+            bg = TeachingTheme::exceptionDestroyedBg().name().toStdString();
+            border = TeachingTheme::exceptionNeutralBorder().name().toStdString();
+            textColor = TeachingTheme::exceptionDestroyedText().name().toStdString();
         } else if (std::string(it->state) == "exception") {
-            bg = "#FDF2E9";
-            border = "#E67E22";
-            textColor = "#D35400";
+            bg = TeachingTheme::exceptionErrorBg().name().toStdString();
+            border = TeachingTheme::orangeAccent().name().toStdString();
+            textColor = TeachingTheme::orangeDeep().name().toStdString();
         } else if (std::string(it->state) == "searching") {
-            bg = "#FEF9E7";
-            border = "#F1C40F";
+            bg = TeachingTheme::exceptionSearchBg().name().toStdString();
+            border = TeachingTheme::exceptionSearchBorder().name().toStdString();
         } else if (std::string(it->state) == "normal" || std::string(it->state) == "resolved") {
-            bg = "#E8F8F5";
-            border = "#1ABC9C";
+            bg = TeachingTheme::exceptionResolvedBg().name().toStdString();
+            border = TeachingTheme::exceptionResolvedBorder().name().toStdString();
         }
         oss << "<tr>";
         // 栈帧标签
@@ -572,8 +575,8 @@ void ExceptionFlowPanel::populatePhaseDetail(int index) {
         oss << "</tr>";
     }
     oss << "</table>";
-    oss << "<p style='color:#6E6E6E;font-size:11px;margin:2px 0 8px 0;'>"
-           "↑ 栈顶（高地址） | ↓ 栈底（低地址）</p>";
+    oss << (QStringLiteral("<p style='color:") + TeachingTheme::textMuted().name() + QStringLiteral(";font-size:11px;margin:2px 0 8px 0;'>")
+           + QStringLiteral("↑ 栈顶（高地址） | ↓ 栈底（低地址）</p>")).toStdString();
 
     // ---- 关键操作列表 ----
     oss << "<h3 style='border-bottom:2px solid " << kPhaseColors[index] << ";padding-bottom:4px;'>"
@@ -587,7 +590,7 @@ void ExceptionFlowPanel::populatePhaseDetail(int index) {
     // ---- 示例代码 ----
     oss << "<h3 style='border-bottom:2px solid " << kPhaseColors[index] << ";padding-bottom:4px;'>"
         << "💻 示例代码（当前阶段: " << p.phase << "）</h3>";
-    oss << "<pre style='background:#F8F9FA;border-left:4px solid " << kPhaseColors[index]
+    oss << (QStringLiteral("<pre style='background:") + TeachingTheme::surfaceAlt().name() + QStringLiteral(";border-left:4px solid ")).toStdString() << kPhaseColors[index]
         << ";padding:8px 12px;font-size:12px;overflow-x:auto;white-space:pre-wrap;'>";
     // 高亮当前阶段对应代码行
     {
@@ -639,7 +642,7 @@ void ExceptionFlowPanel::populatePhaseDetail(int index) {
     oss << "<h3 style='border-bottom:2px solid " << kPhaseColors[index] << ";padding-bottom:4px;'>"
         << "📖 详细说明</h3>";
     oss << MarkdownRenderer::markdownToHtmlFragment(p.description).toStdString();
-    oss << "<p style='background:#F8F9FA;padding:6px 10px;border-radius:4px;margin:8px 0;'><b>⚡ 栈效应:</b> "
+    oss << (QStringLiteral("<p style='background:") + TeachingTheme::surfaceAlt().name() + QStringLiteral(";padding:6px 10px;border-radius:4px;margin:8px 0;'><b>⚡ 栈效应:</b> ")).toStdString()
         << p.stackEffect << "</p>";
 
     oss << "</div>";

@@ -6,6 +6,7 @@
 #include "gui/CodeEditor.h"
 #include "gui/GuiTextUtils.h" // Dedup-4A: monospaceFont()
 #include "gui/I18n.h"         // 功能 13：mlTr() 国际化
+#include "gui/TeachingTheme.h" // OPT-11: 颜色语义化
 #include <QAbstractItemView>
 #include <QComboBox>
 #include <QCompleter>
@@ -55,7 +56,7 @@ void LineNumberArea::paintEvent(QPaintEvent* event) {
 
     QPainter painter(this);
     // F9: 主题感知背景色（R74: 浅色回退浅灰 #F5F5F5）
-    QColor bgColor = codeEditor->isDarkTheme_ ? QColor(37, 37, 37) : QColor(0xF5, 0xF5, 0xF5);
+    QColor bgColor = codeEditor->isDarkTheme_ ? QColor(37, 37, 37) : TeachingTheme::editorGutterBg();
     painter.fillRect(event->rect(), bgColor);
 
     // 字体只需设置一次（移出循环避免每行重建）
@@ -153,7 +154,7 @@ void LineNumberArea::paintEvent(QPaintEvent* event) {
 
             // 绘制行号
             // F9: 主题感知文字颜色
-            QColor numColor = codeEditor->isDarkTheme_ ? QColor(115, 115, 115) : QColor(0x65, 0x7b, 0x83);
+            QColor numColor = codeEditor->isDarkTheme_ ? QColor(115, 115, 115) : TeachingTheme::editorLineNumFg();
             painter.setPen(numColor);
             painter.drawText(0, top, width() - 20, bottom - top, Qt::AlignRight | Qt::AlignVCenter,
                              QString::number(lineNumber));
@@ -315,44 +316,44 @@ void LineNumberArea::contextMenuEvent(QContextMenuEvent* event) {
         dlg.setFixedSize(460, 320);
 
         // Fluent 色板（亮色主题，与 IDE 整体风格一致）（R74: 中性白）
-        const QString bgSurf = "#FFFFFF";
-        const QString fgPrim = "#1E1E1E";
-        const QString fgSec = "#8C8C8C";
-        const QString accent = "#268BD2";
-        const QString border = "#E0E0E0";
-        const QString warnFg = "#B58900";
-        const QString btnBg = "#268BD2";
-        const QString btnHov = "#1E6FA3";
+        const QString bgSurf = TeachingTheme::surface().name();
+        const QString fgPrim = TeachingTheme::textPrimary().name();
+        const QString fgSec = TeachingTheme::textHint().name();
+        const QString accent = TeachingTheme::info().name();
+        const QString border = TeachingTheme::border().name();
+        const QString warnFg = TeachingTheme::warning().name();
+        const QString btnBg = TeachingTheme::info().name();
+        const QString btnHov = TeachingTheme::primaryDeep().name();
         const QString monoFont =
             "'Cascadia Code','Cascadia Mono','Consolas','JetBrains Mono','Source Code Pro','Menlo','DejaVu Sans "
             "Mono','Courier New',monospace";
 
-        dlg.setStyleSheet(QString("QDialog { background: %1; border-radius: 8px; }"
-                                  "QLabel#condTitle { font-size: 14px; font-weight: 600; color: %2; }"
-                                  "QLabel#condHint  { font-size: 11px; color: %3; }"
-                                  "QLabel#condWarn  { font-size: 11px; color: %4; }"
-                                  "QLineEdit#condEdit, QLineEdit#logEdit { "
-                                  "  background: #FFFFFF; color: %2; "
-                                  "  border: 1px solid %5; border-radius: 4px; "
-                                  "  padding: 6px 8px; font-family: %6; "
-                                  "  font-size: 13px; "
-                                  "} "
-                                  "QLineEdit#condEdit:focus, QLineEdit#logEdit:focus { border: 1px solid %7; }"
-                                  "QComboBox#kindCombo { "
-                                  "  background: #FFFFFF; color: %2; "
-                                  "  border: 1px solid %5; border-radius: 4px; "
-                                  "  padding: 4px 8px; font-size: 13px; "
-                                  "} "
-                                  "QPushButton#condOk { "
-                                  "  background: %8; color: #FFFFFF; border: none; border-radius: 4px; "
-                                  "  padding: 6px 18px; font-size: 13px; font-weight: 500; "
-                                  "} "
-                                  "QPushButton#condOk:hover { background: %9; }"
-                                  "QPushButton#condCancel { "
-                                  "  background: transparent; color: %3; border: 1px solid %5; border-radius: 4px; "
-                                  "  padding: 6px 14px; font-size: 13px; "
-                                  "} "
-                                  "QPushButton#condCancel:hover { background: rgba(0,0,0,0.05); }")
+        dlg.setStyleSheet((QStringLiteral("QDialog { background: %1; border-radius: 8px; }")
+                                  + QStringLiteral("QLabel#condTitle { font-size: 14px; font-weight: 600; color: %2; }")
+                                  + QStringLiteral("QLabel#condHint  { font-size: 11px; color: %3; }")
+                                  + QStringLiteral("QLabel#condWarn  { font-size: 11px; color: %4; }")
+                                  + QStringLiteral("QLineEdit#condEdit, QLineEdit#logEdit { ")
+                                  + QStringLiteral("  background: ") + TeachingTheme::surface().name() + QStringLiteral("; color: %2; ")
+                                  + QStringLiteral("  border: 1px solid %5; border-radius: 4px; ")
+                                  + QStringLiteral("  padding: 6px 8px; font-family: %6; ")
+                                  + QStringLiteral("  font-size: 13px; ")
+                                  + QStringLiteral("} ")
+                                  + QStringLiteral("QLineEdit#condEdit:focus, QLineEdit#logEdit:focus { border: 1px solid %7; }")
+                                  + QStringLiteral("QComboBox#kindCombo { ")
+                                  + QStringLiteral("  background: ") + TeachingTheme::surface().name() + QStringLiteral("; color: %2; ")
+                                  + QStringLiteral("  border: 1px solid %5; border-radius: 4px; ")
+                                  + QStringLiteral("  padding: 4px 8px; font-size: 13px; ")
+                                  + QStringLiteral("} ")
+                                  + QStringLiteral("QPushButton#condOk { ")
+                                  + QStringLiteral("  background: %8; color: ") + TeachingTheme::onPrimary().name() + QStringLiteral("; border: none; border-radius: 4px; ")
+                                  + QStringLiteral("  padding: 6px 18px; font-size: 13px; font-weight: 500; ")
+                                  + QStringLiteral("} ")
+                                  + QStringLiteral("QPushButton#condOk:hover { background: %9; }")
+                                  + QStringLiteral("QPushButton#condCancel { ")
+                                  + QStringLiteral("  background: transparent; color: %3; border: 1px solid %5; border-radius: 4px; ")
+                                  + QStringLiteral("  padding: 6px 14px; font-size: 13px; ")
+                                  + QStringLiteral("} ")
+                                  + QStringLiteral("QPushButton#condCancel:hover { background: rgba(0,0,0,0.05); }"))
                               .arg(bgSurf, fgPrim, fgSec, warnFg, border, monoFont, accent, btnBg, btnHov));
 
         auto* layout = new QVBoxLayout(&dlg);
@@ -456,38 +457,38 @@ void LineNumberArea::contextMenuEvent(QContextMenuEvent* event) {
         dlg.setFixedSize(420, 180);
 
         // Fluent 色板（亮色主题，与 IDE 整体风格一致）（R74: 中性白）
-        const QString bgSurf = "#FFFFFF";
-        const QString fgPrim = "#1E1E1E";
-        const QString fgSec = "#8C8C8C";
-        const QString accent = "#268BD2";
-        const QString border = "#E0E0E0";
-        const QString warnFg = "#B58900";
-        const QString btnBg = "#268BD2";
-        const QString btnHov = "#1E6FA3";
+        const QString bgSurf = TeachingTheme::surface().name();
+        const QString fgPrim = TeachingTheme::textPrimary().name();
+        const QString fgSec = TeachingTheme::textHint().name();
+        const QString accent = TeachingTheme::info().name();
+        const QString border = TeachingTheme::border().name();
+        const QString warnFg = TeachingTheme::warning().name();
+        const QString btnBg = TeachingTheme::info().name();
+        const QString btnHov = TeachingTheme::primaryDeep().name();
 
         dlg.setStyleSheet(
-            QString("QDialog { background: %1; border-radius: 8px; }"
-                    "QLabel#condTitle { font-size: 14px; font-weight: 600; color: %2; }"
-                    "QLabel#condHint  { font-size: 11px; color: %3; }"
-                    "QLabel#condWarn  { font-size: 11px; color: %4; }"
-                    "QLineEdit#condEdit { "
-                    "  background: #FFFFFF; color: %2; "
-                    "  border: 1px solid %5; border-radius: 4px; "
-                    "  padding: 6px 8px; font-family: 'Cascadia Code','Cascadia Mono','Consolas','JetBrains "
-                    "Mono','Source Code Pro','Menlo','DejaVu Sans Mono','Courier New',monospace; "
-                    "  font-size: 13px; "
-                    "} "
-                    "QLineEdit#condEdit:focus { border: 1px solid %6; }"
-                    "QPushButton#condOk { "
-                    "  background: %7; color: #FFFFFF; border: none; border-radius: 4px; "
-                    "  padding: 6px 18px; font-size: 13px; font-weight: 500; "
-                    "} "
-                    "QPushButton#condOk:hover { background: %8; }"
-                    "QPushButton#condCancel { "
-                    "  background: transparent; color: %3; border: 1px solid %5; border-radius: 4px; "
-                    "  padding: 6px 14px; font-size: 13px; "
-                    "} "
-                    "QPushButton#condCancel:hover { background: rgba(0,0,0,0.05); }")
+            (QStringLiteral("QDialog { background: %1; border-radius: 8px; }")
+                    + QStringLiteral("QLabel#condTitle { font-size: 14px; font-weight: 600; color: %2; }")
+                    + QStringLiteral("QLabel#condHint  { font-size: 11px; color: %3; }")
+                    + QStringLiteral("QLabel#condWarn  { font-size: 11px; color: %4; }")
+                    + QStringLiteral("QLineEdit#condEdit { ")
+                    + QStringLiteral("  background: ") + TeachingTheme::surface().name() + QStringLiteral("; color: %2; ")
+                    + QStringLiteral("  border: 1px solid %5; border-radius: 4px; ")
+                    + QStringLiteral("  padding: 6px 8px; font-family: 'Cascadia Code','Cascadia Mono','Consolas','JetBrains ")
+                    + QStringLiteral("Mono','Source Code Pro','Menlo','DejaVu Sans Mono','Courier New',monospace; ")
+                    + QStringLiteral("  font-size: 13px; ")
+                    + QStringLiteral("} ")
+                    + QStringLiteral("QLineEdit#condEdit:focus { border: 1px solid %6; }")
+                    + QStringLiteral("QPushButton#condOk { ")
+                    + QStringLiteral("  background: %7; color: ") + TeachingTheme::onPrimary().name() + QStringLiteral("; border: none; border-radius: 4px; ")
+                    + QStringLiteral("  padding: 6px 18px; font-size: 13px; font-weight: 500; ")
+                    + QStringLiteral("} ")
+                    + QStringLiteral("QPushButton#condOk:hover { background: %8; }")
+                    + QStringLiteral("QPushButton#condCancel { ")
+                    + QStringLiteral("  background: transparent; color: %3; border: 1px solid %5; border-radius: 4px; ")
+                    + QStringLiteral("  padding: 6px 14px; font-size: 13px; ")
+                    + QStringLiteral("} ")
+                    + QStringLiteral("QPushButton#condCancel:hover { background: rgba(0,0,0,0.05); }"))
                 .arg(bgSurf, fgPrim, fgSec, warnFg, border, accent, btnBg, btnHov));
 
         auto* layout = new QVBoxLayout(&dlg);
@@ -633,37 +634,37 @@ CodeEditor::CodeEditor(QWidget* parent) : QPlainTextEdit(parent) {
     // 与 IDE 的中性白 + Fluent 圆角风格不协调。（R74: 回退中性白）
     if (completer_->popup()) {
         completer_->popup()->setStyleSheet(
-            "QListView { "
-            "  background: #FFFFFF; "
-            "  color: #1E1E1E; "
-            "  border: 1px solid #E0E0E0; "
-            "  border-radius: 6px; "
-            "  padding: 4px; "
-            "  font-family: 'Cascadia Code','Cascadia Mono','Consolas','JetBrains Mono','Source Code "
-            "Pro','Menlo','DejaVu Sans Mono','Courier New',monospace; "
-            "  font-size: 12px; "
-            "  outline: none; "
-            "} "
-            "QListView::item { "
-            "  padding: 4px 10px; "
-            "  border-radius: 4px; "
-            "} "
-            "QListView::item:selected { "
-            "  background: #268BD2; "
-            "  color: #FFFFFF; "
-            "} "
-            "QListView::item:hover:!selected { "
-            "  background: rgba(38, 139, 210, 0.12); "
-            "  color: #1E1E1E; "
-            "} "
-            "QScrollBar:vertical { "
-            "  background: transparent; width: 8px; margin: 2px; "
-            "} "
-            "QScrollBar::handle:vertical { "
-            "  background: #C8C8C8; border-radius: 4px; min-height: 20px; "
-            "} "
-            "QScrollBar::handle:vertical:hover { background: #8C8C8C; } "
-            "QScrollBar::add-line, QScrollBar::sub-line { height: 0; }");
+            (QStringLiteral("QListView { ")
+            + QStringLiteral("  background: ") + TeachingTheme::surface().name() + QStringLiteral("; ")
+            + QStringLiteral("  color: ") + TeachingTheme::textPrimary().name() + QStringLiteral("; ")
+            + QStringLiteral("  border: 1px solid ") + TeachingTheme::border().name() + QStringLiteral("; ")
+            + QStringLiteral("  border-radius: 6px; ")
+            + QStringLiteral("  padding: 4px; ")
+            + QStringLiteral("  font-family: 'Cascadia Code','Cascadia Mono','Consolas','JetBrains Mono','Source Code ")
+            + QStringLiteral("Pro','Menlo','DejaVu Sans Mono','Courier New',monospace; ")
+            + QStringLiteral("  font-size: 12px; ")
+            + QStringLiteral("  outline: none; ")
+            + QStringLiteral("} ")
+            + QStringLiteral("QListView::item { ")
+            + QStringLiteral("  padding: 4px 10px; ")
+            + QStringLiteral("  border-radius: 4px; ")
+            + QStringLiteral("} ")
+            + QStringLiteral("QListView::item:selected { ")
+            + QStringLiteral("  background: ") + TeachingTheme::info().name() + QStringLiteral("; ")
+            + QStringLiteral("  color: ") + TeachingTheme::onPrimary().name() + QStringLiteral("; ")
+            + QStringLiteral("} ")
+            + QStringLiteral("QListView::item:hover:!selected { ")
+            + QStringLiteral("  background: rgba(38, 139, 210, 0.12); ")
+            + QStringLiteral("  color: ") + TeachingTheme::textPrimary().name() + QStringLiteral("; ")
+            + QStringLiteral("} ")
+            + QStringLiteral("QScrollBar:vertical { ")
+            + QStringLiteral("  background: transparent; width: 8px; margin: 2px; ")
+            + QStringLiteral("} ")
+            + QStringLiteral("QScrollBar::handle:vertical { ")
+            + QStringLiteral("  background: ") + TeachingTheme::scrollbarHandle().name() + QStringLiteral("; border-radius: 4px; min-height: 20px; ")
+            + QStringLiteral("} ")
+            + QStringLiteral("QScrollBar::handle:vertical:hover { background: ") + TeachingTheme::textHint().name() + QStringLiteral("; } ")
+            + QStringLiteral("QScrollBar::add-line, QScrollBar::sub-line { height: 0; }")));
     }
 }
 
@@ -1098,8 +1099,8 @@ void CodeEditor::highlightCurrentLine() {
     // GUI-12 fix: 光标行先添加（浅灰），执行行后添加（柔黄）覆盖
     // Qt ExtraSelection 后添加的覆盖先添加的，黄色要在浅灰之上
     // F9: 主题感知高亮颜色（R74: 浅色光标行浅灰，执行行保留柔黄以标识当前执行）
-    QColor cursorLineColor = isDarkTheme_ ? QColor(40, 44, 48) : QColor(0xF0, 0xF0, 0xF0);
-    QColor execLineColor = isDarkTheme_ ? QColor(86, 90, 46) : QColor(0xFF, 0xF4, 0xD4);
+    QColor cursorLineColor = isDarkTheme_ ? QColor(40, 44, 48) : TeachingTheme::editorCurrentLineBg();
+    QColor execLineColor = isDarkTheme_ ? QColor(86, 90, 46) : TeachingTheme::editorExecLineBg();
 
     // BUG-CE-8 fix: 查找高亮先添加（底层），错误下划线次之（不冲突），
     // 光标行再次（蓝色覆盖查找高亮），执行行最后（黄色覆盖光标行和查找高亮）。
@@ -1135,7 +1136,7 @@ void CodeEditor::highlightCurrentLine() {
 
     // IR/字节码面板点击高亮（蓝色背景，最后添加以覆盖所有其他高亮）
     if (sourceHighlightLine_ > 0) {
-        QColor srcHighlightColor = isDarkTheme_ ? QColor(30, 58, 95) : QColor(0xbf, 0xdb, 0xfe);
+        QColor srcHighlightColor = isDarkTheme_ ? QColor(30, 58, 95) : TeachingTheme::editorSourceHighlightBg();
         QTextBlock block = document()->findBlockByNumber(sourceHighlightLine_ - 1);
         if (block.isValid()) {
             QTextEdit::ExtraSelection sel;
@@ -1349,12 +1350,12 @@ void CodeEditor::setDarkTheme(bool dark) {
     } else {
         // R74: 浅色模式 Base 回退为纯白 (#FFFFFF)，与行号区浅灰 (#F5F5F5) 配合，
         // 解决 Solarized 米黄跨机器渲染不一致问题。文本中性深灰、选中浅蓝。
-        pal.setColor(QPalette::Base, QColor(0xFF, 0xFF, 0xFF));
-        pal.setColor(QPalette::AlternateBase, QColor(0xF5, 0xF5, 0xF5));
-        pal.setColor(QPalette::Text, QColor(0x1E, 0x1E, 0x1E));
+        pal.setColor(QPalette::Base, TeachingTheme::surface());
+        pal.setColor(QPalette::AlternateBase, TeachingTheme::surfaceHover());
+        pal.setColor(QPalette::Text, TeachingTheme::textPrimary());
         pal.setColor(QPalette::Highlight, QColor(0x26, 0x8B, 0xD2, 0x60));
-        pal.setColor(QPalette::HighlightedText, QColor(0xFF, 0xFF, 0xFF));
-        pal.setColor(QPalette::PlaceholderText, QColor(0x8C, 0x8C, 0x8C));
+        pal.setColor(QPalette::HighlightedText, TeachingTheme::onPrimary());
+        pal.setColor(QPalette::PlaceholderText, TeachingTheme::textHint());
     }
     setPalette(pal);
     // viewport 也需应用 palette（QPlainTextEdit 的实际绘制发生在 viewport）

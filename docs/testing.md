@@ -136,6 +136,7 @@ cmake --build out/build/debug --target minilang_tests
 | `TestThreeEnginesAudit.cpp` | 三后端综合审计 |
 | `TestDebugAudit.cpp` | 调试器一致性审计 |
 | `TestAuditBatch1-5.cpp` | 批量综合审计（编译器/IR/调试/三后端/内置方法） |
+| `TestBacklogRegression.cpp` | BACKLOG 缺陷/优化清偿回归锁（B-001/002/003/006/008、OPT-01/03/05/07/18；含 JIT 专项） |
 | `TestTeachingPanelsAudit*.cpp` | 教学面板数据完整性（5 个审计文件） |
 | `TestTeachingPanelsE2E.cpp` | 教学面板端到端交互测试 |
 | `TestTeachingTreePanel.cpp` | PanelCatalog + 教学树导航审计 |
@@ -249,7 +250,7 @@ TEST(TeachingPanelsXxx, IdUnique) {
 2. **栈式 VM 优化默认禁用**：复制传播与 CSE 在栈式 VM 后端与栈操作语义冲突；DCE 经 `isPureCompute` 守卫安全启用。见 [rejected-decisions](specs/rejected-decisions.md) R-15。
 3. **Ninja 陈旧 unity obj**：核心头文件变更后可能出现 LNK2019/LNK1120；处置见 [getting-started](getting-started.md)「构建问题排查」。
 4. **闭包快照语义**：作用域关闭后各闭包持有独立 capturedVars（三后端一致）；若要改为共享单元格，需三后端同步的架构级 ADR。见 R-08。
-5. **残余边角**：finally 同帧 abrupt 替换、循环导入/预编译模块可变导出共享，见 [BACKLOG](BACKLOG.md) B-008 与 R-14。
+5. **残余边角**：循环导入/预编译模块可变导出共享，见 R-14。
 
 ## 覆盖率基线与提升路线图
 

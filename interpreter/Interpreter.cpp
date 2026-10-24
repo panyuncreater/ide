@@ -518,6 +518,7 @@ void Interpreter::setDebugger(std::shared_ptr<DebugController> dbg) {
     // 读到 null 后跳过调试逻辑）。
     std::lock_guard<std::mutex> lock(debuggerMutex_);
     debugger_ = std::move(dbg);
+    debuggerAttached_.store(debugger_ != nullptr, std::memory_order_relaxed);
 }
 
 void Interpreter::setDebugMode(bool enabled) {
@@ -1627,6 +1628,43 @@ Value Interpreter::writeBack(ASTNode* objectNode, bool isIndexAssign, ASTNode* i
         val = evaluate(valueNode);
     }
 
+    // OPT-01: 单节点 VarRef 快路径——求值完成后直接原位变异环境槽位。
+    // 链求值副本（info.vals[0]）使槽位 rc≥2，旧路径每次变异必然 COW 全量克隆；
+    // 释放该副本后无别名时 rc==1，变异零克隆。若 RHS 副作用已重绑定变量
+    // （槽位不再持有求值时捕获的对象）则回退旧路径，语义逐字节保持。
+    if (info.varRef && info.chain.size() == 1) {
+        Value* slot = currentEnv_->getMutableVariableSlot(info.varRef->name);
+        if (slot && slot->sharesStorageWith(info.vals[0])) {
+            info.vals.clear(); // 释放链求值副本：无别名时槽位成为唯一持有者
+            if (isIndexAssign) {
+                if (slot->isArray() && idx.isInt()) {
+                    if (idx.intVal() < 0 ||
+                        static_cast<size_t>(idx.intVal()) >= std::as_const(*slot).arrayVal().size())
+                        runtimeError(ErrorFormat::formatStd("数组索引越界: {}, 有效范围 [0, {})",
+                                                            static_cast<long long>(idx.intVal()),
+                                                            std::as_const(*slot).arrayVal().size()),
+                                     line, col, DiagCodes::kIndexOutOfBounds);
+                    slot->arrayVal()[idx.intVal()] = val;
+                } else if (slot->isDict()) {
+                    if (!Value::dictKeyIsValid(idx))
+                        runtimeError(ErrorMessages::kDictKeyInvalidType, line, col);
+                    Value::dictGetOrInsertRef(slot->dictVal(), idx) = val;
+                } else {
+                    runtimeError(ErrorMessages::kTypeNotIndexAssignable, line, col);
+                }
+            } else {
+                if (slot->isInstance()) {
+                    slot->fields()[fieldName] = val;
+                } else if (slot->isDict()) {
+                    Value::dictGetOrInsertFieldRef(slot->dictVal(), fieldName) = val;
+                } else {
+                    runtimeError(ErrorMessages::kTypeNotMemberAssignable, line, col);
+                }
+            }
+            return val;
+        }
+    }
+
     // 在最内层对象上执行赋值
     Value modifiedObj = std::move(info.vals[0]); // A2: move 而非拷贝，保持 refcount=1 跳过 COW detach
     if (isIndexAssign) {
@@ -1830,9 +1868,12 @@ void Interpreter::visitVarDecl(VarDecl& node) {
     // L19 Watchpoint（pre-execution 语义，与 VM OP_DEFINE_VAR 对齐）：
     // 变量声明也视为写入，在求值初始化表达式之前检查。
     // AUDIT-R4 BUG-15 fix: atomic load 到局部变量
-    auto dbg = debugger();
-    if (dbg && dbg->hasWatchpoints()) {
-        dbg->checkWatchpointHit(node.name, false, "", node.line);
+    // OPT-02: 无调试器时原子短路，避免每条语句的 mutex + shared_ptr 引用计数。
+    if (debuggerAttached_.load(std::memory_order_relaxed)) {
+        auto dbg = debugger();
+        if (dbg && dbg->hasWatchpoints()) {
+            dbg->checkWatchpointHit(node.name, false, "", node.line);
+        }
     }
 
     // Phase 1: 求值变量初始化表达式（含类类型自动构造）
@@ -2025,9 +2066,12 @@ void Interpreter::visitAssignment(Assignment& node) {
     // L19 Watchpoint（pre-execution 语义，与 VM peekWriteTarget 对齐）：
     // 在 evaluate(node.value) 之前检查，用户看到的是写入前的旧值。
     // AUDIT-R4 BUG-15 fix: atomic load 到局部变量
-    auto dbg = debugger();
-    if (dbg && dbg->hasWatchpoints()) {
-        dbg->checkWatchpointHit(node.name, false, "", node.line);
+    // OPT-02: 无调试器时原子短路。
+    if (debuggerAttached_.load(std::memory_order_relaxed)) {
+        auto dbg = debugger();
+        if (dbg && dbg->hasWatchpoints()) {
+            dbg->checkWatchpointHit(node.name, false, "", node.line);
+        }
     }
 
     Value val = evaluate(node.value.get());
@@ -2590,8 +2634,10 @@ void Interpreter::visitThrowStmt(ThrowStmt& node) {
     checkBreak(&node);
     // R104 Exception Breakpoint：throw 前检查异常断点（对齐 GDB `catch throw`）
     // AUDIT-R4 BUG-15 fix: atomic load 到局部变量
-    if (auto dbg = debugger()) {
-        dbg->checkExceptionBreakpoint(node.line);
+    if (debuggerAttached_.load(std::memory_order_relaxed)) {
+        if (auto dbg = debugger()) {
+            dbg->checkExceptionBreakpoint(node.line);
+        }
     }
     Value val = evaluate(node.expression.get());
     throw ThrowException(std::move(val));
@@ -3536,9 +3582,11 @@ void Interpreter::visitIndexAssign(IndexAssign& node) {
     // 索引写入视为修改变量本身（与 VmStepper::checkWatchpointHit 语义一致）。
     // 仅当 node.object 是简单 VarRef 时检查根变量名，复杂链式访问跳过（避免副作用）。
     // AUDIT-R4 BUG-15 fix: atomic load 到局部变量
-    auto dbg = debugger();
-    if (dbg && dbg->hasWatchpoints() && node.object->nodeType == NodeType::NODE_VAR_REF) {
-        dbg->checkWatchpointHit(static_cast<VarRef*>(node.object.get())->name, false, "", node.line);
+    if (debuggerAttached_.load(std::memory_order_relaxed)) {
+        auto dbg = debugger();
+        if (dbg && dbg->hasWatchpoints() && node.object->nodeType == NodeType::NODE_VAR_REF) {
+            dbg->checkWatchpointHit(static_cast<VarRef*>(node.object.get())->name, false, "", node.line);
+        }
     }
     // 左到右求值：object → index → value（由 writeBack 内部按序求值）
     lastValue_ = writeBack(node.object.get(), true, node.index.get(), "", node.value.get(), node.line, node.column);
@@ -3561,6 +3609,18 @@ void Interpreter::visitMethodCall(MethodCall& node) {
     // ---- 数组内置方法 ----
     if (obj.isArray()) {
         auto argValues = evaluateArguments(node.arguments);
+        // OPT-01: 单节点 VarRef 原位变异快路径。参数求值后重新取槽位，确认仍持有
+        // 调用前的同一对象；释放 obj 副本后无别名时 rc==1，push/pop/insert 零克隆。
+        if (info.varRef && info.chain.size() == 1) {
+            Value* slot = currentEnv_->getMutableVariableSlot(info.varRef->name);
+            if (slot && slot->sharesStorageWith(obj)) {
+                obj = Value::nullValue();
+                auto builtinResult =
+                    BuiltinMethods::handleArrayMethod(node.methodName, *slot, argValues, node.line, node.column);
+                lastValue_ = std::move(builtinResult.result);
+                return;
+            }
+        }
         auto builtinResult = BuiltinMethods::handleArrayMethod(node.methodName, obj, argValues, node.line, node.column);
         // P2-7 fix: obj 此后不再使用，使用 std::move 避免不必要的拷贝
         if (builtinResult.objectModified && info.varRef) {
@@ -3573,6 +3633,17 @@ void Interpreter::visitMethodCall(MethodCall& node) {
     // ---- 字典内置方法 ----
     if (obj.isDict()) {
         auto argValues = evaluateArguments(node.arguments);
+        // OPT-01: 字典单节点 VarRef 原位变异快路径（同上，含 dict.set/remove 等）。
+        if (info.varRef && info.chain.size() == 1) {
+            Value* slot = currentEnv_->getMutableVariableSlot(info.varRef->name);
+            if (slot && slot->sharesStorageWith(obj)) {
+                obj = Value::nullValue();
+                auto builtinResult =
+                    BuiltinMethods::handleDictMethod(node.methodName, *slot, argValues, node.line, node.column);
+                lastValue_ = std::move(builtinResult.result);
+                return;
+            }
+        }
         auto builtinResult = BuiltinMethods::handleDictMethod(node.methodName, obj, argValues, node.line, node.column);
         // P2-7 fix: obj 此后不再使用，使用 std::move 避免不必要的拷贝
         if (builtinResult.objectModified && info.varRef) {
@@ -3606,6 +3677,16 @@ void Interpreter::visitMethodCall(MethodCall& node) {
     // 触发 writeBackChain 将修改写回变量引用（如 `var g = gen(); g.next();`）
     if (obj.isCoroutine()) {
         auto argValues = evaluateArguments(node.arguments);
+        // OPT-01: 生成器单节点 VarRef 原位推进快路径（.next() 无需写回链）。
+        if (info.varRef && info.chain.size() == 1) {
+            Value* slot = currentEnv_->getMutableVariableSlot(info.varRef->name);
+            if (slot && slot->sharesStorageWith(obj)) {
+                obj = Value::nullValue();
+                auto builtinResult = handleCoroutineMethod(node.methodName, *slot, argValues, node.line, node.column);
+                lastValue_ = std::move(builtinResult.result);
+                return;
+            }
+        }
         auto builtinResult = handleCoroutineMethod(node.methodName, obj, argValues, node.line, node.column);
         if (builtinResult.objectModified && info.varRef) {
             writeBackChain(info, std::move(obj), node.line, node.column);

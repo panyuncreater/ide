@@ -911,10 +911,10 @@ TEST(IRAuditColumn, StackVMIRColumnsPopulated) {
     c.setUseIR(true);
     auto cr = c.compile(*ast);
     ASSERT_FALSE(c.getDiagnostics().hasErrors());
-    ASSERT_EQ(cr.mainChunk.columns.size(), cr.mainChunk.lines.size());
+    ASSERT_EQ(cr.mainChunk.lineColumn.size(), cr.mainChunk.code.size());
     bool anyNonZero = false;
-    for (int col : cr.mainChunk.columns) {
-        if (col > 0) {
+    for (size_t i = 0; i < cr.mainChunk.lineColumn.size(); ++i) {
+        if (cr.mainChunk.getColumn(i) > 0) {
             anyNonZero = true;
             break;
         }
@@ -934,10 +934,10 @@ TEST(IRAuditColumn, RegisterVMIRColumnsPopulated) {
     c.compile(*ast);
     ASSERT_FALSE(c.getDiagnostics().hasErrors());
     const auto& reg = c.getLastRegisterResult();
-    ASSERT_EQ(reg.mainChunk.columns.size(), reg.mainChunk.lines.size());
+    ASSERT_EQ(reg.mainChunk.lineColumn.size(), reg.mainChunk.code.size());
     bool anyNonZero = false;
-    for (int col : reg.mainChunk.columns) {
-        if (col > 0) {
+    for (size_t i = 0; i < reg.mainChunk.lineColumn.size(); ++i) {
+        if (reg.mainChunk.getColumn(i) > 0) {
             anyNonZero = true;
             break;
         }

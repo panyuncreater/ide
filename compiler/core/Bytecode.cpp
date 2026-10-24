@@ -119,6 +119,10 @@ constexpr OpCodeInfo kOpCodeInfo[] = {
     /* 86 OP_LT_INT_SPEC               */ {"OP_LT_INT_SPEC", 1, false},  // PERF: int<int 特化
     /* 87 OP_TAIL_CALL                 */ {"OP_TAIL_CALL", 4, false},    // L18: nameIdx(2B)+argCount(1B)
     /* 88 OP_AWAIT                     */ {"OP_AWAIT", 1, false},        // 阶段4: opcode(1B) await 同步 drain
+    /* 89 OP_DROP_PENDING_JUMPS        */ {"OP_DROP_PENDING_JUMPS", 2, false}, // B-008: opcode(1B)+count(1B)
+    /* 90 OP_GT_INT_SPEC               */ {"OP_GT_INT_SPEC", 1, false},  // OPT-18: int>int 特化
+    /* 91 OP_GTE_INT_SPEC              */ {"OP_GTE_INT_SPEC", 1, false}, // OPT-18: int>=int 特化
+    /* 92 OP_LTE_INT_SPEC              */ {"OP_LTE_INT_SPEC", 1, false}, // OPT-18: int<=int 特化
 };
 } // anonymous namespace
 
@@ -667,6 +671,12 @@ std::string BytecodeChunk::disassembleInstruction(size_t& offset) const {
         str += "OP_AWAIT";
         offset += 1;
         break;
+    case OpCode::OP_DROP_PENDING_JUMPS: {
+        uint8_t count = code[offset + 1];
+        str += "OP_DROP_PENDING_JUMPS count=" + std::to_string(count);
+        offset += 2;
+        break;
+    }
     case OpCode::OP_ADD_INT_SPEC:
         str += "OP_ADD_INT_SPEC";
         offset += 1;
@@ -681,6 +691,18 @@ std::string BytecodeChunk::disassembleInstruction(size_t& offset) const {
         break;
     case OpCode::OP_LT_INT_SPEC:
         str += "OP_LT_INT_SPEC";
+        offset += 1;
+        break;
+    case OpCode::OP_GT_INT_SPEC:
+        str += "OP_GT_INT_SPEC";
+        offset += 1;
+        break;
+    case OpCode::OP_GTE_INT_SPEC:
+        str += "OP_GTE_INT_SPEC";
+        offset += 1;
+        break;
+    case OpCode::OP_LTE_INT_SPEC:
+        str += "OP_LTE_INT_SPEC";
         offset += 1;
         break;
     default:

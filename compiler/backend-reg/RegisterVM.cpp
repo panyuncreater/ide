@@ -43,6 +43,15 @@
 
 RegisterVM::RegisterVM() = default;
 
+RegCallFrame& RegisterVM::currentFrameSlow() {
+    runtimeError("currentFrame() on empty frames");
+    throw std::runtime_error("RegisterVM: currentFrame() on empty frames");
+}
+
+const RegCallFrame& RegisterVM::currentFrameSlow() const {
+    throw std::runtime_error("RegisterVM: currentFrame() on empty frames");
+}
+
 void RegisterVM::resetState() {
     frames_.clear();
     mainChunk_ = RegBytecodeChunk{};
@@ -51,6 +60,7 @@ void RegisterVM::resetState() {
     globals_.clear();
     globalSlots_.clear();
     globalNameToSlot_.clear();
+    ++globalsVersion_; // OPT-07: 使所有 chunk 的名称版全局缓存失效
     // BUG-REGVM-3 fix: functionClosures_ 已删除（死代码字段）
     classInfo_.clear();
     enumRegistry_.clear(); // R99 enum 校验：同步清理
@@ -123,6 +133,7 @@ bool RegisterVM::restoreFromSnapshot(const std::vector<Value>& registerValues,
             // 不创建新变量——回滚不应引入编译期未注册的变量
         }
     }
+    ++globalsVersion_; // OPT-07: 回滚覆盖全局值/槽位，失效名称版解析缓存
 
     // (4) 清理 openUpvalues_（寄存器被覆盖，原 open upvalue 的 stackSlot 已指向新值）
     // RegisterVM 的 openUpvalues_ 按 registerIndex 索引（每帧独立 0..31），
@@ -199,6 +210,7 @@ void RegisterVM::initExecution(const RegisterCompileResult& result) {
 
     // 初始化全局槽位
     globalSlots_.resize(result.globalSlotCount);
+    ++globalsVersion_; // OPT-07: 槽位存储重分配，缓存槽位/指针失效
     for (size_t i = 0; i < result.globalSlotNames.size() && i < globalSlots_.size(); ++i) {
         globalNameToSlot_[result.globalSlotNames[i]] = static_cast<int>(i);
     }
@@ -324,12 +336,10 @@ VMResult RegisterVM::runtimeError(const std::string& msg, const std::string& dia
     int col = 0;
     if (!frames_.empty()) {
         const auto& frame = frames_.back();
-        if (frame.chunk && frame.ip < frame.chunk->lines.size()) {
-            errorLine = frame.chunk->lines[frame.ip];
-        }
-        // BUG-IBACKEND-2: 从 chunk 读取列号（Compiler 未传入列号时默认 0）
-        if (frame.chunk && frame.ip < frame.chunk->columns.size()) {
-            col = frame.chunk->columns[frame.ip];
+        if (frame.chunk) {
+            errorLine = frame.chunk->getLine(frame.ip);
+            // BUG-IBACKEND-2: 从 chunk 读取列号（Compiler 未传入列号时默认 0）
+            col = frame.chunk->getColumn(frame.ip);
         }
     }
     // BUG-IBACKEND-3: DiagSource 改为 RegisterVM 与 StackVM 区分；Logger 标签统一为 "RegisterVM"
@@ -463,6 +473,7 @@ VMResult RegisterVM::executeOneInstruction() {
     case RegOp::REG_TYPE_TEST: // R134: 软类型测试（push bool 而非抛错）
     case RegOp::REG_PUSH_JUMP_TARGET:
     case RegOp::REG_FINALLY_END:
+    case RegOp::REG_DROP_PENDING_JUMPS:
         return executeMisc(op, ip);
 
     // R164 协程/生成器
@@ -673,10 +684,7 @@ int RegisterVM::getCurrentLine() const {
     if (frames_.empty())
         return 0;
     const auto& frame = currentFrame();
-    if (frame.ip < frame.chunk->lines.size()) {
-        return frame.chunk->lines[frame.ip];
-    }
-    return 0;
+    return frame.chunk ? frame.chunk->getLine(frame.ip) : 0;
 }
 
 std::string RegisterVM::getCurrentChunkName() const {
@@ -885,11 +893,7 @@ std::vector<RegisterVM::RegCallStackEntry> RegisterVM::getCallStack() const {
         RegCallStackEntry entry;
         entry.functionName = frame.chunk ? frame.chunk->name : "";
         entry.ip = frame.ip;
-        int line = 0;
-        if (frame.chunk && frame.ip < frame.chunk->lines.size()) {
-            line = frame.chunk->lines[frame.ip];
-        }
-        entry.line = line;
+        entry.line = frame.chunk ? frame.chunk->getLine(frame.ip) : 0;
         result.push_back(entry);
     }
     return result;

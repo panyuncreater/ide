@@ -9,6 +9,7 @@
 // ============================================================
 
 #include "gui/RegisterAllocatorPanel.h"
+#include "gui/TeachingTheme.h" // OPT-11: 颜色语义化
 
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -649,9 +650,9 @@ void RegisterAllocatorPanel::renderAllocations() {
 
         auto* statusItem = new QTableWidgetItem(a.spilled ? tr("溢出到栈") : tr("已分配寄存器"));
         if (a.spilled) {
-            statusItem->setForeground(QColor("#C62828")); // 红
+            statusItem->setForeground(QColor(TeachingTheme::deepRed().name())); // 红
         } else {
-            statusItem->setForeground(QColor("#2E7D32")); // 绿
+            statusItem->setForeground(QColor(TeachingTheme::deepGreen().name())); // 绿
         }
         varAllocTable_->setItem(i, 3, statusItem);
     }
@@ -737,10 +738,10 @@ void RegisterAllocatorPanel::renderDetails() {
 
     html << "<h3>性能影响</h3>";
     if (currentSpillCount_ == 0) {
-        html << "<p style='color:#2E7D32;'>所有变量访问均在寄存器中，"
+        html << (QStringLiteral("<p style='color:") + TeachingTheme::deepGreen().name() + QStringLiteral(";'>所有变量访问均在寄存器中，")).toStdString()
              << "<b>性能最优</b>，无额外内存访问开销。</p>";
     } else {
-        html << "<p style='color:#C62828;'>溢出变量每次访问需要额外的 <b>load/store</b> 操作，"
+        html << (QStringLiteral("<p style='color:") + TeachingTheme::deepRed().name() + QStringLiteral(";'>溢出变量每次访问需要额外的 <b>load/store</b> 操作，")).toStdString()
              << "预计增加约 <b>" << currentSpillCount_ * 2 << "</b> 次内存访问。"
              << "在热点循环中，溢出会显著降低性能。</p>";
     }

@@ -672,56 +672,95 @@ void Compiler::compileFunctionBody(FunDecl& node) {
     chunk_.slotNameRanges = slotNameRanges_;
 }
 
+// B-003: 默认参数常量提取——字面量/负数字面量/数组/字典（递归）。
+// 提取器与 Parser::isLiteralDefaultExpr 白名单同步；提取失败保持 NO_INDEX 哨兵协议。
+static bool extractLiteralDefaultValue(const ASTNode* node, Value& out) {
+    if (!node)
+        return false;
+    switch (node->nodeType) {
+    case NodeType::NODE_NUMBER_LITERAL:
+        out = static_cast<const NumberLiteral*>(node)->getValue();
+        return true;
+    case NodeType::NODE_STRING_LITERAL:
+        out = static_cast<const StringLiteral*>(node)->getValue();
+        return true;
+    case NodeType::NODE_BOOL_LITERAL:
+        out = static_cast<const BoolLiteral*>(node)->getValue();
+        return true;
+    case NodeType::NODE_NULL_LITERAL:
+        out = Value::nullValue();
+        return true;
+    case NodeType::NODE_UNARY_OP: {
+        // 负数字面量: -42, -3.14, --5（递归折叠嵌套一元运算）
+        const ASTNode* cur = node;
+        int negateCount = 0;
+        while (cur && cur->nodeType == NodeType::NODE_UNARY_OP) {
+            const auto* unary = static_cast<const UnaryOp*>(cur);
+            if (unary->opType != UnaryOp::UnaryOpType::UOP_NEGATE)
+                return false;
+            ++negateCount;
+            cur = unary->operand.get();
+        }
+        if (!cur || cur->nodeType != NodeType::NODE_NUMBER_LITERAL || negateCount == 0)
+            return false;
+        const auto* numNode = static_cast<const NumberLiteral*>(cur);
+        if (numNode->isInt()) {
+            int64_t v = numNode->intVal();
+            if (negateCount % 2 == 1) {
+                if (OverflowCheck::negateOverflow(v))
+                    return false;
+                v = -v;
+            }
+            out = Value(v);
+        } else {
+            double v = numNode->floatVal();
+            out = Value((negateCount % 2 == 1) ? -v : v);
+        }
+        return true;
+    }
+    case NodeType::NODE_ARRAY_LITERAL: {
+        std::vector<Value> elements;
+        const auto* arr = static_cast<const ArrayLiteral*>(node);
+        elements.reserve(arr->elements.size());
+        for (const auto& elem : arr->elements) {
+            Value v;
+            if (!extractLiteralDefaultValue(elem.get(), v))
+                return false;
+            elements.push_back(std::move(v));
+        }
+        out = Value(std::move(elements));
+        return true;
+    }
+    case NodeType::NODE_DICT_LITERAL: {
+        Value::DictMap entries;
+        const auto* dict = static_cast<const DictLiteral*>(node);
+        entries.reserve(dict->pairs.size());
+        for (const auto& kv : dict->pairs) {
+            Value k;
+            Value v;
+            if (!extractLiteralDefaultValue(kv.first.get(), k) ||
+                !extractLiteralDefaultValue(kv.second.get(), v)) {
+                return false;
+            }
+            auto dk = Value::dictKeyFromValue(k);
+            if (!dk)
+                return false;
+            entries.emplace(std::move(*dk), std::move(v));
+        }
+        out = Value(std::move(entries));
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
 void Compiler::emitDefaultValues(FunDecl& node) {
-    // F10: 编译默认参数值为常量
-    // 仅支持字面量（Number/String/Bool/Null）和负数字面量，复杂表达式需通过 Interpreter 执行
-    // 本函数由 visitFunDecl 与 emitMethodBody 共用，确保两条路径默认参数语义一致。
+    // F10: 编译默认参数值为常量（B-003: 数组/字典字面量递归提取）
     for (size_t i = 0; i < node.defaultValues.size(); ++i) {
         if (node.defaultValues[i]) {
-            const ASTNode* dv = node.defaultValues[i].get();
             Value constVal;
-            bool isConst = false;
-
-            if (dv->nodeType == NodeType::NODE_NUMBER_LITERAL) {
-                constVal = static_cast<const NumberLiteral*>(dv)->getValue(); // A1 fix: getValue()
-                isConst = true;
-            } else if (dv->nodeType == NodeType::NODE_STRING_LITERAL) {
-                constVal = static_cast<const StringLiteral*>(dv)->getValue(); // A1 fix: getValue()
-                isConst = true;
-            } else if (dv->nodeType == NodeType::NODE_BOOL_LITERAL) {
-                constVal = static_cast<const BoolLiteral*>(dv)->getValue(); // A1 fix: getValue()
-                isConst = true;
-            } else if (dv->nodeType == NodeType::NODE_NULL_LITERAL) {
-                constVal = Value::nullValue();
-                isConst = true;
-            } else if (dv->nodeType == NodeType::NODE_UNARY_OP) {
-                // 支持负数字面量: -42, -3.14, --5 (双重否定)
-                // C-P2-2 fix: 递归折叠嵌套一元运算，使 --5 等价于 5
-                const ASTNode* cur = dv;
-                int negateCount = 0;
-                while (cur && cur->nodeType == NodeType::NODE_UNARY_OP) {
-                    const auto* unary = static_cast<const UnaryOp*>(cur);
-                    if (unary->opType != UnaryOp::UnaryOpType::UOP_NEGATE)
-                        break;
-                    ++negateCount;
-                    cur = unary->operand.get();
-                }
-                if (cur && cur->nodeType == NodeType::NODE_NUMBER_LITERAL && negateCount > 0) {
-                    // A1 fix: NumberLiteral 存储标量，用 isInt()/intVal() 直接访问
-                    const NumberLiteral* numNode = static_cast<const NumberLiteral*>(cur);
-                    if (numNode->isInt()) {
-                        int64_t v = numNode->intVal();
-                        // 奇数次取反为负，偶数次为正
-                        constVal = Value((negateCount % 2 == 1) ? -v : v);
-                    } else {
-                        double v = numNode->floatVal(); // A1 fix: numNode 标量访问
-                        constVal = Value((negateCount % 2 == 1) ? -v : v);
-                    }
-                    isConst = true;
-                }
-            }
-
-            if (isConst) {
+            if (extractLiteralDefaultValue(node.defaultValues[i].get(), constVal)) {
                 uint16_t constIdx = chunk_.addConstant(constVal);
                 chunk_.defaultConstIndices.push_back(constIdx);
             } else {
@@ -2198,16 +2237,8 @@ bool Compiler::loadPrecompiledRegisterModule(const std::string& modulePath, cons
     mainChunk.code.push_back(static_cast<uint8_t>((nameIdx >> 8) & 0xFF));
     mainChunk.code.push_back(0); // argCount = 0
     // lines/columns 对齐
-    mainChunk.lines.push_back(line);
-    mainChunk.lines.push_back(line);
-    mainChunk.lines.push_back(line);
-    mainChunk.lines.push_back(line);
-    mainChunk.lines.push_back(line);
-    mainChunk.columns.push_back(0);
-    mainChunk.columns.push_back(0);
-    mainChunk.columns.push_back(0);
-    mainChunk.columns.push_back(0);
-    mainChunk.columns.push_back(0);
+    for (int i = 0; i < 5; ++i)
+        mainChunk.lineColumn.push(line, 0);
 
     // 6. 填充 moduleExports_（供具名导入验证和命名空间字典构造）
     std::unordered_set<std::string> exports(moduleResult->moduleExports.begin(), moduleResult->moduleExports.end());
@@ -2630,7 +2661,9 @@ void Compiler::emitFinallyBlock(TryStmt& node, size_t outerTryBeginIp, size_t fi
     tryFinallyStack_.pop_back();
 
     // 正常路径：执行 finally
+    ++finallyBodyDepth_;
     compileNode(node.finallyBlock.get());
+    --finallyBodyDepth_;
     // AUDIT-P1.1 fix: finally 块末尾追加 OP_FINALLY_END。
     // 若 pendingJumpStack_ 非空（break/continue 触发），pop 目标并跳转；
     // 否则继续执行（正常完成）。异常路径的 finally 末尾保持 OP_THROW（re-throw）。
@@ -2654,21 +2687,42 @@ void Compiler::emitFinallyBlock(TryStmt& node, size_t outerTryBeginIp, size_t fi
     chunk_.code[finallyCatchOffsetPatch + 1] = static_cast<uint8_t>((finallyCatchOffset >> 8) & 0xFF);
 
     // 执行 finally（异常路径，重复一次）
-    // AUDIT-R6 B1 fix(B): 异常值先从栈上暂存到唯一临时全局（OP_DEFINE_VAR pop），
-    // finally 体在干净栈上执行；正常走完后重新压回并 rethrow。若 finally 体内
-    // break/continue/return 跳出，则 reload+rethrow 被跳过——待处理异常被丢弃
-    // （Java 式语义，与 Interpreter/IR 路径统一）且无栈残留（原实现异常值留在
-    // 栈上，循环内每轮泄漏一个）。临时全局按 try 站点命名（非每次迭代增长），
-    // break 跳出时残留一个值可接受（下次经过覆盖，正常路径 DELETE 清理）。
-    std::string finallyExcName = "__finally_exc_" + std::to_string(blockSaveCounter_++);
-    uint16_t finallyExcIdx = identifierIndex(finallyExcName);
-    chunk_.writeOp(OpCode::OP_DEFINE_VAR, node.line);
-    chunk_.writeShort(finallyExcIdx, node.line);
+    // AUDIT-R6 B1 fix(B): 异常值先从栈上暂存，finally 体在干净栈上执行；正常走完后
+    // 重新压回并 rethrow。若 finally 体内 break/continue/return 跳出，则 reload+rethrow
+    // 被跳过——待处理异常被丢弃（Java 式语义，与 Interpreter/IR 路径统一）且无栈残留。
+    // B-008 fix: 暂存介质从「按 try 站点命名的全局变量」改为帧内隐藏局部槽——
+    // 递归重入同一 try 站点时，内层调用覆盖全局槽会导致外层 rethrow 读到内层异常
+    // 或「未定义的变量」；局部槽按帧隔离，天然免疫。顶层代码不可递归，保留全局路径
+    // （顶层 main 帧不使用名称局部槽语义）。
+    int finallyExcSlot = -1;
+    std::string finallyExcName;
+    if (inFunction_ && currentLocals_.size() <= 255) {
+        finallyExcSlot = static_cast<int>(currentLocals_.size());
+        // 控制字符前缀：源语言标识符不可能构造该名称，避免与用户变量冲突
+        currentLocals_["\x01__finally_exc"] = finallyExcSlot;
+        peakLocals_ = std::max(peakLocals_, finallyExcSlot + 1);
+        chunk_.writeOp(OpCode::OP_SET_LOCAL, node.line);
+        chunk_.write(static_cast<uint8_t>(finallyExcSlot), node.line);
+        chunk_.writeOp(OpCode::OP_POP, node.line); // OP_SET_LOCAL 为 peek，显式消费异常值
+    } else {
+        finallyExcName = "__finally_exc_" + std::to_string(blockSaveCounter_++);
+        uint16_t finallyExcIdx = identifierIndex(finallyExcName);
+        chunk_.writeOp(OpCode::OP_DEFINE_VAR, node.line);
+        chunk_.writeShort(finallyExcIdx, node.line);
+    }
+    ++finallyBodyDepth_;
     compileNode(node.finallyBlock.get());
-    chunk_.writeOp(OpCode::OP_GET_VAR, node.line);
-    chunk_.writeShort(finallyExcIdx, node.line);
-    chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
-    chunk_.writeShort(finallyExcIdx, node.line);
+    --finallyBodyDepth_;
+    if (finallyExcSlot >= 0) {
+        chunk_.writeOp(OpCode::OP_GET_LOCAL, node.line);
+        chunk_.write(static_cast<uint8_t>(finallyExcSlot), node.line);
+    } else {
+        uint16_t finallyExcIdx = identifierIndex(finallyExcName);
+        chunk_.writeOp(OpCode::OP_GET_VAR, node.line);
+        chunk_.writeShort(finallyExcIdx, node.line);
+        chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
+        chunk_.writeShort(finallyExcIdx, node.line);
+    }
     chunk_.writeOp(OpCode::OP_THROW, node.line);
 
     // AUDIT-R6 B1: 压回自身条目（调用方 visitTryStmt 统一 pop）。

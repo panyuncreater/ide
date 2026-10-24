@@ -10,6 +10,7 @@
 // ============================================================
 
 #include "gui/PerformanceRacePanel.h"
+#include "gui/TeachingTheme.h" // OPT-11: 颜色语义化
 
 #include "app/IdeController.h" // F1 fix: 运行期守卫读取 isRunning/isVmRunning
 
@@ -52,13 +53,13 @@ namespace {
 QString backendColor(int idx) {
     switch (idx) {
     case 0:
-        return QStringLiteral("#3498DB"); // Interpreter 蓝
+        return TeachingTheme::backendInterpreter().name(); // Interpreter 蓝
     case 1:
-        return QStringLiteral("#27AE60"); // StackVM 绿
+        return TeachingTheme::backendStackVm().name(); // StackVM 绿
     case 2:
-        return QStringLiteral("#E67E22"); // RegisterVM 橙
+        return TeachingTheme::backendRegisterVm().name(); // RegisterVM 橙
     default:
-        return QStringLiteral("#888888");
+        return TeachingTheme::backendUnknown().name();
     }
 }
 
@@ -163,7 +164,7 @@ PerformanceRacePanel::PerformanceRacePanel(QWidget* parent) : QWidget(parent) {
     auto* bottomBar = new QHBoxLayout;
     loadSampleBtn_ = new QPushButton(tr("加载样例代码到主编辑器"));
     auto* hintLabel = new QLabel(QString::fromUtf8("三后端输出应完全一致（语义等价性验证）"));
-    hintLabel->setStyleSheet(QStringLiteral("color:#6E6E6E;"));
+    hintLabel->setStyleSheet((QStringLiteral("color:") + TeachingTheme::textMuted().name() + QStringLiteral(";")));
     bottomBar->addWidget(loadSampleBtn_);
     bottomBar->addStretch();
     bottomBar->addWidget(hintLabel);
@@ -202,13 +203,13 @@ void PerformanceRacePanel::onRunRace() {
     // F1 fix: 运行期拒绝面板执行——临时解释器与 Worker 并发会破坏 GC 根集/引擎状态。
     if (controller_ && (controller_->isRunning() || controller_->isVmRunning())) {
         consistencyLabel_->setText(QString::fromUtf8("❌ 程序正在运行，请先停止后再开始竞赛"));
-        consistencyLabel_->setStyleSheet(QStringLiteral("color:#C0392B;"));
+        consistencyLabel_->setStyleSheet((QStringLiteral("color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";")));
         return;
     }
     std::string src = sourceEdit_->text().toStdString();
     if (src.empty()) {
         consistencyLabel_->setText(QString::fromUtf8("❌ 源码为空，请输入 MiniLang 源码"));
-        consistencyLabel_->setStyleSheet(QStringLiteral("color:#C0392B;"));
+        consistencyLabel_->setStyleSheet((QStringLiteral("color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";")));
         return;
     }
 
@@ -373,11 +374,11 @@ void PerformanceRacePanel::renderBarChart(const BackendPerfResult& interp, const
     }
 
     QString html =
-        QStringLiteral("<html><body style='font-family:\"Consolas\",\"Microsoft YaHei\",monospace;padding:4px;'>"
-                       "<h3 style='margin:0 0 8px 0;color:#2C3E50;'>三后端平均耗时对比（柱状图）</h3>");
+        (QStringLiteral("<html><body style='font-family:\"Consolas\",\"Microsoft YaHei\",monospace;padding:4px;'>")
+                       + QStringLiteral("<h3 style='margin:0 0 8px 0;color:") + TeachingTheme::midnight().name() + QStringLiteral(";'>三后端平均耗时对比（柱状图）</h3>"));
 
     if (successCount == 0 || maxAvg <= 0.0) {
-        html += QStringLiteral("<p style='color:#C0392B;'>所有后端均失败或无有效耗时数据，无法绘制柱状图。</p>");
+        html += (QStringLiteral("<p style='color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";'>所有后端均失败或无有效耗时数据，无法绘制柱状图。</p>"));
         html += QStringLiteral("</body></html>");
         barChartView_->setHtml(html);
         return;
@@ -422,26 +423,26 @@ void PerformanceRacePanel::renderBarChart(const BackendPerfResult& interp, const
                     .arg(color)
                     .arg(widthPct)
                     .arg(restPct)
-                    .arg(b->success ? QStringLiteral("#555555") : QStringLiteral("#C0392B"))
+                    .arg(b->success ? TeachingTheme::textFaint().name() : TeachingTheme::dangerRed().name())
                     .arg(valueText.toHtmlEscaped());
     }
 
     html += QStringLiteral("</table>");
 
     // 图例
-    html += QStringLiteral("<p style='margin-top:10px;color:#6E6E6E;font-size:11px;'>"
-                           "图例：<span style='color:%1;'>■</span> Interpreter "
-                           "（树遍历） | <span style='color:%2;'>■</span> StackVM "
-                           "（栈式字节码） | <span style='color:%3;'>■</span> RegisterVM（寄存器式）"
-                           "</p>")
+    html += (QStringLiteral("<p style='margin-top:10px;color:") + TeachingTheme::textMuted().name() + QStringLiteral(";font-size:11px;'>")
+                           + QStringLiteral("图例：<span style='color:%1;'>■</span> Interpreter ")
+                           + QStringLiteral("（树遍历） | <span style='color:%2;'>■</span> StackVM ")
+                           + QStringLiteral("（栈式字节码） | <span style='color:%3;'>■</span> RegisterVM（寄存器式）")
+                           + QStringLiteral("</p>"))
                 .arg(backendColor(0))
                 .arg(backendColor(1))
                 .arg(backendColor(2));
 
     // 运行次数提示（取三后端中最大成功运行次数，避免某个后端失败时显示 0）
     size_t maxRuns = std::max({interp.runs.size(), stackvm.runs.size(), regvm.runs.size()});
-    html += QStringLiteral("<p style='color:#6E6E6E;font-size:11px;'>注：柱长按平均耗时相对最慢后端归一化，"
-                           "每个后端运行次数 = %1，仅成功后端参与归一化。</p>")
+    html += (QStringLiteral("<p style='color:") + TeachingTheme::textMuted().name() + QStringLiteral(";font-size:11px;'>注：柱长按平均耗时相对最慢后端归一化，")
+                           + QStringLiteral("每个后端运行次数 = %1，仅成功后端参与归一化。</p>"))
                 .arg(static_cast<int>(maxRuns));
 
     html += QStringLiteral("</body></html>");
@@ -454,8 +455,8 @@ void PerformanceRacePanel::renderAnalysis(const BackendPerfResult& interp, const
     const BackendPerfResult* backends[3] = {&interp, &stackvm, &regvm};
 
     QString html =
-        QStringLiteral("<html><body style='font-family:\"Consolas\",\"Microsoft YaHei\",monospace;padding:4px;'>"
-                       "<h3 style='margin:0 0 8px 0;color:#2C3E50;'>性能分析报告</h3>");
+        (QStringLiteral("<html><body style='font-family:\"Consolas\",\"Microsoft YaHei\",monospace;padding:4px;'>")
+                       + QStringLiteral("<h3 style='margin:0 0 8px 0;color:") + TeachingTheme::midnight().name() + QStringLiteral(";'>性能分析报告</h3>"));
 
     // 统计成功后端（fastest/slowest 由此循环得出，无需单独计数）
     const BackendPerfResult* fastest = nullptr;
@@ -470,17 +471,17 @@ void PerformanceRacePanel::renderAnalysis(const BackendPerfResult& interp, const
     }
 
     // 1. 最快后端
-    html += QStringLiteral("<h4 style='color:#27AE60;margin:8px 0 4px 0;'>1. 最快后端</h4>");
+    html += (QStringLiteral("<h4 style='color:") + TeachingTheme::backendStackVm().name() + QStringLiteral(";margin:8px 0 4px 0;'>1. 最快后端</h4>"));
     if (fastest) {
         html += QStringLiteral("<p>%1 以 <b>%2</b> 平均耗时胜出。</p>")
                     .arg(fastest->backendName)
                     .arg(formatMs(fastest->avgMs));
     } else {
-        html += QStringLiteral("<p style='color:#C0392B;'>所有后端均失败，无最快后端。</p>");
+        html += (QStringLiteral("<p style='color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";'>所有后端均失败，无最快后端。</p>"));
     }
 
     // 2. 加速比
-    html += QStringLiteral("<h4 style='color:#2980B9;margin:8px 0 4px 0;'>2. 加速比</h4>");
+    html += (QStringLiteral("<h4 style='color:") + TeachingTheme::deepBlue().name() + QStringLiteral(";margin:8px 0 4px 0;'>2. 加速比</h4>"));
     if (fastest && slowest && fastest != slowest && fastest->avgMs > 0.0) {
         double speedup = slowest->avgMs / fastest->avgMs;
         html += QStringLiteral("<p>最快 vs 最慢：<b>%1</b>（%2） vs <b>%3</b>（%4），"
@@ -493,11 +494,11 @@ void PerformanceRacePanel::renderAnalysis(const BackendPerfResult& interp, const
     } else if (fastest && slowest && fastest == slowest) {
         html += QStringLiteral("<p>仅一个后端成功（%1），无法计算加速比。</p>").arg(fastest->backendName);
     } else {
-        html += QStringLiteral("<p style='color:#C0392B;'>数据不足，无法计算加速比。</p>");
+        html += (QStringLiteral("<p style='color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";'>数据不足，无法计算加速比。</p>"));
     }
 
     // 3. 性能差异原因分析
-    html += QStringLiteral("<h4 style='color:#8E44AD;margin:8px 0 4px 0;'>3. 性能差异原因分析</h4>");
+    html += (QStringLiteral("<h4 style='color:") + TeachingTheme::purple().name() + QStringLiteral(";margin:8px 0 4px 0;'>3. 性能差异原因分析</h4>"));
     html += QStringLiteral("<ul style='margin:4px 0;'>");
     html += QStringLiteral("<li><b>Interpreter（树遍历解释器）</b>：直接遍历 AST 节点，"
                            "每个节点需虚函数分发与指针解引用，无编译期优化，"
@@ -509,17 +510,17 @@ void PerformanceRacePanel::renderAnalysis(const BackendPerfResult& interp, const
                            "操作数直接通过虚拟寄存器（32 个）传递，"
                            "指令更密集、分发次数更少，通常最快。</li>");
     html += QStringLiteral("</ul>");
-    html += QStringLiteral("<p style='color:#6E6E6E;font-size:11px;'>注：递归 fib 场景下解释器开销主要来自 AST 重复遍历"
-                           "与递归调用栈；循环累加场景下寄存器式 VM 的局部变量寄存器分配优势明显。</p>");
+    html += (QStringLiteral("<p style='color:") + TeachingTheme::textMuted().name() + QStringLiteral(";font-size:11px;'>注：递归 fib 场景下解释器开销主要来自 AST 重复遍历")
+                           + QStringLiteral("与递归调用栈；循环累加场景下寄存器式 VM 的局部变量寄存器分配优势明显。</p>"));
 
     // 4. 指令数对比
-    html += QStringLiteral("<h4 style='color:#D35400;margin:8px 0 4px 0;'>4. 指令数对比</h4>");
-    html += QStringLiteral("<table cellspacing='0' cellpadding='4' style='width:100%;font-family:monospace;'>"
-                           "<tr style='background:#ECF0F1;font-weight:bold;'>"
-                           "<td width='40%'>后端</td>"
-                           "<td width='30%'>指令数</td>"
-                           "<td width='30%'>说明</td>"
-                           "</tr>");
+    html += (QStringLiteral("<h4 style='color:") + TeachingTheme::orangeDeep().name() + QStringLiteral(";margin:8px 0 4px 0;'>4. 指令数对比</h4>"));
+    html += (QStringLiteral("<table cellspacing='0' cellpadding='4' style='width:100%;font-family:monospace;'>")
+                           + QStringLiteral("<tr style='background:") + TeachingTheme::clouds().name() + QStringLiteral(";font-weight:bold;'>")
+                           + QStringLiteral("<td width='40%'>后端</td>")
+                           + QStringLiteral("<td width='30%'>指令数</td>")
+                           + QStringLiteral("<td width='30%'>说明</td>")
+                           + QStringLiteral("</tr>"));
     html += QStringLiteral("<tr><td>Interpreter</td><td>%1</td><td>树遍历，无字节码</td></tr>")
                 .arg(interp.instrCount.isEmpty() ? QStringLiteral("N/A") : interp.instrCount);
     html += QStringLiteral("<tr><td>StackVM (IR)</td><td>%1</td><td>栈式字节码字节数</td></tr>")
@@ -527,17 +528,16 @@ void PerformanceRacePanel::renderAnalysis(const BackendPerfResult& interp, const
     html += QStringLiteral("<tr><td>RegisterVM (IR)</td><td>%1</td><td>寄存器字节码字节数</td></tr>")
                 .arg(regvm.instrCount.isEmpty() ? QStringLiteral("N/A") : regvm.instrCount);
     html += QStringLiteral("</table>");
-    html += QStringLiteral(
-        "<p style='color:#6E6E6E;font-size:11px;'>注：寄存器式 VM 通常指令数更少（每条指令完成更多工作），"
-        "但单条指令编码可能更长；指令数对比仅作参考，实际性能受分发开销、缓存命中率等多因素影响。</p>");
+    html += (QStringLiteral("<p style='color:") + TeachingTheme::textMuted().name() + QStringLiteral(";font-size:11px;'>注：寄存器式 VM 通常指令数更少（每条指令完成更多工作），")
+        + QStringLiteral("但单条指令编码可能更长；指令数对比仅作参考，实际性能受分发开销、缓存命中率等多因素影响。</p>"));
 
     // 5. 各次运行明细
-    html += QStringLiteral("<h4 style='color:#16A085;margin:8px 0 4px 0;'>5. 各次运行耗时明细</h4>");
+    html += (QStringLiteral("<h4 style='color:") + TeachingTheme::teal().name() + QStringLiteral(";margin:8px 0 4px 0;'>5. 各次运行耗时明细</h4>"));
     for (int i = 0; i < 3; ++i) {
         const BackendPerfResult* b = backends[i];
         html += QStringLiteral("<p><b>%1</b>：").arg(b->backendName);
         if (b->runs.empty()) {
-            html += QStringLiteral("<span style='color:#C0392B;'>无有效运行</span></p>");
+            html += (QStringLiteral("<span style='color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";'>无有效运行</span></p>"));
         } else {
             for (size_t j = 0; j < b->runs.size(); ++j) {
                 if (j > 0)
@@ -571,7 +571,7 @@ void PerformanceRacePanel::renderConsistency(const BackendPerfResult& interp, co
             failed += regvm.backendName + QStringLiteral(" ");
         consistencyLabel_->setText(QString::fromUtf8("⚠ 部分后端失败：") + failed.trimmed() +
                                    QStringLiteral("，无法完整验证一致性"));
-        consistencyLabel_->setStyleSheet(QStringLiteral("color:#D35400;"));
+        consistencyLabel_->setStyleSheet((QStringLiteral("color:") + TeachingTheme::orangeDeep().name() + QStringLiteral(";")));
         return;
     }
 
@@ -580,14 +580,14 @@ void PerformanceRacePanel::renderConsistency(const BackendPerfResult& interp, co
         consistencyLabel_->setText(
             QString::fromUtf8("✅ 三后端输出完全一致（语义等价性验证通过）：") +
             (interp.output.isEmpty() ? QString::fromUtf8("（无输出）") : interp.output.trimmed().left(80)));
-        consistencyLabel_->setStyleSheet(QStringLiteral("color:#27AE60;"));
+        consistencyLabel_->setStyleSheet((QStringLiteral("color:") + TeachingTheme::backendStackVm().name() + QStringLiteral(";")));
     } else {
         consistencyLabel_->setText(QString::fromUtf8("❌ 三后端输出不一致（可能存在语义 bug）——") +
                                    QString::fromUtf8("Interpreter: 「") + interp.output.trimmed().left(40) +
                                    QString::fromUtf8("」| StackVM: 「") + stackvm.output.trimmed().left(40) +
                                    QString::fromUtf8("」| RegisterVM: 「") + regvm.output.trimmed().left(40) +
                                    QString::fromUtf8("」"));
-        consistencyLabel_->setStyleSheet(QStringLiteral("color:#C0392B;"));
+        consistencyLabel_->setStyleSheet((QStringLiteral("color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";")));
     }
 }
 

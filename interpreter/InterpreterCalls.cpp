@@ -155,8 +155,10 @@ Value Interpreter::callClosureValue(FunCall& node) {
 
     // R104 Function Breakpoint：函数调用入口检查（闭包调用路径）
     // AUDIT-R4 BUG-15 fix: atomic load 到局部变量
-    if (auto dbg = debugger()) {
-        dbg->checkFunctionBreakpoint(effectiveName, node.line);
+    if (debuggerAttached_.load(std::memory_order_relaxed)) {
+        if (auto dbg = debugger()) {
+            dbg->checkFunctionBreakpoint(effectiveName, node.line);
+        }
     }
 
     // BUG-DBG-AUDIT-1 fix: VM 后端创建的闭包（OP_CLOSURE / REG_CLOSURE）仅持有
@@ -913,8 +915,10 @@ Value Interpreter::callNamedFunction(FunCall& node) {
     // 使用 node.name 对齐 StackVM/RegisterVM 的 peekCalledFunctionName（OP_CALL/REG_CALL
     // 取常量池函数名，闭包路径另由 callClosureValue 检查 effectiveName）。
     // AUDIT-R4 BUG-15 fix: atomic load 到局部变量
-    if (auto dbg = debugger()) {
-        dbg->checkFunctionBreakpoint(node.name, node.line);
+    if (debuggerAttached_.load(std::memory_order_relaxed)) {
+        if (auto dbg = debugger()) {
+            dbg->checkFunctionBreakpoint(node.name, node.line);
+        }
     }
 
     // R164 fix: 参数求值提前到函数查找之前，对齐 VM 求值顺序。

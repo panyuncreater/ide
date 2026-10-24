@@ -113,6 +113,24 @@ public:
         return nullptr;
     }
 
+    /// OPT-01: 沿作用域链查找变量槽位（仅 variables，不含 boundInstance 字段）。
+    /// 返回的指针在本次求值窗口内有效；调用方须在 RHS/参数求值后重新调用，
+    /// 防止用户代码重绑定变量或 SmallMap 晋升导致指针失效。
+    Value* getMutableVariableSlot(const std::string& name) {
+        Environment* cur = this;
+        int depth = 0;
+        constexpr int MAX_SCOPE_DEPTH = 1024;
+        while (cur) {
+            if (depth++ >= MAX_SCOPE_DEPTH)
+                break;
+            auto it = cur->variables.find(name);
+            if (it != cur->variables.end())
+                return &it->second;
+            cur = cur->parent.get();
+        }
+        return nullptr;
+    }
+
     /// 设置变量值（沿作用域链查找并更新）
     bool set(const std::string& name, const Value& val) {
         // PERF-02 fix: 递归改迭代，每层查 variables 再查 boundInstance 字段

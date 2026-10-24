@@ -138,6 +138,8 @@ add_executable(minilang_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/TestAsyncAwait.cpp
     # R163 泛型/模板：四后端一致性 + Formatter/DocGenerator 输出测试
     ${CMAKE_CURRENT_SOURCE_DIR}/TestGenerics.cpp
+    # BACKLOG 开放项回归锁（B-001/B-002/B-003/B-006/B-008）
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestBacklogRegression.cpp
     # R134 模式匹配扩展（VARIABLE/TUPLE/OR pattern + guard）：四后端一致性测试
     ${CMAKE_CURRENT_SOURCE_DIR}/TestMatch.cpp
     # R103 闭包与高阶函数增强：四后端一致性测试

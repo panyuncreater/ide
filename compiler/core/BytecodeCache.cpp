@@ -210,7 +210,8 @@ constexpr char kRegisterMagic[4] = {'M', 'L', 'R', 'C'};
 // AUDIT-R3 P2-4/P2-5 fix: 版本 1→2——(1) 头部 reserved 字节改为承载 optFlags
 // （优化开关入键）；(2) moduleExports 段改为无条件读写（移除 remaining()>=4
 // 启发式）。旧版本缓存由版本校验自然失效。
-constexpr uint16_t kFormatVersion = 3; // AUDIT-R6 F3: VMEnumVariantInfo.paramTypes + VMEnumInfo.typeParams
+// OPT-10: v4 起行/列元数据改为 4B/字节打包（(line<<16)|column），取代 v3 的双 int 数组
+constexpr uint16_t kFormatVersion = 4; // v3: VMEnumVariantInfo.paramTypes + VMEnumInfo.typeParams
 constexpr size_t kHeaderSize = 32;
 constexpr const char* kCacheSubDir = "minilang_bytecache";
 
@@ -582,16 +583,10 @@ bool writeBytecodeChunk(BufferWriter& w, const BytecodeChunk& chunk) {
         writeValue(w, v);
     }
 
-    // lines
-    w.writeU32(static_cast<uint32_t>(chunk.lines.size()));
-    for (int l : chunk.lines) {
-        w.writeI32(l);
-    }
-
-    // columns
-    w.writeU32(static_cast<uint32_t>(chunk.columns.size()));
-    for (int c : chunk.columns) {
-        w.writeI32(c);
+    // OPT-10: packed line/column metadata (4B per byte, line<<16 | column)
+    w.writeU32(static_cast<uint32_t>(chunk.lineColumn.size()));
+    for (uint32_t packed : chunk.lineColumn.entries) {
+        w.writeU32(packed);
     }
 
     // name
@@ -670,24 +665,13 @@ bool readBytecodeChunk(BufferReader& r, BytecodeChunk& chunk) {
         chunk.constants.push_back(v);
     }
 
-    // lines
-    uint32_t lineCount = r.readU32();
+    // OPT-10: packed line/column metadata
+    uint32_t lcCount = r.readU32();
     if (!r.ok())
         return false;
-    chunk.lines.resize(lineCount);
-    for (uint32_t i = 0; i < lineCount; ++i) {
-        chunk.lines[i] = r.readI32();
-    }
-    if (!r.ok())
-        return false;
-
-    // columns
-    uint32_t colCount = r.readU32();
-    if (!r.ok())
-        return false;
-    chunk.columns.resize(colCount);
-    for (uint32_t i = 0; i < colCount; ++i) {
-        chunk.columns[i] = r.readI32();
+    chunk.lineColumn.resize(lcCount);
+    for (uint32_t i = 0; i < lcCount; ++i) {
+        chunk.lineColumn.entries[i] = r.readU32();
     }
     if (!r.ok())
         return false;
@@ -1060,16 +1044,10 @@ bool writeRegBytecodeChunk(BufferWriter& w, const RegBytecodeChunk& chunk) {
         writeValue(w, v);
     }
 
-    // lines
-    w.writeU32(static_cast<uint32_t>(chunk.lines.size()));
-    for (int l : chunk.lines) {
-        w.writeI32(l);
-    }
-
-    // columns
-    w.writeU32(static_cast<uint32_t>(chunk.columns.size()));
-    for (int c : chunk.columns) {
-        w.writeI32(c);
+    // OPT-10: packed line/column metadata (4B per byte, line<<16 | column)
+    w.writeU32(static_cast<uint32_t>(chunk.lineColumn.size()));
+    for (uint32_t packed : chunk.lineColumn.entries) {
+        w.writeU32(packed);
     }
 
     // name
@@ -1151,24 +1129,13 @@ bool readRegBytecodeChunk(BufferReader& r, RegBytecodeChunk& chunk) {
         chunk.constants.push_back(v);
     }
 
-    // lines
-    uint32_t lineCount = r.readU32();
+    // OPT-10: packed line/column metadata
+    uint32_t lcCount = r.readU32();
     if (!r.ok())
         return false;
-    chunk.lines.resize(lineCount);
-    for (uint32_t i = 0; i < lineCount; ++i) {
-        chunk.lines[i] = r.readI32();
-    }
-    if (!r.ok())
-        return false;
-
-    // columns
-    uint32_t colCount = r.readU32();
-    if (!r.ok())
-        return false;
-    chunk.columns.resize(colCount);
-    for (uint32_t i = 0; i < colCount; ++i) {
-        chunk.columns[i] = r.readI32();
+    chunk.lineColumn.resize(lcCount);
+    for (uint32_t i = 0; i < lcCount; ++i) {
+        chunk.lineColumn.entries[i] = r.readU32();
     }
     if (!r.ok())
         return false;

@@ -77,9 +77,8 @@ bool BytecodeIRBackend::lower(const IRFunction& ir) {
 #endif
             // 填充行号表（每条 IR 指令对应若干字节，统一用 instr.line）
             // D12 fix: BUG-IBACKEND-2 修复——columns 填充 instr.column（原恒 0）
-            while (chunk_->lines.size() < chunk_->code.size()) {
-                chunk_->lines.push_back(instr.line);
-                chunk_->columns.push_back(instr.column);
+            while (chunk_->lineColumn.size() < chunk_->code.size()) {
+                chunk_->lineColumn.push(instr.line, instr.column);
             }
             ++instrIndex;
         }
@@ -330,6 +329,7 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
     case IROp::LOAD_EXCEPTION:
     case IROp::PUSH_JUMP_TARGET:
     case IROp::FINALLY_END:
+    case IROp::DROP_PENDING_JUMPS:
     case IROp::WRITEBACK_MEMBER_VAR:
     case IROp::WRITEBACK_MEMBER_LOCAL:
     case IROp::WRITEBACK_INDEX_VAR:
@@ -1044,6 +1044,7 @@ bool BytecodeIRBackend::lowerMiscOp(const IRInstruction& instr, const IRFunction
     case IROp::LOAD_EXCEPTION:
     case IROp::PUSH_JUMP_TARGET:
     case IROp::FINALLY_END:
+    case IROp::DROP_PENDING_JUMPS:
         return lowerExceptionOps(instr, ir);
     // ---- 写回指令 ----
     case IROp::WRITEBACK_MEMBER_VAR:
@@ -1219,6 +1220,14 @@ bool BytecodeIRBackend::lowerExceptionOps(const IRInstruction& instr, const IRFu
     case IROp::LOAD_EXCEPTION: {
         // P1-4 fix: 栈式 VM 的 throwException 已将异常值推入栈顶，
         // 此处为 no-op（不发射字节码）。后续 STORE_LOCAL/DEFINE_GLOBAL 从栈顶 pop。
+        break;
+    }
+    case IROp::DROP_PENDING_JUMPS: {
+        // B-008: operands: [count(IMM)] → OP_DROP_PENDING_JUMPS count(1B)
+        if (instr.operands.empty())
+            return false;
+        chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_DROP_PENDING_JUMPS));
+        chunk_->code.push_back(static_cast<uint8_t>(std::min<uint32_t>(instr.operands[0].index, 255)));
         break;
     }
     // AUDIT-P1.1 fix: break/continue finally 续跳 lowering

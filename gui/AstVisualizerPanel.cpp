@@ -9,6 +9,7 @@
 // ============================================================
 
 #include "gui/AstVisualizerPanel.h"
+#include "gui/TeachingTheme.h" // OPT-11: 颜色语义化
 
 #include "ast/ASTNode.h"
 #include "common/Diagnostic.h"
@@ -225,8 +226,8 @@ AstVisualizerPanel::AstVisualizerPanel(QWidget* parent) : QWidget(parent) {
     populateNodeDocs();
 
     // 占位提示
-    nodeDetail_->setHtml(QString::fromUtf8("<div style='color:#6E6E6E; padding:8px;'><i>（点击「解析并生成 AST」后，"
-                                           "选中左侧树节点查看该节点的详细信息）</i></div>"));
+    nodeDetail_->setHtml((QStringLiteral("<div style='color:") + TeachingTheme::textMuted().name() + QStringLiteral("; padding:8px;'><i>（点击「解析并生成 AST」后，")
+                                           + QStringLiteral("选中左侧树节点查看该节点的详细信息）</i></div>")));
 }
 
 AstVisualizerPanel::~AstVisualizerPanel() = default;
@@ -327,7 +328,7 @@ void AstVisualizerPanel::onParse() {
 
     std::string source = sourceEdit_->text().toStdString();
     if (source.empty()) {
-        nodeDetail_->setHtml(QString::fromUtf8("<div style='color:#C0392B; padding:8px;'><b>请输入源码</b></div>"));
+        nodeDetail_->setHtml((QStringLiteral("<div style='color:") + TeachingTheme::dangerRed().name() + QStringLiteral("; padding:8px;'><b>请输入源码</b></div>")));
         return;
     }
 
@@ -337,12 +338,12 @@ void AstVisualizerPanel::onParse() {
     try {
         tokens = lex.scan(source);
     } catch (const std::exception& e) {
-        nodeDetail_->setHtml(QString::fromUtf8("<div style='color:#C0392B; padding:8px;'><b>词法错误:</b> %1</div>")
+        nodeDetail_->setHtml((QStringLiteral("<div style='color:") + TeachingTheme::dangerRed().name() + QStringLiteral("; padding:8px;'><b>词法错误:</b> %1</div>"))
                                  .arg(QString::fromUtf8(e.what()).toHtmlEscaped()));
         return;
     }
     if (lex.getDiagnostics().hasErrors()) {
-        nodeDetail_->setHtml(QString::fromUtf8("<div style='color:#C0392B; padding:8px;'><b>词法错误:</b> %1</div>")
+        nodeDetail_->setHtml((QStringLiteral("<div style='color:") + TeachingTheme::dangerRed().name() + QStringLiteral("; padding:8px;'><b>词法错误:</b> %1</div>"))
                                  .arg(formatDiagnosticErrors(lex.getDiagnostics())));
         return;
     }
@@ -352,12 +353,12 @@ void AstVisualizerPanel::onParse() {
     try {
         ast = parser.parse(tokens);
     } catch (const std::exception& e) {
-        nodeDetail_->setHtml(QString::fromUtf8("<div style='color:#C0392B; padding:8px;'><b>语法错误:</b> %1</div>")
+        nodeDetail_->setHtml((QStringLiteral("<div style='color:") + TeachingTheme::dangerRed().name() + QStringLiteral("; padding:8px;'><b>语法错误:</b> %1</div>"))
                                  .arg(QString::fromUtf8(e.what()).toHtmlEscaped()));
         return;
     }
     if (parser.hasErrors()) {
-        nodeDetail_->setHtml(QString::fromUtf8("<div style='color:#C0392B; padding:8px;'><b>语法错误:</b> %1</div>")
+        nodeDetail_->setHtml((QStringLiteral("<div style='color:") + TeachingTheme::dangerRed().name() + QStringLiteral("; padding:8px;'><b>语法错误:</b> %1</div>"))
                                  .arg(formatDiagnosticErrors(parser.getDiagnostics())));
         return;
     }
@@ -371,7 +372,7 @@ void AstVisualizerPanel::onParse() {
         onAstNodeSelected(astTree_->topLevelItem(0), 0);
     } else {
         nodeDetail_->setHtml(
-            QString::fromUtf8("<div style='color:#6E6E6E; padding:8px;'><i>（解析产物为空）</i></div>"));
+            (QStringLiteral("<div style='color:") + TeachingTheme::textMuted().name() + QStringLiteral("; padding:8px;'><i>（解析产物为空）</i></div>")));
     }
 }
 

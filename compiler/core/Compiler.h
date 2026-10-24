@@ -242,6 +242,11 @@ private:
     // P0-4 fix: 跟踪当前 try 块嵌套深度，break/continue 跳出 try 块时需发射 OP_TRY_END
     int tryDepth_ = 0;
 
+    // B-008 fix: 当前编译位置是否处于 finally 体内（两份副本均计入）。
+    // finally 内的 abrupt（break/continue/return）覆盖挂起的 abrupt 完成，
+    // 需发射 OP_DROP_PENDING_JUMPS 丢弃被替换的续跳链。
+    int finallyBodyDepth_ = 0;
+
     // AUDIT-P1.1 fix: try-finally 编译期上下文栈。
     // break/continue 在 try-finally 内时，不直接跳到循环目标，而是先 push 真实跳转目标
     // 到 pendingJumpStack_，再 jump 到 finally 入口。finally 末尾的 OP_FINALLY_END 从栈
@@ -387,6 +392,7 @@ private:
         std::unordered_map<std::string, int> currentUpvalueNames;
         std::vector<LoopContext> loopStack;
         int tryDepth = 0;
+        int finallyBodyDepth = 0; // B-008: 当前是否在 finally 体内编译（替换 abrupt 需丢弃续跳链）
         std::vector<TryFinallyContext> tryFinallyStack; // AUDIT-P1.1 fix
         std::string currentFunctionReturnType;          // BUG-TYPE-1 fix: 当前函数返回类型注解
         std::vector<std::string> currentTypeParams;     // R163 泛型扩展：当前函数/方法的类型参数

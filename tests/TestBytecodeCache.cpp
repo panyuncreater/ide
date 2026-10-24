@@ -56,10 +56,8 @@ static ::testing::AssertionResult chunksEqual(const BytecodeChunk& a, const Byte
         if (!a.constants[i].equals(b.constants[i]))
             return ::testing::AssertionFailure() << "constant[" << i << "] value differs";
     }
-    if (a.lines != b.lines)
-        return ::testing::AssertionFailure() << "lines differ";
-    if (a.columns != b.columns)
-        return ::testing::AssertionFailure() << "columns differ";
+    if (a.lineColumn.entries != b.lineColumn.entries)
+        return ::testing::AssertionFailure() << "line/column metadata differ";
     if (a.name != b.name)
         return ::testing::AssertionFailure() << "name differs";
     if (a.arity != b.arity)
@@ -493,8 +491,7 @@ CompileResult makeResultWithConstants(std::vector<Value> constants) {
     CompileResult cr;
     cr.mainChunk.constants = std::move(constants);
     cr.mainChunk.code = {static_cast<uint8_t>(OpCode::OP_RETURN)};
-    cr.mainChunk.lines = {0};
-    cr.mainChunk.columns = {0};
+    cr.mainChunk.lineColumn.entries = {BytecodeLineColumnMap::pack(0, 0)};
     cr.globalSlotCount = 0;
     return cr;
 }
@@ -865,10 +862,8 @@ static ::testing::AssertionResult regChunksEqual(const RegBytecodeChunk& a, cons
         if (!a.constants[i].equals(b.constants[i]))
             return ::testing::AssertionFailure() << "constant[" << i << "] value differs";
     }
-    if (a.lines != b.lines)
-        return ::testing::AssertionFailure() << "lines differ";
-    if (a.columns != b.columns)
-        return ::testing::AssertionFailure() << "columns differ";
+    if (a.lineColumn.entries != b.lineColumn.entries)
+        return ::testing::AssertionFailure() << "line/column metadata differ";
     if (a.name != b.name)
         return ::testing::AssertionFailure() << "name differs";
     if (a.arity != b.arity)
@@ -1056,4 +1051,25 @@ TEST(BytecodeCacheL17, RegisterCorruptedFileReturnsNullopt) {
 
     auto loaded = cache.tryLoadRegister(key);
     EXPECT_FALSE(loaded.has_value());
+}
+
+// ============================================================
+// OPT-10: 行/列元数据 4B/字节打包
+// ============================================================
+TEST(BytecodeMetadata, LineColumnPackingRoundtripAndSaturation) {
+    BytecodeLineColumnMap map;
+    map.push(123, 45);
+    map.push(0, 0);
+    EXPECT_EQ(map.size(), 2u);
+    EXPECT_EQ(map.lineAt(0), 123);
+    EXPECT_EQ(map.columnAt(0), 45);
+    EXPECT_EQ(map.lineAt(1), 0);
+    EXPECT_EQ(map.columnAt(1), 0);
+    // 越界读取返回 0
+    EXPECT_EQ(map.lineAt(99), 0);
+    EXPECT_EQ(map.columnAt(99), 0);
+    // 超出 16 位的行/列饱和到 65535（不静默回绕）
+    map.push(70000, 70000);
+    EXPECT_EQ(map.lineAt(2), 65535);
+    EXPECT_EQ(map.columnAt(2), 65535);
 }

@@ -8,7 +8,7 @@
 | 事实类型 | 唯一权威 | 允许的消费者（只放链接） | 禁止复制到 |
 |----------|----------|--------------------------|-----------|
 | 执行管线、四后端架构、模块系统 | `docs/architecture.md` | `AGENTS.md` §3、README | spec、skill |
-| 多后端语义细则与新增特性 checklist | `docs/specs/backend-consistency.md` §1-§3 | `AGENTS.md` §3、`docs/testing.md`、skill | CHANGELOG、BACKLOG |
+| 多后端语义细则、新增特性 checklist 与性能路径不变量 | `docs/specs/backend-consistency.md` §1-§3、§10 | `AGENTS.md` §3、`docs/testing.md`、skill | CHANGELOG、BACKLOG |
 | 协程挂起语义与实现 checklist | `docs/adr/ADR-007-*.md` + `backend-consistency.md` §9 | `AGENTS.md` §3、taxonomy K13 | 其他 spec |
 | JIT per-chunk 与缓存协议 | `docs/adr/ADR-008-*.md` + `backend-consistency.md` §8 | `AGENTS.md` §3、taxonomy K14 | CHANGELOG |
 | 值与内存/COW/GC/宿主隔离 | `docs/specs/memory-model.md` + ADR-001/004 | `AGENTS.md` §3、taxonomy K15 | development |

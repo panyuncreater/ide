@@ -9,6 +9,7 @@
 #include "gui/GuidedTour.h"
 #include "gui/MarkdownRenderer.h"
 #include "gui/PanelAnimator.h"
+#include "gui/TeachingTheme.h" // OPT-11: 颜色语义化
 #include "interpreter/Value.h"
 
 #include <QHBoxLayout>
@@ -705,21 +706,21 @@ GuidedTour* VariableInspectorPanel::createGuidedTour(QWidget* host) {
                                     "勾选「自动刷新」每 2 秒刷新快照，点击变量可在右侧查看 NaN-boxing 位布局。"));
     tour->addStep(
         nullptr, QString::fromUtf8("示例代码：观察变量类型"),
-        QString::fromUtf8("<p>将以下代码粘贴到编辑器，按 F5 调试，在变量树中观察各类型：</p>"
-                          "<pre style='background:#F5F5F5;padding:8px;border-radius:4px;font-family:\"Cascadia "
-                          "Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code "
-                          "Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace;'>"
-                          "var x = 42;           // int\n"
-                          "var pi = 3.14;        // float\n"
-                          "var s = \"hello\";      // string\n"
-                          "var arr = [1, 2, 3];  // array\n"
-                          "fun add(a, b) {\n"
-                          "    return a + b;\n"
-                          "}\n"
-                          "var f = add;          // closure\n"
-                          "print(x, pi, s, arr, f);\n"
-                          "</pre>"
-                          "<p>调试时展开变量树节点，可看到 int/float 标量内联、string/array 堆指针的差异。</p>"));
+        (QStringLiteral("<p>将以下代码粘贴到编辑器，按 F5 调试，在变量树中观察各类型：</p>")
+                          + QStringLiteral("<pre style='background:") + TeachingTheme::codeBlockBg().name() + QStringLiteral(";padding:8px;border-radius:4px;font-family:\"Cascadia ")
+                          + QStringLiteral("Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code ")
+                          + QStringLiteral("Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace;'>")
+                          + QStringLiteral("var x = 42;           // int\n")
+                          + QStringLiteral("var pi = 3.14;        // float\n")
+                          + QStringLiteral("var s = \"hello\";      // string\n")
+                          + QStringLiteral("var arr = [1, 2, 3];  // array\n")
+                          + QStringLiteral("fun add(a, b) {\n")
+                          + QStringLiteral("    return a + b;\n")
+                          + QStringLiteral("}\n")
+                          + QStringLiteral("var f = add;          // closure\n")
+                          + QStringLiteral("print(x, pi, s, arr, f);\n")
+                          + QStringLiteral("</pre>")
+                          + QStringLiteral("<p>调试时展开变量树节点，可看到 int/float 标量内联、string/array 堆指针的差异。</p>")));
     tour->addStep(pageLibraryBtn_, QString::fromUtf8("类型教学库"),
                   QString::fromUtf8("点击「类型教学库」切换到静态教学页，查看 int / string / array / closure "
                                     "等类型的 NaN-boxing 位布局与堆对象结构详解。"));

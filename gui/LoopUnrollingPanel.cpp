@@ -11,6 +11,7 @@
 // ============================================================
 
 #include "gui/LoopUnrollingPanel.h"
+#include "gui/TeachingTheme.h" // OPT-11: 颜色语义化
 
 #include <QHeaderView>
 #include <QSplitter>
@@ -382,13 +383,13 @@ void LoopUnrollingPanel::renderSimulation(int loopCount) {
         // 加速比着色：绿色表示有加速
         auto* speedupItem = new QTableWidgetItem(QString::number(r.speedup, 'f', 2) + QStringLiteral("x"));
         if (f == 1) {
-            speedupItem->setForeground(QColor("#666666")); // 基线灰色
+            speedupItem->setForeground(QColor(TeachingTheme::textAuxiliary().name())); // 基线灰色
         } else if (r.speedup >= 1.2) {
-            speedupItem->setForeground(QColor("#2E7D32")); // 绿色
+            speedupItem->setForeground(QColor(TeachingTheme::deepGreen().name())); // 绿色
         } else if (r.speedup >= 1.1) {
-            speedupItem->setForeground(QColor("#F57F17")); // 橙色
+            speedupItem->setForeground(QColor(TeachingTheme::amberDeep().name())); // 橙色
         } else {
-            speedupItem->setForeground(QColor("#666666")); // 灰色
+            speedupItem->setForeground(QColor(TeachingTheme::textAuxiliary().name())); // 灰色
         }
         simCompareTable_->setItem(i, 5, speedupItem);
     }
@@ -445,8 +446,8 @@ void LoopUnrollingPanel::renderSummary(int loopCount) {
     } else {
         int originalTotal = loopCount * (2 + LoopUnrollingLibrary::kDefaultBodyInstrCount);
         int savedInstrs = originalTotal - bestTotalInstrs;
-        html += QStringLiteral("<p>推荐展开因子 <b style='color:#2E7D32;'>K=%1</b>，"
-                               "加速比 <b>%2x</b>，可节省 <b>%3</b> 条指令。</p>")
+        html += (QStringLiteral("<p>推荐展开因子 <b style='color:") + TeachingTheme::deepGreen().name() + QStringLiteral(";'>K=%1</b>，")
+                               + QStringLiteral("加速比 <b>%2x</b>，可节省 <b>%3</b> 条指令。</p>"))
                     .arg(bestFactor)
                     .arg(QString::number(bestSpeedup, 'f', 2))
                     .arg(savedInstrs);

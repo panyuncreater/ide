@@ -21,6 +21,7 @@
 #include "gui/MarkdownRenderer.h"     // 统一 Markdown 渲染
 #include "gui/ProgressSaveFeedback.h" // P2-UX fix: 共享 save 失败反馈 helper
 #include "gui/SyntaxHighlighter.h"    // MiniLang 语法高亮器
+#include "gui/TeachingTheme.h" // OPT-11: 颜色语义化
 
 LabManualPanel::LabManualPanel(QWidget* parent) : QWidget(parent) {
     auto* mainLayout = new QVBoxLayout(this);
@@ -137,11 +138,11 @@ LabManualPanel::LabManualPanel(QWidget* parent) : QWidget(parent) {
     mainLayout->addWidget(splitter, 1);
 
     // issue 6: 中性浅色风格 QSS（章节芯片按钮，二态：默认/当前）
-    setStyleSheet(QString::fromUtf8("QPushButton#labChapterChip { background: #F5F5F5; border: 1px solid #E0E0E0; "
-                                    "border-radius: 4px; font-size: 11px; padding: 2px 10px; }"
-                                    "QPushButton#labChapterChip:hover { border-color: #268BD2; background: #E5F3FB; }"
-                                    "QPushButton#labChapterChip[current='true'] { background: #268BD2; color: white; "
-                                    "border-color: #1E6FA3; font-weight: bold; }"));
+    setStyleSheet((QStringLiteral("QPushButton#labChapterChip { background: ") + TeachingTheme::surfaceHover().name() + QStringLiteral("; border: 1px solid ") + TeachingTheme::border().name() + QStringLiteral("; ")
+                                    + QStringLiteral("border-radius: 4px; font-size: 11px; padding: 2px 10px; }")
+                                    + QStringLiteral("QPushButton#labChapterChip:hover { border-color: ") + TeachingTheme::info().name() + QStringLiteral("; background: ") + TeachingTheme::primaryHoverBg().name() + QStringLiteral("; }")
+                                    + QStringLiteral("QPushButton#labChapterChip[current='true'] { background: ") + TeachingTheme::info().name() + QStringLiteral("; color: white; ")
+                                    + QStringLiteral("border-color: ") + TeachingTheme::primaryDeep().name() + QStringLiteral("; font-weight: bold; }")));
 
     populateChapterChips();
 
@@ -244,7 +245,7 @@ void LabManualPanel::showCurrentChapter() {
     // 使用统一 Markdown 渲染器：支持标题/粗体/列表/代码块/分割线等
     // 替代早期 5 行 html.replace 的最小转换（无法处理 **bold**、列表、代码块）
     // R52-5 fix: 传入 codeBlockBg 对齐面板中性浅色主题，避免代码块用默认浅灰
-    QString html = MarkdownRenderer::markdownToHtml(markdownForRender, QStringLiteral("#F5F5F5"));
+    QString html = MarkdownRenderer::markdownToHtml(markdownForRender, TeachingTheme::surfaceHover().name());
 
     // P2-2 fix (F3): 在 Markdown 渲染结果前插入章节锚点目录（TOC）
     // 让学习者一目了然看到本章所有节标题，点击即可跳转。
@@ -305,7 +306,7 @@ void LabManualPanel::rebuildExercises() {
     if (exercises.empty()) {
         // 无练习：显示提示
         auto* noExLabel = new QLabel(QString::fromUtf8("💡 ") + mlTr("本章暂无可机检练习"), exercisesContainer_);
-        noExLabel->setStyleSheet(QString::fromUtf8("color:#6E6E6E; padding:8px;"));
+        noExLabel->setStyleSheet((QStringLiteral("color:") + TeachingTheme::textMuted().name() + QStringLiteral("; padding:8px;")));
         exercisesLayout_->insertWidget(exercisesLayout_->count() - 1, noExLabel);
         return;
     }
@@ -452,7 +453,7 @@ void LabManualPanel::onSubmitChoiceExercise(int choiceIndex) {
     QLabel* feedbackLabel =
         exercisesContainer_->findChild<QLabel*>(QString::fromUtf8("feedback_choice_%1").arg(choiceIndex));
     if (feedbackLabel) {
-        QString color = correct ? QString::fromUtf8("#4CAF50") : QString::fromUtf8("#F44336");
+        QString color = correct ? TeachingTheme::answerCorrect().name() : TeachingTheme::answerWrong().name();
         QString icon = correct ? QString::fromUtf8("✅ ") : QString::fromUtf8("❌ ");
         QString msg = QString::fromUtf8("<span style='color:%1;'><b>%2</b></span><br>%3")
                           .arg(color, icon + (correct ? mlTr("答对了！") : mlTr("答错了，再想想")),
@@ -540,7 +541,7 @@ void LabManualPanel::onSubmitExpectedOutputExercise(int exerciseIndex) {
     QLabel* feedbackLabel =
         exercisesContainer_->findChild<QLabel*>(QString::fromUtf8("output_feedback_%1").arg(exerciseIndex));
     if (feedbackLabel) {
-        QString color = correct ? QString::fromUtf8("#4CAF50") : QString::fromUtf8("#F44336");
+        QString color = correct ? TeachingTheme::answerCorrect().name() : TeachingTheme::answerWrong().name();
         QString icon = correct ? QString::fromUtf8("✅ ") : QString::fromUtf8("❌ ");
         QString msg;
         if (!controllerAvailable) {

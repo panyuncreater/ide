@@ -1,5 +1,6 @@
 #pragma once
 
+#include "common/BytecodeMetadata.h"
 #include "interpreter/Value.h"
 #include <cstdint>
 #include <map>
@@ -178,6 +179,19 @@ enum class OpCode : uint8_t {
     //   - v 为协程 → 循环 callCoroutineNext 直到 done，push 最后一次 next() 的值
     // 驱动循环受 MAX_LOOP_ITERATIONS 保护；协程体内未捕获异常经 tryStack 截断检测传播。
     OP_AWAIT,
+
+    // B-008 fix: finally 内 abrupt 替换 abrupt 时丢弃被替换的续跳链。
+    // 操作数: count(1B)。从 pendingJumpStack_ 顶部移除至多 count 个属于当前帧的条目
+    // （遇到其他帧条目即停止）。语义：finally 内的 break/continue/return/throw
+    // 覆盖外层挂起的 abrupt 完成，其尚未消费的续跳目标必须一并丢弃，否则残留条目
+    // 会在同帧后续 FINALLY_END 被误弹出并跳转到旧目标。
+    OP_DROP_PENDING_JUMPS,
+
+    // OPT-18 B6: int-int 比较特化扩展（GT/GTE/LTE），跳过运行时类型检查。
+    // 追加在枚举尾部以保持既有操作码数值稳定（缓存/序列化兼容）。
+    OP_GT_INT_SPEC,
+    OP_GTE_INT_SPEC,
+    OP_LTE_INT_SPEC,
 };
 
 // ============================================================
@@ -217,8 +231,8 @@ struct UpvalueDesc {
 struct BytecodeChunk {
     std::vector<uint8_t> code;                 // 指令字节流
     std::vector<Value> constants;              // 常量池
-    std::vector<int> lines;                    // 每条指令对应的行号
-    std::vector<int> columns;                  // BUG-IBACKEND-2: 每条指令对应的列号（与 lines 平行，默认 0）
+    // OPT-10: 行/列元数据紧凑存储（每字节 4B，原 lines+columns 为 8B）
+    BytecodeLineColumnMap lineColumn;
     std::string name;                          // chunk 名称（函数名）
     int arity = 0;                             // 参数个数（F10: 含默认参数的总数）
     int requiredArity = 0;                     // F10: 必需参数个数（无默认值的前缀参数数量）
@@ -310,15 +324,13 @@ struct BytecodeChunk {
     /// C21: 预分配字节码空间，避免编译期间频繁 realloc
     void reserveCode(size_t estimatedBytes) {
         code.reserve(estimatedBytes);
-        lines.reserve(estimatedBytes);
-        columns.reserve(estimatedBytes);
+        lineColumn.reserve(estimatedBytes);
     }
 
     /// 追加一个字节
     void write(uint8_t byte, int line, int column = 0) {
         code.push_back(byte);
-        lines.push_back(line);
-        columns.push_back(column);
+        lineColumn.push(line, column);
     }
 
     /// 追加一个操作码
@@ -375,11 +387,9 @@ private:
 
 public:
     /// 获取指令行号
-    int getLine(size_t offset) const {
-        if (offset < lines.size())
-            return lines[offset];
-        return 0;
-    }
+    int getLine(size_t offset) const { return lineColumn.lineAt(offset); }
+    /// OPT-10: 元数据条目数（= code.size()）
+    size_t lineColumnCount() const { return lineColumn.size(); }
 
     /// 预计算 ip→指令索引映射（编译完成后调用一次）
     void buildIpMap() {
@@ -427,11 +437,7 @@ public:
     static size_t instructionSize(OpCode op) { return getOpCodeInfo(op).baseSize; }
 
     /// BUG-IBACKEND-2: 获取指令列号
-    int getColumn(size_t offset) const {
-        if (offset < columns.size())
-            return columns[offset];
-        return 0;
-    }
+    int getColumn(size_t offset) const { return lineColumn.columnAt(offset); }
 
     /// 反汇编：输出字节码文本（D9 fix: 实现移至 Bytecode.cpp）
     std::string disassemble() const;

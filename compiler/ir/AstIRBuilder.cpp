@@ -38,7 +38,9 @@
 
 namespace {
 
-/// 简化版常量提取（限制4）：支持字面量和负数字面量
+bool extractContainerConstant(ASTNode* node, Value& result);
+
+/// 简化版常量提取（限制4）：支持字面量、负数字面量与数组/字典字面量
 /// 成功返回 true 并输出常量值；失败返回 false
 bool extractConstant(ASTNode* node, Value& result) {
     if (!node)
@@ -76,6 +78,46 @@ bool extractConstant(ASTNode* node, Value& result) {
             }
         }
         return false;
+    }
+    default:
+        return false;
+    }
+}
+
+/// B-003: 数组/字典字面量常量提取（递归）——仅用于默认参数常量表。
+/// 类字段默认值不走此路径（extractConstant 的既有标量语义保持不变）。
+bool extractContainerConstant(ASTNode* node, Value& result) {
+    switch (node->nodeType) {
+    case NodeType::NODE_ARRAY_LITERAL: {
+        auto* arr = static_cast<ArrayLiteral*>(node);
+        std::vector<Value> elements;
+        elements.reserve(arr->elements.size());
+        for (auto& elem : arr->elements) {
+            Value v;
+            if (!extractConstant(elem.get(), v) && !extractContainerConstant(elem.get(), v))
+                return false;
+            elements.push_back(std::move(v));
+        }
+        result = Value(std::move(elements));
+        return true;
+    }
+    case NodeType::NODE_DICT_LITERAL: {
+        auto* dict = static_cast<DictLiteral*>(node);
+        Value::DictMap entries;
+        entries.reserve(dict->pairs.size());
+        for (auto& kv : dict->pairs) {
+            Value k;
+            Value v;
+            if ((!extractConstant(kv.first.get(), k) && !extractContainerConstant(kv.first.get(), k)) ||
+                (!extractConstant(kv.second.get(), v) && !extractContainerConstant(kv.second.get(), v)))
+                return false;
+            auto dk = Value::dictKeyFromValue(k);
+            if (!dk)
+                return false;
+            entries.emplace(std::move(*dk), std::move(v));
+        }
+        result = Value(std::move(entries));
+        return true;
     }
     default:
         return false;
@@ -1881,6 +1923,7 @@ IROperand AstIRBuilder::visitFunDecl(FunDecl* node) {
     ctx.savedBlockScopes = std::move(blockScopes_);
     ctx.savedBlockDepth = blockDepth_;
     ctx.savedTryDepth = tryDepth_;                          // BUG-EXC-2 fix
+    ctx.savedFinallyBodyDepth = finallyBodyDepth_;          // B-008 fix
     ctx.savedTryFinallyStack = std::move(tryFinallyStack_); // L4 fix
     ctx.savedCompilingMethod = compilingMethod_;            // R7 fix
     // R98 t9 fix: 不能用 std::move——类方法的 compilingClassName_ 由 visitClassDecl 设置，
@@ -1955,6 +1998,7 @@ void AstIRBuilder::emitFunctionPrologue(FunDecl& node, FunctionEmitCtx& ctx) {
     blockScopes_.clear();
     blockDepth_ = 0;
     tryDepth_ = 0;            // BUG-EXC-2 fix: 子函数内 try 嵌套从 0 开始
+    finallyBodyDepth_ = 0;    // B-008: 子函数从全新 finally 上下文开始
     tryFinallyStack_.clear(); // L4 fix: 子函数不继承外层 try-finally 上下文
     currentUpvalues_.clear();
     currentUpvalueNames_.clear();
@@ -2045,7 +2089,7 @@ void AstIRBuilder::emitFunctionPrologue(FunDecl& node, FunctionEmitCtx& ctx) {
     for (auto& dv : node.defaultValues) {
         if (dv) {
             Value constVal;
-            if (extractConstant(dv.get(), constVal)) {
+            if (extractConstant(dv.get(), constVal) || extractContainerConstant(dv.get(), constVal)) {
                 uint32_t constIdx = ir_->addConstant(constVal);
                 ir_->defaultConstIndices.push_back(static_cast<uint16_t>(constIdx));
             } else {
@@ -2153,6 +2197,7 @@ void AstIRBuilder::restoreParentFunctionState(FunctionEmitCtx& ctx) {
     blockScopes_ = std::move(ctx.savedBlockScopes);
     blockDepth_ = ctx.savedBlockDepth;
     tryDepth_ = ctx.savedTryDepth;                          // BUG-EXC-2 fix
+    finallyBodyDepth_ = ctx.savedFinallyBodyDepth;          // B-008 fix
     tryFinallyStack_ = std::move(ctx.savedTryFinallyStack); // L4 fix
     compilingMethod_ = ctx.savedCompilingMethod;            // R7 fix
     compilingClassName_ = std::move(ctx.savedCompilingClassName);
@@ -3753,6 +3798,17 @@ bool AstIRBuilder::emitFinallyJumpIR(int line, uint32_t realTargetLabel) {
             finallyIndices.push_back(i - 1);
         }
     }
+    if (finallyIndices.empty() && finallyBodyDepth_ == 0)
+        return false;
+
+    // B-008 fix: finally 内的 abrupt 覆盖挂起的 abrupt 完成——先丢弃被替换链的
+    // 全部续跳条目（1 个本 finally 条目 + 每个仍在场的更外层 finally 条目）。
+    // 正常进入 finally（无挂起链）时为空操作。
+    if (finallyBodyDepth_ > 0) {
+        size_t dropCount = 1 + finallyIndices.size();
+        emitIR(IROp::DROP_PENDING_JUMPS, {IROperand::imm(static_cast<uint32_t>(std::min<size_t>(dropCount, 255)))},
+               line);
+    }
     if (finallyIndices.empty())
         return false;
 
@@ -4120,26 +4176,43 @@ void AstIRBuilder::emitFinallyBlock(TryStmt& node, TryEmitCtx& ctx) {
     tryFinallyStack_.pop_back();
     // AUDIT-P1.1 fix: 标记 finally 正常路径入口，供 break/continue 续跳
     emitIR(IROp::LABEL, {IROperand::label(ctx.finallyEntryLabel)}, node.line);
+    ++finallyBodyDepth_;
     visitNode(node.finallyBlock.get());
+    --finallyBodyDepth_;
     // AUDIT-P1.1 fix: finally 末尾追加 FINALLY_END（break/continue 续跳或正常完成）
     emitIR(IROp::FINALLY_END, {}, node.line);
     emitIR(IROp::JUMP, {IROperand::label(ctx.finallyEndLabel)}, node.line);
     emitIR(IROp::LABEL, {IROperand::label(ctx.finallyCatchLabel)}, node.line);
     IROperand excVregF = ir_->allocVReg();
     emitIR(IROp::LOAD_EXCEPTION, {excVregF}, node.line);
-    // AUDIT-R6 B1 fix(B): 异常值先暂存到唯一临时全局（栈式 lowering 为 OP_DEFINE_VAR，
-    // 把 throwException 压栈的异常值 pop 走），finally 体在干净栈上执行；正常走完
-    // 后 reload + rethrow。若 finally 体内 break/continue/return 跳出，reload+rethrow
-    // 被跳过——待处理异常被丢弃（Java 式语义，与 Interpreter/StackVM 直接路径统一）
-    // 且无栈残留。临时名按 try 站点命名（复用 catchSaveCounter_），机制对齐
-    // emitCatchGlobal 的 GLOBAL_NAME 存取/DELETE_VAR 清理。
-    uint32_t finallyExcIdx = ir_->addGlobal("__finally_exc_" + std::to_string(catchSaveCounter_++));
-    emitIR(IROp::DEFINE_GLOBAL, {IROperand::global(finallyExcIdx), excVregF}, node.line);
-    visitNode(node.finallyBlock.get());
-    IROperand excReload = ir_->allocVReg();
-    emitIR(IROp::LOAD_GLOBAL, {excReload, IROperand::global(finallyExcIdx)}, node.line);
-    emitIR(IROp::DELETE_VAR, {IROperand::global(finallyExcIdx)}, node.line);
-    emitIR(IROp::THROW, {excReload}, node.line);
+    // AUDIT-R6 B1 fix(B) + B-008: 异常值暂存。原实现用按 try 站点命名的全局变量，
+    // 递归重入同一站点时内层覆盖外层槽（外层 rethrow 读到内层异常或未定义变量）。
+    // 函数内改用帧内隐藏局部槽（vreg 经 STORE_LOCAL/LOAD_LOCAL 落槽），按帧隔离；
+    // 顶层代码不可递归，保留全局路径。栈式 lowering 中 LOAD_EXCEPTION 为 no-op
+    // （异常值在栈顶），STORE_LOCAL 为 peek，故需显式 POP 消费栈顶。
+    if (inFunction_) {
+        uint32_t excSlot = nextLocalSlot_++;
+        if (static_cast<int>(nextLocalSlot_) > ir_->localCount)
+            ir_->localCount = static_cast<int>(nextLocalSlot_);
+        emitIR(IROp::STORE_LOCAL, {IROperand::local(excSlot), excVregF}, node.line);
+        emitIR(IROp::POP, {}, node.line);
+        ++finallyBodyDepth_;
+        visitNode(node.finallyBlock.get());
+        --finallyBodyDepth_;
+        IROperand excReload = ir_->allocVReg();
+        emitIR(IROp::LOAD_LOCAL, {excReload, IROperand::local(excSlot)}, node.line);
+        emitIR(IROp::THROW, {excReload}, node.line);
+    } else {
+        uint32_t finallyExcIdx = ir_->addGlobal("__finally_exc_" + std::to_string(catchSaveCounter_++));
+        emitIR(IROp::DEFINE_GLOBAL, {IROperand::global(finallyExcIdx), excVregF}, node.line);
+        ++finallyBodyDepth_;
+        visitNode(node.finallyBlock.get());
+        --finallyBodyDepth_;
+        IROperand excReload = ir_->allocVReg();
+        emitIR(IROp::LOAD_GLOBAL, {excReload, IROperand::global(finallyExcIdx)}, node.line);
+        emitIR(IROp::DELETE_VAR, {IROperand::global(finallyExcIdx)}, node.line);
+        emitIR(IROp::THROW, {excReload}, node.line);
+    }
     emitIR(IROp::LABEL, {IROperand::label(ctx.finallyEndLabel)}, node.line);
     // AUDIT-R6 B1: 压回自身条目（调用方统一 pop）
     tryFinallyStack_.push_back(std::move(selfFinallyCtx));

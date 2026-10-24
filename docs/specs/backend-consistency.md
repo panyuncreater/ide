@@ -75,6 +75,12 @@
 - **字节码截断校验（2026-10-04 上移）**：两 VM 的字节码截断检查在 `initExecution` 加载期一次性预扫描完成——`VM::initExecution` 校验主 chunk 与全部 `functionChunks_`（`validateChunkInstructionBoundaries`），`RegisterVM::initExecution` 同构（`validateRegChunkInstructionBoundaries`，基于 `RegBytecodeChunk::instructionSizeAt`）。主循环 release 不再逐指令做 `instructionSize`/`instructionSizeAt` 越界检查，debug 保留逐指令校验双保险。**不变量**：新增变长指令时，预扫描的展开逻辑（栈式 VM 内联 OP_CLOSURE 展开 / 寄存器 VM `instructionSizeAt`）与主循环消费的长度必须保持同一事实源，否则加载期校验与运行时推进错位。
 - 该校验器落地即捕获一处真实缺陷（顶层 super 写回多发 POP，见 CHANGELOG 2026-10-03）。
 
+## 7.1 finally 续跳与异常暂存不变量（2026-10-23）
+
+- **续跳链整体替换**：finally 体内的 break/continue/return 覆盖挂起的 abrupt 完成，必须先发射 `OP_DROP_PENDING_JUMPS`（IROp `DROP_PENDING_JUMPS` / `REG_DROP_PENDING_JUMPS`）丢弃被替换链的全部条目（数量 = 1 个本 finally 条目 + 仍在场的更外层 finally 条目，按帧边界截断）。否则残留同帧条目会被后续 `OP_FINALLY_END` 误弹出并跳转到旧目标（同帧跨 try 站点可观测）。throw 由 `throwException` 全局清空，无需该指令。
+- **异常暂存帧隔离**：异常路径 finally 的待重抛值在函数内必须存隐藏局部槽（`OP_SET_LOCAL`/`OP_GET_LOCAL`），不得使用按 try 站点命名的进程级全局名——递归重入同一站点时内层会覆盖外层暂存（外层 rethrow 读到内层异常或「未定义的变量」）。顶层代码不可递归，保留全局暂存。
+- **锁定**：`TestBacklogRegression.B008*`（Interpreter/StackVM/StackVM-IR/RegisterVM + JIT 专项）。
+
 ## 8. JIT 语义判定补充（2026-10-03 复核；2026-10-11 per-chunk 架构增补）
 
 - JIT 硬编码 NaN-boxing tag 常量与 `NaNBox.h` 编码的一致性由 `verifyNanBoxConstants()` 在 `JITBackend::execute` debug 入口校验（含 `JitContext` 全部字段偏移的 static_assert 编译期护栏——**新增字段只允许尾部追加**并同步 `jit_offset` 常量与 static_assert，ADR-006 append-only 约束）。
@@ -96,3 +102,12 @@
 - **挂起窗口 upvalue 语义（2026-10-22）**：挂起时生成器区开放 upvalue **快照式关闭**（`uv->value` = 槽值、`isClosed=true`；原 open 态相对 stackSlot 指向已搬空的活栈区域，窗口期逃逸闭包跨快照访问会读错值/写坏调用方栈），窗口期闭包经关闭盒读写；恢复时先传播写回再重挂 open（生成器体与逃逸闭包双向一致）。新增 VM 挂起路径时必须同型处理。
 - **GC 根义务**（Interpreter fiber）：挂起时快照环境链根 + callStack 后缀（帧持 env）；新增随挂起存活的解释器成员引用时必须纳入快照。
 - **锁定测试**：`CoroutineSuspension.*` 5 项（副作用一次/恢复值/状态连续/try 跨挂起/长序列）为四后端一致性断言；`CoroutineTest` 22 项 + `AsyncAwait` 11 项在双模式下均须通过。
+
+
+## 10. 性能路径不变量（2026-10-23，OPT 清偿轮）
+
+- **方法返回接收者写回**：StackVM/JIT 在字段槽已同步进方法 `this` 后，可用整体赋值替代逐字段写回；前提是别名隔离不变（其他别名仍持旧实例）。任何改为共享/移动接收者的优化必须保持该隔离，锁定 `BacklogRegression.OPT05ReceiverWholeWritebackAliasIsolation`（五后端）。
+- **名称版全局缓存**：`RegBytecodeChunk::globalVarCache_` 缓存 `globalSlots_` 下标或 `globals_` 值指针；任何结构变更（reset/槽扩容/名称表插入/删除/回滚/写回插入）必须递增 `RegisterVM::globalsVersion_`，否则旧指针悬垂。新增全局写入路径必须同点失效。
+- **JIT init 入口缓存**：`JitClassInfo::cachedInit` 依赖 `OP_DEFINE_CLASS` 整体替换类条目而自然失效；若未来支持类定义增量更新或方法表原地重建，必须显式重置 `initResolved`。
+- **int 比较特化**：`OP_GT/GTE/LTE_INT_SPEC` 仅由直译编译器在 `isExprKnownInt` 双侧为真时发射；StackVM 原生比较，JIT 复用通用比较代码。新增 `_SPEC` 操作码必须同步 opcode 元数据表、分派与 JIT 判定，锁定 `BacklogRegression.OPT18IntComparisonSpecializations*`。
+- **字节码行列元数据**：`BytecodeLineColumnMap` 每字节 4B（`line<<16|column`，超界饱和）；新增序列化/读写路径必须维持打包格式与 `kFormatVersion`。锁定 `BytecodeMetadata.LineColumnPackingRoundtripAndSaturation` 与缓存往返测试。

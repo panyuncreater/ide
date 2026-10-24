@@ -998,7 +998,8 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
             break;
         }
 
-        case OpCode::OP_GREATER: {
+        case OpCode::OP_GREATER:
+        case OpCode::OP_GT_INT_SPEC: { // OPT-18: 特化比较复用通用 int 原生路径
             Label genericGt = a.new_label();
             Label gtEnd = a.new_label();
             a.mov(x86::rax, x86::qword_ptr(x86::r15));
@@ -1026,7 +1027,8 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
             break;
         }
 
-        case OpCode::OP_LESS_EQUAL: {
+        case OpCode::OP_LESS_EQUAL:
+        case OpCode::OP_LTE_INT_SPEC: { // OPT-18
             Label genericLe = a.new_label();
             Label leEnd = a.new_label();
             a.mov(x86::rax, x86::qword_ptr(x86::r15));
@@ -1054,7 +1056,8 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
             break;
         }
 
-        case OpCode::OP_GREATER_EQUAL: {
+        case OpCode::OP_GREATER_EQUAL:
+        case OpCode::OP_GTE_INT_SPEC: { // OPT-18
             Label genericGe = a.new_label();
             Label geEnd = a.new_label();
             a.mov(x86::rax, x86::qword_ptr(x86::r15));
@@ -2225,6 +2228,29 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
             a.jmp(x86::rax);     // 非空 = 续跳到 break/continue 目标
             a.bind(continueLabel);
             ip += 1;
+            break;
+        }
+
+        case OpCode::OP_DROP_PENDING_JUMPS: {
+            // B-008: 1B count 操作数。丢弃被替换的续跳链（本帧条目）。
+            uint8_t count = bytecodes[ip + 1];
+#ifdef _WIN32
+            a.mov(x86::rcx, x86::r12);
+            a.mov(x86::rdx, static_cast<int32_t>(count));
+            a.sub(x86::rsp, 32);
+#else
+            a.mov(x86::rdi, x86::r12);
+            a.mov(x86::rsi, static_cast<int32_t>(count));
+            a.sub(x86::rsp, 16);
+#endif
+            a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitDropPendingJumps));
+            a.call(x86::rax);
+#ifdef _WIN32
+            a.add(x86::rsp, 32);
+#else
+            a.add(x86::rsp, 16);
+#endif
+            ip += 2;
             break;
         }
 

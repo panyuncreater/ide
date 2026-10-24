@@ -1403,6 +1403,15 @@ public:
     // 原地变异辅助方法 — 跳过 COW detach 当 refCount==1
     // ============================================================
 
+    /// OPT-01: 判断两个 Value 是否指向同一堆对象（标量恒 false）。
+    /// 供解释器单节点 VarRef 快路径确认环境槽位仍持有求值时捕获的对象，
+    /// 避免 RHS/参数副作用重绑定变量后对错误对象原位变异。
+    bool sharesStorageWith(const Value& other) const {
+        if (!box_.isPointer() || !other.box_.isPointer())
+            return false;
+        return box_.asPtr<RefCounted>() == other.box_.asPtr<RefCounted>();
+    }
+
     std::string* tryGetMutableString() {
         if (!isString())
             return nullptr;

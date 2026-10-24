@@ -433,15 +433,35 @@ VMResult RegisterVM::executeVars(RegOp op, size_t& ip) {
                 return runtimeError("全局变量名称索引无效");
             }
             const std::string& name = chunk.constants[nameIdx].stringVal();
+            // OPT-07: 名称版全局变量解析缓存——命中时零哈希；未命中解析后写入。
+            auto& gvcCache = chunk.globalVarCache_;
+            if (gvcCache.size() <= nameIdx)
+                gvcCache.resize(nameIdx + 1);
+            auto& gvc = gvcCache[nameIdx];
+            if (gvc.version == globalsVersion_ && gvc.resolvedSlot != -2) {
+                if (gvc.resolvedSlot >= 0 && static_cast<size_t>(gvc.resolvedSlot) < globalSlots_.size()) {
+                    reg(dst) = globalSlots_[gvc.resolvedSlot];
+                    ip += 4;
+                    break;
+                }
+                if (gvc.resolvedSlot == -1 && gvc.valuePtr) {
+                    reg(dst) = *gvc.valuePtr;
+                    ip += 4;
+                    break;
+                }
+            }
             auto gsIt = globalNameToSlot_.find(name);
             if (gsIt != globalNameToSlot_.end() && gsIt->second >= 0 &&
                 gsIt->second < static_cast<int>(globalSlots_.size())) {
                 reg(dst) = globalSlots_[gsIt->second];
+                gvc = {gsIt->second, nullptr, globalsVersion_};
             } else {
                 auto it = globals_.find(name);
                 if (it != globals_.end()) {
                     reg(dst) = it->second;
+                    gvc = {-1, &it->second, globalsVersion_};
                 } else {
+                    gvc = {};
                     // R97 #11 fix: 三后端 super 错误消息统一（与 VM.cpp OP_GET_VAR 对齐）
                     if (name == "this") {
                         return runtimeError(ErrorMessages::kSuperOutsideMethod);
@@ -470,17 +490,37 @@ VMResult RegisterVM::executeVars(RegOp op, size_t& ip) {
                 return runtimeError("全局变量名称索引无效");
             }
             const std::string& name = chunk.constants[nameIdx].stringVal();
+            // OPT-07: 与 REG_LOAD_GLOBAL 共用名称版解析缓存（写方向）。
+            auto& gvcCache = chunk.globalVarCache_;
+            if (gvcCache.size() <= nameIdx)
+                gvcCache.resize(nameIdx + 1);
+            auto& gvc = gvcCache[nameIdx];
+            if (gvc.version == globalsVersion_ && gvc.resolvedSlot != -2) {
+                if (gvc.resolvedSlot >= 0 && static_cast<size_t>(gvc.resolvedSlot) < globalSlots_.size()) {
+                    globalSlots_[gvc.resolvedSlot] = reg(src);
+                    ip += 4;
+                    break;
+                }
+                if (gvc.resolvedSlot == -1 && gvc.valuePtr) {
+                    *gvc.valuePtr = reg(src);
+                    ip += 4;
+                    break;
+                }
+            }
             auto gsIt = globalNameToSlot_.find(name);
             if (gsIt != globalNameToSlot_.end() && gsIt->second >= 0 &&
                 gsIt->second < static_cast<int>(globalSlots_.size())) {
                 globalSlots_[gsIt->second] = reg(src);
+                gvc = {gsIt->second, nullptr, globalsVersion_};
             } else {
                 // 槽位表未命中，回退到 globals_ 名称表查找（已声明过的全局变量）
                 auto it = globals_.find(name);
                 if (it == globals_.end()) {
+                    gvc = {};
                     return runtimeError("未定义的变量: " + name, DiagCodes::kUndefinedVariable);
                 }
                 it->second = reg(src);
+                gvc = {-1, &it->second, globalsVersion_};
             }
         } else {
             if (slotOrName >= globalSlots_.size()) {
@@ -506,7 +546,13 @@ VMResult RegisterVM::executeVars(RegOp op, size_t& ip) {
                 gsIt->second < static_cast<int>(globalSlots_.size())) {
                 globalSlots_[gsIt->second] = reg(src);
             } else {
-                globals_[name] = reg(src);
+                auto git = globals_.find(name);
+                if (git != globals_.end()) {
+                    git->second = reg(src);
+                } else {
+                    globals_[name] = reg(src);
+                    ++globalsVersion_; // OPT-07: 名称表插入使缓存 Value* 失效
+                }
             }
         } else {
             if (slotOrName >= globalSlots_.size()) {
@@ -524,6 +570,7 @@ VMResult RegisterVM::executeVars(RegOp op, size_t& ip) {
         }
         const std::string& name = chunk.constants[nameIdx].stringVal();
         globals_.erase(name);
+        ++globalsVersion_; // OPT-07: erase 使缓存 Value* 悬垂，失效所有 per-chunk 缓存
         auto gsIt = globalNameToSlot_.find(name);
         if (gsIt != globalNameToSlot_.end()) {
             if (gsIt->second < static_cast<int>(globalSlots_.size())) {
@@ -1236,6 +1283,17 @@ VMResult RegisterVM::executeTryThrowOps(RegOp op, size_t& ip) {
         }
         break;
     }
+    case RegOp::REG_DROP_PENDING_JUMPS: {
+        // B-008 fix: 丢弃被替换的续跳链（至多 count 个本帧条目；遇其他帧停止）。
+        uint8_t count = chunk.code[ip + 1];
+        size_t curFrameIdx = frames_.size() - 1;
+        while (count > 0 && !pendingJumpStack_.empty() && pendingJumpStack_.back().frameIndex == curFrameIdx) {
+            pendingJumpStack_.pop_back();
+            --count;
+        }
+        ip += 2;
+        break;
+    }
     default:
         return runtimeError("executeTryThrowOps: 未知操作码");
     }
@@ -1281,7 +1339,13 @@ VMResult RegisterVM::executeWritebackOps(RegOp op, size_t& ip) {
                 gsIt->second < static_cast<int>(globalSlots_.size())) {
                 globalSlots_[gsIt->second] = mutated;
             } else {
-                globals_[name] = mutated;
+                auto git = globals_.find(name);
+                if (git != globals_.end()) {
+                    git->second = mutated;
+                } else {
+                    globals_[name] = mutated;
+                    ++globalsVersion_; // OPT-07
+                }
             }
         } else {
             if (slotOrName >= globalSlots_.size()) {
@@ -1306,7 +1370,13 @@ VMResult RegisterVM::executeWritebackOps(RegOp op, size_t& ip) {
                 gsIt->second < static_cast<int>(globalSlots_.size())) {
                 globalSlots_[gsIt->second] = mutated;
             } else {
-                globals_[name] = mutated;
+                auto git = globals_.find(name);
+                if (git != globals_.end()) {
+                    git->second = mutated;
+                } else {
+                    globals_[name] = mutated;
+                    ++globalsVersion_; // OPT-07
+                }
             }
         } else {
             if (slotOrName >= globalSlots_.size()) {
@@ -1559,6 +1629,7 @@ VMResult RegisterVM::executeMisc(RegOp op, size_t& ip) {
     case RegOp::REG_LOAD_EXCEPTION:
     case RegOp::REG_PUSH_JUMP_TARGET:
     case RegOp::REG_FINALLY_END:
+    case RegOp::REG_DROP_PENDING_JUMPS:
         return executeTryThrowOps(op, ip);
     case RegOp::REG_WRITEBACK_INDEX_LOCAL:
     case RegOp::REG_WRITEBACK_MEMBER_LOCAL:

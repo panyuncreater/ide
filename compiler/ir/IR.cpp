@@ -98,6 +98,7 @@ const char* irOpName(IROp op) {
         // AUDIT-P1.1 fix: finally 续跳
         {IROp::PUSH_JUMP_TARGET, "PUSH_JUMP_TARGET"},
         {IROp::FINALLY_END, "FINALLY_END"},
+        {IROp::DROP_PENDING_JUMPS, "DROP_PENDING_JUMPS"},
         // 写回指令（限制2）
         {IROp::WRITEBACK_MEMBER_VAR, "WRITEBACK_MEMBER_VAR"},
         {IROp::WRITEBACK_MEMBER_LOCAL, "WRITEBACK_MEMBER_LOCAL"},

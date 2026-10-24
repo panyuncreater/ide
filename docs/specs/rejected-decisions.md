@@ -23,6 +23,8 @@
 | R-16 | stepCallback 在错误路径通知 | 不实施。三后端均不在错误路径触发“指令成功执行”事件；BUG-016 已审计为误报。GUI 通过返回码 + `hasError_` 双重检测。 | 调试器协议要求错误路径也产生步进事件。 |
 | R-17 | NaN-box `fromPtr` 高位指针改为堆包装 | 不实施。x86-64 用户空间虚拟地址高 16 位为 0 由硬件规范保证；abort 是防御性最后防线，实际不可触发。改造需新增类型 + 20+ 处 `asPtr` + 三后端同步。 | 支持高位地址的硬件/平台进入支持矩阵。 |
 | R-18 | 拆分 `Bytecode.h` 以缩短重编译链 | 不实施。PCH 仅含标准库头，配置正确；`BytecodeChunk` 被 30+ .cpp 直接 include 是 C++ 依赖管理固有行为。彻底解决需 PIMPL，重构成本高于收益。 | 核心头变更频率显著上升或增量编译成为瓶颈。 |
+| R-19 | BytecodeCache memo 改 `shared_ptr<const CompileResult>` 共享（OPT-18 B4） | 暂不实施。memo 命中路径（`app/PipelineRunner.cpp:56/79`）把结果移入 `Compiler::lastRegisterResult_`，随后编译器在 `loadPrecompiledRegisterModule` 中原地修改该结果；仅把 memo 容器改为 shared_ptr 仍会在编译器边界产生一次深拷贝，真正消除需把 Compiler/VM 的结果所有权整体改为不可变共享，存在缓存对象被后续编译原地修改的风险。 | Compiler/VM 引入不可变共享编译结果（或 memo 成为唯一所有者且消费者只读）。 |
+| R-20 | 常量折叠跨轮复用 `vregDefs`（OPT-18 B5） | 不实施。`constantFoldingPass` 每轮重建一次定义映射，而 `optimizeIR` 在“全 pass 无修改”时立即 break（`IROptPasses.cpp:1157-1160`），可复用场景至多省一次全函数扫描；轮次间的指令已被修改，复用旧映射会读到失效定义。“非 SSA 无支配性校验”疑点无失败用例，IR 差分测试已覆盖。 | 出现常量折叠误编译的最小复现，或 profile 证明该扫描占编译时间 >5%。 |
 
 ## 维护规则
 

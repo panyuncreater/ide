@@ -6,7 +6,7 @@
 //
 // 工作流程：
 //   source → Lexer::scan → Parser::parse → Compiler::compile → CompileResult
-//   → (1) 扫描 mainChunk + functionChunks.lines 收集"可执行行集"
+//   → (1) 扫描 mainChunk/functionChunks 的行元数据收集"可执行行集"
 //   → (2) 创建 VM 设置 stepCallback，callback 内读 vm.getCurrentLine()
 //        累加到 lineCounts[]
 //   → (3) VM::execute 全速运行
@@ -35,8 +35,8 @@ namespace minilang_coverage {
 
 /// 覆盖率后端选择
 enum class Backend {
-    StackVM,    ///< 栈式 VM（默认，复用 BytecodeChunk.lines）
-    RegisterVM, ///< 寄存器式 VM（复用 RegBytecodeChunk.lines）
+    StackVM,    ///< 栈式 VM（默认，复用 BytecodeChunk 行元数据）
+    RegisterVM, ///< 寄存器式 VM（复用 RegBytecodeChunk 行元数据）
     Both        ///< 同时跑两后端，分别报告（用于交叉验证）
 };
 
@@ -60,7 +60,7 @@ struct CoverageOptions {
 /// 单行覆盖率信息
 struct LineCoverage {
     int line = 0;            ///< 1-based 源码行号
-    bool executable = false; ///< 是否为可执行行（出现在 chunk.lines 中）
+    bool executable = false; ///< 是否为可执行行（出现在 chunk 行元数据中）
     bool covered = false;    ///< 是否被执行（lineCounts[line] > 0）
     uint64_t count = 0;      ///< 执行次数（covered=true 时 >0）
 };

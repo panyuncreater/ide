@@ -221,6 +221,9 @@ private:
     // 全局变量
     std::unordered_map<std::string, Value> globals_;
     std::vector<Value> globalSlots_;
+    // OPT-07: 结构变更版本号（reset/slot 扩容/名称表插入/删除时递增），
+    // 使各 chunk 的 globalVarCache_ 中缓存槽位与 globals_ 指针失效。
+    uint32_t globalsVersion_ = 0;
     std::unordered_map<std::string, int> globalNameToSlot_;
 
     // BUG-REGVM-3 fix: 删除 functionClosures_ 死代码字段。该字段无任何写入点，
@@ -367,17 +370,17 @@ private:
     // B3 fix: 越界时调用 runtimeError（设置 hasError_ + 诊断）后抛 std::runtime_error，
     // 替代原 std::abort()。调用方（VmStepper::stepByMode / runBatch）已用 try/catch 包裹，
     // 抛出会被捕获并转化为 ERROR 状态，避免 IDE 整个进程崩溃。
+    // OPT-17: 热路径内联快路径，空帧异常处理移至 .cpp 冷路径。
+    RegCallFrame& currentFrameSlow();
+    const RegCallFrame& currentFrameSlow() const;
     RegCallFrame& currentFrame() {
-        if (frames_.empty()) {
-            runtimeError("currentFrame() on empty frames");
-            throw std::runtime_error("RegisterVM: currentFrame() on empty frames");
-        }
+        if (frames_.empty()) [[unlikely]]
+            return currentFrameSlow();
         return frames_.back();
     }
     const RegCallFrame& currentFrame() const {
-        if (frames_.empty()) {
-            throw std::runtime_error("RegisterVM: currentFrame() on empty frames");
-        }
+        if (frames_.empty()) [[unlikely]]
+            return currentFrameSlow();
         return frames_.back();
     }
     // PERF-AUDIT-5 fix: reg() 内联到头文件。原实现定义在 .cpp 中，每次寄存器访问

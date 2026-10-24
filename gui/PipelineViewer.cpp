@@ -15,6 +15,7 @@
 #include "gui/GuiTextUtils.h" // R75: monospaceFont() 跨机器字体回退链
 #include "gui/I18n.h"
 #include "gui/PanelAnimator.h"
+#include "gui/TeachingTheme.h" // OPT-11: 颜色语义化
 #include "lexer/Lexer.h"
 #include "lexer/Token.h"
 #include "parser/Parser.h"
@@ -112,14 +113,14 @@ static QString bytecodeTextToClickableHtml(const QString& plainText) {
 // ============================================================
 QColor PipelineViewer::stageColor(int step) {
     static const QColor kColors[] = {
-        QColor("#5A5A5A"), // 源码：石墨灰
-        QColor("#268BD2"), // Token：海蓝
-        QColor("#859900"), // AST：森林绿
-        QColor("#6C71C4"), // IR：紫色
-        QColor("#CB4B16"), // 字节码：橙色
+        QColor(TeachingTheme::textSecondary().name()), // 源码：石墨灰
+        QColor(TeachingTheme::info().name()), // Token：海蓝
+        QColor(TeachingTheme::success().name()), // AST：森林绿
+        QColor(TeachingTheme::solarizedViolet().name()), // IR：紫色
+        QColor(TeachingTheme::solarizedOrange().name()), // 字节码：橙色
     };
     if (step < 0 || step >= 5)
-        return QColor("#E0E0E0");
+        return QColor(TeachingTheme::border().name());
     return kColors[step];
 }
 
@@ -164,7 +165,7 @@ QString PipelineViewer::stageDesc(int step) {
 PipelineViewer::PipelineViewer(QWidget* parent) : QWidget(parent) {
     // 整面板背景：白色（与 IDE 主背景一致）
     setObjectName("pipelineRoot");
-    setStyleSheet("QWidget#pipelineRoot { background: #FFFFFF; }");
+    setStyleSheet((QStringLiteral("QWidget#pipelineRoot { background: ") + TeachingTheme::surface().name() + QStringLiteral("; }")));
 
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(8, 8, 8, 8);
@@ -173,11 +174,11 @@ PipelineViewer::PipelineViewer(QWidget* parent) : QWidget(parent) {
     // === 步骤导航条：圆角容器 + 主题色按钮 + chevron 箭头 ===
     auto* stepBar = new QFrame(this);
     stepBar->setObjectName("pipelineStepBar");
-    stepBar->setStyleSheet(QString("QFrame#pipelineStepBar {"
-                                   "  background: #F5F5F5;"       // 浅灰
-                                   "  border: 1px solid #E0E0E0;" // 浅灰边框
-                                   "  border-radius: 8px;"
-                                   "}"));
+    stepBar->setStyleSheet((QStringLiteral("QFrame#pipelineStepBar {")
+                                   + QStringLiteral("  background: ") + TeachingTheme::surfaceHover().name() + QStringLiteral(";")       // 浅灰
+                                   + QStringLiteral("  border: 1px solid ") + TeachingTheme::border().name() + QStringLiteral(";") // 浅灰边框
+                                   + QStringLiteral("  border-radius: 8px;")
+                                   + QStringLiteral("}")));
     auto* stepLayout = new QHBoxLayout(stepBar);
     stepLayout->setContentsMargins(8, 4, 8, 4);
     stepLayout->setSpacing(4);
@@ -192,25 +193,25 @@ PipelineViewer::PipelineViewer(QWidget* parent) : QWidget(parent) {
         btn->setMinimumWidth(96);
         btn->setCursor(Qt::PointingHandCursor);
         const QString colorHex = stageColor(step).name();
-        btn->setStyleSheet(QString("QPushButton {"
-                                   "  background: #FFFFFF;" // 白色未选中背景
-                                   "  color: %1;"
-                                   "  border: 1.5px solid %1;"
-                                   "  border-radius: 4px;"
-                                   "  padding: 6px 12px;"
-                                   "  font-weight: 600;"
-                                   "  font-size: 12px;"
-                                   "}"
-                                   "QPushButton:checked {"
-                                   "  background: %1;" // 选中态填充主题色
-                                   "  color: white;"
-                                   "}"
-                                   "QPushButton:hover:!checked {"
-                                   "  background: #F5F5F5;" // 浅灰 hover
-                                   "}"
-                                   "QPushButton:pressed {"
-                                   "  background: %1; color: white;"
-                                   "}")
+        btn->setStyleSheet((QStringLiteral("QPushButton {")
+                                   + QStringLiteral("  background: ") + TeachingTheme::surface().name() + QStringLiteral(";") // 白色未选中背景
+                                   + QStringLiteral("  color: %1;")
+                                   + QStringLiteral("  border: 1.5px solid %1;")
+                                   + QStringLiteral("  border-radius: 4px;")
+                                   + QStringLiteral("  padding: 6px 12px;")
+                                   + QStringLiteral("  font-weight: 600;")
+                                   + QStringLiteral("  font-size: 12px;")
+                                   + QStringLiteral("}")
+                                   + QStringLiteral("QPushButton:checked {")
+                                   + QStringLiteral("  background: %1;") // 选中态填充主题色
+                                   + QStringLiteral("  color: white;")
+                                   + QStringLiteral("}")
+                                   + QStringLiteral("QPushButton:hover:!checked {")
+                                   + QStringLiteral("  background: ") + TeachingTheme::surfaceHover().name() + QStringLiteral(";") // 浅灰 hover
+                                   + QStringLiteral("}")
+                                   + QStringLiteral("QPushButton:pressed {")
+                                   + QStringLiteral("  background: %1; color: white;")
+                                   + QStringLiteral("}"))
                                .arg(colorHex));
         connect(btn, &QPushButton::clicked, this, [this, step]() { switchToStep(step); });
         return btn;
@@ -254,21 +255,21 @@ PipelineViewer::PipelineViewer(QWidget* parent) : QWidget(parent) {
     // === 主体：QStackedWidget（外层圆角容器 + 每页 header + content） ===
     stack_ = new QStackedWidget(this);
     stack_->setObjectName("pipelineStack");
-    stack_->setStyleSheet(QString("QStackedWidget#pipelineStack {"
-                                  "  background: #FFFFFF;"
-                                  "  border: 1px solid #E0E0E0;"
-                                  "  border-radius: 6px;"
-                                  "}"));
+    stack_->setStyleSheet((QStringLiteral("QStackedWidget#pipelineStack {")
+                                  + QStringLiteral("  background: ") + TeachingTheme::surface().name() + QStringLiteral(";")
+                                  + QStringLiteral("  border: 1px solid ") + TeachingTheme::border().name() + QStringLiteral(";")
+                                  + QStringLiteral("  border-radius: 6px;")
+                                  + QStringLiteral("}")));
 
     // === 内容控件创建（保持原有逻辑） ===
     sourceBrowser_ = new QTextBrowser(this);
     sourceBrowser_->setFont(GuiTextUtils::monospaceFont(10));
-    sourceBrowser_->setStyleSheet(QString("QTextBrowser {"
-                                          "  background: #FFFFFF;"
-                                          "  border: 1px solid #E0E0E0;"
-                                          "  border-radius: 4px;"
-                                          "  padding: 4px;"
-                                          "}"));
+    sourceBrowser_->setStyleSheet((QStringLiteral("QTextBrowser {")
+                                          + QStringLiteral("  background: ") + TeachingTheme::surface().name() + QStringLiteral(";")
+                                          + QStringLiteral("  border: 1px solid ") + TeachingTheme::border().name() + QStringLiteral(";")
+                                          + QStringLiteral("  border-radius: 4px;")
+                                          + QStringLiteral("  padding: 4px;")
+                                          + QStringLiteral("}")));
 
     tokenTable_ = new QTableWidget(this);
     tokenTable_->setColumnCount(5);
@@ -280,23 +281,23 @@ PipelineViewer::PipelineViewer(QWidget* parent) : QWidget(parent) {
     tokenTable_->setSelectionBehavior(QAbstractItemView::SelectItems);
     tokenTable_->setSelectionMode(QAbstractItemView::SingleSelection);
     tokenTable_->setAlternatingRowColors(true);
-    tokenTable_->setStyleSheet(QString("QTableWidget {"
-                                       "  background: #FFFFFF;"
-                                       "  alternate-background-color: #F5F5F5;"
-                                       "  border: 1px solid #E0E0E0;"
-                                       "  border-radius: 4px;"
-                                       "  gridline-color: #E0E0E0;"
-                                       "  selection-background-color: #268BD2;"
-                                       "  selection-color: white;"
-                                       "}"
-                                       "QHeaderView::section {"
-                                       "  background: #F5F5F5;"
-                                       "  color: #1E1E1E;"
-                                       "  border: none;"
-                                       "  border-bottom: 1px solid #E0E0E0;"
-                                       "  padding: 4px 8px;"
-                                       "  font-weight: bold;"
-                                       "}"));
+    tokenTable_->setStyleSheet((QStringLiteral("QTableWidget {")
+                                       + QStringLiteral("  background: ") + TeachingTheme::surface().name() + QStringLiteral(";")
+                                       + QStringLiteral("  alternate-background-color: ") + TeachingTheme::surfaceHover().name() + QStringLiteral(";")
+                                       + QStringLiteral("  border: 1px solid ") + TeachingTheme::border().name() + QStringLiteral(";")
+                                       + QStringLiteral("  border-radius: 4px;")
+                                       + QStringLiteral("  gridline-color: ") + TeachingTheme::border().name() + QStringLiteral(";")
+                                       + QStringLiteral("  selection-background-color: ") + TeachingTheme::info().name() + QStringLiteral(";")
+                                       + QStringLiteral("  selection-color: white;")
+                                       + QStringLiteral("}")
+                                       + QStringLiteral("QHeaderView::section {")
+                                       + QStringLiteral("  background: ") + TeachingTheme::surfaceHover().name() + QStringLiteral(";")
+                                       + QStringLiteral("  color: ") + TeachingTheme::textPrimary().name() + QStringLiteral(";")
+                                       + QStringLiteral("  border: none;")
+                                       + QStringLiteral("  border-bottom: 1px solid ") + TeachingTheme::border().name() + QStringLiteral(";")
+                                       + QStringLiteral("  padding: 4px 8px;")
+                                       + QStringLiteral("  font-weight: bold;")
+                                       + QStringLiteral("}")));
 
     // M10: 右键菜单 — 复制单元格 / 复制整行
     tokenTable_->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -332,34 +333,34 @@ PipelineViewer::PipelineViewer(QWidget* parent) : QWidget(parent) {
 
     astSummary_ = new QTextBrowser(this);
     astSummary_->setFont(GuiTextUtils::monospaceFont(10));
-    astSummary_->setStyleSheet(QString("QTextBrowser {"
-                                       "  background: #FFFFFF;"
-                                       "  border: 1px solid #E0E0E0;"
-                                       "  border-radius: 4px;"
-                                       "  padding: 4px;"
-                                       "}"));
+    astSummary_->setStyleSheet((QStringLiteral("QTextBrowser {")
+                                       + QStringLiteral("  background: ") + TeachingTheme::surface().name() + QStringLiteral(";")
+                                       + QStringLiteral("  border: 1px solid ") + TeachingTheme::border().name() + QStringLiteral(";")
+                                       + QStringLiteral("  border-radius: 4px;")
+                                       + QStringLiteral("  padding: 4px;")
+                                       + QStringLiteral("}")));
 
     irBrowser_ = new QTextBrowser(this);
     irBrowser_->setFont(GuiTextUtils::monospaceFont(10));
     irBrowser_->setOpenLinks(false);
     irBrowser_->setOpenExternalLinks(false);
-    irBrowser_->setStyleSheet(QString("QTextBrowser {"
-                                      "  background: #FFFFFF;"
-                                      "  border: 1px solid #E0E0E0;"
-                                      "  border-radius: 4px;"
-                                      "  padding: 4px;"
-                                      "}"));
+    irBrowser_->setStyleSheet((QStringLiteral("QTextBrowser {")
+                                      + QStringLiteral("  background: ") + TeachingTheme::surface().name() + QStringLiteral(";")
+                                      + QStringLiteral("  border: 1px solid ") + TeachingTheme::border().name() + QStringLiteral(";")
+                                      + QStringLiteral("  border-radius: 4px;")
+                                      + QStringLiteral("  padding: 4px;")
+                                      + QStringLiteral("}")));
 
     bytecodeBrowser_ = new QTextBrowser(this);
     bytecodeBrowser_->setFont(GuiTextUtils::monospaceFont(10));
     bytecodeBrowser_->setOpenLinks(false);
     bytecodeBrowser_->setOpenExternalLinks(false);
-    bytecodeBrowser_->setStyleSheet(QString("QTextBrowser {"
-                                            "  background: #FFFFFF;"
-                                            "  border: 1px solid #E0E0E0;"
-                                            "  border-radius: 4px;"
-                                            "  padding: 4px;"
-                                            "}"));
+    bytecodeBrowser_->setStyleSheet((QStringLiteral("QTextBrowser {")
+                                            + QStringLiteral("  background: ") + TeachingTheme::surface().name() + QStringLiteral(";")
+                                            + QStringLiteral("  border: 1px solid ") + TeachingTheme::border().name() + QStringLiteral(";")
+                                            + QStringLiteral("  border-radius: 4px;")
+                                            + QStringLiteral("  padding: 4px;")
+                                            + QStringLiteral("}")));
 
     // === 包装每个内容控件到「header + content」容器 ===
     // header 条：左侧 4px 主题色竖线 + 标题 + 描述
@@ -377,28 +378,28 @@ PipelineViewer::PipelineViewer(QWidget* parent) : QWidget(parent) {
         header->setTextFormat(Qt::RichText);
         const QColor color = stageColor(step);
         const QString html =
-            QString("<div style='font-family: \"Microsoft YaHei\",\"PingFang SC\",\"Noto Sans CJK SC\",\"Source Han "
-                    "Sans SC\",\"Segoe UI\",\"SF Pro Text\",\"Arial Unicode MS\",\"Arial\",sans-serif;'>"
-                    "<span style='font-size: 14px; font-weight: 600; color: %1;'>%2 %3</span>"
-                    "&nbsp;&nbsp;&nbsp;"
-                    "<span style='font-size: 11px; color: #8C8C8C;'>%4</span>"
-                    "</div>")
+            (QStringLiteral("<div style='font-family: \"Microsoft YaHei\",\"PingFang SC\",\"Noto Sans CJK SC\",\"Source Han ")
+                    + QStringLiteral("Sans SC\",\"Segoe UI\",\"SF Pro Text\",\"Arial Unicode MS\",\"Arial\",sans-serif;'>")
+                    + QStringLiteral("<span style='font-size: 14px; font-weight: 600; color: %1;'>%2 %3</span>")
+                    + QStringLiteral("&nbsp;&nbsp;&nbsp;")
+                    + QStringLiteral("<span style='font-size: 11px; color: ") + TeachingTheme::textHint().name() + QStringLiteral(";'>%4</span>")
+                    + QStringLiteral("</div>"))
                 .arg(color.name())
                 .arg(stageIcon(step))
                 .arg(stageTitle(step))
                 .arg(stageDesc(step));
         header->setText(html);
         // header QSS：左 4px 主题色竖线 + 浅色背景 + 上下竖直 padding
-        header->setStyleSheet(QString("QLabel {"
-                                      "  background: #F5F5F5;"       // 浅灰背景
-                                      "  border-left: 4px solid %1;" // 主题色左竖线
-                                      "  border-top: 1px solid #E0E0E0;"
-                                      "  border-right: 1px solid #E0E0E0;"
-                                      "  border-bottom: 1px solid #E0E0E0;"
-                                      "  border-top-left-radius: 4px;"
-                                      "  border-bottom-left-radius: 4px;"
-                                      "  padding: 8px 12px;"
-                                      "}")
+        header->setStyleSheet((QStringLiteral("QLabel {")
+                                      + QStringLiteral("  background: ") + TeachingTheme::surfaceHover().name() + QStringLiteral(";")       // 浅灰背景
+                                      + QStringLiteral("  border-left: 4px solid %1;") // 主题色左竖线
+                                      + QStringLiteral("  border-top: 1px solid ") + TeachingTheme::border().name() + QStringLiteral(";")
+                                      + QStringLiteral("  border-right: 1px solid ") + TeachingTheme::border().name() + QStringLiteral(";")
+                                      + QStringLiteral("  border-bottom: 1px solid ") + TeachingTheme::border().name() + QStringLiteral(";")
+                                      + QStringLiteral("  border-top-left-radius: 4px;")
+                                      + QStringLiteral("  border-bottom-left-radius: 4px;")
+                                      + QStringLiteral("  padding: 8px 12px;")
+                                      + QStringLiteral("}"))
                                   .arg(color.name()));
         layout->addWidget(header);
         layout->addWidget(content, 1); // auto-reparent 到 page
@@ -563,14 +564,14 @@ void PipelineViewer::updateStatusBar() {
                                            QString::fromUtf8("AST"), QString::fromUtf8("IR"),
                                            QString::fromUtf8("字节码")};
     const QColor color = stageColor(currentStep_);
-    statusLabel_->setStyleSheet(QString("QLabel {"
-                                        "  background: #F5F5F5;" // 浅灰背景
-                                        "  border: 1px solid #E0E0E0;"
-                                        "  border-left: 4px solid %1;" // 当前阶段主题色左竖线
-                                        "  border-radius: 4px;"
-                                        "  padding: 4px 10px;"
-                                        "  color: #1E1E1E;"
-                                        "}")
+    statusLabel_->setStyleSheet((QStringLiteral("QLabel {")
+                                        + QStringLiteral("  background: ") + TeachingTheme::surfaceHover().name() + QStringLiteral(";") // 浅灰背景
+                                        + QStringLiteral("  border: 1px solid ") + TeachingTheme::border().name() + QStringLiteral(";")
+                                        + QStringLiteral("  border-left: 4px solid %1;") // 当前阶段主题色左竖线
+                                        + QStringLiteral("  border-radius: 4px;")
+                                        + QStringLiteral("  padding: 4px 10px;")
+                                        + QStringLiteral("  color: ") + TeachingTheme::textPrimary().name() + QStringLiteral(";")
+                                        + QStringLiteral("}"))
                                     .arg(color.name()));
     statusLabel_->setText(QString::fromUtf8("\xF0\x9F\x93\x8C 步骤: %1 | 光标: 行 %2, 列 %3") // 📌
                               .arg(kStepNames.value(currentStep_))

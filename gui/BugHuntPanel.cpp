@@ -5,6 +5,7 @@
 #include "gui/I18n.h"
 #include "gui/LearnerProgress.h"
 #include "gui/ProgressSaveFeedback.h" // P2-UX fix: save 失败 toast 通知
+#include "gui/TeachingTheme.h" // OPT-11: 颜色语义化
 
 #include <QButtonGroup>
 #include <QHBoxLayout>
@@ -152,8 +153,8 @@ BugHuntPanel::BugHuntPanel(QWidget* parent) : QWidget(parent) {
     // 教学目标：引导用户走「预测 → 观察 → 修复 → 验证」四步调试闭环，
     // 而非仅展示问题代码和错误原因。每步完成后打勾，增强可操作性。
     debugStepsLabel_ = new QLabel(this);
-    debugStepsLabel_->setStyleSheet("QLabel { background: #F5F5F5; border: 1px solid #E0E0E0;"
-                                    "  border-radius: 4px; padding: 6px 8px; font-size: 12px; }");
+    debugStepsLabel_->setStyleSheet((QStringLiteral("QLabel { background: ") + TeachingTheme::surfaceHover().name() + QStringLiteral("; border: 1px solid ") + TeachingTheme::border().name() + QStringLiteral(";")
+                                    + QStringLiteral("  border-radius: 4px; padding: 6px 8px; font-size: 12px; }")));
     debugStepsLabel_->setWordWrap(true);
     debugStepsLabel_->setTextFormat(Qt::RichText);
     rightLayout->addWidget(debugStepsLabel_);
@@ -189,14 +190,14 @@ BugHuntPanel::BugHuntPanel(QWidget* parent) : QWidget(parent) {
 
     // issue 5: 中性浅色风格 QSS（Bug 芯片按钮，三态：默认/当前/隐藏）
     // 动态属性 [current='true'] 在 refreshBugChips() 中通过 setProperty + polish() 触发
-    setStyleSheet(QString::fromUtf8("QPushButton#bugChip { background: #F5F5F5; border: 1px solid #E0E0E0; "
-                                    "border-radius: 4px; font-size: 11px; padding: 2px 8px; }"
-                                    "QPushButton#bugChip:hover { border-color: #268BD2; background: #E5F3FB; }"
-                                    "QPushButton#bugChip[current='true'] { background: #268BD2; color: white; "
-                                    "border-color: #1E6FA3; font-weight: bold; }"
-                                    "QPushButton#bugChip[diff='0'] { border-color: #859900; }"
-                                    "QPushButton#bugChip[diff='1'] { border-color: #B58900; }"
-                                    "QPushButton#bugChip[diff='2'] { border-color: #CB4B16; }"));
+    setStyleSheet((QStringLiteral("QPushButton#bugChip { background: ") + TeachingTheme::surfaceHover().name() + QStringLiteral("; border: 1px solid ") + TeachingTheme::border().name() + QStringLiteral("; ")
+                                    + QStringLiteral("border-radius: 4px; font-size: 11px; padding: 2px 8px; }")
+                                    + QStringLiteral("QPushButton#bugChip:hover { border-color: ") + TeachingTheme::info().name() + QStringLiteral("; background: ") + TeachingTheme::primaryHoverBg().name() + QStringLiteral("; }")
+                                    + QStringLiteral("QPushButton#bugChip[current='true'] { background: ") + TeachingTheme::info().name() + QStringLiteral("; color: white; ")
+                                    + QStringLiteral("border-color: ") + TeachingTheme::primaryDeep().name() + QStringLiteral("; font-weight: bold; }")
+                                    + QStringLiteral("QPushButton#bugChip[diff='0'] { border-color: ") + TeachingTheme::success().name() + QStringLiteral("; }")
+                                    + QStringLiteral("QPushButton#bugChip[diff='1'] { border-color: ") + TeachingTheme::warning().name() + QStringLiteral("; }")
+                                    + QStringLiteral("QPushButton#bugChip[diff='2'] { border-color: ") + TeachingTheme::solarizedOrange().name() + QStringLiteral("; }")));
 
     // OPT-2 fix: 搜索框 textChanged 改用 200ms 防抖定时器聚合输入，
     // 避免每输入一个字符就 O(n) 遍历 bugChips_ 重建 haystack。
@@ -596,12 +597,12 @@ void BugHuntPanel::refreshDebugSteps() {
     auto check = [](bool done) -> QString {
         return done ? QString::fromUtf8("\xe2\x9c\x85") : QString::fromUtf8("\xe2\xac\x9c");
     };
-    QString html = QString::fromUtf8("<b>调试流程：</b> %1 预测 → %2 观察 → %3 修复 → %4 验证"
-                                     "<br><span style='color:#5A5A5A;font-size:11px;'>"
-                                     "教学目标：通过「预测-观察-修复-验证」四步闭环培养系统化调试能力。"
-                                     "先在下方输入框写下你对代码行为的预测，运行后对比差异，"
-                                     "修改代码尝试修复，最后用「三后端对比」验证修复效果。"
-                                     "</span>")
+    QString html = (QStringLiteral("<b>调试流程：</b> %1 预测 → %2 观察 → %3 修复 → %4 验证")
+                                     + QStringLiteral("<br><span style='color:") + TeachingTheme::textSecondary().name() + QStringLiteral(";font-size:11px;'>")
+                                     + QStringLiteral("教学目标：通过「预测-观察-修复-验证」四步闭环培养系统化调试能力。")
+                                     + QStringLiteral("先在下方输入框写下你对代码行为的预测，运行后对比差异，")
+                                     + QStringLiteral("修改代码尝试修复，最后用「三后端对比」验证修复效果。")
+                                     + QStringLiteral("</span>"))
                        .arg(check(stepPredicted_))
                        .arg(check(stepObserved_))
                        .arg(check(stepAttemptedFix_))

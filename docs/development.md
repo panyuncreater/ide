@@ -34,6 +34,8 @@
 - **PERF-14 寄存器式 VM**：32 虚拟寄存器 R0-R31，68 条 RegOp，IR 直接 lowering
 - **PERF-15 IR 复制传播**：vreg→常量等价替换，仅寄存器后端启用
 - **COW 优化**：修改前检查独占所有权，避免不必要的深拷贝
+- **OPT 性能快路径（2026-10-23）**：解释器单节点 VarRef 原位变异、StackVM/JIT 接收者整体写回、RegisterVM 名称版全局缓存、JIT init 缓存均有明确的失效/回退条件——修改前必读 `docs/specs/memory-model.md` §4 与 `docs/specs/backend-consistency.md` §10，并保留对应回归锁。
+- **GUI 颜色**：面板内所有六位十六进制颜色必须经 `gui/TeachingTheme.h` 的语义角色（如 `TeachingTheme::error()`），禁止新增裸 hex；core_headless 编译的 `gui/ErrorHintEngine.cpp`（无 Qt 依赖）与暗色回退分支是仅有的例外，3 位 CSS 简写暂保留。
 
 ## 安全约束摘要
 
@@ -79,6 +81,8 @@
 ## 新增教学面板指南
 
 MiniLang IDE 的教学面板采用**懒加载工厂 + 元数据目录**双注册模式，新增一个面板需完成以下 4 步：
+
+**颜色约定（OPT-11）**：面板样式与 HTML 中的六位颜色值必须使用 `gui/TeachingTheme.h` 的语义角色（新增角色需保持与被替换字面量逐位同值）；禁止直接写 `#RRGGBB`。`gui/ErrorHintEngine.cpp` 属于 core_base 无 Qt 编译单元，不得 include TeachingTheme。
 
 ### 1. 创建面板源文件
 
@@ -199,6 +203,8 @@ registrar(QStringLiteral("xxx-panel"), mlTr("我的面板"), [this]() {
 | `interpreter/Interpreter.h` | `Interpreter::currentEnvironmentShared()` | 获取当前环境 shared_ptr（跨线程安全） |
 | `interpreter/Value.h` | `Value::isAsciiString()` | O(1) 读取 StringData 持久缓存的 isAscii 标志（R97 #3 fix） |
 | `interpreter/Value.h` | `Value::DictKey` / `DictMap` | 字典键 variant 类型与容器 typedef（R97 #2 / L4 fix） |
+| `interpreter/Value.h` | `Value::sharesStorageWith(other)` | 判断两个 Value 是否指向同一堆对象（OPT-01 原位变异身份校验） |
+| `interpreter/Environment.h` | `Environment::getMutableVariableSlot(name)` | 沿作用域链取变量可写槽位（OPT-01：RHS 求值后重取，避免悬垂/错对象） |
 
 ### 编译器层（compiler/）
 
@@ -208,8 +214,9 @@ registrar(QStringLiteral("xxx-panel"), mlTr("我的面板"), [this]() {
 | `compiler/core/Compiler.h` | `Compiler::CompileContextGuard` | RAII 守卫，自动保存/恢复编译上下文（R97 #9 fix） |
 | `compiler/backend-stack/VM.h` | `VM::execute(BytecodeChunk&)` | 执行栈式字节码 |
 | `compiler/backend-reg/RegisterVM.h` | `RegisterVM::execute(RegBytecodeChunk&)` | 执行寄存器式字节码 |
-| `compiler/core/Bytecode.h` | `OpCode` 枚举 | 栈式 VM 操作码（~60 项） |
-| `compiler/backend-reg/RegisterBytecode.h` | `RegOp` 枚举 | 寄存器式 VM 操作码（~50 项） |
+| `compiler/core/Bytecode.h` | `OpCode` 枚举 | 栈式 VM 操作码（93 项，含 int 比较特化） |
+| `compiler/backend-reg/RegisterBytecode.h` | `RegOp` 枚举 | 寄存器式 VM 操作码（69 项） |
+| `compiler/core/Bytecode.h` | `BytecodeLineColumnMap` / `getLine` / `getColumn` | 行列元数据 4B/字节打包（OPT-10） |
 
 ### IR 中间层（compiler/）
 

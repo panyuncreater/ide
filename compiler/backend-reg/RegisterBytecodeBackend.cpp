@@ -427,13 +427,11 @@ bool RegisterBytecodeBackend::lower(const IRFunction& ir) {
                 return false; // lowering 失败或 vreg 溢出：不生成损坏的字节码
             }
             for (size_t i = codeStart; i < chunk_->code.size(); ++i) {
-                chunk_->columns[i] = instr.column;
+                chunk_->lineColumn.entries[i] = BytecodeLineColumnMap::pack(chunk_->getLine(i), instr.column);
             }
             // 填充行号表（writeOp 已同步补齐，此处为防御性兜底）
-            // D12 fix: BUG-IBACKEND-2 修复——columns 填充 instr.column（原恒 0）
-            while (static_cast<int>(chunk_->lines.size()) < static_cast<int>(chunk_->code.size())) {
-                chunk_->lines.push_back(instr.line);
-                chunk_->columns.push_back(instr.column);
+            while (chunk_->lineColumn.size() < chunk_->code.size()) {
+                chunk_->lineColumn.push(instr.line, instr.column);
             }
             // P0-REGALLOC fix: 释放最后使用点 == instrIndex 的 vreg 的寄存器
             releaseDeadVRegs(instrIndex);
@@ -625,6 +623,7 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
     case IROp::LOAD_EXCEPTION:
     case IROp::PUSH_JUMP_TARGET:
     case IROp::FINALLY_END:
+    case IROp::DROP_PENDING_JUMPS:
     case IROp::WRITEBACK_MEMBER_VAR:
     case IROp::WRITEBACK_MEMBER_LOCAL:
     case IROp::WRITEBACK_INDEX_VAR:
@@ -847,9 +846,8 @@ bool RegisterBytecodeBackend::lowerUpvalueOps(const IRInstruction& instr, const 
         chunk_->writeOp(RegOp::REG_LOAD_UPVALUE, line);
         chunk_->writeReg(dst, line);
         chunk_->code.push_back(static_cast<uint8_t>(instr.operands[1].index));
-        while (static_cast<int>(chunk_->lines.size()) < static_cast<int>(chunk_->code.size())) {
-            chunk_->lines.push_back(line);
-            chunk_->columns.push_back(instr.column); // D12 fix: BUG-IBACKEND-2（原恒 0）
+        while (chunk_->lineColumn.size() < chunk_->code.size()) {
+            chunk_->lineColumn.push(line, instr.column); // D12 fix: BUG-IBACKEND-2
         }
         break;
     }
@@ -866,9 +864,8 @@ bool RegisterBytecodeBackend::lowerUpvalueOps(const IRInstruction& instr, const 
         chunk_->writeOp(RegOp::REG_STORE_UPVALUE, line);
         chunk_->writeReg(src, line);
         chunk_->code.push_back(static_cast<uint8_t>(instr.operands[0].index));
-        while (static_cast<int>(chunk_->lines.size()) < static_cast<int>(chunk_->code.size())) {
-            chunk_->lines.push_back(line);
-            chunk_->columns.push_back(instr.column); // D12 fix: BUG-IBACKEND-2（原恒 0）
+        while (chunk_->lineColumn.size() < chunk_->code.size()) {
+            chunk_->lineColumn.push(line, instr.column); // D12 fix: BUG-IBACKEND-2
         }
         break;
     }
@@ -885,9 +882,8 @@ bool RegisterBytecodeBackend::lowerUpvalueOps(const IRInstruction& instr, const 
         }
         chunk_->writeOp(RegOp::REG_CLOSE_UPVALUE, line);
         chunk_->code.push_back(static_cast<uint8_t>(instr.operands[0].index));
-        while (static_cast<int>(chunk_->lines.size()) < static_cast<int>(chunk_->code.size())) {
-            chunk_->lines.push_back(line);
-            chunk_->columns.push_back(instr.column); // D12 fix: BUG-IBACKEND-2（原恒 0）
+        while (chunk_->lineColumn.size() < chunk_->code.size()) {
+            chunk_->lineColumn.push(line, instr.column); // D12 fix: BUG-IBACKEND-2
         }
         break;
     }
@@ -1800,6 +1796,14 @@ bool RegisterBytecodeBackend::lowerMiscOps(const IRInstruction& instr, const IRF
     case IROp::FINALLY_END: {
         // 无操作数 → REG_FINALLY_END
         chunk_->writeOp(RegOp::REG_FINALLY_END, line);
+        break;
+    }
+    case IROp::DROP_PENDING_JUMPS: {
+        // B-008: operands: [count(IMM)] → REG_DROP_PENDING_JUMPS count(1B)
+        if (instr.operands.empty())
+            return false;
+        chunk_->writeOp(RegOp::REG_DROP_PENDING_JUMPS, line);
+        chunk_->writeByte(static_cast<uint8_t>(std::min<uint32_t>(instr.operands[0].index, 255)), line);
         break;
     }
 

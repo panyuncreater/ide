@@ -1,11 +1,11 @@
 // ============================================================
 // cli/coverage_core.cpp - minilang-coverage CLI 核心逻辑实现
 // ------------------------------------------------------------
-// R110 行级覆盖率工具：复用 Compiler + VM stepCallback + BytecodeChunk.lines
+// R110 行级覆盖率工具：复用 Compiler + VM stepCallback + BytecodeChunk 行元数据
 // 行号信息收集行级覆盖率。
 //
 // 关键设计点：
-//   (1) 可执行行集：扫描 mainChunk.lines + 所有 functionChunks[*].lines，
+//   (1) 可执行行集：扫描 mainChunk/functionChunks 的 lineColumn（getLine），
 //       去重后得到 1-based 源码行号集合（过滤 0 表示无位置信息）。
 //   (2) 已执行行集：VM 运行时 stepCallback 内读 vm.getCurrentLine()，
 //       用 unordered_map<int, uint64_t> 累加每行执行次数。
@@ -60,7 +60,8 @@ std::vector<std::string> splitLines(const std::string& source) {
 
 /// 收集 BytecodeChunk 中所有非 0 行号（可执行行）
 template <typename Chunk> void collectExecutableLines(const Chunk& chunk, std::unordered_set<int>& out) {
-    for (int line : chunk.lines) {
+    for (size_t i = 0; i < chunk.lineColumn.size(); ++i) {
+        const int line = chunk.getLine(i);
         if (line > 0) {
             out.insert(line);
         }
@@ -134,7 +135,7 @@ void scanBranchesRegister(const RegBytecodeChunk& chunk, const std::string& chun
     while (off < chunk.code.size()) {
         if (static_cast<RegOp>(chunk.code[off]) == RegOp::REG_JUMP_IF_FALSE && off + 3 < chunk.code.size()) {
             BranchPointInfo bp;
-            bp.line = (off < chunk.lines.size()) ? chunk.lines[off] : 0;
+            bp.line = chunk.getLine(off);
             bp.target = static_cast<size_t>(chunk.code[off + 2] | (chunk.code[off + 3] << 8));
             bp.fallthrough = off + 4;
             out[{chunkName, off}] = bp;
