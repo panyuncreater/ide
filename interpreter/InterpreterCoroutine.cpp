@@ -212,6 +212,10 @@ struct Interpreter::CoroutineFiberState {
     bool completed = false; // 生成器体执行终结（自然结束/显式 return/错误逃逸）
     bool failed = false;    // 错误逃逸（fiber 不可复用；保留至协程终结，后续 .next() 持续重抛同一错误对齐重放）
     std::exception_ptr pendingError;
+    // 失败错误的脚本值副本：catch(e) 绑定可能 move 掉异常对象内的 Value，
+    // 仅保存 exception_ptr 会让第二次 .next() 抛出空值（Linux ucontext 实测）。
+    Value pendingThrownValue;
+    bool hasPendingThrownValue = false;
     Value handoffValue;           // yield 值交接（挂起→恢复）
     size_t resumerStackDepth = 0; // .next() 入口时 callStack_ 深度（挂起截断基线，=守卫 savedStackDepth）
     // 挂起期间的解释器上下文快照（P0 fix 2026-10-21：快照持 shared_ptr 仅保对象存活，
@@ -293,11 +297,20 @@ void Interpreter::coroutineFiberBody() {
         cd->currentValueBox.push_back(std::move(e.returnValue));
         if (fs->funEnv)
             fs->funEnv->closeCapturedVariables();
+    } catch (const ThrowException& e) {
+        // 脚本 throw：额外保存值的独立副本，确保多次 .next() 重抛同一错误值。
+        fs->failed = true;
+        fs->pendingError = std::current_exception();
+        fs->pendingThrownValue = e.thrownValue;
+        fs->hasPendingThrownValue = true;
+        if (fs->funEnv)
+            fs->funEnv->closeCapturedVariables();
     } catch (...) {
-        // 错误逃逸（RuntimeError/ThrowException/DebugStopException）：封送后由
+        // 错误逃逸（RuntimeError/DebugStopException 等）：封送后由
         // callCoroutineNext 重抛——调用方上下文由其守卫恢复，done 不置位（对齐重放）
         fs->failed = true;
         fs->pendingError = std::current_exception();
+        fs->hasPendingThrownValue = false;
         if (fs->funEnv)
             fs->funEnv->closeCapturedVariables();
     }
@@ -369,6 +382,10 @@ void Interpreter::collectCoroutineFiberGcRoots(const CoroutineFiberState& fs, st
     for (const auto& frame : fs.suspendedCallStack) {
         if (frame.env)
             collectChain(frame.env.get());
+    }
+    if (fs.hasPendingThrownValue) {
+        if (const void* ptr = fs.pendingThrownValue.gcRootPtr())
+            roots.push_back(ptr);
     }
 }
 #endif // MINILANG_CORO_FIBER
@@ -477,6 +494,8 @@ Value Interpreter::callCoroutineNext(Value& coroVal) {
             // 只执行一次（ADR-007 挂起 vs 重放的唯一既定差异口径）。
             // 实现要点：重抛必须在切入前（此处）——fiber 体已终结，switch 进去即重入
             // 死栈 = UB；首次失败在 switch 返回后重抛（见下方返回点检查）。
+            if (fs->hasPendingThrownValue)
+                throw ThrowException(fs->pendingThrownValue);
             std::rethrow_exception(fs->pendingError);
         }
         if (activeCoroutineFiber_ == fs) {
@@ -494,6 +513,8 @@ Value Interpreter::callCoroutineNext(Value& coroVal) {
         if (fs->failed) {
             // 首次失败到达此处（fiber 体内设 failed 后切回）：重抛并保留 fiber
             // （后续 .next() 走上方前置检查直接重抛，不再重建）。
+            if (fs->hasPendingThrownValue)
+                throw ThrowException(fs->pendingThrownValue);
             std::rethrow_exception(fs->pendingError);
         }
         if (fs->completed) {

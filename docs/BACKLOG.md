@@ -7,7 +7,12 @@
 
 ## 1. 缺陷与阻塞
 
-当前无开放缺陷或阻塞（2026-10-24 缺陷轮清偿全部 P0–P2，见 `docs/audit/2026-10-24-defects.md`）。
+- **B-009** `open` / P1：macOS 重放平台 RegisterVM 在挂起窗口闭包 upvalue 场景报
+  `closeUpvaluesFrom: upvalue 指向已弹出的帧`（CI `CoroutineSuspension.SuspendedWindowClosureUpvalueSemantics`）。
+  测试已按 `MINILANG_CORO_FIBER` 门控（该语义仅真挂起平台成立）；下一步在 macOS 重放路径定位
+  `owningFrameIdx` 与回放帧生命周期。
+- 2026-10-24 缺陷轮的 P0–P2 已清偿（见 `docs/audit/2026-10-24-defects.md`）；B-009 为跨平台 CI
+  新暴露的存量缺陷。
 
 ## 2. 优化候选
 
