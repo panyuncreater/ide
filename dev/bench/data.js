@@ -1,5 +1,5 @@
 {
-  "lastUpdate": 1792809890577,
+  "lastUpdate": 1792812255260,
   "repoUrl": "https://github.com/panyuncreater/ide",
   "entries": {
     "MiniLang Performance Benchmark": [
@@ -1188,6 +1188,264 @@
           {
             "name": "JIT::field_access",
             "value": 24.2216,
+            "unit": "ms",
+            "extra": "[object Object]"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "1265110878@qq.com",
+            "name": "panyuncreater",
+            "username": "panyuncreater"
+          },
+          "committer": {
+            "email": "1265110878@qq.com",
+            "name": "panyuncreater",
+            "username": "panyuncreater"
+          },
+          "distinct": true,
+          "id": "3338355c7333eb1f6fddd9ea501f17a50dbf9638",
+          "message": "fix(gui,i18n): 补全 StepExplainer 新 OpCode 分支\n\n- 增加 OP_DROP_PENDING_JUMPS / OP_GT_INT_SPEC / OP_GTE_INT_SPEC / OP_LTE_INT_SPEC\n- 修复 GCC/Clang -Werror=switch 导致的 Linux/macOS/Docker 构建失败\n- 同步新增说明字符串，i18n 保持 787/787\n\nKnowledge-Impact: none",
+          "timestamp": "2026-10-24T11:22:14+08:00",
+          "tree_id": "13b5332e92f04ca52dc8e97e4b7330dabe750592",
+          "url": "https://github.com/panyuncreater/ide/commit/3338355c7333eb1f6fddd9ea501f17a50dbf9638"
+        },
+        "date": 1792812255259,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Interpreter::fibonacci",
+            "value": 893.025,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "StackVM::fibonacci",
+            "value": 50.0487,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "RegisterVM::fibonacci",
+            "value": 58.4436,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Interpreter::large_loop",
+            "value": 39.5706,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "StackVM::large_loop",
+            "value": 34.2897,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "RegisterVM::large_loop",
+            "value": 33.9944,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Interpreter::string_concat",
+            "value": 3.49628,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "StackVM::string_concat",
+            "value": 2.43534,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "RegisterVM::string_concat",
+            "value": 2.31758,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Interpreter::array_alloc",
+            "value": 106.416,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "StackVM::array_alloc",
+            "value": 21.4654,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "RegisterVM::array_alloc",
+            "value": 20.5558,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Interpreter::tak",
+            "value": 330.2,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "StackVM::tak",
+            "value": 19.2215,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "RegisterVM::tak",
+            "value": 22.4433,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Interpreter::ackermann",
+            "value": 1.14849,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "StackVM::ackermann",
+            "value": 0.091021,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "RegisterVM::ackermann",
+            "value": 0.079359,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Interpreter::bubble_sort",
+            "value": 1.48819,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "StackVM::bubble_sort",
+            "value": 1.13352,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "RegisterVM::bubble_sort",
+            "value": 0.017763,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Interpreter::closure_counter",
+            "value": 50.9657,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "StackVM::closure_counter",
+            "value": 7.8293,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "RegisterVM::closure_counter",
+            "value": 6.60973,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Interpreter::method_call",
+            "value": 122.371,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "StackVM::method_call",
+            "value": 27.9694,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "RegisterVM::method_call",
+            "value": 28.3828,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Interpreter::field_access",
+            "value": 43.7867,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "StackVM::field_access",
+            "value": 29.5296,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "RegisterVM::field_access",
+            "value": 44.8545,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "JIT::fibonacci",
+            "value": 4.06967,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "JIT::large_loop",
+            "value": 1.32746,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "JIT::string_concat",
+            "value": 0.020879,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "JIT::tak",
+            "value": 1.6114,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "JIT::ackermann",
+            "value": 0.059071,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "JIT::bubble_sort",
+            "value": 0.051286,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "JIT::closure_counter",
+            "value": 9.75334,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "JIT::method_call",
+            "value": 33.6745,
+            "unit": "ms",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "JIT::field_access",
+            "value": 40.733,
             "unit": "ms",
             "extra": "[object Object]"
           }
