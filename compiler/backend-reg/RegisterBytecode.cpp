@@ -100,21 +100,44 @@ const RegOpInfo& getRegOpInfo(RegOp op) {
 
 // ---- RegBytecodeChunk 实现 ----
 
+namespace {
+size_t hashConstantValue(const Value& value) {
+    switch (value.getType()) {
+    case ValueType::VAL_INT:
+        return std::hash<int64_t>{}(value.intVal());
+    case ValueType::VAL_FLOAT:
+        return std::hash<double>{}(value.floatVal());
+    case ValueType::VAL_STRING:
+        return std::hash<std::string>{}(value.stringVal());
+    case ValueType::VAL_BOOL:
+        return std::hash<bool>{}(value.boolVal());
+    case ValueType::VAL_NULL:
+        return 0;
+    default:
+        return static_cast<size_t>(value.getType());
+    }
+}
+} // namespace
+
 uint16_t RegBytecodeChunk::addConstant(const Value& value) {
-    // 简单线性扫描去重（常量池通常较小）
+    // 与 BytecodeChunk::addConstant 同构：哈希分桶 + 桶内严格 type/equals 比较。
     // BUG-CP-1 fix: 类型严格匹配，避免 Value::equals() 跨类型数值相等性
     // （如 Value(0).equals(Value(0.0)) == true）导致 int/float 常量被错误去重。
-    for (size_t i = 0; i < constants.size(); ++i) {
+    const size_t h = hashConstantValue(value);
+    auto& bucket = constantHashMap_[h];
+    for (uint16_t i : bucket) {
         if (constants[i].getType() == value.getType() && constants[i].equals(value)) {
-            return static_cast<uint16_t>(i);
+            return i;
         }
     }
     if (constants.size() >= 65535) {
         // 超出索引上限，抛异常（与 BytecodeChunk 行为一致）
         throw std::runtime_error("常量池索引超出 65535 上限");
     }
+    const uint16_t idx = static_cast<uint16_t>(constants.size());
     constants.push_back(value);
-    return static_cast<uint16_t>(constants.size() - 1);
+    bucket.push_back(idx);
+    return idx;
 }
 
 void RegBytecodeChunk::writeOp(RegOp op, int line, int column) {

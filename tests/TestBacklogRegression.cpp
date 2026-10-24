@@ -8,6 +8,7 @@
 #include "common/ThreeBackends.h"
 #include "cli/ProtocolUtils.h"
 #include "cli/pkg_core.h"
+#include "compiler/backend-reg/RegisterBytecode.h"
 #include "common/RuntimeLimits.h"
 #include "formatter/Formatter.h"
 #include "interpreter/GcManager.h"
@@ -445,6 +446,20 @@ TEST(AuditRound2, PkgRejectsTraversalNames) {
     cfg.packagesDir = "C:/tmp/mlpkgs";
     EXPECT_TRUE(minilang_pkg::getPackageInstallPath(cfg.packagesDir, "../evil").empty());
     EXPECT_FALSE(minilang_pkg::getPackageInstallPath(cfg.packagesDir, "math-utils").empty());
+}
+
+TEST(AuditRound2, RegBytecodeConstantHashDedup) {
+    RegBytecodeChunk chunk;
+    const uint16_t intA = chunk.addConstant(Value(static_cast<int64_t>(42)));
+    const uint16_t intB = chunk.addConstant(Value(static_cast<int64_t>(42)));
+    const uint16_t strA = chunk.addConstant(Value(std::string("hello")));
+    const uint16_t strB = chunk.addConstant(Value(std::string("hello")));
+    const uint16_t intZero = chunk.addConstant(Value(static_cast<int64_t>(0)));
+    const uint16_t floatZero = chunk.addConstant(Value(0.0));
+    EXPECT_EQ(intA, intB);
+    EXPECT_EQ(strA, strB);
+    EXPECT_NE(intZero, floatZero); // 类型严格匹配：int 0 与 float 0.0 不得合并
+    EXPECT_EQ(chunk.constants.size(), 4u);
 }
 
 TEST(AuditRound2, ProtocolContentLengthBounds) {

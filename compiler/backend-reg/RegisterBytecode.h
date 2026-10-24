@@ -24,7 +24,9 @@
 #include "compiler/core/Bytecode.h" // 复用 UpvalueDesc
 #include "interpreter/Value.h"
 #include <cstdint>
+#include <functional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 // ============================================================
@@ -298,6 +300,11 @@ struct RegBytecodeChunk {
     /// REG_DELETE_GLOBAL 使用 nameConstIdx（常量池索引）而非 slot，无需重定位。
     /// @param relocationMap[moduleSlot] = mainSlot（-1 表示不重定位）
     void relocateGlobalSlots(const std::vector<int>& relocationMap);
+
+private:
+    // 常量池去重索引（与 BytecodeChunk::constantHashMap_ 同构）。
+    // 值类型 + 内容哈希分桶，桶内再严格比较 type/equals，保持首索引语义。
+    std::unordered_map<size_t, std::vector<uint16_t>> constantHashMap_;
 };
 
 // ============================================================
