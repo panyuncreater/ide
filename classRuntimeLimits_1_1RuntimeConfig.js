@@ -1,5 +1,7 @@
 var classRuntimeLimits_1_1RuntimeConfig =
 [
+    [ "SandboxPolicy", "structRuntimeLimits_1_1RuntimeConfig_1_1SandboxPolicy.html", "structRuntimeLimits_1_1RuntimeConfig_1_1SandboxPolicy" ],
+    [ "SandboxScope", "classRuntimeLimits_1_1RuntimeConfig_1_1SandboxScope.html", "classRuntimeLimits_1_1RuntimeConfig_1_1SandboxScope" ],
     [ "RuntimeConfig", "classRuntimeLimits_1_1RuntimeConfig.html#a5c27fc2bb7bc3f6f52ccf5d843e9b217", null ],
     [ "RuntimeConfig", "classRuntimeLimits_1_1RuntimeConfig.html#a3984a363f136c177bae30c3431c6c636", null ],
     [ "instance", "classRuntimeLimits_1_1RuntimeConfig.html#a6427bb642e16cabd93396b8672844b57", null ],
@@ -19,6 +21,7 @@ var classRuntimeLimits_1_1RuntimeConfig =
     [ "setSandboxAllowImport", "classRuntimeLimits_1_1RuntimeConfig.html#afb3e8d3ab173d250892264dcf7fc1482", null ],
     [ "setSandboxAllowInput", "classRuntimeLimits_1_1RuntimeConfig.html#a0da62ae5e1302a69b0ae31b6383f5f8d", null ],
     [ "setSandboxEnabled", "classRuntimeLimits_1_1RuntimeConfig.html#a4039fdd08dd683d56e64884798ed817d", null ],
+    [ "threadSandboxPolicy", "classRuntimeLimits_1_1RuntimeConfig.html#adaf541a977e5bafd9dbc1abc0cf7a88e", null ],
     [ "maxInstructions_", "classRuntimeLimits_1_1RuntimeConfig.html#ae658176b2a2ed9d13c14ec9604c5dc1c", null ],
     [ "maxLoopIterations_", "classRuntimeLimits_1_1RuntimeConfig.html#a879fc8516310592a92b172abe4cd4d45", null ],
     [ "maxParseErrors_", "classRuntimeLimits_1_1RuntimeConfig.html#a11320797def2b04e5943fdd9c70a593c", null ],

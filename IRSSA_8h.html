@@ -179,7 +179,7 @@ Functions</h2></td></tr>
 
 <p>将 CFG 格式化为可读字符串（含节点、前驱、后继） </p>
 
-<p class="definition">Definition at line <a class="el" href="IRSSA_8cpp_source.html#l01505">1505</a> of file <a class="el" href="IRSSA_8cpp_source.html">IRSSA.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IRSSA_8cpp_source.html#l01488">1488</a> of file <a class="el" href="IRSSA_8cpp_source.html">IRSSA.cpp</a>.</p>
 
 <p class="reference">References <a class="el" href="IRSSA_8h_source.html#l00051">CFGNode::id</a>, <a class="el" href="IRSSA_8h_source.html#l00095">IRCFG::node()</a>, and <a class="el" href="IRSSA_8h_source.html#l00091">IRCFG::size()</a>.</p>
 
@@ -203,7 +203,7 @@ Functions</h2></td></tr>
 
 <p>将支配树格式化为可读字符串 </p>
 
-<p class="definition">Definition at line <a class="el" href="IRSSA_8cpp_source.html#l01540">1540</a> of file <a class="el" href="IRSSA_8cpp_source.html">IRSSA.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IRSSA_8cpp_source.html#l01523">1523</a> of file <a class="el" href="IRSSA_8cpp_source.html">IRSSA.cpp</a>.</p>
 
 <p class="reference">References <a class="el" href="IRSSA_8h_source.html#l00133">DominatorTree::children()</a>, and <a class="el" href="IRSSA_8h_source.html#l00127">DominatorTree::idom()</a>.</p>
 
@@ -232,11 +232,11 @@ Functions</h2></td></tr>
 </ol>
 <p>约束：必须在 ssaDestructPass 之前调用；PHI 不可到达后端 lowering。 返回：是否插入了 PHI（true 表示进入 SSA 形态）。 </p>
 
-<p class="definition">Definition at line <a class="el" href="IRSSA_8cpp_source.html#l00530">530</a> of file <a class="el" href="IRSSA_8cpp_source.html">IRSSA.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IRSSA_8cpp_source.html#l00513">513</a> of file <a class="el" href="IRSSA_8cpp_source.html">IRSSA.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="IR_8h_source.html#l00462">IRFunction::blocks</a>, <a class="el" href="IRSSA_8h_source.html#l00133">DominatorTree::children()</a>, <a class="el" href="IRSSA_8h_source.html#l00164">DominanceFrontier::df()</a>, <a class="el" href="IR_8h_source.html#l00161">IROperandList::empty()</a>, <a class="el" href="IRSSA_8h_source.html#l00093">IRCFG::entryId()</a>, <a class="el" href="IR_8h_source.html#l00112">IROperand::imm()</a>, <a class="el" href="IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a40222410c7347ec4b6bcaba3bcb21f3b">JUMP</a>, <a class="el" href="IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a971bcd38882322fdbe582579ab487528">JUMP_IF_FALSE</a>, <a class="el" href="IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a57b44564e59ef1ac6b5d3240d6397e77">LOAD_LOCAL</a>, <a class="el" href="IR_8h_source.html#l00108">IROperand::local()</a>, <a class="el" href="Logger_8h_source.html#l00263">LOG_DEBUG</a>, <a class="el" href="IR_8h_source.html#l00471">IRFunction::nextVReg</a>, <a class="el" href="IRSSA_8h_source.html#l00095">IRCFG::node()</a>, <a class="el" href="IR_8h_source.html#l00440">IRInstruction::op</a>, <a class="el" href="IR_8h_source.html#l00441">IRInstruction::operands</a>, <a class="el" href="IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a7434b75669da1d8610a2f9a91957da81">PHI</a>, <a class="el" href="IR_8h_source.html#l00164">IROperandList::push_back()</a>, <a class="el" href="IR_8h_source.html#l00160">IROperandList::size()</a>, <a class="el" href="IRSSA_8h_source.html#l00091">IRCFG::size()</a>, <a class="el" href="IRSSA_8h_source.html#l00057">CFGNode::sourceBlockIdx</a>, <a class="el" href="IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a1b7e42dab9c66c9d8ee554d23e2da5c6">STORE_LOCAL</a>, <a class="el" href="IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a78989d52a0377f76740c1b0faed4e566">TRY_BEGIN</a>, <a class="el" href="IR_8h.html#a0b52ca5a30dc56314f1f0571ce291589a05470727787aa721cf53222b5d3d40f3">VIRTUAL</a>, and <a class="el" href="IR_8h_source.html#l00105">IROperand::vreg()</a>.</p>
+<p class="reference">References <a class="el" href="IR_8h_source.html#l00533">IRFunction::blocks</a>, <a class="el" href="IRSSA_8h_source.html#l00133">DominatorTree::children()</a>, <a class="el" href="IRSSA_8h_source.html#l00164">DominanceFrontier::df()</a>, <a class="el" href="IRSSA_8h_source.html#l00093">IRCFG::entryId()</a>, <a class="el" href="IR_8h_source.html#l00112">IROperand::imm()</a>, <a class="el" href="IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a40222410c7347ec4b6bcaba3bcb21f3b">JUMP</a>, <a class="el" href="IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a971bcd38882322fdbe582579ab487528">JUMP_IF_FALSE</a>, <a class="el" href="IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a57b44564e59ef1ac6b5d3240d6397e77">LOAD_LOCAL</a>, <a class="el" href="IR_8h_source.html#l00108">IROperand::local()</a>, <a class="el" href="Logger_8h_source.html#l00263">LOG_DEBUG</a>, <a class="el" href="IR_8h_source.html#l00542">IRFunction::nextVReg</a>, <a class="el" href="IRSSA_8h_source.html#l00095">IRCFG::node()</a>, <a class="el" href="IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a7434b75669da1d8610a2f9a91957da81">PHI</a>, <a class="el" href="IR_8h_source.html#l00164">IROperandList::push_back()</a>, <a class="el" href="IRSSA_8h_source.html#l00091">IRCFG::size()</a>, <a class="el" href="IRSSA_8h_source.html#l00057">CFGNode::sourceBlockIdx</a>, <a class="el" href="IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a1b7e42dab9c66c9d8ee554d23e2da5c6">STORE_LOCAL</a>, <a class="el" href="IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a78989d52a0377f76740c1b0faed4e566">TRY_BEGIN</a>, <a class="el" href="IR_8h.html#a0b52ca5a30dc56314f1f0571ce291589a05470727787aa721cf53222b5d3d40f3">VIRTUAL</a>, and <a class="el" href="IR_8h_source.html#l00105">IROperand::vreg()</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="CompilerStmt_8cpp_source.html#l01729">Compiler::compileModuleViaRegisterIR()</a>, and <a class="el" href="Compiler_8cpp_source.html#l00335">Compiler::compileViaRegisterIR()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CompilerStmt_8cpp_source.html#l01771">Compiler::compileModuleViaRegisterIR()</a>, and <a class="el" href="Compiler_8cpp_source.html#l00335">Compiler::compileViaRegisterIR()</a>.</p>
 
 </div>
 </div>
@@ -259,11 +259,11 @@ Functions</h2></td></tr>
 <p>策略：对每个 PHI(dest, (pred1, v1), (pred2, v2), ...)，在 pred1 尾部 插入 STORE_LOCAL slot=v1，在 pred2 尾部插入 STORE_LOCAL slot=v2， 将 PHI 替换为 LOAD_LOCAL slot→dest。</p>
 <p>返回：是否消除了 PHI（true 表示已退出 SSA 形态）。 </p>
 
-<p class="definition">Definition at line <a class="el" href="IRSSA_8cpp_source.html#l00799">799</a> of file <a class="el" href="IRSSA_8cpp_source.html">IRSSA.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IRSSA_8cpp_source.html#l00782">782</a> of file <a class="el" href="IRSSA_8cpp_source.html">IRSSA.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="IR_8h_source.html#l00462">IRFunction::blocks</a>, <a class="el" href="IR_8h_source.html#l00442">IRInstruction::line</a>, <a class="el" href="IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a57b44564e59ef1ac6b5d3240d6397e77">LOAD_LOCAL</a>, <a class="el" href="IR_8h_source.html#l00108">IROperand::local()</a>, <a class="el" href="Logger_8h_source.html#l00263">LOG_DEBUG</a>, <a class="el" href="IRSSA_8h_source.html#l00095">IRCFG::node()</a>, <a class="el" href="IR_8h_source.html#l00440">IRInstruction::op</a>, <a class="el" href="IR_8h_source.html#l00441">IRInstruction::operands</a>, <a class="el" href="IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a7434b75669da1d8610a2f9a91957da81">PHI</a>, <a class="el" href="IR_8h_source.html#l00164">IROperandList::push_back()</a>, <a class="el" href="IR_8h_source.html#l00160">IROperandList::size()</a>, <a class="el" href="IRSSA_8h_source.html#l00091">IRCFG::size()</a>, <a class="el" href="IRSSA_8h_source.html#l00057">CFGNode::sourceBlockIdx</a>, <a class="el" href="IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a1b7e42dab9c66c9d8ee554d23e2da5c6">STORE_LOCAL</a>, and <a class="el" href="IR_8h_source.html#l00105">IROperand::vreg()</a>.</p>
+<p class="reference">References <a class="el" href="IR_8h_source.html#l00533">IRFunction::blocks</a>, <a class="el" href="IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a57b44564e59ef1ac6b5d3240d6397e77">LOAD_LOCAL</a>, <a class="el" href="IR_8h_source.html#l00108">IROperand::local()</a>, <a class="el" href="Logger_8h_source.html#l00263">LOG_DEBUG</a>, <a class="el" href="IRSSA_8h_source.html#l00095">IRCFG::node()</a>, <a class="el" href="IR_8h_source.html#l00444">IRInstruction::operands</a>, <a class="el" href="IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a7434b75669da1d8610a2f9a91957da81">PHI</a>, <a class="el" href="IR_8h_source.html#l00164">IROperandList::push_back()</a>, <a class="el" href="IRSSA_8h_source.html#l00091">IRCFG::size()</a>, <a class="el" href="IRSSA_8h_source.html#l00057">CFGNode::sourceBlockIdx</a>, <a class="el" href="IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a1b7e42dab9c66c9d8ee554d23e2da5c6">STORE_LOCAL</a>, and <a class="el" href="IR_8h_source.html#l00105">IROperand::vreg()</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="CompilerStmt_8cpp_source.html#l01729">Compiler::compileModuleViaRegisterIR()</a>, and <a class="el" href="Compiler_8cpp_source.html#l00335">Compiler::compileViaRegisterIR()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CompilerStmt_8cpp_source.html#l01771">Compiler::compileModuleViaRegisterIR()</a>, and <a class="el" href="Compiler_8cpp_source.html#l00335">Compiler::compileViaRegisterIR()</a>.</p>
 
 </div>
 </div>

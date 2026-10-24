@@ -33,6 +33,7 @@ var searchData=
   ['bytecodecache_30',['BytecodeCache',['../classBytecodeCache.html',1,'']]],
   ['bytecodechunk_31',['BytecodeChunk',['../structBytecodeChunk.html',1,'']]],
   ['bytecodeirbackend_32',['BytecodeIRBackend',['../classBytecodeIRBackend.html',1,'']]],
-  ['bytecodetracelibrary_33',['BytecodeTraceLibrary',['../classBytecodeTraceLibrary.html',1,'']]],
-  ['bytecodetracepanel_34',['BytecodeTracePanel',['../classBytecodeTracePanel.html',1,'']]]
+  ['bytecodelinecolumnmap_33',['BytecodeLineColumnMap',['../structBytecodeLineColumnMap.html',1,'']]],
+  ['bytecodetracelibrary_34',['BytecodeTraceLibrary',['../classBytecodeTraceLibrary.html',1,'']]],
+  ['bytecodetracepanel_35',['BytecodeTracePanel',['../classBytecodeTracePanel.html',1,'']]]
 ];

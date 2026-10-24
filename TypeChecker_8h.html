@@ -103,6 +103,7 @@ $(document).ready(function(){initNavTree('TypeChecker_8h.html',''); initResizabl
 <a href="#details">More...</a></p>
 <div class="textblock"><code>#include &quot;<a class="el" href="Diagnostic_8h_source.html">Diagnostic.h</a>&quot;</code><br />
 <code>#include &quot;<a class="el" href="Value_8h_source.html">interpreter/Value.h</a>&quot;</code><br />
+<code>#include &lt;algorithm&gt;</code><br />
 <code>#include &lt;string&gt;</code><br />
 <code>#include &lt;unordered_map&gt;</code><br />
 <code>#include &lt;vector&gt;</code><br />
@@ -148,10 +149,18 @@ Enumerations</h2></td></tr>
 </table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="func-members" name="func-members"></a>
 Functions</h2></td></tr>
+<tr class="memitem:a6fd7efeba6fca380cff22b69623e267c" id="r_a6fd7efeba6fca380cff22b69623e267c"><td class="memItemLeft" align="right" valign="top">size_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="namespaceminilang.html#a6fd7efeba6fca380cff22b69623e267c">minilang::skipTypeAnnotationFrom</a> (const std::string &amp;inner, size_t start)</td></tr>
+<tr class="separator:a6fd7efeba6fca380cff22b69623e267c"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:af33eb25640b303fc724b909e61c0dc9c" id="r_af33eb25640b303fc724b909e61c0dc9c"><td class="memItemLeft" align="right" valign="top">size_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="namespaceminilang.html#af33eb25640b303fc724b909e61c0dc9c">minilang::findDictKVSeparator</a> (const std::string &amp;inner)</td></tr>
+<tr class="separator:af33eb25640b303fc724b909e61c0dc9c"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a8ca286a690754ad7a4b067329f2af8fa" id="r_a8ca286a690754ad7a4b067329f2af8fa"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="namespaceminilang.html#a8ca286a690754ad7a4b067329f2af8fa">minilang::typeMatchValue</a> (const <a class="el" href="structValue.html">Value</a> &amp;val, const std::string &amp;annotation)</td></tr>
 <tr class="separator:a8ca286a690754ad7a4b067329f2af8fa"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aa52ae8fee7911ef9b659f4e772b7a52c" id="r_aa52ae8fee7911ef9b659f4e772b7a52c"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="namespaceminilang.html#aa52ae8fee7911ef9b659f4e772b7a52c">minilang::isTypeParameter</a> (const std::string &amp;typeName, const std::vector&lt; std::string &gt; &amp;typeParams)</td></tr>
 <tr class="separator:aa52ae8fee7911ef9b659f4e772b7a52c"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a36f9630e3188a4697d8cb0a54bedf20b" id="r_a36f9630e3188a4697d8cb0a54bedf20b"><td class="memItemLeft" align="right" valign="top">std::vector&lt; std::string &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="namespaceminilang.html#a36f9630e3188a4697d8cb0a54bedf20b">minilang::mergeTypeParams</a> (std::vector&lt; std::string &gt; base, const std::vector&lt; std::string &gt; &amp;extra)</td></tr>
+<tr class="separator:a36f9630e3188a4697d8cb0a54bedf20b"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:afd0e5ee77a88c01ae7134999275e61f2" id="r_afd0e5ee77a88c01ae7134999275e61f2"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="namespaceminilang.html#afd0e5ee77a88c01ae7134999275e61f2">minilang::annotationReferencesTypeParam</a> (const std::string &amp;annotation, const std::vector&lt; std::string &gt; &amp;typeParams)</td></tr>
+<tr class="separator:afd0e5ee77a88c01ae7134999275e61f2"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
 <a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
 <div class="textblock"><p>静态类型检查接口（ARCH-10 预留）+ 共享运行时类型匹配。 </p>

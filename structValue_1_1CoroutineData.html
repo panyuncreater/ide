@@ -164,6 +164,10 @@ Public Attributes</h2></td></tr>
 <tr class="separator:ae35332878922b6244ca2a12c1c77eabb"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:afb43460b5a22b8917ee514bff9faeeb1" id="r_afb43460b5a22b8917ee514bff9faeeb1"><td class="memItemLeft" align="right" valign="top">std::shared_ptr&lt; void &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structValue_1_1CoroutineData.html#afb43460b5a22b8917ee514bff9faeeb1">vmSuspension</a></td></tr>
 <tr class="separator:afb43460b5a22b8917ee514bff9faeeb1"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ae4bf27edb9d276666c3e60647a52628a" id="r_ae4bf27edb9d276666c3e60647a52628a"><td class="memItemLeft" align="right" valign="top">std::function&lt; void(std::vector&lt; const void * &gt; &amp;)&gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structValue_1_1CoroutineData.html#ae4bf27edb9d276666c3e60647a52628a">gcRootContributor</a></td></tr>
+<tr class="separator:ae4bf27edb9d276666c3e60647a52628a"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ae122e9b0abb4807910d12f8d68577706" id="r_ae122e9b0abb4807910d12f8d68577706"><td class="memItemLeft" align="right" valign="top">std::vector&lt; <a class="el" href="structValue.html">Value</a> &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structValue_1_1CoroutineData.html#ae122e9b0abb4807910d12f8d68577706">vmPendingErrorBox</a></td></tr>
+<tr class="separator:ae122e9b0abb4807910d12f8d68577706"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="inherit_header pub_attribs_structRefCounted"><td colspan="2" onclick="javascript:toggleInherit('pub_attribs_structRefCounted')"><img src="closed.png" alt="-"/>&#160;Public Attributes inherited from <a class="el" href="structRefCounted.html">RefCounted</a></td></tr>
 <tr class="memitem:a149748777e67c951a105965440ffefdc inherit pub_attribs_structRefCounted" id="r_a149748777e67c951a105965440ffefdc"><td class="memItemLeft" align="right" valign="top">std::atomic&lt; int &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structRefCounted.html#a149748777e67c951a105965440ffefdc">refCount</a> {1}</td></tr>
 <tr class="separator:a149748777e67c951a105965440ffefdc inherit pub_attribs_structRefCounted"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -176,7 +180,7 @@ Public Attributes</h2></td></tr>
 </table>
 <a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
 <div class="textblock">
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00483">483</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00531">531</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 </div><h2 class="groupheader">Constructor &amp; Destructor Documentation</h2>
 <a id="a9a227b8ec1a131fcdc4767aa145de6ea" name="a9a227b8ec1a131fcdc4767aa145de6ea"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a9a227b8ec1a131fcdc4767aa145de6ea">&#9670;&#160;</a></span>CoroutineData()</h2>
@@ -201,7 +205,7 @@ Public Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00508">508</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00573">573</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
 </div>
 </div>
@@ -218,7 +222,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00486">486</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00534">534</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
 </div>
 </div>
@@ -234,7 +238,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00485">485</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00533">533</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
 </div>
 </div>
@@ -250,9 +254,9 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00490">490</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00538">538</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="RegisterVMCalls_8cpp_source.html#l01720">RegisterVM::callCoroutineNext()</a>, and <a class="el" href="VMCalls_8cpp_source.html#l01984">VM::callCoroutineNext()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="RegisterVMCalls_8cpp_source.html#l01733">RegisterVM::callCoroutineNext()</a>, and <a class="el" href="VMCalls_8cpp_source.html#l02002">VM::callCoroutineNext()</a>.</p>
 
 </div>
 </div>
@@ -268,7 +272,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00487">487</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00535">535</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
 </div>
 </div>
@@ -284,7 +288,25 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00489">489</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00537">537</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+
+</div>
+</div>
+<a id="ae4bf27edb9d276666c3e60647a52628a" name="ae4bf27edb9d276666c3e60647a52628a"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ae4bf27edb9d276666c3e60647a52628a">&#9670;&#160;</a></span>gcRootContributor</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">std::function&lt;void(std::vector&lt;const void*&gt;&amp;)&gt; Value::CoroutineData::gcRootContributor</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00565">565</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="InterpreterCoroutine_8cpp_source.html#l00393">Interpreter::callCoroutineNext()</a>, <a class="el" href="GcManager_8cpp_source.html#l00264">GcManager::markTrackedRoot()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00142">GcManager::markValue()</a>.</p>
 
 </div>
 </div>
@@ -300,7 +322,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00484">484</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00532">532</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
 </div>
 </div>
@@ -316,9 +338,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00506">506</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
-
-<p class="reference">Referenced by <a class="el" href="InterpreterCoroutine_8cpp_source.html#l00198">Interpreter::callCoroutineNext()</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00554">554</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
 </div>
 </div>
@@ -334,7 +354,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00498">498</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00546">546</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
 </div>
 </div>
@@ -350,7 +370,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00492">492</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00540">540</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
 </div>
 </div>
@@ -366,7 +386,23 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00495">495</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00543">543</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+
+</div>
+</div>
+<a id="ae122e9b0abb4807910d12f8d68577706" name="ae122e9b0abb4807910d12f8d68577706"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ae122e9b0abb4807910d12f8d68577706">&#9670;&#160;</a></span>vmPendingErrorBox</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">std::vector&lt;<a class="el" href="structValue.html">Value</a>&gt; Value::CoroutineData::vmPendingErrorBox</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00572">572</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
 </div>
 </div>
@@ -382,7 +418,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00507">507</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00555">555</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
 </div>
 </div>
@@ -398,7 +434,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00488">488</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00536">536</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
 </div>
 </div>

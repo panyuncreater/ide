@@ -27,5 +27,6 @@ var classReplPanel =
     [ "pendingInput_", "classReplPanel.html#a59e94361dc930af595d4ffb53ca50561", null ],
     [ "pollTimer_", "classReplPanel.html#a8b696dbf9e6506ad0a78be2ef9568d5a", null ],
     [ "replFuture_", "classReplPanel.html#a5f813b4f99c1306af711fe8d8d2469b3", null ],
+    [ "replQueue_", "classReplPanel.html#a6c348c1b3de5519c981f37ed91f83abc", null ],
     [ "replRunning_", "classReplPanel.html#ae6cd099580fe30d9b47e1f4e8a5a6e45", null ]
 ];

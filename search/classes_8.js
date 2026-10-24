@@ -32,7 +32,9 @@ var searchData=
   ['iroptsteprecord_29',['IROptStepRecord',['../structIROptStepRecord.html',1,'']]],
   ['irtransformlibrary_30',['IRTransformLibrary',['../classIRTransformLibrary.html',1,'']]],
   ['irtransformpanel_31',['IRTransformPanel',['../classIRTransformPanel.html',1,'']]],
-  ['irviewer_32',['IrViewer',['../classIrViewer.html',1,'']]],
-  ['iterator_33',['iterator',['../classSmallMap_1_1iterator.html',1,'SmallMap']]],
-  ['ivmbackend_34',['IVmBackend',['../classIVmBackend.html',1,'']]]
+  ['irvaluekey_32',['IRValueKey',['../structIRValueKey.html',1,'']]],
+  ['irvaluekeyhash_33',['IRValueKeyHash',['../structIRValueKeyHash.html',1,'']]],
+  ['irviewer_34',['IrViewer',['../classIrViewer.html',1,'']]],
+  ['iterator_35',['iterator',['../classSmallMap_1_1iterator.html',1,'SmallMap']]],
+  ['ivmbackend_36',['IVmBackend',['../classIVmBackend.html',1,'']]]
 ];

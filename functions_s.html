@@ -113,6 +113,7 @@ $(document).ready(function(){initNavTree('functions_s.html',''); initResizable()
 <li>sandboxEnabled()&#160;:&#160;<a class="el" href="classRuntimeLimits_1_1RuntimeConfig.html#a9343291cc8fd1c730ad67ee255849c0a">RuntimeLimits::RuntimeConfig</a></li>
 <li>sandboxEnabled_&#160;:&#160;<a class="el" href="classRuntimeLimits_1_1RuntimeConfig.html#a2f386dd1fc769b190705e104e4e53137">RuntimeLimits::RuntimeConfig</a></li>
 <li>sandboxOpHintLabel_&#160;:&#160;<a class="el" href="classVmStackSandboxPanel.html#a84938ecd48e3f002f79495f68ce9f269">VmStackSandboxPanel</a></li>
+<li>SandboxScope()&#160;:&#160;<a class="el" href="classRuntimeLimits_1_1RuntimeConfig_1_1SandboxScope.html#ad7493959dbed72f0d16c764b15f0c189">RuntimeLimits::RuntimeConfig::SandboxScope</a></li>
 <li>save()&#160;:&#160;<a class="el" href="classLearnerProgressStore.html#a6ee5789307e1f12709136f2c2d09ca97">LearnerProgressStore</a></li>
 <li>saveAction_&#160;:&#160;<a class="el" href="classIde.html#a418bc2b17225c7b6a3cb438f2d936b6a">Ide</a></li>
 <li>saveAsAction_&#160;:&#160;<a class="el" href="classIde.html#a3ec55b8135b1b1cd24a400d892c3cd8d">Ide</a></li>
@@ -121,7 +122,7 @@ $(document).ready(function(){initNavTree('functions_s.html',''); initResizable()
 <li>saveCourseToFile()&#160;:&#160;<a class="el" href="classCourseSystemLibrary.html#ae2e01bbcb34f082e180294ac8a96a3fc">CourseSystemLibrary</a></li>
 <li>saveCustomCoursesToSettings()&#160;:&#160;<a class="el" href="classCourseSystemPanel.html#a6c49e05f7dd8d2cbb84b9f6c59e817bd">CourseSystemPanel</a></li>
 <li>saved&#160;:&#160;<a class="el" href="structCompiler_1_1CompileContextGuard.html#ab57ae4eb2f6af96eb85460cbf06d296b">Compiler::CompileContextGuard</a>, <a class="el" href="structParser_1_1BoolScope.html#aa3ebd7746663bd55918bb15440b7b8e5">Parser::BoolScope</a>, <a class="el" href="structParser_1_1YieldIdScope.html#a100353fe280c8bb2129cb659c7018e1e">Parser::YieldIdScope</a></li>
-<li>saved_&#160;:&#160;<a class="el" href="classGcManager_1_1CallbackSuppressor.html#a4d0eccd92e9425bb4048110e2e63791b">GcManager::CallbackSuppressor</a></li>
+<li>saved_&#160;:&#160;<a class="el" href="classGcManager_1_1CallbackSuppressor.html#a4d0eccd92e9425bb4048110e2e63791b">GcManager::CallbackSuppressor</a>, <a class="el" href="classRuntimeLimits_1_1RuntimeConfig_1_1SandboxScope.html#a5337853c68620538237727f5f2015849">RuntimeLimits::RuntimeConfig::SandboxScope</a></li>
 <li>savedBlock&#160;:&#160;<a class="el" href="structAstIRBuilder_1_1FunctionEmitCtx.html#a914cd50b47eb25482ae39f589aca38b1">AstIRBuilder::FunctionEmitCtx</a></li>
 <li>savedBlockDepth&#160;:&#160;<a class="el" href="structAstIRBuilder_1_1FunctionEmitCtx.html#a31b36aa5a93a2e252abeedbdf85d70e5">AstIRBuilder::FunctionEmitCtx</a></li>
 <li>savedBlockScopes&#160;:&#160;<a class="el" href="structAstIRBuilder_1_1FunctionEmitCtx.html#ae9acaf71227999f7b90ec6af042a4de5">AstIRBuilder::FunctionEmitCtx</a></li>
@@ -143,6 +144,7 @@ $(document).ready(function(){initNavTree('functions_s.html',''); initResizable()
 <li>savedEnabled&#160;:&#160;<a class="el" href="structInterpreter_1_1TcoScopeGuard.html#ad9fdd811f93bec1ba72a753f6e8a544e">Interpreter::TcoScopeGuard</a></li>
 <li>savedEnumRegistry&#160;:&#160;<a class="el" href="structInterpreter_1_1ReplState.html#a2da64fa6c6b3d1c08d2fbf308be97be0">Interpreter::ReplState</a></li>
 <li>savedExportedNames&#160;:&#160;<a class="el" href="structInterpreter_1_1ReplState.html#a7fe9a26e480f03d36394f9b20db81d7c">Interpreter::ReplState</a></li>
+<li>savedFinallyBodyDepth&#160;:&#160;<a class="el" href="structAstIRBuilder_1_1FunctionEmitCtx.html#ac300fcb87866104012ea7dfd5c479b2e">AstIRBuilder::FunctionEmitCtx</a></li>
 <li>savedFunRegistry&#160;:&#160;<a class="el" href="structInterpreter_1_1ReplState.html#ae7673db3e1a19de727cfeef4816f83c0">Interpreter::ReplState</a></li>
 <li>savedFunRegistryGen&#160;:&#160;<a class="el" href="structInterpreter_1_1ReplState.html#a9a0b1c6ab5909fe72ff1347d100db258">Interpreter::ReplState</a></li>
 <li>savedGlobalEnv&#160;:&#160;<a class="el" href="structInterpreter_1_1ReplState.html#ab43bae65e25708e98ac711ac9930f5a2">Interpreter::ReplState</a></li>
@@ -270,6 +272,7 @@ $(document).ready(function(){initNavTree('functions_s.html',''); initResizable()
 <li>setFunctionBreakpoint()&#160;:&#160;<a class="el" href="classDebugController.html#a3714383460647cceaa897b53c347ee82">DebugController</a>, <a class="el" href="classDebugCoordinator.html#a336d92043de2c169e4b7c6c8588a4342">DebugCoordinator</a>, <a class="el" href="classIDebugController.html#aa936b79a01474598558f157d2bda28ae">IDebugController</a>, <a class="el" href="classIdeController.html#ad0adfafb5ddd03fc62792bb85b52f611">IdeController</a>, <a class="el" href="classVmStepper.html#ac2ec552bd0064fe2577fd99eee819938">VmStepper</a></li>
 <li>setFunctionBreakpointCondition()&#160;:&#160;<a class="el" href="classDebugController.html#a131f2954389627699f4b47dfecf347d7">DebugController</a>, <a class="el" href="classDebugCoordinator.html#a8ce99b6f77c41122b95b08ffcbc42b8f">DebugCoordinator</a>, <a class="el" href="classIDebugController.html#a325d7ae41acf80e5cea7633f5755579a">IDebugController</a>, <a class="el" href="classIdeController.html#a96869575fbcaca85ab2a94a17f507c94">IdeController</a>, <a class="el" href="classVmStepper.html#adc7ef6b9c165deed67c6baaa74e35fff">VmStepper</a></li>
 <li>setFunctionBreakpoints()&#160;:&#160;<a class="el" href="classDebugController.html#a21ecef47d1927f9c5d4af3cd32c2a79b">DebugController</a>, <a class="el" href="classDebugCoordinator.html#afda4abc95a8a06ded1e2959e14659b1b">DebugCoordinator</a>, <a class="el" href="classIDebugController.html#aab9f05b52cc876135837983443daadf3">IDebugController</a>, <a class="el" href="classIdeController.html#a24a9ddb28c000a6e4ae6b95cb1f3a6eb">IdeController</a>, <a class="el" href="classVmStepper.html#a605f68296b03e1dadc33a252b7f66633">VmStepper</a></li>
+<li>setFunctionName()&#160;:&#160;<a class="el" href="structVMCallFrame.html#abeb05e4a8d0429563d3860334c1a4a24">VMCallFrame</a></li>
 <li>setGcAllocationThreshold()&#160;:&#160;<a class="el" href="classGcManager.html#aae7a8daf3db0cb70a4e0c6e67032b0f7">GcManager</a>, <a class="el" href="classMemoryInspectionAPI.html#a7b07e93dbceac598e50273c807ef9b58">MemoryInspectionAPI</a></li>
 <li>setGcMode()&#160;:&#160;<a class="el" href="classGcManager.html#ad70c84b90e8389715248205c1dd30fe3">GcManager</a>, <a class="el" href="classMemoryInspectionAPI.html#a1d9d93f6642c7f165d684fbc377bae7a">MemoryInspectionAPI</a></li>
 <li>setGcTriggerCallback()&#160;:&#160;<a class="el" href="classGcManager.html#aa168ea666345c49f331913b012c555e5">GcManager</a>, <a class="el" href="classMemoryInspectionAPI.html#a705b152c650795df6d3b7232a08938e6">MemoryInspectionAPI</a></li>
@@ -294,6 +297,7 @@ $(document).ready(function(){initNavTree('functions_s.html',''); initResizable()
 <li>setOptions()&#160;:&#160;<a class="el" href="classFormatter.html#ac4af3bb71cb90d8e415a0fc2d3b2ffff">Formatter</a></li>
 <li>setOutputCallback()&#160;:&#160;<a class="el" href="classIBackend.html#a4a610af53664bbe5d85f3a53c7f933a5">IBackend</a>, <a class="el" href="classInterpreter.html#a0625b562f5bd09b7a5867b4f29e31e41">Interpreter</a>, <a class="el" href="classRegisterVM.html#a138bc039d8b293a07cddd0714c9bc931">RegisterVM</a>, <a class="el" href="classVM.html#a2f6152a538a24f6b7343cd7fb9f47f9a">VM</a>, <a class="el" href="classVmStepper.html#a5e21bb895dd5fd9f0c964c61144e5d9f">VmStepper</a></li>
 <li>setOutputFile()&#160;:&#160;<a class="el" href="classLogger.html#aacb83dd4ae001cbba4933a362f28abb1">Logger</a></li>
+<li>setOwnedFunctionName()&#160;:&#160;<a class="el" href="structVMCallFrame.html#a3a80d6810e06ac356ea86bc5781d5551">VMCallFrame</a></li>
 <li>setPrecompiledModuleResolver()&#160;:&#160;<a class="el" href="classAstIRBuilder.html#a8180af86784b4c8dc404f9bab1c7dcaf">AstIRBuilder</a>, <a class="el" href="classCompiler.html#af9fff34bd6df585961654a7c6d6b4aeb">Compiler</a></li>
 <li>setRecordingEnabled()&#160;:&#160;<a class="el" href="classInterpreter.html#a65346edcd3368353de14ba99460371ec">Interpreter</a>, <a class="el" href="classVmStepper.html#a29f8593cac7b1ce1daa7033e1b3e3d60">VmStepper</a></li>
 <li>setRecordingMode()&#160;:&#160;<a class="el" href="classExecutionTraceRecorder.html#afc767838ff7bcbe7505d40a9cfd7a548">ExecutionTraceRecorder</a></li>
@@ -323,7 +327,7 @@ $(document).ready(function(){initNavTree('functions_s.html',''); initResizable()
 <li>setupDisagreeTable()&#160;:&#160;<a class="el" href="classFuzzPlaygroundPanel.html#ab965efc34898db317f83cc14eb27cc77">FuzzPlaygroundPanel</a></li>
 <li>setupDockWidgets()&#160;:&#160;<a class="el" href="classIde.html#ade75066474290dab054f6c03de8d74c5">Ide</a></li>
 <li>setupFileWatcher()&#160;:&#160;<a class="el" href="classIde.html#a26a71a131cd88f43cac49eca90b38300">Ide</a></li>
-<li>setupFunctionCallFrame()&#160;:&#160;<a class="el" href="classVM.html#acc17dc6818400854a9b8828dac9702de">VM</a></li>
+<li>setupFunctionCallFrame()&#160;:&#160;<a class="el" href="classVM.html#a75b33d120c6963097f48c890a7d968bb">VM</a></li>
 <li>setupInitEnvironment()&#160;:&#160;<a class="el" href="classInterpreter.html#a4d71fd962e4e75204662c77fa2266a51">Interpreter</a></li>
 <li>setupMainCallbacks()&#160;:&#160;<a class="el" href="classWorkerManager.html#aad731ca9b86de46fc50a806fa5058cd1">WorkerManager</a></li>
 <li>setupMainContainerAndDockManager()&#160;:&#160;<a class="el" href="classIde.html#add03f6a3112024fdb434ca925611fac0">Ide</a></li>
@@ -349,12 +353,15 @@ $(document).ready(function(){initNavTree('functions_s.html',''); initResizable()
 <li>setVmBreakpointConditions()&#160;:&#160;<a class="el" href="classIdeController.html#aa425767200461eb1648f367dadad8b05">IdeController</a></li>
 <li>setVmBreakpoints()&#160;:&#160;<a class="el" href="classIdeController.html#a0e3dc800ce40fe2a065f47b534fe65e7">IdeController</a></li>
 <li>setVmRecordingEnabled()&#160;:&#160;<a class="el" href="classIdeController.html#a048af4b13668e2e41cd03bd7a6dbf3d3">IdeController</a></li>
+<li>setVmStateChangedListenersSuspended()&#160;:&#160;<a class="el" href="classIdeController.html#aa3e5aa9dd87e141a527409f9fbbfceea">IdeController</a></li>
 <li>setVmStepActionsEnabled()&#160;:&#160;<a class="el" href="classIde.html#a4242dd77ecf11e8ffb16cdc3ece747aa">Ide</a></li>
 <li>setWatchpoint()&#160;:&#160;<a class="el" href="classDebugController.html#addbdd4025c6d247a67d833cc20234b23">DebugController</a>, <a class="el" href="classDebugCoordinator.html#aee75d7808872eab7af1fee639204800f">DebugCoordinator</a>, <a class="el" href="classIDebugController.html#a9f2ff1d736310a52e459505daa613fca">IDebugController</a>, <a class="el" href="classIdeController.html#aae46a72ec191f595f9fdea9afaf2e671">IdeController</a>, <a class="el" href="classVmStepper.html#ab75214b243430cd68a2d10f7090f3ac5">VmStepper</a></li>
 <li>severity&#160;:&#160;<a class="el" href="structBugHuntItem.html#af36ac66e46b4b7de6ab810eec7909944">BugHuntItem</a></li>
+<li>shadowedGlobalNames_&#160;:&#160;<a class="el" href="classCompiler.html#a8ed8811ea54bb21ecf63851beeb006d6">Compiler</a></li>
 <li>shadowedGlobalSlot&#160;:&#160;<a class="el" href="structCompiler_1_1CatchVarBindInfo.html#a28dc909d88f156950e17a50f4a757885">Compiler::CatchVarBindInfo</a></li>
 <li>shadowedSaveName&#160;:&#160;<a class="el" href="structCompiler_1_1CatchVarBindInfo.html#a972408182581f11432648294f83ef68e">Compiler::CatchVarBindInfo</a></li>
 <li>shadowedVars&#160;:&#160;<a class="el" href="structAstIRBuilder_1_1BlockScope.html#aa37a19a7ab5ba70308e858d7fc91d85e">AstIRBuilder::BlockScope</a></li>
+<li>sharesStorageWith()&#160;:&#160;<a class="el" href="structValue.html#aa743f33b4fb851db8e227bc36506557f">Value</a></li>
 <li>shortCircuitScratchSlot_&#160;:&#160;<a class="el" href="classAstIRBuilder.html#a1b1edb9b48c9136773a57cd8b3b1c224">AstIRBuilder</a></li>
 <li>shortCircuitScratchValid_&#160;:&#160;<a class="el" href="classAstIRBuilder.html#a5ec99415f33b2e3291bd3b1b71cb198a">AstIRBuilder</a></li>
 <li>shortDef&#160;:&#160;<a class="el" href="structGlossaryPanel_1_1TermEntry.html#a4b7860cb327e770e6899cd9ba9f397ff">GlossaryPanel::TermEntry</a></li>
@@ -409,7 +416,7 @@ $(document).ready(function(){initNavTree('functions_s.html',''); initResizable()
 <li>simTotalCalls_&#160;:&#160;<a class="el" href="classInlineCachePanel.html#acdd11944d9cb17d9bb7a48cf2c748136">InlineCachePanel</a></li>
 <li>simulate()&#160;:&#160;<a class="el" href="classLoopUnrollingLibrary.html#a6eba9be9b4a71165264b4572f82ba7c6">LoopUnrollingLibrary</a></li>
 <li>simulateOneStep()&#160;:&#160;<a class="el" href="classInlineCachePanel.html#a2f12f752010cf4f4ff98931887ef3e0f">InlineCachePanel</a></li>
-<li>size()&#160;:&#160;<a class="el" href="classDiagnosticBag.html#ad99f60bbaee993e51291a7b8c3c5a4c0">DiagnosticBag</a>, <a class="el" href="classExecutionTraceRecorder.html#a27a22bff6d96db877954d38e3135d52c">ExecutionTraceRecorder</a>, <a class="el" href="classIRCFG.html#ad75278a18d6208316f9d1d3dd66fdb2e">IRCFG</a>, <a class="el" href="classIROperandList.html#a889862a8293fa3e88f23a3e386ee54a4">IROperandList</a>, <a class="el" href="classSmallArgs.html#a9deef5a2346c27a598a9592ea61853bf">SmallArgs&lt; T, N &gt;</a>, <a class="el" href="classSmallMap.html#a019b48ad6f7f5d72629209d514fa927b">SmallMap&lt; K, V, N &gt;</a>, <a class="el" href="classVMStack.html#add2915408807b471fceaaacae94097d1">VMStack</a></li>
+<li>size()&#160;:&#160;<a class="el" href="structBytecodeLineColumnMap.html#a928db09286dcb7948a2463a498d467c4">BytecodeLineColumnMap</a>, <a class="el" href="classDiagnosticBag.html#ad99f60bbaee993e51291a7b8c3c5a4c0">DiagnosticBag</a>, <a class="el" href="classExecutionTraceRecorder.html#a27a22bff6d96db877954d38e3135d52c">ExecutionTraceRecorder</a>, <a class="el" href="classIRCFG.html#ad75278a18d6208316f9d1d3dd66fdb2e">IRCFG</a>, <a class="el" href="classIROperandList.html#a889862a8293fa3e88f23a3e386ee54a4">IROperandList</a>, <a class="el" href="classSmallArgs.html#a9deef5a2346c27a598a9592ea61853bf">SmallArgs&lt; T, N &gt;</a>, <a class="el" href="classSmallMap.html#a019b48ad6f7f5d72629209d514fa927b">SmallMap&lt; K, V, N &gt;</a>, <a class="el" href="classVMStack.html#add2915408807b471fceaaacae94097d1">VMStack</a></li>
 <li>size_&#160;:&#160;<a class="el" href="classIROperandList.html#a126eda94af67392b9e5ed66844bc57a2">IROperandList</a></li>
 <li>size_type&#160;:&#160;<a class="el" href="classSmallMap.html#a517c7d7401fe1db3bca1f6cc124ae038">SmallMap&lt; K, V, N &gt;</a></li>
 <li>sizeHint()&#160;:&#160;<a class="el" href="classLineNumberArea.html#aefc37a3b342bfa21ee7ee364696ff712">LineNumberArea</a>, <a class="el" href="classRichTextItemDelegate.html#a9978ac0fb1dc4929329bd49d8da0fc3b">RichTextItemDelegate</a></li>
@@ -483,7 +490,7 @@ $(document).ready(function(){initNavTree('functions_s.html',''); initResizable()
 <li>stagesLayout_&#160;:&#160;<a class="el" href="classLearningPathPanel.html#a2d5790184214cb330348b981a18211da">LearningPathPanel</a></li>
 <li>stageTitle()&#160;:&#160;<a class="el" href="classLearningPathPanel.html#a7c6c08a6fb61c5907b02b62dda82485b">LearningPathPanel</a>, <a class="el" href="classPipelineViewer.html#a8b4f15033935017088bf0003ae4e07ee">PipelineViewer</a></li>
 <li>starsToText()&#160;:&#160;<a class="el" href="classTokenPuzzlePanel.html#a263905a3c0d572dfdc104d29197fa8c8">TokenPuzzlePanel</a></li>
-<li>start()&#160;:&#160;<a class="el" href="classGuidedTour.html#ae2a899b96b5871f211d99abec2bda2a9">GuidedTour</a>, <a class="el" href="structWelcomeWizard_1_1TokenSpan.html#abc9ed529479333a949c9ef1ca50c8c2c">WelcomeWizard::TokenSpan</a></li>
+<li>start()&#160;:&#160;<a class="el" href="classGuidedTour.html#ae2a899b96b5871f211d99abec2bda2a9">GuidedTour</a>, <a class="el" href="classReplTaskQueue.html#a9277fde268eedc833473d42438bd00c4">ReplTaskQueue</a>, <a class="el" href="structWelcomeWizard_1_1TokenSpan.html#abc9ed529479333a949c9ef1ca50c8c2c">WelcomeWizard::TokenSpan</a></li>
 <li>start_&#160;:&#160;<a class="el" href="classLexer.html#a0bdd6fd59e58e679d9839fb6ad877510">Lexer</a></li>
 <li>starterCode&#160;:&#160;<a class="el" href="structExercise.html#aecbcba3cfcfabae2141fb368a8330a23">Exercise</a></li>
 <li>startGuidedTour()&#160;:&#160;<a class="el" href="classIde.html#a21de8648d8dd98a04ad4f3812103283b">Ide</a></li>
@@ -568,12 +575,13 @@ $(document).ready(function(){initNavTree('functions_s.html',''); initResizable()
 <li>stepTable_&#160;:&#160;<a class="el" href="classStepExplainerPanel.html#ad2d0b738ce069ce86dfa90583c055eb1">StepExplainerPanel</a></li>
 <li>stepTokenBtn_&#160;:&#160;<a class="el" href="classPipelineViewer.html#ac598bea2f2d202a5485247175aa4b03f">PipelineViewer</a></li>
 <li>stepVerified_&#160;:&#160;<a class="el" href="classBugHuntPanel.html#a1200597138c9fb37d4b9e7eb0b04e0e2">BugHuntPanel</a></li>
-<li>stop()&#160;:&#160;<a class="el" href="classDebugController.html#a86371b1faec4b8f112cf8bf964fe4fb2">DebugController</a>, <a class="el" href="classDebugCoordinator.html#a6eb50ce4ae35a876da4513ec9a42b798">DebugCoordinator</a>, <a class="el" href="classIDebugController.html#a7c3bb7e2c9f89a30a8e8a85f37060641">IDebugController</a>, <a class="el" href="classIdeController.html#a66e72f0e45a8d98cf9dd1a9eb4ffcb60">IdeController</a>, <a class="el" href="classVmStepper.html#a1ebf60b70c51b19ba6379d5250386de3">VmStepper</a></li>
+<li>stop()&#160;:&#160;<a class="el" href="classDebugController.html#a86371b1faec4b8f112cf8bf964fe4fb2">DebugController</a>, <a class="el" href="classDebugCoordinator.html#a6eb50ce4ae35a876da4513ec9a42b798">DebugCoordinator</a>, <a class="el" href="classIDebugController.html#a7c3bb7e2c9f89a30a8e8a85f37060641">IDebugController</a>, <a class="el" href="classIdeController.html#a66e72f0e45a8d98cf9dd1a9eb4ffcb60">IdeController</a>, <a class="el" href="classReplTaskQueue.html#aea862bf0054954f2b3a7872a34f21eef">ReplTaskQueue</a>, <a class="el" href="classVmStepper.html#a1ebf60b70c51b19ba6379d5250386de3">VmStepper</a></li>
 <li>stopAction_&#160;:&#160;<a class="el" href="classIde.html#af67771ae43f47bbb2640995bf41e5bc9">Ide</a></li>
 <li>stopCloseAnimationsAndTimers()&#160;:&#160;<a class="el" href="classIde.html#a8f50d832f0e3d99b74a13bec85019a6e">Ide</a></li>
 <li>stopForClose()&#160;:&#160;<a class="el" href="classIdeController.html#a21e58b128e27e4bb2ebfe9c7985f961e">IdeController</a>, <a class="el" href="classWorkerManager.html#adf599f8eb957e65d20750dc287c895a3">WorkerManager</a></li>
 <li>stopped_&#160;:&#160;<a class="el" href="classDebugController.html#adab4168a92101db05c4218098fb229da">DebugController</a></li>
 <li>stoppedByUser()&#160;:&#160;<a class="el" href="classIdeController.html#ab045aa7f000cda67be2f1dfbc20251d1">IdeController</a>, <a class="el" href="classInterpreterWorker.html#aa44960e113aa99d3374c69969e292cbd">InterpreterWorker</a>, <a class="el" href="classWorkerManager.html#a840e6a49b3c1dc197b3d912b4e752d10">WorkerManager</a></li>
+<li>stopping_&#160;:&#160;<a class="el" href="classReplTaskQueue.html#a81ca2a25e72aeb35986ceaaea5be83b6">ReplTaskQueue</a></li>
 <li>stopRequested_&#160;:&#160;<a class="el" href="classInterpreter.html#ad13bebe2a9ae6c030e2a64b2efb29977">Interpreter</a></li>
 <li>stopRunningWorkersForClose()&#160;:&#160;<a class="el" href="classIde.html#aad939de52c9202adb97d7269146e20c9">Ide</a></li>
 <li>stopStatusAnimation()&#160;:&#160;<a class="el" href="classProfileDashboardPanel.html#a067544021a071ac5d049e788ab7ce364">ProfileDashboardPanel</a></li>

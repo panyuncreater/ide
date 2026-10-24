@@ -97,7 +97,8 @@ $(document).ready(function(){initNavTree('Bytecode_8h.html',''); initResizable()
   <div class="headertitle"><div class="title">Bytecode.h File Reference</div></div>
 </div><!--header-->
 <div class="contents">
-<div class="textblock"><code>#include &quot;<a class="el" href="Value_8h_source.html">interpreter/Value.h</a>&quot;</code><br />
+<div class="textblock"><code>#include &quot;<a class="el" href="BytecodeMetadata_8h_source.html">common/BytecodeMetadata.h</a>&quot;</code><br />
+<code>#include &quot;<a class="el" href="Value_8h_source.html">interpreter/Value.h</a>&quot;</code><br />
 <code>#include &lt;cstdint&gt;</code><br />
 <code>#include &lt;map&gt;</code><br />
 <code>#include &lt;string&gt;</code><br />
@@ -244,6 +245,11 @@ Enumerations</h2></td></tr>
 , <a class="el" href="Bytecode_8h.html#a7e85f04e30e1c4c4607773335350fe20a4a868180a54d70c808b68a6ce15a4e29">OP_TAIL_CALL</a>
 , <br />
 &#160;&#160;<a class="el" href="Bytecode_8h.html#a7e85f04e30e1c4c4607773335350fe20a9c21742f9260d0a939c6ca08000471d8">OP_AWAIT</a>
+, <a class="el" href="Bytecode_8h.html#a7e85f04e30e1c4c4607773335350fe20af6dc67f927ad80195dd0c13c4c2bd3ee">OP_DROP_PENDING_JUMPS</a>
+, <a class="el" href="Bytecode_8h.html#a7e85f04e30e1c4c4607773335350fe20a5bd35f3b16713e872859fa207943c05a">OP_GT_INT_SPEC</a>
+, <a class="el" href="Bytecode_8h.html#a7e85f04e30e1c4c4607773335350fe20a0621737f4461a58fd93fd601d3c4db8b">OP_GTE_INT_SPEC</a>
+, <br />
+&#160;&#160;<a class="el" href="Bytecode_8h.html#a7e85f04e30e1c4c4607773335350fe20a83d2a043e55effc8ca248562d36e23f0">OP_LTE_INT_SPEC</a>
 <br />
  }</td></tr>
 <tr class="memdesc:a7e85f04e30e1c4c4607773335350fe20"><td class="mdescLeft">&#160;</td><td class="mdescRight">操作码枚举  <a href="Bytecode_8h.html#a7e85f04e30e1c4c4607773335350fe20">More...</a><br /></td></tr>
@@ -373,9 +379,13 @@ Functions</h2></td></tr>
 <tr><td class="fieldname"><a id="a7e85f04e30e1c4c4607773335350fe20a04237f8d60571bf432cc0685ac98e043" name="a7e85f04e30e1c4c4607773335350fe20a04237f8d60571bf432cc0685ac98e043"></a>OP_LT_INT_SPEC&#160;</td><td class="fielddoc"></td></tr>
 <tr><td class="fieldname"><a id="a7e85f04e30e1c4c4607773335350fe20a4a868180a54d70c808b68a6ce15a4e29" name="a7e85f04e30e1c4c4607773335350fe20a4a868180a54d70c808b68a6ce15a4e29"></a>OP_TAIL_CALL&#160;</td><td class="fielddoc"></td></tr>
 <tr><td class="fieldname"><a id="a7e85f04e30e1c4c4607773335350fe20a9c21742f9260d0a939c6ca08000471d8" name="a7e85f04e30e1c4c4607773335350fe20a9c21742f9260d0a939c6ca08000471d8"></a>OP_AWAIT&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a7e85f04e30e1c4c4607773335350fe20af6dc67f927ad80195dd0c13c4c2bd3ee" name="a7e85f04e30e1c4c4607773335350fe20af6dc67f927ad80195dd0c13c4c2bd3ee"></a>OP_DROP_PENDING_JUMPS&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a7e85f04e30e1c4c4607773335350fe20a5bd35f3b16713e872859fa207943c05a" name="a7e85f04e30e1c4c4607773335350fe20a5bd35f3b16713e872859fa207943c05a"></a>OP_GT_INT_SPEC&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a7e85f04e30e1c4c4607773335350fe20a0621737f4461a58fd93fd601d3c4db8b" name="a7e85f04e30e1c4c4607773335350fe20a0621737f4461a58fd93fd601d3c4db8b"></a>OP_GTE_INT_SPEC&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a7e85f04e30e1c4c4607773335350fe20a83d2a043e55effc8ca248562d36e23f0" name="a7e85f04e30e1c4c4607773335350fe20a83d2a043e55effc8ca248562d36e23f0"></a>OP_LTE_INT_SPEC&#160;</td><td class="fielddoc"></td></tr>
 </table>
 
-<p class="definition">Definition at line <a class="el" href="Bytecode_8h_source.html#l00015">15</a> of file <a class="el" href="Bytecode_8h_source.html">Bytecode.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Bytecode_8h_source.html#l00016">16</a> of file <a class="el" href="Bytecode_8h_source.html">Bytecode.h</a>.</p>
 
 </div>
 </div>
@@ -399,9 +409,9 @@ Functions</h2></td></tr>
 <p>获取 opcode 元数据（name + baseSize + isVariableLength） </p>
 <p>获取 opcode 元数据（name + baseSize + isVariableLength） A3 fix: 单一数据源，替代原 opCodeName switch + instructionSize 数组两处维护 </p>
 
-<p class="definition">Definition at line <a class="el" href="Bytecode_8cpp_source.html#l00127">127</a> of file <a class="el" href="Bytecode_8cpp_source.html">Bytecode.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Bytecode_8cpp_source.html#l00131">131</a> of file <a class="el" href="Bytecode_8cpp_source.html">Bytecode.cpp</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Bytecode_8h_source.html#l00427">BytecodeChunk::instructionSize()</a>, <a class="el" href="Bytecode_8h_source.html#l00205">isOpCodeVariableLength()</a>, and <a class="el" href="Bytecode_8h_source.html#l00200">opCodeName()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Bytecode_8h_source.html#l00437">BytecodeChunk::instructionSize()</a>, <a class="el" href="Bytecode_8h_source.html#l00219">isOpCodeVariableLength()</a>, and <a class="el" href="Bytecode_8h_source.html#l00214">opCodeName()</a>.</p>
 
 </div>
 </div>
@@ -431,11 +441,11 @@ Functions</h2></td></tr>
 
 <p>操作码 → 是否变长指令 </p>
 
-<p class="definition">Definition at line <a class="el" href="Bytecode_8h_source.html#l00205">205</a> of file <a class="el" href="Bytecode_8h_source.html">Bytecode.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Bytecode_8h_source.html#l00219">219</a> of file <a class="el" href="Bytecode_8h_source.html">Bytecode.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Bytecode_8cpp_source.html#l00127">getOpCodeInfo()</a>, and <a class="el" href="Bytecode_8h_source.html#l00193">OpCodeInfo::isVariableLength</a>.</p>
+<p class="reference">References <a class="el" href="Bytecode_8cpp_source.html#l00131">getOpCodeInfo()</a>, and <a class="el" href="Bytecode_8h_source.html#l00207">OpCodeInfo::isVariableLength</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Bytecode_8h_source.html#l00402">BytecodeChunk::instructionSizeAt()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Bytecode_8h_source.html#l00412">BytecodeChunk::instructionSizeAt()</a>.</p>
 
 </div>
 </div>
@@ -465,11 +475,11 @@ Functions</h2></td></tr>
 
 <p>操作码 → 名称字符串（基于元数据表，O(1) 查表） </p>
 
-<p class="definition">Definition at line <a class="el" href="Bytecode_8h_source.html#l00200">200</a> of file <a class="el" href="Bytecode_8h_source.html">Bytecode.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Bytecode_8h_source.html#l00214">214</a> of file <a class="el" href="Bytecode_8h_source.html">Bytecode.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Bytecode_8cpp_source.html#l00127">getOpCodeInfo()</a>, and <a class="el" href="Bytecode_8h_source.html#l00191">OpCodeInfo::name</a>.</p>
+<p class="reference">References <a class="el" href="Bytecode_8cpp_source.html#l00131">getOpCodeInfo()</a>, and <a class="el" href="Bytecode_8h_source.html#l00205">OpCodeInfo::name</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="StepExplainerPanel_8cpp_source.html#l00477">StepExplainerLibrary::generateStepExplanation()</a>, <a class="el" href="VmStepper_8h_source.html#l00525">VmStepper::getCurrentOpCodeName()</a>, <a class="el" href="VmStackSandboxPanel_8cpp_source.html#l01030">VmStackSandboxPanel::loadBytecodeFromCurrentLevel()</a>, <a class="el" href="StepExplainerPanel_8cpp_source.html#l00644">StepExplainerPanel::onCompile()</a>, and <a class="el" href="ProfileDashboardPanel_8cpp_source.html#l00516">ProfileDashboardPanel::runProfile()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="StepExplainerPanel_8cpp_source.html#l00483">StepExplainerLibrary::generateStepExplanation()</a>, <a class="el" href="VmStepper_8h_source.html#l00525">VmStepper::getCurrentOpCodeName()</a>, <a class="el" href="VmStackSandboxPanel_8cpp_source.html#l01032">VmStackSandboxPanel::loadBytecodeFromCurrentLevel()</a>, <a class="el" href="StepExplainerPanel_8cpp_source.html#l00650">StepExplainerPanel::onCompile()</a>, and <a class="el" href="ProfileDashboardPanel_8cpp_source.html#l00517">ProfileDashboardPanel::runProfile()</a>.</p>
 
 </div>
 </div>

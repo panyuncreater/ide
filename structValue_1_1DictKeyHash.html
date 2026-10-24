@@ -135,7 +135,7 @@ Static Public Attributes</h2></td></tr>
 <a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
 <div class="textblock"><p>DictKey 的 hash 函数：按 variant index 区分类型，避免 bool(true) 与 int(1) 冲突。 float 用位模式 hash，避免 std::hash&lt;double&gt; 在不同平台 NaN/-0.0 行为不一致。 R97 #2 fix: 改为透明 hash（C++20 is_transparent），支持 unordered_map::find&lt;string_view&gt; 等异构查找，避免查找路径构造完整 DictKey（含 string 拷贝）的开销。 关键不变量：透明路径（如 string_view）与 DictKey 路径（DictKey{string}）必须产生 相同 hash，否则 find&lt;string_view&gt; 找不到桶。本实现用"类型前缀 XOR value hash"模式： DictKey{string} 的 hash = kStringTag ^ hash(string)，与 find(string_view) 一致。 </p>
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00151">151</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00153">153</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 </div><h2 class="groupheader">Member Typedef Documentation</h2>
 <a id="ac653e26efd1a2bfee47f39425e647ed3" name="ac653e26efd1a2bfee47f39425e647ed3"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#ac653e26efd1a2bfee47f39425e647ed3">&#9670;&#160;</a></span>is_transparent</h2>
@@ -149,7 +149,7 @@ Static Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00152">152</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00154">154</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
 </div>
 </div>
@@ -178,9 +178,9 @@ Static Public Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00165">165</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00167">167</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Value_8h_source.html#l00158">kBoolTag</a>.</p>
+<p class="reference">References <a class="el" href="Value_8h_source.html#l00160">kBoolTag</a>.</p>
 
 </div>
 </div>
@@ -208,9 +208,9 @@ Static Public Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00174">174</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00178">178</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Value_8h_source.html#l00158">kBoolTag</a>, <a class="el" href="Value_8h_source.html#l00159">kDoubleTag</a>, <a class="el" href="Value_8h_source.html#l00157">kIntTag</a>, and <a class="el" href="Value_8h_source.html#l00156">kStringTag</a>.</p>
+<p class="reference">References <a class="el" href="Value_8h_source.html#l00160">kBoolTag</a>, <a class="el" href="Value_8h_source.html#l00161">kDoubleTag</a>, <a class="el" href="Value_8h_source.html#l00159">kIntTag</a>, and <a class="el" href="Value_8h_source.html#l00158">kStringTag</a>.</p>
 
 </div>
 </div>
@@ -238,9 +238,9 @@ Static Public Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00162">162</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00164">164</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Value_8h_source.html#l00156">kStringTag</a>.</p>
+<p class="reference">References <a class="el" href="Value_8h_source.html#l00158">kStringTag</a>.</p>
 
 </div>
 </div>
@@ -268,9 +268,9 @@ Static Public Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00163">163</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00165">165</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Value_8h_source.html#l00156">kStringTag</a>.</p>
+<p class="reference">References <a class="el" href="Value_8h_source.html#l00158">kStringTag</a>.</p>
 
 </div>
 </div>
@@ -298,9 +298,9 @@ Static Public Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00166">166</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00168">168</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Value_8h_source.html#l00159">kDoubleTag</a>.</p>
+<p class="reference">References <a class="el" href="Value_8h_source.html#l00161">kDoubleTag</a>.</p>
 
 </div>
 </div>
@@ -328,9 +328,9 @@ Static Public Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00164">164</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00166">166</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Value_8h_source.html#l00157">kIntTag</a>.</p>
+<p class="reference">References <a class="el" href="Value_8h_source.html#l00159">kIntTag</a>.</p>
 
 </div>
 </div>
@@ -355,9 +355,9 @@ Static Public Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00158">158</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00160">160</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Value_8h_source.html#l00165">operator()()</a>, and <a class="el" href="Value_8h_source.html#l00174">operator()()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Value_8h_source.html#l00167">operator()()</a>, and <a class="el" href="Value_8h_source.html#l00178">operator()()</a>.</p>
 
 </div>
 </div>
@@ -381,9 +381,9 @@ Static Public Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00159">159</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00161">161</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Value_8h_source.html#l00174">operator()()</a>, and <a class="el" href="Value_8h_source.html#l00166">operator()()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Value_8h_source.html#l00178">operator()()</a>, and <a class="el" href="Value_8h_source.html#l00168">operator()()</a>.</p>
 
 </div>
 </div>
@@ -407,9 +407,9 @@ Static Public Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00157">157</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00159">159</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Value_8h_source.html#l00174">operator()()</a>, and <a class="el" href="Value_8h_source.html#l00164">operator()()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Value_8h_source.html#l00178">operator()()</a>, and <a class="el" href="Value_8h_source.html#l00166">operator()()</a>.</p>
 
 </div>
 </div>
@@ -433,9 +433,9 @@ Static Public Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00156">156</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00158">158</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Value_8h_source.html#l00174">operator()()</a>, <a class="el" href="Value_8h_source.html#l00162">operator()()</a>, and <a class="el" href="Value_8h_source.html#l00163">operator()()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Value_8h_source.html#l00178">operator()()</a>, <a class="el" href="Value_8h_source.html#l00164">operator()()</a>, and <a class="el" href="Value_8h_source.html#l00165">operator()()</a>.</p>
 
 </div>
 </div>

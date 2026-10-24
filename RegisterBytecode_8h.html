@@ -100,7 +100,9 @@ $(document).ready(function(){initNavTree('RegisterBytecode_8h.html',''); initRes
 <div class="textblock"><code>#include &quot;<a class="el" href="Bytecode_8h_source.html">compiler/core/Bytecode.h</a>&quot;</code><br />
 <code>#include &quot;<a class="el" href="Value_8h_source.html">interpreter/Value.h</a>&quot;</code><br />
 <code>#include &lt;cstdint&gt;</code><br />
+<code>#include &lt;functional&gt;</code><br />
 <code>#include &lt;string&gt;</code><br />
+<code>#include &lt;unordered_map&gt;</code><br />
 <code>#include &lt;vector&gt;</code><br />
 </div>
 <p><a href="RegisterBytecode_8h_source.html">Go to the source code of this file.</a></p>
@@ -112,6 +114,8 @@ Classes</h2></td></tr>
 <tr class="memitem:"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structRegBytecodeChunk.html">RegBytecodeChunk</a></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structRegBytecodeChunk_1_1SlotNameRange.html">RegBytecodeChunk::SlotNameRange</a></td></tr>
+<tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structRegBytecodeChunk_1_1GlobalVarCacheEntry.html">RegBytecodeChunk::GlobalVarCacheEntry</a></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structRegisterCompileResult.html">RegisterCompileResult</a></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -203,6 +207,8 @@ Enumerations</h2></td></tr>
 , <a class="el" href="RegisterBytecode_8h.html#a598fcdfbb0cf4cebebc1fa99d31a43d3ae5eb85552bad3671e0b9af98077c68c7">REG_LEN</a>
 , <a class="el" href="RegisterBytecode_8h.html#a598fcdfbb0cf4cebebc1fa99d31a43d3a673cff15b875d2bffac689854094b65c">REG_TYPE_TEST</a>
 , <a class="el" href="RegisterBytecode_8h.html#a598fcdfbb0cf4cebebc1fa99d31a43d3a38383ae5fddd00f4a3031821a7c3a2a6">REG_TAIL_CALL</a>
+, <br />
+&#160;&#160;<a class="el" href="RegisterBytecode_8h.html#a598fcdfbb0cf4cebebc1fa99d31a43d3a6f083fd40745ee36aa979834e2e3f022">REG_DROP_PENDING_JUMPS</a>
 <br />
  }</td></tr>
 <tr class="separator:a598fcdfbb0cf4cebebc1fa99d31a43d3"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -308,9 +314,10 @@ Functions</h2></td></tr>
 <tr><td class="fieldname"><a id="a598fcdfbb0cf4cebebc1fa99d31a43d3ae5eb85552bad3671e0b9af98077c68c7" name="a598fcdfbb0cf4cebebc1fa99d31a43d3ae5eb85552bad3671e0b9af98077c68c7"></a>REG_LEN&#160;</td><td class="fielddoc"></td></tr>
 <tr><td class="fieldname"><a id="a598fcdfbb0cf4cebebc1fa99d31a43d3a673cff15b875d2bffac689854094b65c" name="a598fcdfbb0cf4cebebc1fa99d31a43d3a673cff15b875d2bffac689854094b65c"></a>REG_TYPE_TEST&#160;</td><td class="fielddoc"></td></tr>
 <tr><td class="fieldname"><a id="a598fcdfbb0cf4cebebc1fa99d31a43d3a38383ae5fddd00f4a3031821a7c3a2a6" name="a598fcdfbb0cf4cebebc1fa99d31a43d3a38383ae5fddd00f4a3031821a7c3a2a6"></a>REG_TAIL_CALL&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a598fcdfbb0cf4cebebc1fa99d31a43d3a6f083fd40745ee36aa979834e2e3f022" name="a598fcdfbb0cf4cebebc1fa99d31a43d3a6f083fd40745ee36aa979834e2e3f022"></a>REG_DROP_PENDING_JUMPS&#160;</td><td class="fielddoc"></td></tr>
 </table>
 
-<p class="definition">Definition at line <a class="el" href="RegisterBytecode_8h_source.html#l00033">33</a> of file <a class="el" href="RegisterBytecode_8h_source.html">RegisterBytecode.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="RegisterBytecode_8h_source.html#l00035">35</a> of file <a class="el" href="RegisterBytecode_8h_source.html">RegisterBytecode.h</a>.</p>
 
 </div>
 </div>
@@ -334,9 +341,9 @@ Functions</h2></td></tr>
 <p>获取 RegOp 元数据 </p>
 <p>获取 RegOp 元数据 A3 fix: 单一数据源，替代原 regOpName switch + instructionSize switch 两处维护 </p>
 
-<p class="definition">Definition at line <a class="el" href="RegisterBytecode_8cpp_source.html#l00091">91</a> of file <a class="el" href="RegisterBytecode_8cpp_source.html">RegisterBytecode.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="RegisterBytecode_8cpp_source.html#l00092">92</a> of file <a class="el" href="RegisterBytecode_8cpp_source.html">RegisterBytecode.cpp</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="RegisterBytecode_8cpp_source.html#l00156">RegBytecodeChunk::instructionSize()</a>, <a class="el" href="RegisterBytecode_8h_source.html#l00190">isRegOpVariableLength()</a>, and <a class="el" href="RegisterBytecode_8h_source.html#l00185">regOpName()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="RegisterBytecode_8cpp_source.html#l00172">RegBytecodeChunk::instructionSize()</a>, <a class="el" href="RegisterBytecode_8h_source.html#l00196">isRegOpVariableLength()</a>, and <a class="el" href="RegisterBytecode_8h_source.html#l00191">regOpName()</a>.</p>
 
 </div>
 </div>
@@ -366,9 +373,9 @@ Functions</h2></td></tr>
 
 <p>寄存器式操作码 → 是否变长指令 </p>
 
-<p class="definition">Definition at line <a class="el" href="RegisterBytecode_8h_source.html#l00190">190</a> of file <a class="el" href="RegisterBytecode_8h_source.html">RegisterBytecode.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="RegisterBytecode_8h_source.html#l00196">196</a> of file <a class="el" href="RegisterBytecode_8h_source.html">RegisterBytecode.h</a>.</p>
 
-<p class="reference">References <a class="el" href="RegisterBytecode_8cpp_source.html#l00091">getRegOpInfo()</a>, and <a class="el" href="RegisterBytecode_8h_source.html#l00177">RegOpInfo::isVariableLength</a>.</p>
+<p class="reference">References <a class="el" href="RegisterBytecode_8cpp_source.html#l00092">getRegOpInfo()</a>, and <a class="el" href="RegisterBytecode_8h_source.html#l00183">RegOpInfo::isVariableLength</a>.</p>
 
 </div>
 </div>
@@ -398,11 +405,11 @@ Functions</h2></td></tr>
 
 <p>寄存器式操作码名称（调试用） </p>
 
-<p class="definition">Definition at line <a class="el" href="RegisterBytecode_8h_source.html#l00185">185</a> of file <a class="el" href="RegisterBytecode_8h_source.html">RegisterBytecode.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="RegisterBytecode_8h_source.html#l00191">191</a> of file <a class="el" href="RegisterBytecode_8h_source.html">RegisterBytecode.h</a>.</p>
 
-<p class="reference">References <a class="el" href="RegisterBytecode_8cpp_source.html#l00091">getRegOpInfo()</a>, and <a class="el" href="RegisterBytecode_8h_source.html#l00175">RegOpInfo::name</a>.</p>
+<p class="reference">References <a class="el" href="RegisterBytecode_8cpp_source.html#l00092">getRegOpInfo()</a>, and <a class="el" href="RegisterBytecode_8h_source.html#l00181">RegOpInfo::name</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="VmStepper_8h_source.html#l00525">VmStepper::getCurrentOpCodeName()</a>, <a class="el" href="VmStackSandboxPanel_8cpp_source.html#l01030">VmStackSandboxPanel::loadBytecodeFromCurrentLevel()</a>, and <a class="el" href="ProfileDashboardPanel_8cpp_source.html#l00516">ProfileDashboardPanel::runProfile()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="VmStepper_8h_source.html#l00525">VmStepper::getCurrentOpCodeName()</a>, <a class="el" href="VmStackSandboxPanel_8cpp_source.html#l01032">VmStackSandboxPanel::loadBytecodeFromCurrentLevel()</a>, and <a class="el" href="ProfileDashboardPanel_8cpp_source.html#l00517">ProfileDashboardPanel::runProfile()</a>.</p>
 
 </div>
 </div>

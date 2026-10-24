@@ -16,7 +16,7 @@ var searchData=
   ['val_5fstring_13',['VAL_STRING',['../ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1adc3d719712033cea5159a2b74a4a5731',1,'ValueTypes.h']]],
   ['val_5fthread_14',['VAL_THREAD',['../ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1ac0d742dbdce7c3b838e245eecca560e1',1,'ValueTypes.h']]],
   ['val_5ftuple_15',['VAL_TUPLE',['../ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a93a8f176a9cd2f49d4384b4d69a5c9ac',1,'ValueTypes.h']]],
-  ['variable_16',['variable',['../ASTNode_8h.html#a7e9d88022ddd1fbb138d6da988e9c453ae61ad9b2553a293b4a3f4d3b4fa5ab31',1,'VARIABLE:&#160;ASTNode.h'],['../DebugTypes_8h.html#a88883fac375c6ff5519472ace52660f3a47c14840d8e15331fa420b9b2f757cd9',1,'Variable:&#160;DebugTypes.h']]],
+  ['variable_16',['variable',['../DebugTypes_8h.html#a88883fac375c6ff5519472ace52660f3a47c14840d8e15331fa420b9b2f757cd9',1,'Variable:&#160;DebugTypes.h'],['../ASTNode_8h.html#a7e9d88022ddd1fbb138d6da988e9c453ae61ad9b2553a293b4a3f4d3b4fa5ab31',1,'VARIABLE:&#160;ASTNode.h']]],
   ['variant_17',['VARIANT',['../ASTNode_8h.html#a7e9d88022ddd1fbb138d6da988e9c453acda7182af4cc0451672a1cd50d36f3a2',1,'ASTNode.h']]],
   ['virtual_18',['VIRTUAL',['../IR_8h.html#a0b52ca5a30dc56314f1f0571ce291589a05470727787aa721cf53222b5d3d40f3',1,'IR.h']]],
   ['vm_19',['VM',['../Diagnostic_8h.html#a1158f6747810701dbac41858c4964e34a583a65df9db4119165f5ea0abaa50281',1,'Diagnostic.h']]],

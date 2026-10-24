@@ -195,7 +195,7 @@ Static Private Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01396">1396</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01363">1363</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
 
 <p class="reference">References <a class="el" href="BytecodeCache_8h_source.html#l00174">cacheDir_</a>.</p>
 
@@ -273,9 +273,9 @@ Static Private Attributes</h2></td></tr>
 
 <p>清空缓存目录下所有 .mbc 文件 </p>
 
-<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01760">1760</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01727">1727</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="BytecodeCache_8h_source.html#l00174">cacheDir_</a>, and <a class="el" href="BytecodeCache_8cpp_source.html#l01755">clearMemo()</a>.</p>
+<p class="reference">References <a class="el" href="BytecodeCache_8h_source.html#l00174">cacheDir_</a>, and <a class="el" href="BytecodeCache_8cpp_source.html#l01722">clearMemo()</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="PipelineRunner_8h_source.html#l00128">PipelineRunner::invalidateBytecodeCache()</a>.</p>
 
@@ -298,11 +298,11 @@ Static Private Attributes</h2></td></tr>
 
 <p>清空进程内 memo（clear() 会同步调用，供测试隔离） </p>
 
-<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01755">1755</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01722">1722</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
 
 <p class="reference">References <a class="el" href="BytecodeCache_8h_source.html#l00183">memo_</a>, and <a class="el" href="BytecodeCache_8h_source.html#l00184">memoMutex_</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="BytecodeCache_8cpp_source.html#l01760">clear()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="BytecodeCache_8cpp_source.html#l01727">clear()</a>.</p>
 
 </div>
 </div>
@@ -323,7 +323,7 @@ Static Private Attributes</h2></td></tr>
 
 <p>获取当前缓存条目数(主要用于测试) </p>
 
-<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01781">1781</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01748">1748</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
 
 <p class="reference">References <a class="el" href="BytecodeCache_8h_source.html#l00174">cacheDir_</a>.</p>
 
@@ -353,11 +353,11 @@ Static Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01683">1683</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01650">1650</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
 
 <p class="reference">References <a class="el" href="BytecodeCache_8h_source.html#l00183">memo_</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="BytecodeCache_8cpp_source.html#l01704">storeMemo()</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01736">storeMemoRegister()</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01691">tryMemo()</a>, and <a class="el" href="BytecodeCache_8cpp_source.html#l01723">tryMemoRegister()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="BytecodeCache_8cpp_source.html#l01671">storeMemo()</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01703">storeMemoRegister()</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01658">tryMemo()</a>, and <a class="el" href="BytecodeCache_8cpp_source.html#l01690">tryMemoRegister()</a>.</p>
 
 </div>
 </div>
@@ -421,7 +421,7 @@ Static Private Attributes</h2></td></tr>
 
 <p>写入缓存。失败时静默(缓存非关键路径,失败不影响正确性)。 </p>
 
-<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01479">1479</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01446">1446</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
 
 <p class="reference">References <a class="el" href="BytecodeCache_8h_source.html#l00174">cacheDir_</a>, <a class="el" href="BytecodeCache_8h_source.html#l00080">BytecodeCache::CacheKey::compilerMode</a>, <a class="el" href="BytecodeCache_8h_source.html#l00079">BytecodeCache::CacheKey::mtime</a>, <a class="el" href="BytecodeCache_8h_source.html#l00084">BytecodeCache::CacheKey::optFlags</a>, and <a class="el" href="BytecodeCache_8h_source.html#l00078">BytecodeCache::CacheKey::source</a>.</p>
 
@@ -455,9 +455,9 @@ Static Private Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01704">1704</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01671">1671</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="BytecodeCache_8h_source.html#l00179">BytecodeCache::MemoEntry::keyHash</a>, <a class="el" href="BytecodeCache_8h_source.html#l00177">kMemoCapacity</a>, <a class="el" href="BytecodeCache_8h_source.html#l00183">memo_</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01672">memoKeyHash()</a>, <a class="el" href="BytecodeCache_8h_source.html#l00184">memoMutex_</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01683">moveToFront()</a>, and <a class="el" href="BytecodeCache_8h_source.html#l00180">BytecodeCache::MemoEntry::stackResult</a>.</p>
+<p class="reference">References <a class="el" href="BytecodeCache_8h_source.html#l00179">BytecodeCache::MemoEntry::keyHash</a>, <a class="el" href="BytecodeCache_8h_source.html#l00177">kMemoCapacity</a>, <a class="el" href="BytecodeCache_8h_source.html#l00183">memo_</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01639">memoKeyHash()</a>, <a class="el" href="BytecodeCache_8h_source.html#l00184">memoMutex_</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01650">moveToFront()</a>, and <a class="el" href="BytecodeCache_8h_source.html#l00180">BytecodeCache::MemoEntry::stackResult</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="PipelineRunner_8cpp_source.html#l00033">PipelineRunner::runCompiler()</a>.</p>
 
@@ -489,9 +489,9 @@ Static Private Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01736">1736</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01703">1703</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="BytecodeCache_8h_source.html#l00179">BytecodeCache::MemoEntry::keyHash</a>, <a class="el" href="BytecodeCache_8h_source.html#l00177">kMemoCapacity</a>, <a class="el" href="BytecodeCache_8h_source.html#l00183">memo_</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01672">memoKeyHash()</a>, <a class="el" href="BytecodeCache_8h_source.html#l00184">memoMutex_</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01683">moveToFront()</a>, and <a class="el" href="BytecodeCache_8h_source.html#l00181">BytecodeCache::MemoEntry::regResult</a>.</p>
+<p class="reference">References <a class="el" href="BytecodeCache_8h_source.html#l00179">BytecodeCache::MemoEntry::keyHash</a>, <a class="el" href="BytecodeCache_8h_source.html#l00177">kMemoCapacity</a>, <a class="el" href="BytecodeCache_8h_source.html#l00183">memo_</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01639">memoKeyHash()</a>, <a class="el" href="BytecodeCache_8h_source.html#l00184">memoMutex_</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01650">moveToFront()</a>, and <a class="el" href="BytecodeCache_8h_source.html#l00181">BytecodeCache::MemoEntry::regResult</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="PipelineRunner_8cpp_source.html#l00033">PipelineRunner::runCompiler()</a>.</p>
 
@@ -524,7 +524,7 @@ Static Private Attributes</h2></td></tr>
 </div><div class="memdoc">
 <p>L17 <a class="el" href="classPipelineRunner.html">PipelineRunner</a> 内存级 <a class="el" href="classRegisterVM.html">RegisterVM</a> 缓存：写入 RegisterCompileResult。 使用 kRegisterMagic "MLRC" + <code>.mrc</code> 扩展名，与 StackVM <code>.mbc</code> 隔离。 失败时静默(缓存非关键路径,失败不影响正确性)。 </p>
 
-<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01610">1610</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01577">1577</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
 
 <p class="reference">References <a class="el" href="BytecodeCache_8h_source.html#l00174">cacheDir_</a>, <a class="el" href="BytecodeCache_8h_source.html#l00079">BytecodeCache::CacheKey::mtime</a>, <a class="el" href="BytecodeCache_8h_source.html#l00084">BytecodeCache::CacheKey::optFlags</a>, and <a class="el" href="BytecodeCache_8h_source.html#l00078">BytecodeCache::CacheKey::source</a>.</p>
 
@@ -580,7 +580,7 @@ Static Private Attributes</h2></td></tr>
 </dl>
 <dl class="section return"><dt>Returns</dt><dd>成功返回 true；常量池含非标量或 I/O 失败返回 false </dd></dl>
 
-<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l02005">2005</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01972">1972</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
 
 </div>
 </div>
@@ -632,7 +632,7 @@ Static Private Attributes</h2></td></tr>
 </dl>
 <dl class="section return"><dt>Returns</dt><dd>成功返回 true；常量池含非标量或 I/O 失败返回 false </dd></dl>
 
-<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01868">1868</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01835">1835</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
 
 </div>
 </div>
@@ -653,7 +653,7 @@ Static Private Attributes</h2></td></tr>
 </div><div class="memdoc">
 <p>尝试从缓存加载 CompileResult。 </p><dl class="section return"><dt>Returns</dt><dd>命中且五重校验通过返回反序列化结果;否则返回 nullopt </dd></dl>
 
-<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01408">1408</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01375">1375</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
 
 <p class="reference">References <a class="el" href="BytecodeCache_8h_source.html#l00174">cacheDir_</a>, <a class="el" href="BytecodeCache_8h_source.html#l00080">BytecodeCache::CacheKey::compilerMode</a>, <a class="el" href="BytecodeCache_8h_source.html#l00079">BytecodeCache::CacheKey::mtime</a>, <a class="el" href="BytecodeCache_8h_source.html#l00084">BytecodeCache::CacheKey::optFlags</a>, and <a class="el" href="BytecodeCache_8h_source.html#l00078">BytecodeCache::CacheKey::source</a>.</p>
 
@@ -695,9 +695,9 @@ Static Private Attributes</h2></td></tr>
 </dl>
 <dl class="section return"><dt>Returns</dt><dd>加载成功返回反序列化结果；否则返回 nullopt </dd></dl>
 
-<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01805">1805</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01772">1772</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="CompilerStmt_8cpp_source.html#l01973">Compiler::loadPrecompiledModule()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CompilerStmt_8cpp_source.html#l02015">Compiler::loadPrecompiledModule()</a>.</p>
 
 </div>
 </div>
@@ -724,7 +724,7 @@ Static Private Attributes</h2></td></tr>
 </dl>
 <dl class="section return"><dt>Returns</dt><dd>命中且五重校验通过返回反序列化结果;否则返回 nullopt </dd></dl>
 
-<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01544">1544</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01511">1511</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
 
 <p class="reference">References <a class="el" href="BytecodeCache_8h_source.html#l00174">cacheDir_</a>, <a class="el" href="BytecodeCache_8h_source.html#l00079">BytecodeCache::CacheKey::mtime</a>, <a class="el" href="BytecodeCache_8h_source.html#l00084">BytecodeCache::CacheKey::optFlags</a>, and <a class="el" href="BytecodeCache_8h_source.html#l00078">BytecodeCache::CacheKey::source</a>.</p>
 
@@ -766,9 +766,9 @@ Static Private Attributes</h2></td></tr>
 </dl>
 <dl class="section return"><dt>Returns</dt><dd>加载成功返回反序列化结果；否则返回 nullopt </dd></dl>
 
-<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01944">1944</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01911">1911</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l00504">AstIRBuilder::handleImportStmt()</a>, and <a class="el" href="CompilerStmt_8cpp_source.html#l02100">Compiler::loadPrecompiledRegisterModule()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l00546">AstIRBuilder::handleImportStmt()</a>, and <a class="el" href="CompilerStmt_8cpp_source.html#l02142">Compiler::loadPrecompiledRegisterModule()</a>.</p>
 
 </div>
 </div>
@@ -788,9 +788,9 @@ Static Private Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01691">1691</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01658">1658</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="BytecodeCache_8h_source.html#l00183">memo_</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01672">memoKeyHash()</a>, <a class="el" href="BytecodeCache_8h_source.html#l00184">memoMutex_</a>, and <a class="el" href="BytecodeCache_8cpp_source.html#l01683">moveToFront()</a>.</p>
+<p class="reference">References <a class="el" href="BytecodeCache_8h_source.html#l00183">memo_</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01639">memoKeyHash()</a>, <a class="el" href="BytecodeCache_8h_source.html#l00184">memoMutex_</a>, and <a class="el" href="BytecodeCache_8cpp_source.html#l01650">moveToFront()</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="PipelineRunner_8cpp_source.html#l00033">PipelineRunner::runCompiler()</a>.</p>
 
@@ -812,9 +812,9 @@ Static Private Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01723">1723</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="BytecodeCache_8cpp_source.html#l01690">1690</a> of file <a class="el" href="BytecodeCache_8cpp_source.html">BytecodeCache.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="BytecodeCache_8h_source.html#l00183">memo_</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01672">memoKeyHash()</a>, <a class="el" href="BytecodeCache_8h_source.html#l00184">memoMutex_</a>, and <a class="el" href="BytecodeCache_8cpp_source.html#l01683">moveToFront()</a>.</p>
+<p class="reference">References <a class="el" href="BytecodeCache_8h_source.html#l00183">memo_</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01639">memoKeyHash()</a>, <a class="el" href="BytecodeCache_8h_source.html#l00184">memoMutex_</a>, and <a class="el" href="BytecodeCache_8cpp_source.html#l01650">moveToFront()</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="PipelineRunner_8cpp_source.html#l00033">PipelineRunner::runCompiler()</a>.</p>
 
@@ -843,7 +843,7 @@ Static Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="BytecodeCache_8h_source.html#l00174">174</a> of file <a class="el" href="BytecodeCache_8h_source.html">BytecodeCache.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="BytecodeCache_8cpp_source.html#l01396">BytecodeCache()</a>, <a class="el" href="BytecodeCache_8h_source.html#l00168">cacheDir()</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01760">clear()</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01781">entryCount()</a>, <a class="el" href="BytecodeCache_8h_source.html#l00167">setCacheDir()</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01479">store()</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01610">storeRegister()</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01408">tryLoad()</a>, and <a class="el" href="BytecodeCache_8cpp_source.html#l01544">tryLoadRegister()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="BytecodeCache_8cpp_source.html#l01363">BytecodeCache()</a>, <a class="el" href="BytecodeCache_8h_source.html#l00168">cacheDir()</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01727">clear()</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01748">entryCount()</a>, <a class="el" href="BytecodeCache_8h_source.html#l00167">setCacheDir()</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01446">store()</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01577">storeRegister()</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01375">tryLoad()</a>, and <a class="el" href="BytecodeCache_8cpp_source.html#l01511">tryLoadRegister()</a>.</p>
 
 </div>
 </div>
@@ -869,7 +869,7 @@ Static Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="BytecodeCache_8h_source.html#l00177">177</a> of file <a class="el" href="BytecodeCache_8h_source.html">BytecodeCache.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="BytecodeCache_8cpp_source.html#l01704">storeMemo()</a>, and <a class="el" href="BytecodeCache_8cpp_source.html#l01736">storeMemoRegister()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="BytecodeCache_8cpp_source.html#l01671">storeMemo()</a>, and <a class="el" href="BytecodeCache_8cpp_source.html#l01703">storeMemoRegister()</a>.</p>
 
 </div>
 </div>
@@ -895,7 +895,7 @@ Static Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="BytecodeCache_8h_source.html#l00183">183</a> of file <a class="el" href="BytecodeCache_8h_source.html">BytecodeCache.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="BytecodeCache_8cpp_source.html#l01755">clearMemo()</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01683">moveToFront()</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01704">storeMemo()</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01736">storeMemoRegister()</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01691">tryMemo()</a>, and <a class="el" href="BytecodeCache_8cpp_source.html#l01723">tryMemoRegister()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="BytecodeCache_8cpp_source.html#l01722">clearMemo()</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01650">moveToFront()</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01671">storeMemo()</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01703">storeMemoRegister()</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01658">tryMemo()</a>, and <a class="el" href="BytecodeCache_8cpp_source.html#l01690">tryMemoRegister()</a>.</p>
 
 </div>
 </div>
@@ -921,7 +921,7 @@ Static Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="BytecodeCache_8h_source.html#l00184">184</a> of file <a class="el" href="BytecodeCache_8h_source.html">BytecodeCache.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="BytecodeCache_8cpp_source.html#l01755">clearMemo()</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01704">storeMemo()</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01736">storeMemoRegister()</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01691">tryMemo()</a>, and <a class="el" href="BytecodeCache_8cpp_source.html#l01723">tryMemoRegister()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="BytecodeCache_8cpp_source.html#l01722">clearMemo()</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01671">storeMemo()</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01703">storeMemoRegister()</a>, <a class="el" href="BytecodeCache_8cpp_source.html#l01658">tryMemo()</a>, and <a class="el" href="BytecodeCache_8cpp_source.html#l01690">tryMemoRegister()</a>.</p>
 
 </div>
 </div>

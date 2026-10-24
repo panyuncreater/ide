@@ -23,6 +23,7 @@ var searchData=
   ['bytecodecache_2eh_20',['BytecodeCache.h',['../BytecodeCache_8h.html',1,'']]],
   ['bytecodeirbackend_2ecpp_21',['BytecodeIRBackend.cpp',['../BytecodeIRBackend_8cpp.html',1,'']]],
   ['bytecodeirbackendstackcheck_2ecpp_22',['BytecodeIRBackendStackCheck.cpp',['../BytecodeIRBackendStackCheck_8cpp.html',1,'']]],
-  ['bytecodetracepanel_2ecpp_23',['BytecodeTracePanel.cpp',['../BytecodeTracePanel_8cpp.html',1,'']]],
-  ['bytecodetracepanel_2eh_24',['BytecodeTracePanel.h',['../BytecodeTracePanel_8h.html',1,'']]]
+  ['bytecodemetadata_2eh_23',['BytecodeMetadata.h',['../BytecodeMetadata_8h.html',1,'']]],
+  ['bytecodetracepanel_2ecpp_24',['BytecodeTracePanel.cpp',['../BytecodeTracePanel_8cpp.html',1,'']]],
+  ['bytecodetracepanel_2eh_25',['BytecodeTracePanel.h',['../BytecodeTracePanel_8h.html',1,'']]]
 ];

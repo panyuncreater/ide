@@ -188,9 +188,9 @@ Private Attributes</h2></td></tr>
 
 <p>从 CFG 构建支配树 </p>
 
-<p class="definition">Definition at line <a class="el" href="IRSSA_8cpp_source.html#l00284">284</a> of file <a class="el" href="IRSSA_8cpp_source.html">IRSSA.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IRSSA_8cpp_source.html#l00267">267</a> of file <a class="el" href="IRSSA_8cpp_source.html">IRSSA.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="IRSSA_8cpp_source.html#l00332">computeIDom()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00304">computeRPO()</a>, <a class="el" href="IRSSA_8h_source.html#l00140">domChildren_</a>, <a class="el" href="IRSSA_8h_source.html#l00139">idom_</a>, <a class="el" href="IRSSA_8h_source.html#l00135">kInvalid</a>, <a class="el" href="IRSSA_8h_source.html#l00142">postorder_</a>, <a class="el" href="IRSSA_8h_source.html#l00143">postOrderNum_</a>, <a class="el" href="IRSSA_8h_source.html#l00141">rpo_</a>, and <a class="el" href="IRSSA_8h_source.html#l00091">IRCFG::size()</a>.</p>
+<p class="reference">References <a class="el" href="IRSSA_8cpp_source.html#l00315">computeIDom()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00287">computeRPO()</a>, <a class="el" href="IRSSA_8h_source.html#l00140">domChildren_</a>, <a class="el" href="IRSSA_8h_source.html#l00139">idom_</a>, <a class="el" href="IRSSA_8h_source.html#l00135">kInvalid</a>, <a class="el" href="IRSSA_8h_source.html#l00142">postorder_</a>, <a class="el" href="IRSSA_8h_source.html#l00143">postOrderNum_</a>, <a class="el" href="IRSSA_8h_source.html#l00141">rpo_</a>, and <a class="el" href="IRSSA_8h_source.html#l00091">IRCFG::size()</a>.</p>
 
 </div>
 </div>
@@ -225,7 +225,7 @@ Private Attributes</h2></td></tr>
 
 <p class="reference">References <a class="el" href="IRSSA_8h_source.html#l00140">domChildren_</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l01540">domTreeToString()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00932">gvnPass()</a>, and <a class="el" href="IRSSA_8cpp_source.html#l00530">ssaConstructPass()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l01523">domTreeToString()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00915">gvnPass()</a>, and <a class="el" href="IRSSA_8cpp_source.html#l00513">ssaConstructPass()</a>.</p>
 
 </div>
 </div>
@@ -254,11 +254,11 @@ Private Attributes</h2></td></tr>
 
 <p>Cooper-Harvey-Kennedy 迭代求解 idom. </p>
 
-<p class="definition">Definition at line <a class="el" href="IRSSA_8cpp_source.html#l00332">332</a> of file <a class="el" href="IRSSA_8cpp_source.html">IRSSA.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IRSSA_8cpp_source.html#l00315">315</a> of file <a class="el" href="IRSSA_8cpp_source.html">IRSSA.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="IRSSA_8h_source.html#l00138">cfg_</a>, <a class="el" href="IRSSA_8h_source.html#l00093">IRCFG::entryId()</a>, <a class="el" href="IRSSA_8h_source.html#l00139">idom_</a>, <a class="el" href="IRSSA_8cpp_source.html#l00371">intersect()</a>, <a class="el" href="IRSSA_8h_source.html#l00135">kInvalid</a>, <a class="el" href="IRSSA_8h_source.html#l00095">IRCFG::node()</a>, <a class="el" href="IRSSA_8h_source.html#l00142">postorder_</a>, <a class="el" href="IRSSA_8h_source.html#l00143">postOrderNum_</a>, <a class="el" href="IRSSA_8h_source.html#l00061">CFGNode::preds</a>, and <a class="el" href="IRSSA_8h_source.html#l00141">rpo_</a>.</p>
+<p class="reference">References <a class="el" href="IRSSA_8h_source.html#l00138">cfg_</a>, <a class="el" href="IRSSA_8h_source.html#l00093">IRCFG::entryId()</a>, <a class="el" href="IRSSA_8h_source.html#l00139">idom_</a>, <a class="el" href="IRSSA_8cpp_source.html#l00354">intersect()</a>, <a class="el" href="IRSSA_8h_source.html#l00135">kInvalid</a>, <a class="el" href="IRSSA_8h_source.html#l00095">IRCFG::node()</a>, <a class="el" href="IRSSA_8h_source.html#l00142">postorder_</a>, <a class="el" href="IRSSA_8h_source.html#l00143">postOrderNum_</a>, <a class="el" href="IRSSA_8h_source.html#l00061">CFGNode::preds</a>, and <a class="el" href="IRSSA_8h_source.html#l00141">rpo_</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l00284">DominatorTree()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l00267">DominatorTree()</a>.</p>
 
 </div>
 </div>
@@ -287,11 +287,11 @@ Private Attributes</h2></td></tr>
 
 <p>反向后序遍历（构建 rpo_ 与 postorder_） </p>
 
-<p class="definition">Definition at line <a class="el" href="IRSSA_8cpp_source.html#l00304">304</a> of file <a class="el" href="IRSSA_8cpp_source.html">IRSSA.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IRSSA_8cpp_source.html#l00287">287</a> of file <a class="el" href="IRSSA_8cpp_source.html">IRSSA.cpp</a>.</p>
 
 <p class="reference">References <a class="el" href="IRSSA_8h_source.html#l00138">cfg_</a>, <a class="el" href="IRSSA_8h_source.html#l00093">IRCFG::entryId()</a>, <a class="el" href="IRSSA_8h_source.html#l00095">IRCFG::node()</a>, <a class="el" href="IRSSA_8h_source.html#l00142">postorder_</a>, <a class="el" href="IRSSA_8h_source.html#l00141">rpo_</a>, <a class="el" href="IRSSA_8h_source.html#l00091">IRCFG::size()</a>, and <a class="el" href="IRSSA_8h_source.html#l00062">CFGNode::succs</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l00284">DominatorTree()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l00267">DominatorTree()</a>.</p>
 
 </div>
 </div>
@@ -323,11 +323,11 @@ Private Attributes</h2></td></tr>
 
 <p>a 是否支配 b </p>
 
-<p class="definition">Definition at line <a class="el" href="IRSSA_8cpp_source.html#l00384">384</a> of file <a class="el" href="IRSSA_8cpp_source.html">IRSSA.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IRSSA_8cpp_source.html#l00367">367</a> of file <a class="el" href="IRSSA_8cpp_source.html">IRSSA.cpp</a>.</p>
 
 <p class="reference">References <a class="el" href="IRSSA_8h_source.html#l00139">idom_</a>, and <a class="el" href="IRSSA_8h_source.html#l00135">kInvalid</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l00492">NaturalLoopInfo::detectBackEdges()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l00475">NaturalLoopInfo::detectBackEdges()</a>.</p>
 
 </div>
 </div>
@@ -361,7 +361,7 @@ Private Attributes</h2></td></tr>
 
 <p class="reference">References <a class="el" href="IRSSA_8h_source.html#l00139">idom_</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l00434">DominanceFrontier::DominanceFrontier()</a>, and <a class="el" href="IRSSA_8cpp_source.html#l01540">domTreeToString()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l00417">DominanceFrontier::DominanceFrontier()</a>, and <a class="el" href="IRSSA_8cpp_source.html#l01523">domTreeToString()</a>.</p>
 
 </div>
 </div>
@@ -401,11 +401,11 @@ Private Attributes</h2></td></tr>
 
 <p>intersect：沿 postorder 更深者上溯直到相遇（CHK 算法核心） </p>
 
-<p class="definition">Definition at line <a class="el" href="IRSSA_8cpp_source.html#l00371">371</a> of file <a class="el" href="IRSSA_8cpp_source.html">IRSSA.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IRSSA_8cpp_source.html#l00354">354</a> of file <a class="el" href="IRSSA_8cpp_source.html">IRSSA.cpp</a>.</p>
 
 <p class="reference">References <a class="el" href="IRSSA_8h_source.html#l00139">idom_</a>, and <a class="el" href="IRSSA_8h_source.html#l00143">postOrderNum_</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l00332">computeIDom()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l00315">computeIDom()</a>.</p>
 
 </div>
 </div>
@@ -437,7 +437,7 @@ Private Attributes</h2></td></tr>
 
 <p>a 与 b 的最近公共支配者 </p>
 
-<p class="definition">Definition at line <a class="el" href="IRSSA_8cpp_source.html#l00402">402</a> of file <a class="el" href="IRSSA_8cpp_source.html">IRSSA.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IRSSA_8cpp_source.html#l00385">385</a> of file <a class="el" href="IRSSA_8cpp_source.html">IRSSA.cpp</a>.</p>
 
 <p class="reference">References <a class="el" href="IRSSA_8h_source.html#l00138">cfg_</a>, <a class="el" href="IRSSA_8h_source.html#l00093">IRCFG::entryId()</a>, <a class="el" href="IRSSA_8h_source.html#l00139">idom_</a>, and <a class="el" href="IRSSA_8h_source.html#l00135">kInvalid</a>.</p>
 
@@ -466,7 +466,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="IRSSA_8h_source.html#l00138">138</a> of file <a class="el" href="IRSSA_8h_source.html">IRSSA.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l00332">computeIDom()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00304">computeRPO()</a>, and <a class="el" href="IRSSA_8cpp_source.html#l00402">nearestCommonDominator()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l00315">computeIDom()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00287">computeRPO()</a>, and <a class="el" href="IRSSA_8cpp_source.html#l00385">nearestCommonDominator()</a>.</p>
 
 </div>
 </div>
@@ -492,7 +492,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="IRSSA_8h_source.html#l00140">140</a> of file <a class="el" href="IRSSA_8h_source.html">IRSSA.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="IRSSA_8h_source.html#l00133">children()</a>, and <a class="el" href="IRSSA_8cpp_source.html#l00284">DominatorTree()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="IRSSA_8h_source.html#l00133">children()</a>, and <a class="el" href="IRSSA_8cpp_source.html#l00267">DominatorTree()</a>.</p>
 
 </div>
 </div>
@@ -518,7 +518,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="IRSSA_8h_source.html#l00139">139</a> of file <a class="el" href="IRSSA_8h_source.html">IRSSA.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l00332">computeIDom()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00384">dominates()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00284">DominatorTree()</a>, <a class="el" href="IRSSA_8h_source.html#l00127">idom()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00371">intersect()</a>, and <a class="el" href="IRSSA_8cpp_source.html#l00402">nearestCommonDominator()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l00315">computeIDom()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00367">dominates()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00267">DominatorTree()</a>, <a class="el" href="IRSSA_8h_source.html#l00127">idom()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00354">intersect()</a>, and <a class="el" href="IRSSA_8cpp_source.html#l00385">nearestCommonDominator()</a>.</p>
 
 </div>
 </div>
@@ -544,7 +544,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="IRSSA_8h_source.html#l00135">135</a> of file <a class="el" href="IRSSA_8h_source.html">IRSSA.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l00332">computeIDom()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00434">DominanceFrontier::DominanceFrontier()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00384">dominates()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00284">DominatorTree()</a>, and <a class="el" href="IRSSA_8cpp_source.html#l00402">nearestCommonDominator()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l00315">computeIDom()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00417">DominanceFrontier::DominanceFrontier()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00367">dominates()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00267">DominatorTree()</a>, and <a class="el" href="IRSSA_8cpp_source.html#l00385">nearestCommonDominator()</a>.</p>
 
 </div>
 </div>
@@ -570,7 +570,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="IRSSA_8h_source.html#l00142">142</a> of file <a class="el" href="IRSSA_8h_source.html">IRSSA.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l00332">computeIDom()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00304">computeRPO()</a>, and <a class="el" href="IRSSA_8cpp_source.html#l00284">DominatorTree()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l00315">computeIDom()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00287">computeRPO()</a>, and <a class="el" href="IRSSA_8cpp_source.html#l00267">DominatorTree()</a>.</p>
 
 </div>
 </div>
@@ -596,7 +596,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="IRSSA_8h_source.html#l00143">143</a> of file <a class="el" href="IRSSA_8h_source.html">IRSSA.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l00332">computeIDom()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00284">DominatorTree()</a>, and <a class="el" href="IRSSA_8cpp_source.html#l00371">intersect()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l00315">computeIDom()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00267">DominatorTree()</a>, and <a class="el" href="IRSSA_8cpp_source.html#l00354">intersect()</a>.</p>
 
 </div>
 </div>
@@ -622,7 +622,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="IRSSA_8h_source.html#l00141">141</a> of file <a class="el" href="IRSSA_8h_source.html">IRSSA.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l00332">computeIDom()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00304">computeRPO()</a>, and <a class="el" href="IRSSA_8cpp_source.html#l00284">DominatorTree()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l00315">computeIDom()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00287">computeRPO()</a>, and <a class="el" href="IRSSA_8cpp_source.html#l00267">DominatorTree()</a>.</p>
 
 </div>
 </div>

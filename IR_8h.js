@@ -3,6 +3,8 @@ var IR_8h =
     [ "IROperand", "structIROperand.html", "structIROperand" ],
     [ "IROperandList", "classIROperandList.html", "classIROperandList" ],
     [ "IRInstruction", "structIRInstruction.html", "structIRInstruction" ],
+    [ "IRValueKey", "structIRValueKey.html", "structIRValueKey" ],
+    [ "IRValueKeyHash", "structIRValueKeyHash.html", "structIRValueKeyHash" ],
     [ "IRBasicBlock", "structIRBasicBlock.html", "structIRBasicBlock" ],
     [ "IRFunction", "structIRFunction.html", "structIRFunction" ],
     [ "IRFunction::SlotNameRange", "structIRFunction_1_1SlotNameRange.html", "structIRFunction_1_1SlotNameRange" ],
@@ -93,6 +95,7 @@ var IR_8h =
       [ "TYPE_CHECK", "IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a3109dd00dc754e3d0a6f3da4e4f0ef62", null ],
       [ "PUSH_JUMP_TARGET", "IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a6b2dfddc401e6df2a5ff0e7754c9285f", null ],
       [ "FINALLY_END", "IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93aa19702948df2ac18a9acd6b0ccba5f52", null ],
+      [ "DROP_PENDING_JUMPS", "IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93ab4457e1013471f0bfa0e8d32e4db016d", null ],
       [ "LEN", "IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a6dd2477cccabf8da7a1e050374b1be17", null ],
       [ "TYPE_TEST", "IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a106667f721c68d98de14d26764dbe1ea", null ],
       [ "PHI", "IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a7434b75669da1d8610a2f9a91957da81", null ],
@@ -122,5 +125,6 @@ var IR_8h =
     [ "IRToString", "IR_8h.html#a14a0cd3f6c5ef5359042cf0520350bf5", null ],
     [ "licmPass", "IR_8h.html#ad838f6e4777d5842ffe68ef043d0b1ca", null ],
     [ "loopUnrollingPass", "IR_8h.html#a86ccac1225815447d6a673176c8c5ae4", null ],
+    [ "makeIRValueKey", "IR_8h.html#a3e7af658774c794a91e925f492a5c3fc", null ],
     [ "optimizeIR", "IR_8h.html#af966dd8378b9db5d350a678d922583f8", null ]
 ];

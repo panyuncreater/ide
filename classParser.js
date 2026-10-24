@@ -61,6 +61,7 @@ var classParser =
     [ "term", "classParser.html#ab7a9dd53e520d5e163012ad6b483b7e3", null ],
     [ "throwStmt", "classParser.html#a6be30a6c9cdf9885bb7938c827139159", null ],
     [ "traitDecl", "classParser.html#a59c3bc44df6fbac7f8635ee8d970a98a", null ],
+    [ "trySkipExplicitTypeArgs", "classParser.html#a6ab9f8a8e32b8de64adc2a0645bc3d64", null ],
     [ "tryStmt", "classParser.html#a4bd34118a09012e067798882a680df36", null ],
     [ "typedFunDecl", "classParser.html#a138ec0d91c511e0940de8a65c3f05507", null ],
     [ "typedVarDecl", "classParser.html#aaaf42f6d1f4b4a41d991232a7b70a7f2", null ],

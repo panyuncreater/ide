@@ -120,6 +120,9 @@ Public Member Functions</h2></td></tr>
 <tr class="separator:a25a2da8f792d25cce1563aa9c67f31d2"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:af79a9e01f0a0ec1ed7ac45e1a06d84c9" id="r_af79a9e01f0a0ec1ed7ac45e1a06d84c9"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classVMStack.html#af79a9e01f0a0ec1ed7ac45e1a06d84c9">push_back</a> (const <a class="el" href="structValue.html">Value</a> &amp;v)</td></tr>
 <tr class="separator:af79a9e01f0a0ec1ed7ac45e1a06d84c9"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a3c84e0f5c6273a0e752455ab3fd693f6" id="r_a3c84e0f5c6273a0e752455ab3fd693f6"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classVMStack.html#a3c84e0f5c6273a0e752455ab3fd693f6">pushNulls</a> (size_t count)</td></tr>
+<tr class="memdesc:a3c84e0f5c6273a0e752455ab3fd693f6"><td class="mdescLeft">&#160;</td><td class="mdescRight">OPT-17: 批量压入 null（extraSlots 预分配），消除逐槽 push 调用开销。  <br /></td></tr>
+<tr class="separator:a3c84e0f5c6273a0e752455ab3fd693f6"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a29b49fd55e69828c25f7e0063486f30c" id="r_a29b49fd55e69828c25f7e0063486f30c"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classVMStack.html#a29b49fd55e69828c25f7e0063486f30c">push_back</a> (<a class="el" href="structValue.html">Value</a> &amp;&amp;v)</td></tr>
 <tr class="separator:a29b49fd55e69828c25f7e0063486f30c"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a5e5bb5db9a7a9cd8b3e09978ca1377e6" id="r_a5e5bb5db9a7a9cd8b3e09978ca1377e6"><td class="memTemplParams" colspan="2">template&lt;typename... Args&gt; </td></tr>
@@ -157,7 +160,7 @@ Static Private Attributes</h2></td></tr>
 </table>
 <a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
 <div class="textblock">
-<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00188">188</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00200">200</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
 </div><h2 class="groupheader">Constructor &amp; Destructor Documentation</h2>
 <a id="aca462402a750c563f82951a3bd09b8a8" name="aca462402a750c563f82951a3bd09b8a8"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#aca462402a750c563f82951a3bd09b8a8">&#9670;&#160;</a></span>VMStack()</h2>
@@ -182,9 +185,9 @@ Static Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00190">190</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00202">202</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
 
-<p class="reference">References <a class="el" href="VM_8h_source.html#l00284">CAPACITY</a>, <a class="el" href="VM_8h_source.html#l00285">data_</a>, and <a class="el" href="Value_8h_source.html#l00872">Value::nullValue()</a>.</p>
+<p class="reference">References <a class="el" href="VM_8h_source.html#l00305">CAPACITY</a>, <a class="el" href="VM_8h_source.html#l00306">data_</a>, and <a class="el" href="Value_8h_source.html#l00937">Value::nullValue()</a>.</p>
 
 </div>
 </div>
@@ -212,11 +215,11 @@ Static Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00220">220</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00232">232</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
 
-<p class="reference">References <a class="el" href="VM_8h_source.html#l00285">data_</a>, and <a class="el" href="VM_8h_source.html#l00286">top_</a>.</p>
+<p class="reference">References <a class="el" href="VM_8h_source.html#l00306">data_</a>, and <a class="el" href="VM_8h_source.html#l00307">top_</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="VM_8cpp_source.html#l01147">VM::dispatchArrayBuiltin()</a>, <a class="el" href="VM_8cpp_source.html#l01215">VM::dispatchDictBuiltin()</a>, <a class="el" href="VM_8cpp_source.html#l02043">VM::executeArithOps()</a>, <a class="el" href="VM_8cpp_source.html#l02198">VM::executeCompareOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00963">VM::executeMiscStackOps()</a>, <a class="el" href="VM_8h_source.html#l00680">VM::orderedCompare()</a>, and <a class="el" href="VM_8cpp_source.html#l00061">VM::pop()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="VMCalls_8cpp_source.html#l02002">VM::callCoroutineNext()</a>, <a class="el" href="VM_8cpp_source.html#l01138">VM::dispatchArrayBuiltin()</a>, <a class="el" href="VM_8cpp_source.html#l01206">VM::dispatchDictBuiltin()</a>, <a class="el" href="VM_8cpp_source.html#l02039">VM::executeArithOps()</a>, <a class="el" href="VM_8cpp_source.html#l02219">VM::executeCompareOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00962">VM::executeMiscStackOps()</a>, <a class="el" href="VM_8h_source.html#l00702">VM::orderedCompare()</a>, and <a class="el" href="VM_8cpp_source.html#l00061">VM::pop()</a>.</p>
 
 </div>
 </div>
@@ -243,9 +246,9 @@ Static Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00226">226</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00238">238</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
 
-<p class="reference">References <a class="el" href="VM_8h_source.html#l00285">data_</a>, and <a class="el" href="VM_8h_source.html#l00286">top_</a>.</p>
+<p class="reference">References <a class="el" href="VM_8h_source.html#l00306">data_</a>, and <a class="el" href="VM_8h_source.html#l00307">top_</a>.</p>
 
 </div>
 </div>
@@ -272,9 +275,9 @@ Static Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00202">202</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00214">214</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
 
-<p class="reference">References <a class="el" href="VM_8h_source.html#l00284">CAPACITY</a>.</p>
+<p class="reference">References <a class="el" href="VM_8h_source.html#l00305">CAPACITY</a>.</p>
 
 </div>
 </div>
@@ -301,11 +304,11 @@ Static Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00264">264</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00285">285</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
 
-<p class="reference">References <a class="el" href="VM_8h_source.html#l00286">top_</a>.</p>
+<p class="reference">References <a class="el" href="VM_8h_source.html#l00307">top_</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="VMCalls_8cpp_source.html#l00072">VM::executeReturn()</a>, <a class="el" href="VM_8cpp_source.html#l01432">VM::initExecution()</a>, <a class="el" href="VM_8cpp_source.html#l00105">VM::popN()</a>, <a class="el" href="VM_8cpp_source.html#l01537">VM::resetState()</a>, and <a class="el" href="VM_8cpp_source.html#l01575">VM::restoreFromSnapshot()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="VMCalls_8cpp_source.html#l00072">VM::executeReturn()</a>, <a class="el" href="VM_8cpp_source.html#l01423">VM::initExecution()</a>, <a class="el" href="VM_8cpp_source.html#l00105">VM::popN()</a>, <a class="el" href="VM_8cpp_source.html#l01529">VM::resetState()</a>, and <a class="el" href="VM_8cpp_source.html#l01567">VM::restoreFromSnapshot()</a>.</p>
 
 </div>
 </div>
@@ -335,11 +338,11 @@ template&lt;typename... Args&gt; </div>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00246">246</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00267">267</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
 
-<p class="reference">References <a class="el" href="VM_8h_source.html#l00284">CAPACITY</a>, <a class="el" href="VM_8h_source.html#l00285">data_</a>, and <a class="el" href="VM_8h_source.html#l00286">top_</a>.</p>
+<p class="reference">References <a class="el" href="VM_8h_source.html#l00305">CAPACITY</a>, <a class="el" href="VM_8h_source.html#l00306">data_</a>, and <a class="el" href="VM_8h_source.html#l00307">top_</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="VM_8h_source.html#l00622">VM::emplace()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="VM_8h_source.html#l00644">VM::emplace()</a>.</p>
 
 </div>
 </div>
@@ -366,11 +369,11 @@ template&lt;typename... Args&gt; </div>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00201">201</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00213">213</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
 
-<p class="reference">References <a class="el" href="VM_8h_source.html#l00286">top_</a>.</p>
+<p class="reference">References <a class="el" href="VM_8h_source.html#l00307">top_</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="VM_8cpp_source.html#l02043">VM::executeArithOps()</a>, <a class="el" href="VM_8cpp_source.html#l02198">VM::executeCompareOps()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01771">VM::executeCoroutineOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00661">VM::executeEnumOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l01211">VM::executeMiscExceptionOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00963">VM::executeMiscStackOps()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01600">VM::invokeClosureSync()</a>, and <a class="el" href="VM_8cpp_source.html#l00061">VM::pop()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="VM_8cpp_source.html#l02039">VM::executeArithOps()</a>, <a class="el" href="VM_8cpp_source.html#l02219">VM::executeCompareOps()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01757">VM::executeCoroutineOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00659">VM::executeEnumOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l01210">VM::executeMiscExceptionOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00962">VM::executeMiscStackOps()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01589">VM::invokeClosureSync()</a>, and <a class="el" href="VM_8cpp_source.html#l00061">VM::pop()</a>.</p>
 
 </div>
 </div>
@@ -398,9 +401,9 @@ template&lt;typename... Args&gt; </div>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00208">208</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00220">220</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
 
-<p class="reference">References <a class="el" href="VM_8h_source.html#l00285">data_</a>, and <a class="el" href="VM_8h_source.html#l00286">top_</a>.</p>
+<p class="reference">References <a class="el" href="VM_8h_source.html#l00306">data_</a>, and <a class="el" href="VM_8h_source.html#l00307">top_</a>.</p>
 
 </div>
 </div>
@@ -428,9 +431,9 @@ template&lt;typename... Args&gt; </div>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00214">214</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00226">226</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
 
-<p class="reference">References <a class="el" href="VM_8h_source.html#l00285">data_</a>, and <a class="el" href="VM_8h_source.html#l00286">top_</a>.</p>
+<p class="reference">References <a class="el" href="VM_8h_source.html#l00306">data_</a>, and <a class="el" href="VM_8h_source.html#l00307">top_</a>.</p>
 
 </div>
 </div>
@@ -457,11 +460,11 @@ template&lt;typename... Args&gt; </div>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00252">252</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00273">273</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
 
-<p class="reference">References <a class="el" href="VM_8h_source.html#l00285">data_</a>, <a class="el" href="Value_8h_source.html#l00872">Value::nullValue()</a>, and <a class="el" href="VM_8h_source.html#l00286">top_</a>.</p>
+<p class="reference">References <a class="el" href="VM_8h_source.html#l00306">data_</a>, <a class="el" href="Value_8h_source.html#l00937">Value::nullValue()</a>, and <a class="el" href="VM_8h_source.html#l00307">top_</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="VM_8cpp_source.html#l01147">VM::dispatchArrayBuiltin()</a>, <a class="el" href="VM_8cpp_source.html#l01215">VM::dispatchDictBuiltin()</a>, <a class="el" href="VM_8cpp_source.html#l02043">VM::executeArithOps()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00778">VM::executeCallExprValue()</a>, <a class="el" href="VM_8cpp_source.html#l00934">VM::numericOp()</a>, <a class="el" href="VM_8cpp_source.html#l00061">VM::pop()</a>, and <a class="el" href="VM_8cpp_source.html#l01028">VM::pushCompareResult()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="VM_8cpp_source.html#l01138">VM::dispatchArrayBuiltin()</a>, <a class="el" href="VM_8cpp_source.html#l01206">VM::dispatchDictBuiltin()</a>, <a class="el" href="VM_8cpp_source.html#l02039">VM::executeArithOps()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00763">VM::executeCallExprValue()</a>, <a class="el" href="VM_8cpp_source.html#l00923">VM::numericOp()</a>, <a class="el" href="VM_8cpp_source.html#l00061">VM::pop()</a>, and <a class="el" href="VM_8cpp_source.html#l01017">VM::pushCompareResult()</a>.</p>
 
 </div>
 </div>
@@ -489,11 +492,11 @@ template&lt;typename... Args&gt; </div>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00234">234</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00246">246</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
 
-<p class="reference">References <a class="el" href="VM_8h_source.html#l00284">CAPACITY</a>, <a class="el" href="VM_8h_source.html#l00285">data_</a>, and <a class="el" href="VM_8h_source.html#l00286">top_</a>.</p>
+<p class="reference">References <a class="el" href="VM_8h_source.html#l00305">CAPACITY</a>, <a class="el" href="VM_8h_source.html#l00306">data_</a>, and <a class="el" href="VM_8h_source.html#l00307">top_</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="VMCalls_8cpp_source.html#l01984">VM::callCoroutineNext()</a>, <a class="el" href="VM_8cpp_source.html#l01432">VM::initExecution()</a>, <a class="el" href="VM_8cpp_source.html#l00041">VM::push()</a>, <a class="el" href="VM_8cpp_source.html#l00053">VM::push()</a>, and <a class="el" href="VM_8cpp_source.html#l01575">VM::restoreFromSnapshot()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="VMCalls_8cpp_source.html#l02002">VM::callCoroutineNext()</a>, <a class="el" href="VM_8cpp_source.html#l01423">VM::initExecution()</a>, <a class="el" href="VM_8cpp_source.html#l00041">VM::push()</a>, <a class="el" href="VM_8cpp_source.html#l00053">VM::push()</a>, and <a class="el" href="VM_8cpp_source.html#l01567">VM::restoreFromSnapshot()</a>.</p>
 
 </div>
 </div>
@@ -521,9 +524,43 @@ template&lt;typename... Args&gt; </div>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00240">240</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00261">261</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
 
-<p class="reference">References <a class="el" href="VM_8h_source.html#l00284">CAPACITY</a>, <a class="el" href="VM_8h_source.html#l00285">data_</a>, and <a class="el" href="VM_8h_source.html#l00286">top_</a>.</p>
+<p class="reference">References <a class="el" href="VM_8h_source.html#l00305">CAPACITY</a>, <a class="el" href="VM_8h_source.html#l00306">data_</a>, and <a class="el" href="VM_8h_source.html#l00307">top_</a>.</p>
+
+</div>
+</div>
+<a id="a3c84e0f5c6273a0e752455ab3fd693f6" name="a3c84e0f5c6273a0e752455ab3fd693f6"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a3c84e0f5c6273a0e752455ab3fd693f6">&#9670;&#160;</a></span>pushNulls()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">void VMStack::pushNulls </td>
+          <td>(</td>
+          <td class="paramtype">size_t&#160;</td>
+          <td class="paramname"><em>count</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">inline</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>OPT-17: 批量压入 null（extraSlots 预分配），消除逐槽 push 调用开销。 </p>
+
+<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00253">253</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
+
+<p class="reference">References <a class="el" href="VM_8h_source.html#l00305">CAPACITY</a>, <a class="el" href="VM_8h_source.html#l00306">data_</a>, <a class="el" href="Value_8h_source.html#l00937">Value::nullValue()</a>, and <a class="el" href="VM_8h_source.html#l00307">top_</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="VM_8h_source.html#l00618">VM::pushNulls()</a>.</p>
 
 </div>
 </div>
@@ -553,7 +590,7 @@ template&lt;typename... Args&gt; </div>
 
 <p>no-op：定长数组无需预分配 </p>
 
-<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00278">278</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00299">299</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
 
 </div>
 </div>
@@ -581,11 +618,11 @@ template&lt;typename... Args&gt; </div>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00267">267</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00288">288</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
 
-<p class="reference">References <a class="el" href="VM_8h_source.html#l00285">data_</a>, <a class="el" href="Value_8h_source.html#l00872">Value::nullValue()</a>, and <a class="el" href="VM_8h_source.html#l00286">top_</a>.</p>
+<p class="reference">References <a class="el" href="VM_8h_source.html#l00306">data_</a>, <a class="el" href="Value_8h_source.html#l00937">Value::nullValue()</a>, and <a class="el" href="VM_8h_source.html#l00307">top_</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="VMCalls_8cpp_source.html#l01984">VM::callCoroutineNext()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00072">VM::executeReturn()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00284">VM::executeTailCall()</a>, <a class="el" href="VM_8cpp_source.html#l01669">VM::popFrameAndPushReturn()</a>, <a class="el" href="VM_8cpp_source.html#l00105">VM::popN()</a>, and <a class="el" href="VM_8cpp_source.html#l00167">VM::throwException()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="VMCalls_8cpp_source.html#l02002">VM::callCoroutineNext()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00072">VM::executeReturn()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00284">VM::executeTailCall()</a>, <a class="el" href="VM_8cpp_source.html#l01661">VM::popFrameAndPushReturn()</a>, <a class="el" href="VM_8cpp_source.html#l00105">VM::popN()</a>, and <a class="el" href="VM_8cpp_source.html#l00165">VM::throwException()</a>.</p>
 
 </div>
 </div>
@@ -612,11 +649,11 @@ template&lt;typename... Args&gt; </div>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00200">200</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00212">212</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
 
-<p class="reference">References <a class="el" href="VM_8h_source.html#l00286">top_</a>.</p>
+<p class="reference">References <a class="el" href="VM_8h_source.html#l00307">top_</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="VMCalls_8cpp_source.html#l01984">VM::callCoroutineNext()</a>, <a class="el" href="VM_8cpp_source.html#l00237">VM::closeUpvaluesFrom()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01880">VM::createCoroutineValue()</a>, <a class="el" href="VM_8h_source.html#l00622">VM::emplace()</a>, <a class="el" href="VM_8cpp_source.html#l02043">VM::executeArithOps()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00706">VM::executeCallBuiltinFunction()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00546">VM::executeCallBuiltinInput()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00430">VM::executeCallConstructor()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00778">VM::executeCallExprValue()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00578">VM::executeCallHigherOrder()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00654">VM::executeCallSpawn()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01254">VM::executeClassNew()</a>, <a class="el" href="VM_8cpp_source.html#l02198">VM::executeCompareOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00077">VM::executeContainerBuildOps()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01771">VM::executeCoroutineOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00661">VM::executeEnumOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00266">VM::executeIndexGet()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00364">VM::executeIndexSet()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00452">VM::executeIndexSetLocal()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00405">VM::executeIndexSetVar()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01027">VM::executeInstanceMethodCall()</a>, <a class="el" href="VM_8cpp_source.html#l02523">VM::executeLocalOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00505">VM::executeMemberOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l01211">VM::executeMiscExceptionOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00963">VM::executeMiscStackOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l01125">VM::executeMiscTypeTest()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00072">VM::executeReturn()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00284">VM::executeTailCall()</a>, <a class="el" href="VM_8cpp_source.html#l02569">VM::executeUpvalueOps()</a>, <a class="el" href="VM_8cpp_source.html#l00607">VM::getCurrentFrameLocals()</a>, <a class="el" href="VM_8cpp_source.html#l00650">VM::getFrameLocalsAt()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01600">VM::invokeClosureSync()</a>, <a class="el" href="VM_8cpp_source.html#l00934">VM::numericOp()</a>, <a class="el" href="VM_8h_source.html#l00680">VM::orderedCompare()</a>, <a class="el" href="VM_8cpp_source.html#l00075">VM::peek()</a>, <a class="el" href="VM_8cpp_source.html#l00089">VM::peekRef()</a>, <a class="el" href="VM_8cpp_source.html#l01669">VM::popFrameAndPushReturn()</a>, <a class="el" href="VM_8cpp_source.html#l00105">VM::popN()</a>, <a class="el" href="VM_8cpp_source.html#l00041">VM::push()</a>, <a class="el" href="VM_8cpp_source.html#l00053">VM::push()</a>, <a class="el" href="VM_8cpp_source.html#l01028">VM::pushCompareResult()</a>, <a class="el" href="VM_8cpp_source.html#l01575">VM::restoreFromSnapshot()</a>, <a class="el" href="VM_8cpp_source.html#l00703">VM::setFrameLocalAt()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00861">VM::setupFunctionCallFrame()</a>, <a class="el" href="VM_8cpp_source.html#l00167">VM::throwException()</a>, <a class="el" href="VM_8cpp_source.html#l00842">VM::tryOperatorOverload()</a>, <a class="el" href="VM_8cpp_source.html#l01077">VM::writeBackReceiver()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00809">VM::writebackToStackSlot()</a>, and <a class="el" href="VMContainers_8cpp_source.html#l00870">VM::writebackToUpvalue()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="VMCalls_8cpp_source.html#l02002">VM::callCoroutineNext()</a>, <a class="el" href="VM_8cpp_source.html#l00235">VM::closeUpvaluesFrom()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01898">VM::createCoroutineValue()</a>, <a class="el" href="VM_8h_source.html#l00644">VM::emplace()</a>, <a class="el" href="VM_8cpp_source.html#l02039">VM::executeArithOps()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00693">VM::executeCallBuiltinFunction()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00542">VM::executeCallBuiltinInput()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00428">VM::executeCallConstructor()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00763">VM::executeCallExprValue()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00571">VM::executeCallHigherOrder()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00644">VM::executeCallSpawn()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01243">VM::executeClassNew()</a>, <a class="el" href="VM_8cpp_source.html#l02219">VM::executeCompareOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00077">VM::executeContainerBuildOps()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01757">VM::executeCoroutineOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00659">VM::executeEnumOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00266">VM::executeIndexGet()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00364">VM::executeIndexSet()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00452">VM::executeIndexSetLocal()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00405">VM::executeIndexSetVar()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01015">VM::executeInstanceMethodCall()</a>, <a class="el" href="VM_8cpp_source.html#l02544">VM::executeLocalOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00505">VM::executeMemberOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l01210">VM::executeMiscExceptionOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00962">VM::executeMiscStackOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l01124">VM::executeMiscTypeTest()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00072">VM::executeReturn()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00284">VM::executeTailCall()</a>, <a class="el" href="VM_8cpp_source.html#l02590">VM::executeUpvalueOps()</a>, <a class="el" href="VM_8cpp_source.html#l00598">VM::getCurrentFrameLocals()</a>, <a class="el" href="VM_8cpp_source.html#l00641">VM::getFrameLocalsAt()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01589">VM::invokeClosureSync()</a>, <a class="el" href="VM_8cpp_source.html#l00923">VM::numericOp()</a>, <a class="el" href="VM_8h_source.html#l00702">VM::orderedCompare()</a>, <a class="el" href="VM_8cpp_source.html#l00075">VM::peek()</a>, <a class="el" href="VM_8cpp_source.html#l00089">VM::peekRef()</a>, <a class="el" href="VM_8cpp_source.html#l01661">VM::popFrameAndPushReturn()</a>, <a class="el" href="VM_8cpp_source.html#l00105">VM::popN()</a>, <a class="el" href="VM_8cpp_source.html#l00041">VM::push()</a>, <a class="el" href="VM_8cpp_source.html#l00053">VM::push()</a>, <a class="el" href="VM_8cpp_source.html#l01017">VM::pushCompareResult()</a>, <a class="el" href="VM_8cpp_source.html#l01567">VM::restoreFromSnapshot()</a>, <a class="el" href="VM_8cpp_source.html#l00694">VM::setFrameLocalAt()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00847">VM::setupFunctionCallFrame()</a>, <a class="el" href="VM_8cpp_source.html#l00165">VM::throwException()</a>, <a class="el" href="VM_8cpp_source.html#l00833">VM::tryOperatorOverload()</a>, <a class="el" href="VM_8cpp_source.html#l01066">VM::writeBackReceiver()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00807">VM::writebackToStackSlot()</a>, and <a class="el" href="VMContainers_8cpp_source.html#l00868">VM::writebackToUpvalue()</a>.</p>
 
 </div>
 </div>
@@ -645,11 +682,11 @@ template&lt;typename... Args&gt; </div>
 
 <p>转换为 vector（用于 GUI 调试视图，按值返回） </p>
 
-<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00281">281</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00302">302</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
 
-<p class="reference">References <a class="el" href="VM_8h_source.html#l00285">data_</a>, and <a class="el" href="VM_8h_source.html#l00286">top_</a>.</p>
+<p class="reference">References <a class="el" href="VM_8h_source.html#l00306">data_</a>, and <a class="el" href="VM_8h_source.html#l00307">top_</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="VM_8cpp_source.html#l00319">VM::getStack()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="VM_8cpp_source.html#l00317">VM::getStack()</a>.</p>
 
 </div>
 </div>
@@ -674,9 +711,9 @@ template&lt;typename... Args&gt; </div>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00284">284</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00305">305</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="VM_8h_source.html#l00202">capacity()</a>, <a class="el" href="VM_8h_source.html#l00246">emplace_back()</a>, <a class="el" href="VM_8h_source.html#l00234">push_back()</a>, <a class="el" href="VM_8h_source.html#l00240">push_back()</a>, and <a class="el" href="VM_8h_source.html#l00190">VMStack()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="VM_8h_source.html#l00214">capacity()</a>, <a class="el" href="VM_8h_source.html#l00267">emplace_back()</a>, <a class="el" href="VM_8h_source.html#l00246">push_back()</a>, <a class="el" href="VM_8h_source.html#l00261">push_back()</a>, <a class="el" href="VM_8h_source.html#l00253">pushNulls()</a>, and <a class="el" href="VM_8h_source.html#l00202">VMStack()</a>.</p>
 
 </div>
 </div>
@@ -700,9 +737,9 @@ template&lt;typename... Args&gt; </div>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00285">285</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00306">306</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="VM_8h_source.html#l00220">back()</a>, <a class="el" href="VM_8h_source.html#l00226">back()</a>, <a class="el" href="VM_8h_source.html#l00246">emplace_back()</a>, <a class="el" href="VM_8h_source.html#l00208">operator[]()</a>, <a class="el" href="VM_8h_source.html#l00214">operator[]()</a>, <a class="el" href="VM_8h_source.html#l00252">pop_back()</a>, <a class="el" href="VM_8h_source.html#l00234">push_back()</a>, <a class="el" href="VM_8h_source.html#l00240">push_back()</a>, <a class="el" href="VM_8h_source.html#l00267">resize()</a>, <a class="el" href="VM_8h_source.html#l00281">toVector()</a>, and <a class="el" href="VM_8h_source.html#l00190">VMStack()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="VM_8h_source.html#l00232">back()</a>, <a class="el" href="VM_8h_source.html#l00238">back()</a>, <a class="el" href="VM_8h_source.html#l00267">emplace_back()</a>, <a class="el" href="VM_8h_source.html#l00220">operator[]()</a>, <a class="el" href="VM_8h_source.html#l00226">operator[]()</a>, <a class="el" href="VM_8h_source.html#l00273">pop_back()</a>, <a class="el" href="VM_8h_source.html#l00246">push_back()</a>, <a class="el" href="VM_8h_source.html#l00261">push_back()</a>, <a class="el" href="VM_8h_source.html#l00253">pushNulls()</a>, <a class="el" href="VM_8h_source.html#l00288">resize()</a>, <a class="el" href="VM_8h_source.html#l00302">toVector()</a>, and <a class="el" href="VM_8h_source.html#l00202">VMStack()</a>.</p>
 
 </div>
 </div>
@@ -726,9 +763,9 @@ template&lt;typename... Args&gt; </div>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00286">286</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00307">307</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="VM_8h_source.html#l00220">back()</a>, <a class="el" href="VM_8h_source.html#l00226">back()</a>, <a class="el" href="VM_8h_source.html#l00264">clear()</a>, <a class="el" href="VM_8h_source.html#l00246">emplace_back()</a>, <a class="el" href="VM_8h_source.html#l00201">empty()</a>, <a class="el" href="VM_8h_source.html#l00208">operator[]()</a>, <a class="el" href="VM_8h_source.html#l00214">operator[]()</a>, <a class="el" href="VM_8h_source.html#l00252">pop_back()</a>, <a class="el" href="VM_8h_source.html#l00234">push_back()</a>, <a class="el" href="VM_8h_source.html#l00240">push_back()</a>, <a class="el" href="VM_8h_source.html#l00267">resize()</a>, <a class="el" href="VM_8h_source.html#l00200">size()</a>, and <a class="el" href="VM_8h_source.html#l00281">toVector()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="VM_8h_source.html#l00232">back()</a>, <a class="el" href="VM_8h_source.html#l00238">back()</a>, <a class="el" href="VM_8h_source.html#l00285">clear()</a>, <a class="el" href="VM_8h_source.html#l00267">emplace_back()</a>, <a class="el" href="VM_8h_source.html#l00213">empty()</a>, <a class="el" href="VM_8h_source.html#l00220">operator[]()</a>, <a class="el" href="VM_8h_source.html#l00226">operator[]()</a>, <a class="el" href="VM_8h_source.html#l00273">pop_back()</a>, <a class="el" href="VM_8h_source.html#l00246">push_back()</a>, <a class="el" href="VM_8h_source.html#l00261">push_back()</a>, <a class="el" href="VM_8h_source.html#l00253">pushNulls()</a>, <a class="el" href="VM_8h_source.html#l00288">resize()</a>, <a class="el" href="VM_8h_source.html#l00212">size()</a>, and <a class="el" href="VM_8h_source.html#l00302">toVector()</a>.</p>
 
 </div>
 </div>

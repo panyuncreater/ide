@@ -168,6 +168,8 @@ Private Member Functions</h2></td></tr>
 <tr class="separator:a3e6a09788d493ed90828cae91d606e78"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a4281be467fd64027aad24e27a6b038ae" id="r_a4281be467fd64027aad24e27a6b038ae"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classGcManager.html#a4281be467fd64027aad24e27a6b038ae">markValue</a> (const <a class="el" href="structValue.html">Value</a> &amp;v, std::unordered_set&lt; const void * &gt; &amp;marked, std::vector&lt; const <a class="el" href="structValue.html">Value</a> * &gt; &amp;worklist)</td></tr>
 <tr class="separator:a4281be467fd64027aad24e27a6b038ae"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a4f09e2f4276c58714350cd8348e87105" id="r_a4f09e2f4276c58714350cd8348e87105"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classGcManager.html#a4f09e2f4276c58714350cd8348e87105">markTrackedRoot</a> (const void *rootPtr, std::unordered_set&lt; const void * &gt; &amp;marked, std::vector&lt; const <a class="el" href="structValue.html">Value</a> * &gt; &amp;worklist)</td></tr>
+<tr class="separator:a4f09e2f4276c58714350cd8348e87105"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:af0a0286c728d880bf478d9fcb256ef3d" id="r_af0a0286c728d880bf478d9fcb256ef3d"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classGcManager.html#af0a0286c728d880bf478d9fcb256ef3d">checkIncrementalGc</a> ()</td></tr>
 <tr class="separator:af0a0286c728d880bf478d9fcb256ef3d"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table><table class="memberdecls">
@@ -308,9 +310,9 @@ Private Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00573">573</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00599">599</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00199">allocationsSinceLastGc_</a>.</p>
+<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00205">allocationsSinceLastGc_</a>.</p>
 
 </div>
 </div>
@@ -339,7 +341,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00086">86</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00199">allocationsSinceLastGc_</a>, <a class="el" href="GcManager_8h_source.html#l00200">gcAllocationThreshold_</a>, <a class="el" href="GcManager_8h_source.html#l00206">gcInProgress_</a>, and <a class="el" href="GcManager_8h_source.html#l00201">gcTriggerCallback_</a>.</p>
+<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00205">allocationsSinceLastGc_</a>, <a class="el" href="GcManager_8h_source.html#l00206">gcAllocationThreshold_</a>, <a class="el" href="GcManager_8h_source.html#l00212">gcInProgress_</a>, and <a class="el" href="GcManager_8h_source.html#l00207">gcTriggerCallback_</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00109">checkPendingGc()</a>.</p>
 
@@ -362,9 +364,9 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00109">109</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="GcManager_8cpp_source.html#l00086">checkIncrementalGc()</a>, <a class="el" href="GcManager_8h_source.html#l00227">mutex_</a>, and <a class="el" href="GcManager_8h_source.html#l00209">pendingIncrementalGc_</a>.</p>
+<p class="reference">References <a class="el" href="GcManager_8cpp_source.html#l00086">checkIncrementalGc()</a>, <a class="el" href="GcManager_8h_source.html#l00233">mutex_</a>, and <a class="el" href="GcManager_8h_source.html#l00215">pendingIncrementalGc_</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l02438">Interpreter::executeFunctionBody()</a>, and <a class="el" href="Interpreter_8cpp_source.html#l00221">Interpreter::runStatementsWithExceptionHandling()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l02515">Interpreter::executeFunctionBody()</a>, and <a class="el" href="Interpreter_8cpp_source.html#l00235">Interpreter::runStatementsWithExceptionHandling()</a>.</p>
 
 </div>
 </div>
@@ -385,11 +387,11 @@ Private Attributes</h2></td></tr>
 </div><div class="memdoc">
 <p>AUDIT-R3 P2-9 fix: 仅当当前回调属于 owner 时才清除（析构路径专用）。 若回调已被其他实例覆盖（owner 不匹配）则不动，保护存活实例的回调。 </p>
 
-<p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00539">539</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00565">565</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00201">gcTriggerCallback_</a>, <a class="el" href="GcManager_8h_source.html#l00204">gcTriggerOwner_</a>, and <a class="el" href="GcManager_8h_source.html#l00227">mutex_</a>.</p>
+<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00207">gcTriggerCallback_</a>, <a class="el" href="GcManager_8h_source.html#l00210">gcTriggerOwner_</a>, and <a class="el" href="GcManager_8h_source.html#l00233">mutex_</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00062">Interpreter::~Interpreter()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00069">Interpreter::~Interpreter()</a>.</p>
 
 </div>
 </div>
@@ -409,11 +411,11 @@ Private Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00252">252</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00340">340</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00199">allocationsSinceLastGc_</a>, <a class="el" href="GcManager_8h_source.html#l00212">currentPhase_</a>, <a class="el" href="MemoryInspectionAPI_8h.html#a2cef17ada7b8e117205c9df3631d562aab0cd65e5a3b82924ff47c1d319b8b37d">Finalizing</a>, <a class="el" href="GcManager_8h_source.html#l00190">freeSlots_</a>, <a class="el" href="GcManager_8h_source.html#l00219">gcMode_</a>, <a class="el" href="MemoryInspectionAPI_8h.html#a113ec5a1d3390308c264368630fbbb8caae0b03db5ba23d2af2706ea03b819f8c">GcOnly</a>, <a class="el" href="RefCounted_8h_source.html#l00082">RefCounted::gcSlot_</a>, <a class="el" href="MemoryInspectionAPI_8h.html#a2cef17ada7b8e117205c9df3631d562aae599161956d626eda4cb0a5ffb85271c">Idle</a>, <a class="el" href="GcManager_8h_source.html#l00214">lastCollectedCount_</a>, <a class="el" href="GcManager_8h_source.html#l00213">lastMarkedCount_</a>, <a class="el" href="GcManager_8h_source.html#l00193">liveTrackedCount_</a>, <a class="el" href="Logger_8h_source.html#l00268">LOG_INFO</a>, <a class="el" href="MemoryInspectionAPI_8h.html#a2cef17ada7b8e117205c9df3631d562aa2d9d6219cb93df7115866b7c5f7e5a00">Marking</a>, <a class="el" href="GcManager_8cpp_source.html#l00142">markValue()</a>, <a class="el" href="GcManager_8h_source.html#l00227">mutex_</a>, <a class="el" href="MemoryInspectionAPI_8h.html#a113ec5a1d3390308c264368630fbbb8caf264905d7b70ca24e7f7b6a46ed3aea4">RefCountOnly</a>, <a class="el" href="GcManager_8h_source.html#l00186">slots_</a>, <a class="el" href="MemoryInspectionAPI_8h.html#a2cef17ada7b8e117205c9df3631d562aaf3a05d31e99f48311f9079c3b6dbfc5e">Sweeping</a>, <a class="el" href="GcManager_8h_source.html#l00215">totalGcCount_</a>, <a class="el" href="RefCounted_8h_source.html#l00070">RefCounted::type</a>, <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a9b2b2e22c3887afddd7fb28e7a35cc2e">VAL_ARRAY</a>, <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a22e4ac0f2aabbadf638442d15dadf924">VAL_CLOSURE</a>, <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1aa38e27cffdf2f1c1f8250ac5b7eab515">VAL_COROUTINE</a>, <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a33fee84dbed14401d9ddf2537ca74c54">VAL_DICT</a>, <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1aed2791324ac3a65d3f0284b6aec373ae">VAL_ENUM_VARIANT</a>, <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a0481304f4d8763213007faf705c793ce">VAL_INSTANCE</a>, and <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a93a8f176a9cd2f49d4384b4d69a5c9ac">VAL_TUPLE</a>.</p>
+<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00205">allocationsSinceLastGc_</a>, <a class="el" href="GcManager_8h_source.html#l00218">currentPhase_</a>, <a class="el" href="MemoryInspectionAPI_8h.html#a2cef17ada7b8e117205c9df3631d562aab0cd65e5a3b82924ff47c1d319b8b37d">Finalizing</a>, <a class="el" href="GcManager_8h_source.html#l00196">freeSlots_</a>, <a class="el" href="GcManager_8h_source.html#l00225">gcMode_</a>, <a class="el" href="MemoryInspectionAPI_8h.html#a113ec5a1d3390308c264368630fbbb8caae0b03db5ba23d2af2706ea03b819f8c">GcOnly</a>, <a class="el" href="RefCounted_8h_source.html#l00082">RefCounted::gcSlot_</a>, <a class="el" href="MemoryInspectionAPI_8h.html#a2cef17ada7b8e117205c9df3631d562aae599161956d626eda4cb0a5ffb85271c">Idle</a>, <a class="el" href="GcManager_8h_source.html#l00220">lastCollectedCount_</a>, <a class="el" href="GcManager_8h_source.html#l00219">lastMarkedCount_</a>, <a class="el" href="GcManager_8h_source.html#l00199">liveTrackedCount_</a>, <a class="el" href="Logger_8h_source.html#l00268">LOG_INFO</a>, <a class="el" href="MemoryInspectionAPI_8h.html#a2cef17ada7b8e117205c9df3631d562aa2d9d6219cb93df7115866b7c5f7e5a00">Marking</a>, <a class="el" href="GcManager_8cpp_source.html#l00264">markTrackedRoot()</a>, <a class="el" href="GcManager_8h_source.html#l00233">mutex_</a>, <a class="el" href="MemoryInspectionAPI_8h.html#a113ec5a1d3390308c264368630fbbb8caf264905d7b70ca24e7f7b6a46ed3aea4">RefCountOnly</a>, <a class="el" href="GcManager_8h_source.html#l00192">slots_</a>, <a class="el" href="MemoryInspectionAPI_8h.html#a2cef17ada7b8e117205c9df3631d562aaf3a05d31e99f48311f9079c3b6dbfc5e">Sweeping</a>, <a class="el" href="GcManager_8h_source.html#l00221">totalGcCount_</a>, <a class="el" href="RefCounted_8h_source.html#l00070">RefCounted::type</a>, <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a9b2b2e22c3887afddd7fb28e7a35cc2e">VAL_ARRAY</a>, <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a33fee84dbed14401d9ddf2537ca74c54">VAL_DICT</a>, <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1aed2791324ac3a65d3f0284b6aec373ae">VAL_ENUM_VARIANT</a>, <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a0481304f4d8763213007faf705c793ce">VAL_INSTANCE</a>, and <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a93a8f176a9cd2f49d4384b4d69a5c9ac">VAL_TUPLE</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="MemoryInspectionAPI_8cpp_source.html#l00334">MemoryInspectionAPI::collectCycle()</a>, <a class="el" href="Interpreter_8cpp_source.html#l00084">Interpreter::execute()</a>, and <a class="el" href="Interpreter_8cpp_source.html#l01251">Interpreter::triggerIncrementalGc()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="MemoryInspectionAPI_8cpp_source.html#l00334">MemoryInspectionAPI::collectCycle()</a>, <a class="el" href="Interpreter_8cpp_source.html#l00094">Interpreter::execute()</a>, and <a class="el" href="Interpreter_8cpp_source.html#l01269">Interpreter::triggerIncrementalGc()</a>.</p>
 
 </div>
 </div>
@@ -432,9 +434,9 @@ Private Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00586">586</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00612">612</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00212">currentPhase_</a>.</p>
+<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00218">currentPhase_</a>.</p>
 
 </div>
 </div>
@@ -453,9 +455,9 @@ Private Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00582">582</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00608">608</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00200">gcAllocationThreshold_</a>.</p>
+<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00206">gcAllocationThreshold_</a>.</p>
 
 </div>
 </div>
@@ -474,9 +476,9 @@ Private Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00602">602</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00628">628</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00219">gcMode_</a>, and <a class="el" href="GcManager_8h_source.html#l00227">mutex_</a>.</p>
+<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00225">gcMode_</a>, and <a class="el" href="GcManager_8h_source.html#l00233">mutex_</a>.</p>
 
 </div>
 </div>
@@ -505,7 +507,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="GcManager_8h_source.html#l00068">68</a> of file <a class="el" href="GcManager_8h_source.html">GcManager.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Value_8h_source.html#l00123">Value::ArrayData::ArrayData()</a>, <a class="el" href="Value_8h_source.html#l00127">Value::ArrayData::ArrayData()</a>, <a class="el" href="GcManager_8cpp_source.html#l00554">GcManager::CallbackSuppressor::CallbackSuppressor()</a>, <a class="el" href="MemoryInspectionAPI_8cpp_source.html#l00334">MemoryInspectionAPI::collectCycle()</a>, <a class="el" href="Value_8h_source.html#l00354">Value::DictData::DictData()</a>, <a class="el" href="Value_8h_source.html#l00515">Value::ensureUnique()</a>, <a class="el" href="Value_8h_source.html#l00414">Value::EnumVariantData::EnumVariantData()</a>, <a class="el" href="Value_8h_source.html#l00415">Value::EnumVariantData::EnumVariantData()</a>, <a class="el" href="Interpreter_8cpp_source.html#l00084">Interpreter::execute()</a>, <a class="el" href="BackendExecutionService_8cpp_source.html#l00142">BackendExecutionService::execute()</a>, <a class="el" href="Interpreter_8cpp_source.html#l02438">Interpreter::executeFunctionBody()</a>, <a class="el" href="MemoryInspectionAPI_8cpp_source.html#l00312">MemoryInspectionAPI::getGcStats()</a>, <a class="el" href="Value_8h_source.html#l00360">Value::InstanceData::InstanceData()</a>, <a class="el" href="Value_8h_source.html#l00361">Value::InstanceData::InstanceData()</a>, <a class="el" href="Interpreter_8cpp_source.html#l00050">Interpreter::Interpreter()</a>, <a class="el" href="MemoryInspectionAPI_8cpp_source.html#l00326">MemoryInspectionAPI::resetGc()</a>, <a class="el" href="Interpreter_8cpp_source.html#l00221">Interpreter::runStatementsWithExceptionHandling()</a>, <a class="el" href="MemoryInspectionAPI_8cpp_source.html#l00338">MemoryInspectionAPI::setGcAllocationThreshold()</a>, <a class="el" href="MemoryInspectionAPI_8cpp_source.html#l00330">MemoryInspectionAPI::setGcMode()</a>, <a class="el" href="MemoryInspectionAPI_8cpp_source.html#l00342">MemoryInspectionAPI::setGcTriggerCallback()</a>, <a class="el" href="Interpreter_8cpp_source.html#l01251">Interpreter::triggerIncrementalGc()</a>, <a class="el" href="Value_8h_source.html#l00399">Value::TupleData::TupleData()</a>, <a class="el" href="Value_8h_source.html#l00400">Value::TupleData::TupleData()</a>, <a class="el" href="GcManager_8cpp_source.html#l00563">GcManager::CallbackSuppressor::~CallbackSuppressor()</a>, <a class="el" href="Interpreter_8cpp_source.html#l00062">Interpreter::~Interpreter()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00037">RefCounted::~RefCounted()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Value_8h_source.html#l00125">Value::ArrayData::ArrayData()</a>, <a class="el" href="Value_8h_source.html#l00129">Value::ArrayData::ArrayData()</a>, <a class="el" href="GcManager_8cpp_source.html#l00580">GcManager::CallbackSuppressor::CallbackSuppressor()</a>, <a class="el" href="MemoryInspectionAPI_8cpp_source.html#l00334">MemoryInspectionAPI::collectCycle()</a>, <a class="el" href="Value_8h_source.html#l00394">Value::DictData::DictData()</a>, <a class="el" href="Value_8h_source.html#l00580">Value::ensureUnique()</a>, <a class="el" href="Value_8h_source.html#l00462">Value::EnumVariantData::EnumVariantData()</a>, <a class="el" href="Value_8h_source.html#l00463">Value::EnumVariantData::EnumVariantData()</a>, <a class="el" href="Interpreter_8cpp_source.html#l00094">Interpreter::execute()</a>, <a class="el" href="BackendExecutionService_8cpp_source.html#l00142">BackendExecutionService::execute()</a>, <a class="el" href="Interpreter_8cpp_source.html#l02515">Interpreter::executeFunctionBody()</a>, <a class="el" href="MemoryInspectionAPI_8cpp_source.html#l00312">MemoryInspectionAPI::getGcStats()</a>, <a class="el" href="Value_8h_source.html#l00400">Value::InstanceData::InstanceData()</a>, <a class="el" href="Value_8h_source.html#l00401">Value::InstanceData::InstanceData()</a>, <a class="el" href="Interpreter_8cpp_source.html#l00050">Interpreter::Interpreter()</a>, <a class="el" href="MemoryInspectionAPI_8cpp_source.html#l00326">MemoryInspectionAPI::resetGc()</a>, <a class="el" href="Interpreter_8cpp_source.html#l00235">Interpreter::runStatementsWithExceptionHandling()</a>, <a class="el" href="MemoryInspectionAPI_8cpp_source.html#l00338">MemoryInspectionAPI::setGcAllocationThreshold()</a>, <a class="el" href="MemoryInspectionAPI_8cpp_source.html#l00330">MemoryInspectionAPI::setGcMode()</a>, <a class="el" href="MemoryInspectionAPI_8cpp_source.html#l00342">MemoryInspectionAPI::setGcTriggerCallback()</a>, <a class="el" href="Interpreter_8cpp_source.html#l01269">Interpreter::triggerIncrementalGc()</a>, <a class="el" href="Value_8h_source.html#l00447">Value::TupleData::TupleData()</a>, <a class="el" href="Value_8h_source.html#l00448">Value::TupleData::TupleData()</a>, <a class="el" href="GcManager_8cpp_source.html#l00589">GcManager::CallbackSuppressor::~CallbackSuppressor()</a>, <a class="el" href="Interpreter_8cpp_source.html#l00069">Interpreter::~Interpreter()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00037">RefCounted::~RefCounted()</a>.</p>
 
 </div>
 </div>
@@ -524,9 +526,9 @@ Private Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00594">594</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00620">620</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00214">lastCollectedCount_</a>.</p>
+<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00220">lastCollectedCount_</a>.</p>
 
 </div>
 </div>
@@ -545,9 +547,57 @@ Private Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00590">590</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00616">616</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00213">lastMarkedCount_</a>.</p>
+<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00219">lastMarkedCount_</a>.</p>
+
+</div>
+</div>
+<a id="a4f09e2f4276c58714350cd8348e87105" name="a4f09e2f4276c58714350cd8348e87105"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a4f09e2f4276c58714350cd8348e87105">&#9670;&#160;</a></span>markTrackedRoot()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">void GcManager::markTrackedRoot </td>
+          <td>(</td>
+          <td class="paramtype">const void *&#160;</td>
+          <td class="paramname"><em>rootPtr</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">std::unordered_set&lt; const void * &gt; &amp;&#160;</td>
+          <td class="paramname"><em>marked</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">std::vector&lt; const <a class="el" href="structValue.html">Value</a> * &gt; &amp;&#160;</td>
+          <td class="paramname"><em>worklist</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">private</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00264">264</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
+
+<p class="reference">References <a class="el" href="Value_8h_source.html#l00565">Value::CoroutineData::gcRootContributor</a>, <a class="el" href="GcManager_8cpp_source.html#l00264">markTrackedRoot()</a>, <a class="el" href="GcManager_8cpp_source.html#l00142">markValue()</a>, <a class="el" href="RefCounted_8h_source.html#l00070">RefCounted::type</a>, <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a9b2b2e22c3887afddd7fb28e7a35cc2e">VAL_ARRAY</a>, <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a22e4ac0f2aabbadf638442d15dadf924">VAL_CLOSURE</a>, <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1aa38e27cffdf2f1c1f8250ac5b7eab515">VAL_COROUTINE</a>, <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a33fee84dbed14401d9ddf2537ca74c54">VAL_DICT</a>, <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1aed2791324ac3a65d3f0284b6aec373ae">VAL_ENUM_VARIANT</a>, <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a0481304f4d8763213007faf705c793ce">VAL_INSTANCE</a>, and <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a93a8f176a9cd2f49d4384b4d69a5c9ac">VAL_TUPLE</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00340">collectCycle()</a>, <a class="el" href="GcManager_8cpp_source.html#l00264">markTrackedRoot()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00142">markValue()</a>.</p>
 
 </div>
 </div>
@@ -593,9 +643,9 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00142">142</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="NaNBox_8h_source.html#l00203">NaNBox::asPtr()</a>, <a class="el" href="Value_8h_source.html#l00512">Value::box_</a>, <a class="el" href="Value_8h_source.html#l00370">Value::ClosureData::capturedVars</a>, <a class="el" href="NaNBox_8h_source.html#l00163">NaNBox::isPointer()</a>, <a class="el" href="RefCounted_8h_source.html#l00070">RefCounted::type</a>, <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a9b2b2e22c3887afddd7fb28e7a35cc2e">VAL_ARRAY</a>, <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a22e4ac0f2aabbadf638442d15dadf924">VAL_CLOSURE</a>, <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1aa38e27cffdf2f1c1f8250ac5b7eab515">VAL_COROUTINE</a>, <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a33fee84dbed14401d9ddf2537ca74c54">VAL_DICT</a>, <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1aed2791324ac3a65d3f0284b6aec373ae">VAL_ENUM_VARIANT</a>, <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a0481304f4d8763213007faf705c793ce">VAL_INSTANCE</a>, <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1afd01a941902f3027b30e52c84d99d264">VAL_INT</a>, <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1adc3d719712033cea5159a2b74a4a5731">VAL_STRING</a>, and <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a93a8f176a9cd2f49d4384b4d69a5c9ac">VAL_TUPLE</a>.</p>
+<p class="reference">References <a class="el" href="NaNBox_8h_source.html#l00203">NaNBox::asPtr()</a>, <a class="el" href="Value_8h_source.html#l00577">Value::box_</a>, <a class="el" href="Value_8h_source.html#l00410">Value::ClosureData::capturedVars</a>, <a class="el" href="Value_8h_source.html#l00565">Value::CoroutineData::gcRootContributor</a>, <a class="el" href="NaNBox_8h_source.html#l00163">NaNBox::isPointer()</a>, <a class="el" href="GcManager_8cpp_source.html#l00264">markTrackedRoot()</a>, <a class="el" href="RefCounted_8h_source.html#l00070">RefCounted::type</a>, <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a9b2b2e22c3887afddd7fb28e7a35cc2e">VAL_ARRAY</a>, <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a22e4ac0f2aabbadf638442d15dadf924">VAL_CLOSURE</a>, <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1aa38e27cffdf2f1c1f8250ac5b7eab515">VAL_COROUTINE</a>, <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a33fee84dbed14401d9ddf2537ca74c54">VAL_DICT</a>, <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1aed2791324ac3a65d3f0284b6aec373ae">VAL_ENUM_VARIANT</a>, <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a0481304f4d8763213007faf705c793ce">VAL_INSTANCE</a>, <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1afd01a941902f3027b30e52c84d99d264">VAL_INT</a>, <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1adc3d719712033cea5159a2b74a4a5731">VAL_STRING</a>, and <a class="el" href="ValueTypes_8h.html#ad9971b6ef33e02ba2c75d19c1d2518a1a93a8f176a9cd2f49d4384b4d69a5c9ac">VAL_TUPLE</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00252">collectCycle()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00264">markTrackedRoot()</a>.</p>
 
 </div>
 </div>
@@ -617,7 +667,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00124">124</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00190">freeSlots_</a>, <a class="el" href="RefCounted_8h_source.html#l00082">RefCounted::gcSlot_</a>, <a class="el" href="GcManager_8h_source.html#l00193">liveTrackedCount_</a>, <a class="el" href="GcManager_8h_source.html#l00227">mutex_</a>, and <a class="el" href="GcManager_8h_source.html#l00186">slots_</a>.</p>
+<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00196">freeSlots_</a>, <a class="el" href="RefCounted_8h_source.html#l00082">RefCounted::gcSlot_</a>, <a class="el" href="GcManager_8h_source.html#l00199">liveTrackedCount_</a>, <a class="el" href="GcManager_8h_source.html#l00233">mutex_</a>, and <a class="el" href="GcManager_8h_source.html#l00192">slots_</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00037">RefCounted::~RefCounted()</a>.</p>
 
@@ -667,9 +717,9 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00046">46</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00199">allocationsSinceLastGc_</a>, <a class="el" href="GcManager_8h_source.html#l00190">freeSlots_</a>, <a class="el" href="GcManager_8h_source.html#l00200">gcAllocationThreshold_</a>, <a class="el" href="GcManager_8h_source.html#l00206">gcInProgress_</a>, <a class="el" href="GcManager_8h_source.html#l00219">gcMode_</a>, <a class="el" href="RefCounted_8h_source.html#l00082">RefCounted::gcSlot_</a>, <a class="el" href="RefCounted_8h_source.html#l00078">RefCounted::gcTracked_</a>, <a class="el" href="GcManager_8h_source.html#l00201">gcTriggerCallback_</a>, <a class="el" href="GcManager_8h_source.html#l00193">liveTrackedCount_</a>, <a class="el" href="GcManager_8h_source.html#l00227">mutex_</a>, <a class="el" href="GcManager_8h_source.html#l00209">pendingIncrementalGc_</a>, <a class="el" href="MemoryInspectionAPI_8h.html#a113ec5a1d3390308c264368630fbbb8caf264905d7b70ca24e7f7b6a46ed3aea4">RefCountOnly</a>, and <a class="el" href="GcManager_8h_source.html#l00186">slots_</a>.</p>
+<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00205">allocationsSinceLastGc_</a>, <a class="el" href="GcManager_8h_source.html#l00196">freeSlots_</a>, <a class="el" href="GcManager_8h_source.html#l00206">gcAllocationThreshold_</a>, <a class="el" href="GcManager_8h_source.html#l00212">gcInProgress_</a>, <a class="el" href="GcManager_8h_source.html#l00225">gcMode_</a>, <a class="el" href="RefCounted_8h_source.html#l00082">RefCounted::gcSlot_</a>, <a class="el" href="RefCounted_8h_source.html#l00078">RefCounted::gcTracked_</a>, <a class="el" href="GcManager_8h_source.html#l00207">gcTriggerCallback_</a>, <a class="el" href="GcManager_8h_source.html#l00199">liveTrackedCount_</a>, <a class="el" href="GcManager_8h_source.html#l00233">mutex_</a>, <a class="el" href="GcManager_8h_source.html#l00215">pendingIncrementalGc_</a>, <a class="el" href="MemoryInspectionAPI_8h.html#a113ec5a1d3390308c264368630fbbb8caf264905d7b70ca24e7f7b6a46ed3aea4">RefCountOnly</a>, and <a class="el" href="GcManager_8h_source.html#l00192">slots_</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Value_8h_source.html#l00123">Value::ArrayData::ArrayData()</a>, <a class="el" href="Value_8h_source.html#l00127">Value::ArrayData::ArrayData()</a>, <a class="el" href="Value_8h_source.html#l00354">Value::DictData::DictData()</a>, <a class="el" href="Value_8h_source.html#l00515">Value::ensureUnique()</a>, <a class="el" href="Value_8h_source.html#l00414">Value::EnumVariantData::EnumVariantData()</a>, <a class="el" href="Value_8h_source.html#l00415">Value::EnumVariantData::EnumVariantData()</a>, <a class="el" href="Value_8h_source.html#l00360">Value::InstanceData::InstanceData()</a>, <a class="el" href="Value_8h_source.html#l00361">Value::InstanceData::InstanceData()</a>, <a class="el" href="Value_8h_source.html#l00399">Value::TupleData::TupleData()</a>, and <a class="el" href="Value_8h_source.html#l00400">Value::TupleData::TupleData()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Value_8h_source.html#l00125">Value::ArrayData::ArrayData()</a>, <a class="el" href="Value_8h_source.html#l00129">Value::ArrayData::ArrayData()</a>, <a class="el" href="Value_8h_source.html#l00394">Value::DictData::DictData()</a>, <a class="el" href="Value_8h_source.html#l00580">Value::ensureUnique()</a>, <a class="el" href="Value_8h_source.html#l00462">Value::EnumVariantData::EnumVariantData()</a>, <a class="el" href="Value_8h_source.html#l00463">Value::EnumVariantData::EnumVariantData()</a>, <a class="el" href="Value_8h_source.html#l00400">Value::InstanceData::InstanceData()</a>, <a class="el" href="Value_8h_source.html#l00401">Value::InstanceData::InstanceData()</a>, <a class="el" href="Value_8h_source.html#l00447">Value::TupleData::TupleData()</a>, and <a class="el" href="Value_8h_source.html#l00448">Value::TupleData::TupleData()</a>.</p>
 
 </div>
 </div>
@@ -688,9 +738,9 @@ Private Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00496">496</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00522">522</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00199">allocationsSinceLastGc_</a>, <a class="el" href="GcManager_8h_source.html#l00212">currentPhase_</a>, <a class="el" href="GcManager_8h_source.html#l00190">freeSlots_</a>, <a class="el" href="GcManager_8h_source.html#l00206">gcInProgress_</a>, <a class="el" href="GcManager_8h_source.html#l00201">gcTriggerCallback_</a>, <a class="el" href="GcManager_8h_source.html#l00204">gcTriggerOwner_</a>, <a class="el" href="MemoryInspectionAPI_8h.html#a2cef17ada7b8e117205c9df3631d562aae599161956d626eda4cb0a5ffb85271c">Idle</a>, <a class="el" href="GcManager_8h_source.html#l00214">lastCollectedCount_</a>, <a class="el" href="GcManager_8h_source.html#l00213">lastMarkedCount_</a>, <a class="el" href="GcManager_8h_source.html#l00193">liveTrackedCount_</a>, <a class="el" href="GcManager_8h_source.html#l00227">mutex_</a>, <a class="el" href="GcManager_8h_source.html#l00209">pendingIncrementalGc_</a>, <a class="el" href="GcManager_8h_source.html#l00186">slots_</a>, and <a class="el" href="GcManager_8h_source.html#l00215">totalGcCount_</a>.</p>
+<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00205">allocationsSinceLastGc_</a>, <a class="el" href="GcManager_8h_source.html#l00218">currentPhase_</a>, <a class="el" href="GcManager_8h_source.html#l00196">freeSlots_</a>, <a class="el" href="GcManager_8h_source.html#l00212">gcInProgress_</a>, <a class="el" href="GcManager_8h_source.html#l00207">gcTriggerCallback_</a>, <a class="el" href="GcManager_8h_source.html#l00210">gcTriggerOwner_</a>, <a class="el" href="MemoryInspectionAPI_8h.html#a2cef17ada7b8e117205c9df3631d562aae599161956d626eda4cb0a5ffb85271c">Idle</a>, <a class="el" href="GcManager_8h_source.html#l00220">lastCollectedCount_</a>, <a class="el" href="GcManager_8h_source.html#l00219">lastMarkedCount_</a>, <a class="el" href="GcManager_8h_source.html#l00199">liveTrackedCount_</a>, <a class="el" href="GcManager_8h_source.html#l00233">mutex_</a>, <a class="el" href="GcManager_8h_source.html#l00215">pendingIncrementalGc_</a>, <a class="el" href="GcManager_8h_source.html#l00192">slots_</a>, and <a class="el" href="GcManager_8h_source.html#l00221">totalGcCount_</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="MemoryInspectionAPI_8cpp_source.html#l00326">MemoryInspectionAPI::resetGc()</a>.</p>
 
@@ -712,9 +762,9 @@ Private Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00577">577</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00603">603</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00200">gcAllocationThreshold_</a>, and <a class="el" href="GcManager_8h_source.html#l00227">mutex_</a>.</p>
+<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00206">gcAllocationThreshold_</a>, and <a class="el" href="GcManager_8h_source.html#l00233">mutex_</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="MemoryInspectionAPI_8cpp_source.html#l00338">MemoryInspectionAPI::setGcAllocationThreshold()</a>.</p>
 
@@ -736,9 +786,9 @@ Private Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00607">607</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00633">633</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00219">gcMode_</a>, and <a class="el" href="GcManager_8h_source.html#l00227">mutex_</a>.</p>
+<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00225">gcMode_</a>, and <a class="el" href="GcManager_8h_source.html#l00233">mutex_</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="MemoryInspectionAPI_8cpp_source.html#l00330">MemoryInspectionAPI::setGcMode()</a>.</p>
 
@@ -770,9 +820,9 @@ Private Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00532">532</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00558">558</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00201">gcTriggerCallback_</a>, <a class="el" href="GcManager_8h_source.html#l00204">gcTriggerOwner_</a>, and <a class="el" href="GcManager_8h_source.html#l00227">mutex_</a>.</p>
+<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00207">gcTriggerCallback_</a>, <a class="el" href="GcManager_8h_source.html#l00210">gcTriggerOwner_</a>, and <a class="el" href="GcManager_8h_source.html#l00233">mutex_</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00050">Interpreter::Interpreter()</a>, and <a class="el" href="MemoryInspectionAPI_8cpp_source.html#l00342">MemoryInspectionAPI::setGcTriggerCallback()</a>.</p>
 
@@ -793,9 +843,9 @@ Private Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00598">598</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00624">624</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00215">totalGcCount_</a>.</p>
+<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00221">totalGcCount_</a>.</p>
 
 </div>
 </div>
@@ -814,9 +864,9 @@ Private Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00527">527</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="GcManager_8cpp_source.html#l00553">553</a> of file <a class="el" href="GcManager_8cpp_source.html">GcManager.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00193">liveTrackedCount_</a>, and <a class="el" href="GcManager_8h_source.html#l00227">mutex_</a>.</p>
+<p class="reference">References <a class="el" href="GcManager_8h_source.html#l00199">liveTrackedCount_</a>, and <a class="el" href="GcManager_8h_source.html#l00233">mutex_</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="BackendExecutionService_8cpp_source.html#l00142">BackendExecutionService::execute()</a>.</p>
 
@@ -843,9 +893,9 @@ Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="GcManager_8h_source.html#l00199">199</a> of file <a class="el" href="GcManager_8h_source.html">GcManager.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="GcManager_8h_source.html#l00205">205</a> of file <a class="el" href="GcManager_8h_source.html">GcManager.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00573">allocationsSinceLastGc()</a>, <a class="el" href="GcManager_8cpp_source.html#l00086">checkIncrementalGc()</a>, <a class="el" href="GcManager_8cpp_source.html#l00252">collectCycle()</a>, <a class="el" href="GcManager_8cpp_source.html#l00046">registerTracked()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00496">reset()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00599">allocationsSinceLastGc()</a>, <a class="el" href="GcManager_8cpp_source.html#l00086">checkIncrementalGc()</a>, <a class="el" href="GcManager_8cpp_source.html#l00340">collectCycle()</a>, <a class="el" href="GcManager_8cpp_source.html#l00046">registerTracked()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00522">reset()</a>.</p>
 
 </div>
 </div>
@@ -869,9 +919,9 @@ Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="GcManager_8h_source.html#l00212">212</a> of file <a class="el" href="GcManager_8h_source.html">GcManager.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="GcManager_8h_source.html#l00218">218</a> of file <a class="el" href="GcManager_8h_source.html">GcManager.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00252">collectCycle()</a>, <a class="el" href="GcManager_8cpp_source.html#l00586">currentPhase()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00496">reset()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00340">collectCycle()</a>, <a class="el" href="GcManager_8cpp_source.html#l00612">currentPhase()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00522">reset()</a>.</p>
 
 </div>
 </div>
@@ -895,9 +945,9 @@ Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="GcManager_8h_source.html#l00190">190</a> of file <a class="el" href="GcManager_8h_source.html">GcManager.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="GcManager_8h_source.html#l00196">196</a> of file <a class="el" href="GcManager_8h_source.html">GcManager.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00252">collectCycle()</a>, <a class="el" href="GcManager_8cpp_source.html#l00124">onDestroyed()</a>, <a class="el" href="GcManager_8cpp_source.html#l00046">registerTracked()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00496">reset()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00340">collectCycle()</a>, <a class="el" href="GcManager_8cpp_source.html#l00124">onDestroyed()</a>, <a class="el" href="GcManager_8cpp_source.html#l00046">registerTracked()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00522">reset()</a>.</p>
 
 </div>
 </div>
@@ -945,9 +995,9 @@ Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="GcManager_8h_source.html#l00200">200</a> of file <a class="el" href="GcManager_8h_source.html">GcManager.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="GcManager_8h_source.html#l00206">206</a> of file <a class="el" href="GcManager_8h_source.html">GcManager.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00086">checkIncrementalGc()</a>, <a class="el" href="GcManager_8cpp_source.html#l00582">gcAllocationThreshold()</a>, <a class="el" href="GcManager_8cpp_source.html#l00046">registerTracked()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00577">setGcAllocationThreshold()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00086">checkIncrementalGc()</a>, <a class="el" href="GcManager_8cpp_source.html#l00608">gcAllocationThreshold()</a>, <a class="el" href="GcManager_8cpp_source.html#l00046">registerTracked()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00603">setGcAllocationThreshold()</a>.</p>
 
 </div>
 </div>
@@ -971,9 +1021,9 @@ Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="GcManager_8h_source.html#l00206">206</a> of file <a class="el" href="GcManager_8h_source.html">GcManager.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="GcManager_8h_source.html#l00212">212</a> of file <a class="el" href="GcManager_8h_source.html">GcManager.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00086">checkIncrementalGc()</a>, <a class="el" href="GcManager_8cpp_source.html#l00046">registerTracked()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00496">reset()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00086">checkIncrementalGc()</a>, <a class="el" href="GcManager_8cpp_source.html#l00046">registerTracked()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00522">reset()</a>.</p>
 
 </div>
 </div>
@@ -997,9 +1047,9 @@ Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="GcManager_8h_source.html#l00219">219</a> of file <a class="el" href="GcManager_8h_source.html">GcManager.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="GcManager_8h_source.html#l00225">225</a> of file <a class="el" href="GcManager_8h_source.html">GcManager.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00252">collectCycle()</a>, <a class="el" href="GcManager_8cpp_source.html#l00602">gcMode()</a>, <a class="el" href="GcManager_8cpp_source.html#l00046">registerTracked()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00607">setGcMode()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00340">collectCycle()</a>, <a class="el" href="GcManager_8cpp_source.html#l00628">gcMode()</a>, <a class="el" href="GcManager_8cpp_source.html#l00046">registerTracked()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00633">setGcMode()</a>.</p>
 
 </div>
 </div>
@@ -1023,9 +1073,9 @@ Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="GcManager_8h_source.html#l00201">201</a> of file <a class="el" href="GcManager_8h_source.html">GcManager.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="GcManager_8h_source.html#l00207">207</a> of file <a class="el" href="GcManager_8h_source.html">GcManager.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00086">checkIncrementalGc()</a>, <a class="el" href="GcManager_8cpp_source.html#l00539">clearGcTriggerCallbackIfOwner()</a>, <a class="el" href="GcManager_8cpp_source.html#l00046">registerTracked()</a>, <a class="el" href="GcManager_8cpp_source.html#l00496">reset()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00532">setGcTriggerCallback()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00086">checkIncrementalGc()</a>, <a class="el" href="GcManager_8cpp_source.html#l00565">clearGcTriggerCallbackIfOwner()</a>, <a class="el" href="GcManager_8cpp_source.html#l00046">registerTracked()</a>, <a class="el" href="GcManager_8cpp_source.html#l00522">reset()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00558">setGcTriggerCallback()</a>.</p>
 
 </div>
 </div>
@@ -1049,9 +1099,9 @@ Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="GcManager_8h_source.html#l00204">204</a> of file <a class="el" href="GcManager_8h_source.html">GcManager.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="GcManager_8h_source.html#l00210">210</a> of file <a class="el" href="GcManager_8h_source.html">GcManager.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00539">clearGcTriggerCallbackIfOwner()</a>, <a class="el" href="GcManager_8cpp_source.html#l00496">reset()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00532">setGcTriggerCallback()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00565">clearGcTriggerCallbackIfOwner()</a>, <a class="el" href="GcManager_8cpp_source.html#l00522">reset()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00558">setGcTriggerCallback()</a>.</p>
 
 </div>
 </div>
@@ -1075,9 +1125,9 @@ Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="GcManager_8h_source.html#l00214">214</a> of file <a class="el" href="GcManager_8h_source.html">GcManager.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="GcManager_8h_source.html#l00220">220</a> of file <a class="el" href="GcManager_8h_source.html">GcManager.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00252">collectCycle()</a>, <a class="el" href="GcManager_8cpp_source.html#l00594">lastCollectedCount()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00496">reset()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00340">collectCycle()</a>, <a class="el" href="GcManager_8cpp_source.html#l00620">lastCollectedCount()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00522">reset()</a>.</p>
 
 </div>
 </div>
@@ -1101,9 +1151,9 @@ Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="GcManager_8h_source.html#l00213">213</a> of file <a class="el" href="GcManager_8h_source.html">GcManager.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="GcManager_8h_source.html#l00219">219</a> of file <a class="el" href="GcManager_8h_source.html">GcManager.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00252">collectCycle()</a>, <a class="el" href="GcManager_8cpp_source.html#l00590">lastMarkedCount()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00496">reset()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00340">collectCycle()</a>, <a class="el" href="GcManager_8cpp_source.html#l00616">lastMarkedCount()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00522">reset()</a>.</p>
 
 </div>
 </div>
@@ -1127,9 +1177,9 @@ Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="GcManager_8h_source.html#l00193">193</a> of file <a class="el" href="GcManager_8h_source.html">GcManager.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="GcManager_8h_source.html#l00199">199</a> of file <a class="el" href="GcManager_8h_source.html">GcManager.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00252">collectCycle()</a>, <a class="el" href="GcManager_8cpp_source.html#l00124">onDestroyed()</a>, <a class="el" href="GcManager_8cpp_source.html#l00046">registerTracked()</a>, <a class="el" href="GcManager_8cpp_source.html#l00496">reset()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00527">trackedCount()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00340">collectCycle()</a>, <a class="el" href="GcManager_8cpp_source.html#l00124">onDestroyed()</a>, <a class="el" href="GcManager_8cpp_source.html#l00046">registerTracked()</a>, <a class="el" href="GcManager_8cpp_source.html#l00522">reset()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00553">trackedCount()</a>.</p>
 
 </div>
 </div>
@@ -1153,9 +1203,9 @@ Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="GcManager_8h_source.html#l00227">227</a> of file <a class="el" href="GcManager_8h_source.html">GcManager.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="GcManager_8h_source.html#l00233">233</a> of file <a class="el" href="GcManager_8h_source.html">GcManager.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00109">checkPendingGc()</a>, <a class="el" href="GcManager_8cpp_source.html#l00539">clearGcTriggerCallbackIfOwner()</a>, <a class="el" href="GcManager_8cpp_source.html#l00252">collectCycle()</a>, <a class="el" href="GcManager_8cpp_source.html#l00602">gcMode()</a>, <a class="el" href="GcManager_8cpp_source.html#l00124">onDestroyed()</a>, <a class="el" href="GcManager_8cpp_source.html#l00046">registerTracked()</a>, <a class="el" href="GcManager_8cpp_source.html#l00496">reset()</a>, <a class="el" href="GcManager_8cpp_source.html#l00577">setGcAllocationThreshold()</a>, <a class="el" href="GcManager_8cpp_source.html#l00607">setGcMode()</a>, <a class="el" href="GcManager_8cpp_source.html#l00532">setGcTriggerCallback()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00527">trackedCount()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00109">checkPendingGc()</a>, <a class="el" href="GcManager_8cpp_source.html#l00565">clearGcTriggerCallbackIfOwner()</a>, <a class="el" href="GcManager_8cpp_source.html#l00340">collectCycle()</a>, <a class="el" href="GcManager_8cpp_source.html#l00628">gcMode()</a>, <a class="el" href="GcManager_8cpp_source.html#l00124">onDestroyed()</a>, <a class="el" href="GcManager_8cpp_source.html#l00046">registerTracked()</a>, <a class="el" href="GcManager_8cpp_source.html#l00522">reset()</a>, <a class="el" href="GcManager_8cpp_source.html#l00603">setGcAllocationThreshold()</a>, <a class="el" href="GcManager_8cpp_source.html#l00633">setGcMode()</a>, <a class="el" href="GcManager_8cpp_source.html#l00558">setGcTriggerCallback()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00553">trackedCount()</a>.</p>
 
 </div>
 </div>
@@ -1179,9 +1229,9 @@ Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="GcManager_8h_source.html#l00209">209</a> of file <a class="el" href="GcManager_8h_source.html">GcManager.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="GcManager_8h_source.html#l00215">215</a> of file <a class="el" href="GcManager_8h_source.html">GcManager.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00109">checkPendingGc()</a>, <a class="el" href="GcManager_8cpp_source.html#l00046">registerTracked()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00496">reset()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00109">checkPendingGc()</a>, <a class="el" href="GcManager_8cpp_source.html#l00046">registerTracked()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00522">reset()</a>.</p>
 
 </div>
 </div>
@@ -1205,9 +1255,9 @@ Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="GcManager_8h_source.html#l00186">186</a> of file <a class="el" href="GcManager_8h_source.html">GcManager.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="GcManager_8h_source.html#l00192">192</a> of file <a class="el" href="GcManager_8h_source.html">GcManager.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00252">collectCycle()</a>, <a class="el" href="GcManager_8cpp_source.html#l00124">onDestroyed()</a>, <a class="el" href="GcManager_8cpp_source.html#l00046">registerTracked()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00496">reset()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00340">collectCycle()</a>, <a class="el" href="GcManager_8cpp_source.html#l00124">onDestroyed()</a>, <a class="el" href="GcManager_8cpp_source.html#l00046">registerTracked()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00522">reset()</a>.</p>
 
 </div>
 </div>
@@ -1231,9 +1281,9 @@ Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="GcManager_8h_source.html#l00215">215</a> of file <a class="el" href="GcManager_8h_source.html">GcManager.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="GcManager_8h_source.html#l00221">221</a> of file <a class="el" href="GcManager_8h_source.html">GcManager.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00252">collectCycle()</a>, <a class="el" href="GcManager_8cpp_source.html#l00496">reset()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00598">totalGcCount()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00340">collectCycle()</a>, <a class="el" href="GcManager_8cpp_source.html#l00522">reset()</a>, and <a class="el" href="GcManager_8cpp_source.html#l00624">totalGcCount()</a>.</p>
 
 </div>
 </div>

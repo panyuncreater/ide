@@ -9,5 +9,6 @@ var classminilang_1_1HostFunctionRegistry =
     [ "instance", "classminilang_1_1HostFunctionRegistry.html#a116efbd089bbea55918e8875805abf88", null ],
     [ "operator=", "classminilang_1_1HostFunctionRegistry.html#acdcfdf55b15bfa5fd1b206bf49c6c68d", null ],
     [ "registerFunction", "classminilang_1_1HostFunctionRegistry.html#a725ffa54a39106e03ab61befbdd13eb6", null ],
+    [ "unregisterFunction", "classminilang_1_1HostFunctionRegistry.html#a1b2ad93ff8dffd4511d3dbbb3f4946c7", null ],
     [ "functions_", "classminilang_1_1HostFunctionRegistry.html#a2db8913ef5e5942f37e49f948227d927", null ]
 ];

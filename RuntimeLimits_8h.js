@@ -1,6 +1,8 @@
 var RuntimeLimits_8h =
 [
     [ "RuntimeLimits::RuntimeConfig", "classRuntimeLimits_1_1RuntimeConfig.html", "classRuntimeLimits_1_1RuntimeConfig" ],
+    [ "RuntimeLimits::RuntimeConfig::SandboxPolicy", "structRuntimeLimits_1_1RuntimeConfig_1_1SandboxPolicy.html", "structRuntimeLimits_1_1RuntimeConfig_1_1SandboxPolicy" ],
+    [ "RuntimeLimits::RuntimeConfig::SandboxScope", "classRuntimeLimits_1_1RuntimeConfig_1_1SandboxScope.html", "classRuntimeLimits_1_1RuntimeConfig_1_1SandboxScope" ],
     [ "MAX_BLOCK_DEPTH", "RuntimeLimits_8h.html#abc48af8e22accfa588f8cf72ba41775f", null ],
     [ "MAX_CHANNEL_TIMEOUT_MS", "RuntimeLimits_8h.html#a47dc96a68610a8ab0d04d5b8fc55b9dc", null ],
     [ "MAX_CLONE_DEPTH", "RuntimeLimits_8h.html#a0dcdb82bd72f053e0b1ee66b13741ffc", null ],

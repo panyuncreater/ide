@@ -156,6 +156,8 @@ Public Attributes</h2></td></tr>
 <tr class="separator:adaf19097195d88f2cc39199288f00481"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a9e2570b883fe6dbabcb95254c777707d" id="r_a9e2570b883fe6dbabcb95254c777707d"><td class="memItemLeft" align="right" valign="top">uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structValue_1_1ClosureData.html#a9e2570b883fe6dbabcb95254c777707d">functionId</a> = 0</td></tr>
 <tr class="separator:a9e2570b883fe6dbabcb95254c777707d"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a18bb5456f9b2f553e58afc8a0e662b13" id="r_a18bb5456f9b2f553e58afc8a0e662b13"><td class="memItemLeft" align="right" valign="top">std::vector&lt; std::string &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structValue_1_1ClosureData.html#a18bb5456f9b2f553e58afc8a0e662b13">definingTypeParams</a></td></tr>
+<tr class="separator:a18bb5456f9b2f553e58afc8a0e662b13"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="inherit_header pub_attribs_structRefCounted"><td colspan="2" onclick="javascript:toggleInherit('pub_attribs_structRefCounted')"><img src="closed.png" alt="-"/>&#160;Public Attributes inherited from <a class="el" href="structRefCounted.html">RefCounted</a></td></tr>
 <tr class="memitem:a149748777e67c951a105965440ffefdc inherit pub_attribs_structRefCounted" id="r_a149748777e67c951a105965440ffefdc"><td class="memItemLeft" align="right" valign="top">std::atomic&lt; int &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structRefCounted.html#a149748777e67c951a105965440ffefdc">refCount</a> {1}</td></tr>
 <tr class="separator:a149748777e67c951a105965440ffefdc inherit pub_attribs_structRefCounted"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -168,7 +170,7 @@ Public Attributes</h2></td></tr>
 </table>
 <a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
 <div class="textblock">
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00366">366</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00406">406</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 </div><h2 class="groupheader">Constructor &amp; Destructor Documentation</h2>
 <a id="af2835b8e02c382aaae05f65f7f7bf024" name="af2835b8e02c382aaae05f65f7f7bf024"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#af2835b8e02c382aaae05f65f7f7bf024">&#9670;&#160;</a></span>ClosureData() <span class="overload">[1/2]</span></h2>
@@ -193,7 +195,7 @@ Public Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00380">380</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00428">428</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
 </div>
 </div>
@@ -249,7 +251,7 @@ Public Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00381">381</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00429">429</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
 </div>
 </div>
@@ -266,7 +268,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00372">372</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00412">412</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
 </div>
 </div>
@@ -282,9 +284,25 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00370">370</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00410">410</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="GcManager_8cpp_source.html#l00142">GcManager::markValue()</a>.</p>
+
+</div>
+</div>
+<a id="a18bb5456f9b2f553e58afc8a0e662b13" name="a18bb5456f9b2f553e58afc8a0e662b13"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a18bb5456f9b2f553e58afc8a0e662b13">&#9670;&#160;</a></span>definingTypeParams</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">std::vector&lt;std::string&gt; Value::ClosureData::definingTypeParams</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00426">426</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
 </div>
 </div>
@@ -300,7 +318,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00368">368</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00408">408</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
 </div>
 </div>
@@ -316,7 +334,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00378">378</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00418">418</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="Value_8cpp_source.html#l00365">Value::equalsImplLeafObject()</a>.</p>
 
@@ -334,7 +352,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00367">367</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00407">407</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
 </div>
 </div>
@@ -350,7 +368,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00369">369</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00409">409</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
 </div>
 </div>
@@ -366,7 +384,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00373">373</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Value_8h_source.html#l00413">413</a> of file <a class="el" href="Value_8h_source.html">Value.h</a>.</p>
 
 </div>
 </div>

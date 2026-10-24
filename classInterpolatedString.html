@@ -155,7 +155,7 @@ Public Attributes</h2></td></tr>
 <a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
 <div class="textblock"><p>C5 fix: 插值字符串节点 — 保留 <code>"text {expr} more {expr2}"</code> 的 AST 结构 原 parseInterpolatedString 将其抹平为 <a class="el" href="classBinaryOp.html" title="二元运算节点">BinaryOp(BIN_ADD)</a> 链，Formatter 无法 重建插值语法，AstViewer 只能看到一堆 BinaryOp。本节点存储交替的字面量片段 和表达式，Formatter 可精确重建 <code>"text {expr} more {expr2}"</code> 语法。 </p>
 
-<p class="definition">Definition at line <a class="el" href="ASTNode_8h_source.html#l00321">321</a> of file <a class="el" href="ASTNode_8h_source.html">ASTNode.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="ASTNode_8h_source.html#l00328">328</a> of file <a class="el" href="ASTNode_8h_source.html">ASTNode.h</a>.</p>
 </div><h2 class="groupheader">Constructor &amp; Destructor Documentation</h2>
 <a id="a7deabb6dd873a4018933ed06c2295b1e" name="a7deabb6dd873a4018933ed06c2295b1e"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a7deabb6dd873a4018933ed06c2295b1e">&#9670;&#160;</a></span>InterpolatedString()</h2>
@@ -191,7 +191,7 @@ Public Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="ASTNode_8h_source.html#l00335">335</a> of file <a class="el" href="ASTNode_8h_source.html">ASTNode.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="ASTNode_8h_source.html#l00342">342</a> of file <a class="el" href="ASTNode_8h_source.html">ASTNode.h</a>.</p>
 
 <p class="reference">References <a class="el" href="ASTNode_8h.html#acac9cbaeea226ed297804c012dc12b16ab4903c5f633f79f343780ab287cedb2e">NODE_INTERPOLATED_STRING</a>, and <a class="el" href="ASTNode_8h_source.html#l00095">ASTNode::nodeType</a>.</p>
 
@@ -226,7 +226,7 @@ Public Attributes</h2></td></tr>
 
 <p>Implements <a class="el" href="classASTNode.html#ab19e2a3711c648e10a78f678f8a7aa17">ASTNode</a>.</p>
 
-<p class="definition">Definition at line <a class="el" href="ASTNode_8cpp_source.html#l00228">228</a> of file <a class="el" href="ASTNode_8cpp_source.html">ASTNode.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="ASTNode_8cpp_source.html#l00244">244</a> of file <a class="el" href="ASTNode_8cpp_source.html">ASTNode.cpp</a>.</p>
 
 <p class="reference">References <a class="el" href="classVisitor.html#a42d1741d1694432d720e08839c4e919e">Visitor::visitInterpolatedString()</a>.</p>
 
@@ -259,9 +259,9 @@ Public Attributes</h2></td></tr>
 
 <p>Implements <a class="el" href="classASTNode.html#a22acccda13969fd35d016137b70748f2">ASTNode</a>.</p>
 
-<p class="definition">Definition at line <a class="el" href="ASTNode_8h_source.html#l00339">339</a> of file <a class="el" href="ASTNode_8h_source.html">ASTNode.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="ASTNode_8h_source.html#l00346">346</a> of file <a class="el" href="ASTNode_8h_source.html">ASTNode.h</a>.</p>
 
-<p class="reference">References <a class="el" href="ASTNode_8h_source.html#l00326">expressions</a>.</p>
+<p class="reference">References <a class="el" href="ASTNode_8h_source.html#l00333">expressions</a>.</p>
 
 </div>
 </div>
@@ -292,7 +292,7 @@ Public Attributes</h2></td></tr>
 
 <p>Implements <a class="el" href="classASTNode.html#abea3e85475f6a6a71a38230014599a36">ASTNode</a>.</p>
 
-<p class="definition">Definition at line <a class="el" href="ASTNode_8h_source.html#l00338">338</a> of file <a class="el" href="ASTNode_8h_source.html">ASTNode.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="ASTNode_8h_source.html#l00345">345</a> of file <a class="el" href="ASTNode_8h_source.html">ASTNode.h</a>.</p>
 
 </div>
 </div>
@@ -309,9 +309,9 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="ASTNode_8h_source.html#l00333">333</a> of file <a class="el" href="ASTNode_8h_source.html">ASTNode.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="ASTNode_8h_source.html#l00340">340</a> of file <a class="el" href="ASTNode_8h_source.html">ASTNode.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Formatter_8cpp_source.html#l01586">Formatter::formatInterpolatedString()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Formatter_8cpp_source.html#l01717">Formatter::formatInterpolatedString()</a>.</p>
 
 </div>
 </div>
@@ -327,9 +327,9 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="ASTNode_8h_source.html#l00326">326</a> of file <a class="el" href="ASTNode_8h_source.html">ASTNode.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="ASTNode_8h_source.html#l00333">333</a> of file <a class="el" href="ASTNode_8h_source.html">ASTNode.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="ASTNode_8h_source.html#l00339">children()</a>, <a class="el" href="Formatter_8cpp_source.html#l01586">Formatter::formatInterpolatedString()</a>, <a class="el" href="AstIRBuilder_8cpp_source.html#l03516">AstIRBuilder::visitInterpolatedString()</a>, <a class="el" href="CompilerExpr_8cpp_source.html#l00218">Compiler::visitInterpolatedString()</a>, and <a class="el" href="Interpreter_8cpp_source.html#l01784">Interpreter::visitInterpolatedString()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="ASTNode_8h_source.html#l00346">children()</a>, <a class="el" href="Formatter_8cpp_source.html#l01717">Formatter::formatInterpolatedString()</a>, <a class="el" href="AstIRBuilder_8cpp_source.html#l03611">AstIRBuilder::visitInterpolatedString()</a>, <a class="el" href="CompilerExpr_8cpp_source.html#l00220">Compiler::visitInterpolatedString()</a>, and <a class="el" href="Interpreter_8cpp_source.html#l01845">Interpreter::visitInterpolatedString()</a>.</p>
 
 </div>
 </div>
@@ -345,9 +345,9 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="ASTNode_8h_source.html#l00325">325</a> of file <a class="el" href="ASTNode_8h_source.html">ASTNode.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="ASTNode_8h_source.html#l00332">332</a> of file <a class="el" href="ASTNode_8h_source.html">ASTNode.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Formatter_8cpp_source.html#l01586">Formatter::formatInterpolatedString()</a>, <a class="el" href="AstIRBuilder_8cpp_source.html#l03516">AstIRBuilder::visitInterpolatedString()</a>, <a class="el" href="CompilerExpr_8cpp_source.html#l00218">Compiler::visitInterpolatedString()</a>, and <a class="el" href="Interpreter_8cpp_source.html#l01784">Interpreter::visitInterpolatedString()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Formatter_8cpp_source.html#l01717">Formatter::formatInterpolatedString()</a>, <a class="el" href="AstIRBuilder_8cpp_source.html#l03611">AstIRBuilder::visitInterpolatedString()</a>, <a class="el" href="CompilerExpr_8cpp_source.html#l00220">Compiler::visitInterpolatedString()</a>, and <a class="el" href="Interpreter_8cpp_source.html#l01845">Interpreter::visitInterpolatedString()</a>.</p>
 
 </div>
 </div>
@@ -363,9 +363,9 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="ASTNode_8h_source.html#l00330">330</a> of file <a class="el" href="ASTNode_8h_source.html">ASTNode.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="ASTNode_8h_source.html#l00337">337</a> of file <a class="el" href="ASTNode_8h_source.html">ASTNode.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l01784">Interpreter::visitInterpolatedString()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l01845">Interpreter::visitInterpolatedString()</a>.</p>
 
 </div>
 </div>

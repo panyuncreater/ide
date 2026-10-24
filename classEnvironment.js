@@ -13,6 +13,7 @@ var classEnvironment =
     [ "get", "classEnvironment.html#aef9c3b8deab6d2bf834865017f00a51a", null ],
     [ "getBoundInstance", "classEnvironment.html#a478a7197af0f649277c6373009f1ce80", null ],
     [ "getLocalVariable", "classEnvironment.html#aa29e5c29eaf149ffac5be3d1bd6154cb", null ],
+    [ "getMutableVariableSlot", "classEnvironment.html#a7d7663e4085983f4531ef23f79053431", null ],
     [ "getTypeAnnotation", "classEnvironment.html#a1bd252d2f64d039d5be153746c9c0b23", null ],
     [ "getVariableOnly", "classEnvironment.html#adad49380fb27b840097de425ac4dbfec", null ],
     [ "hasClosureCaptures", "classEnvironment.html#a99548560e4c2a02c78e4995d0ec50a4f", null ],

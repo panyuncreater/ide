@@ -3,6 +3,7 @@ var RegisterBytecode_8h =
     [ "RegOpInfo", "structRegOpInfo.html", "structRegOpInfo" ],
     [ "RegBytecodeChunk", "structRegBytecodeChunk.html", "structRegBytecodeChunk" ],
     [ "RegBytecodeChunk::SlotNameRange", "structRegBytecodeChunk_1_1SlotNameRange.html", "structRegBytecodeChunk_1_1SlotNameRange" ],
+    [ "RegBytecodeChunk::GlobalVarCacheEntry", "structRegBytecodeChunk_1_1GlobalVarCacheEntry.html", "structRegBytecodeChunk_1_1GlobalVarCacheEntry" ],
     [ "RegisterCompileResult", "structRegisterCompileResult.html", "structRegisterCompileResult" ],
     [ "RegOp", "RegisterBytecode_8h.html#a598fcdfbb0cf4cebebc1fa99d31a43d3", [
       [ "REG_LOAD_CONST", "RegisterBytecode_8h.html#a598fcdfbb0cf4cebebc1fa99d31a43d3abf2404f03dd8f13bd6dc741fcf95dc8e", null ],
@@ -72,7 +73,8 @@ var RegisterBytecode_8h =
       [ "REG_FINALLY_END", "RegisterBytecode_8h.html#a598fcdfbb0cf4cebebc1fa99d31a43d3a3c8b764a3faef299a75975e62ff4cbd8", null ],
       [ "REG_LEN", "RegisterBytecode_8h.html#a598fcdfbb0cf4cebebc1fa99d31a43d3ae5eb85552bad3671e0b9af98077c68c7", null ],
       [ "REG_TYPE_TEST", "RegisterBytecode_8h.html#a598fcdfbb0cf4cebebc1fa99d31a43d3a673cff15b875d2bffac689854094b65c", null ],
-      [ "REG_TAIL_CALL", "RegisterBytecode_8h.html#a598fcdfbb0cf4cebebc1fa99d31a43d3a38383ae5fddd00f4a3031821a7c3a2a6", null ]
+      [ "REG_TAIL_CALL", "RegisterBytecode_8h.html#a598fcdfbb0cf4cebebc1fa99d31a43d3a38383ae5fddd00f4a3031821a7c3a2a6", null ],
+      [ "REG_DROP_PENDING_JUMPS", "RegisterBytecode_8h.html#a598fcdfbb0cf4cebebc1fa99d31a43d3a6f083fd40745ee36aa979834e2e3f022", null ]
     ] ],
     [ "getRegOpInfo", "RegisterBytecode_8h.html#aeaf5c370fb6f96a773da806722846afa", null ],
     [ "isRegOpVariableLength", "RegisterBytecode_8h.html#ae2b68c9a1a077dc34b00aa95e633aef7", null ],

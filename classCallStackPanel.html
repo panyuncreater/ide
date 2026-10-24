@@ -240,9 +240,9 @@ Private Attributes</h2></td></tr>
 </div><div class="memdoc">
 <p>构造面板：组装顶部子页切换（实时调用栈 / 教学场景库）与 QStackedWidget， 构建两个子页，配置 2s 自动刷新定时器（安全网），并填充场景库列表。 </p>
 
-<p class="definition">Definition at line <a class="el" href="CallStackPanel_8cpp_source.html#l00086">86</a> of file <a class="el" href="CallStackPanel_8cpp_source.html">CallStackPanel.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="CallStackPanel_8cpp_source.html#l00087">87</a> of file <a class="el" href="CallStackPanel_8cpp_source.html">CallStackPanel.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="CallStackPanel_8h_source.html#l00107">autoTimer_</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00216">buildLibraryPage()</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00177">buildLivePage()</a>, <a class="el" href="CallStackPanel_8h_source.html#l00094">controller_</a>, <a class="el" href="CallStackPanel_8h_source.html#l00108">lastAutoRefreshEpoch_</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00242">onRefresh()</a>, <a class="el" href="CallStackPanel_8h_source.html#l00098">pageLibraryBtn_</a>, <a class="el" href="CallStackPanel_8h_source.html#l00097">pageLiveBtn_</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00440">populateScenarios()</a>, <a class="el" href="CallStackPanel_8h_source.html#l00111">scenarioList_</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00457">showScenario()</a>, <a class="el" href="PanelAnimator_8h_source.html#l00213">PanelAnimator::slideInWidget()</a>, <a class="el" href="CallStackPanel_8h_source.html#l00099">stack_</a>, and <a class="el" href="IdeController_8h_source.html#l00095">IdeController::vmStateEpoch()</a>.</p>
+<p class="reference">References <a class="el" href="CallStackPanel_8h_source.html#l00107">autoTimer_</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00217">buildLibraryPage()</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00178">buildLivePage()</a>, <a class="el" href="CallStackPanel_8h_source.html#l00094">controller_</a>, <a class="el" href="CallStackPanel_8h_source.html#l00108">lastAutoRefreshEpoch_</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00243">onRefresh()</a>, <a class="el" href="CallStackPanel_8h_source.html#l00098">pageLibraryBtn_</a>, <a class="el" href="CallStackPanel_8h_source.html#l00097">pageLiveBtn_</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00441">populateScenarios()</a>, <a class="el" href="CallStackPanel_8h_source.html#l00111">scenarioList_</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00458">showScenario()</a>, <a class="el" href="PanelAnimator_8h_source.html#l00213">PanelAnimator::slideInWidget()</a>, <a class="el" href="CallStackPanel_8h_source.html#l00099">stack_</a>, and <a class="el" href="IdeController_8h_source.html#l00095">IdeController::vmStateEpoch()</a>.</p>
 
 </div>
 </div>
@@ -271,7 +271,7 @@ Private Attributes</h2></td></tr>
 
 <p>析构时反注册 vmStateChanged 监听器，避免 controller 持有悬垂 this 回调。 </p>
 
-<p class="definition">Definition at line <a class="el" href="CallStackPanel_8cpp_source.html#l00169">169</a> of file <a class="el" href="CallStackPanel_8cpp_source.html">CallStackPanel.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="CallStackPanel_8cpp_source.html#l00170">170</a> of file <a class="el" href="CallStackPanel_8cpp_source.html">CallStackPanel.cpp</a>.</p>
 
 <p class="reference">References <a class="el" href="CallStackPanel_8h_source.html#l00094">controller_</a>, and <a class="el" href="IdeController_8h_source.html#l00610">IdeController::removeVmStateChangedListener()</a>.</p>
 
@@ -303,11 +303,11 @@ Private Attributes</h2></td></tr>
 </div><div class="memdoc">
 <p>构建「教学场景库」子页：左侧场景列表 + 右侧详情浏览器 + 加载样例按钮， 选中项变化时通过 onScenarioSelected 渲染期望栈帧序列与注解。 </p>
 
-<p class="definition">Definition at line <a class="el" href="CallStackPanel_8cpp_source.html#l00216">216</a> of file <a class="el" href="CallStackPanel_8cpp_source.html">CallStackPanel.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="CallStackPanel_8cpp_source.html#l00217">217</a> of file <a class="el" href="CallStackPanel_8cpp_source.html">CallStackPanel.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="CallStackPanel_8h_source.html#l00113">loadCodeBtn_</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00492">onLoadScenarioCode()</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00451">onScenarioSelected()</a>, <a class="el" href="CallStackPanel_8h_source.html#l00112">scenarioDetail_</a>, and <a class="el" href="CallStackPanel_8h_source.html#l00111">scenarioList_</a>.</p>
+<p class="reference">References <a class="el" href="CallStackPanel_8h_source.html#l00113">loadCodeBtn_</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00493">onLoadScenarioCode()</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00452">onScenarioSelected()</a>, <a class="el" href="CallStackPanel_8h_source.html#l00112">scenarioDetail_</a>, and <a class="el" href="CallStackPanel_8h_source.html#l00111">scenarioList_</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00086">CallStackPanel()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00087">CallStackPanel()</a>.</p>
 
 </div>
 </div>
@@ -336,11 +336,11 @@ Private Attributes</h2></td></tr>
 </div><div class="memdoc">
 <p>构建「实时调用栈」子页：顶部状态/刷新/自动刷新按钮 + 垂直 splitter （上方栈帧树 + 下方帧/变量详情浏览器）。树列：栈帧/行号/深度。 </p>
 
-<p class="definition">Definition at line <a class="el" href="CallStackPanel_8cpp_source.html#l00177">177</a> of file <a class="el" href="CallStackPanel_8cpp_source.html">CallStackPanel.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="CallStackPanel_8cpp_source.html#l00178">178</a> of file <a class="el" href="CallStackPanel_8cpp_source.html">CallStackPanel.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="CallStackPanel_8h_source.html#l00104">autoRefreshCheck_</a>, <a class="el" href="CallStackPanel_8h_source.html#l00106">frameDetail_</a>, <a class="el" href="CallStackPanel_8h_source.html#l00102">liveStatusLabel_</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00247">onAutoRefreshToggled()</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00389">onFrameSelected()</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00242">onRefresh()</a>, <a class="el" href="CallStackPanel_8h_source.html#l00103">refreshBtn_</a>, and <a class="el" href="CallStackPanel_8h_source.html#l00105">stackTree_</a>.</p>
+<p class="reference">References <a class="el" href="CallStackPanel_8h_source.html#l00104">autoRefreshCheck_</a>, <a class="el" href="CallStackPanel_8h_source.html#l00106">frameDetail_</a>, <a class="el" href="CallStackPanel_8h_source.html#l00102">liveStatusLabel_</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00248">onAutoRefreshToggled()</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00390">onFrameSelected()</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00243">onRefresh()</a>, <a class="el" href="CallStackPanel_8h_source.html#l00103">refreshBtn_</a>, and <a class="el" href="CallStackPanel_8h_source.html#l00105">stackTree_</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00086">CallStackPanel()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00087">CallStackPanel()</a>.</p>
 
 </div>
 </div>
@@ -363,11 +363,11 @@ Private Attributes</h2></td></tr>
 <p>创建该面板的新手引导（5 步），调用方负责持有并调用 start() </p>
 <p>构建 5 步新手引导：高亮实时调用栈页、递归示例、教学场景库与开始实验步骤。 </p>
 
-<p class="definition">Definition at line <a class="el" href="CallStackPanel_8cpp_source.html#l00505">505</a> of file <a class="el" href="CallStackPanel_8cpp_source.html">CallStackPanel.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="CallStackPanel_8cpp_source.html#l00506">506</a> of file <a class="el" href="CallStackPanel_8cpp_source.html">CallStackPanel.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="CallStackPanel_8h_source.html#l00098">pageLibraryBtn_</a>, and <a class="el" href="CallStackPanel_8h_source.html#l00097">pageLiveBtn_</a>.</p>
+<p class="reference">References <a class="el" href="TeachingTheme_8h_source.html#l00192">TeachingTheme::codeBlockBg()</a>, <a class="el" href="CallStackPanel_8h_source.html#l00098">pageLibraryBtn_</a>, and <a class="el" href="CallStackPanel_8h_source.html#l00097">pageLiveBtn_</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="ide_8cpp_source.html#l07272">Ide::onPanelGuidedTourRequested()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="ide_8cpp_source.html#l07289">Ide::onPanelGuidedTourRequested()</a>.</p>
 
 </div>
 </div>
@@ -397,7 +397,7 @@ Private Attributes</h2></td></tr>
 
 <p>面板隐藏时停止自动刷新定时器，避免后台空转。 </p>
 
-<p class="definition">Definition at line <a class="el" href="CallStackPanel_8cpp_source.html#l00265">265</a> of file <a class="el" href="CallStackPanel_8cpp_source.html">CallStackPanel.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="CallStackPanel_8cpp_source.html#l00266">266</a> of file <a class="el" href="CallStackPanel_8cpp_source.html">CallStackPanel.cpp</a>.</p>
 
 <p class="reference">References <a class="el" href="CallStackPanel_8h_source.html#l00107">autoTimer_</a>.</p>
 
@@ -429,7 +429,7 @@ Private Attributes</h2></td></tr>
 
 <p>请求加载样例代码到主编辑器 </p>
 
-<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00492">onLoadScenarioCode()</a>, and <a class="el" href="ide_8cpp_source.html#l04007">Ide::registerDebugInspectorPanels()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00493">onLoadScenarioCode()</a>, and <a class="el" href="ide_8cpp_source.html#l04024">Ide::registerDebugInspectorPanels()</a>.</p>
 
 </div>
 </div>
@@ -459,11 +459,11 @@ Private Attributes</h2></td></tr>
 
 <p>自动刷新复选框切换：勾选启动 2s 定时器，取消则停止。 </p>
 
-<p class="definition">Definition at line <a class="el" href="CallStackPanel_8cpp_source.html#l00247">247</a> of file <a class="el" href="CallStackPanel_8cpp_source.html">CallStackPanel.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="CallStackPanel_8cpp_source.html#l00248">248</a> of file <a class="el" href="CallStackPanel_8cpp_source.html">CallStackPanel.cpp</a>.</p>
 
 <p class="reference">References <a class="el" href="CallStackPanel_8h_source.html#l00107">autoTimer_</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00177">buildLivePage()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00178">buildLivePage()</a>.</p>
 
 </div>
 </div>
@@ -491,11 +491,11 @@ Private Attributes</h2></td></tr>
 </div><div class="memdoc">
 <p>选中栈树节点时渲染详情：顶层帧节点显示函数名/深度/当前行/局部变量数； 子节点（变量）显示类型与值，写入详情浏览器。 R121: 选中顶层帧节点时通知 controller 切换选中帧（触发 VariableInspector/WatchPanel 联动刷新）。 inRefresh_ 守卫避免 refreshLive 重建树期间误触发。 </p>
 
-<p class="definition">Definition at line <a class="el" href="CallStackPanel_8cpp_source.html#l00389">389</a> of file <a class="el" href="CallStackPanel_8cpp_source.html">CallStackPanel.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="CallStackPanel_8cpp_source.html#l00390">390</a> of file <a class="el" href="CallStackPanel_8cpp_source.html">CallStackPanel.cpp</a>.</p>
 
 <p class="reference">References <a class="el" href="CallStackPanel_8h_source.html#l00094">controller_</a>, <a class="el" href="CallStackPanel_8h_source.html#l00106">frameDetail_</a>, <a class="el" href="CallStackPanel_8h_source.html#l00118">inRefresh_</a>, <a class="el" href="IdeController_8h_source.html#l00273">IdeController::setSelectedFrame()</a>, and <a class="el" href="CallStackPanel_8h_source.html#l00105">stackTree_</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00177">buildLivePage()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00178">buildLivePage()</a>.</p>
 
 </div>
 </div>
@@ -524,11 +524,11 @@ Private Attributes</h2></td></tr>
 
 <p>将当前选中场景的源码 emit loadSampleRequested，加载到主编辑器调试观察对应栈形态。 </p>
 
-<p class="definition">Definition at line <a class="el" href="CallStackPanel_8cpp_source.html#l00492">492</a> of file <a class="el" href="CallStackPanel_8cpp_source.html">CallStackPanel.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="CallStackPanel_8cpp_source.html#l00493">493</a> of file <a class="el" href="CallStackPanel_8cpp_source.html">CallStackPanel.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="CallStackPanel_8h_source.html#l00114">currentScenarioIdx_</a>, <a class="el" href="classCallStackPanel.html#a0b39bc05729a2d85f49fa4339db6cdb5">loadSampleRequested()</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00029">CallStackLibrary::scenarios()</a>.</p>
+<p class="reference">References <a class="el" href="CallStackPanel_8h_source.html#l00114">currentScenarioIdx_</a>, <a class="el" href="classCallStackPanel.html#a0b39bc05729a2d85f49fa4339db6cdb5">loadSampleRequested()</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00030">CallStackLibrary::scenarios()</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00216">buildLibraryPage()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00217">buildLibraryPage()</a>.</p>
 
 </div>
 </div>
@@ -557,11 +557,11 @@ Private Attributes</h2></td></tr>
 
 <p>刷新按钮回调：委托 <a class="el" href="classCallStackPanel.html#a37b8e66d2618efcdae3740e75061c7c6">refreshLive()</a> 重新抓取并渲染实时调用栈。 </p>
 
-<p class="definition">Definition at line <a class="el" href="CallStackPanel_8cpp_source.html#l00242">242</a> of file <a class="el" href="CallStackPanel_8cpp_source.html">CallStackPanel.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="CallStackPanel_8cpp_source.html#l00243">243</a> of file <a class="el" href="CallStackPanel_8cpp_source.html">CallStackPanel.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="CallStackPanel_8cpp_source.html#l00283">refreshLive()</a>.</p>
+<p class="reference">References <a class="el" href="CallStackPanel_8cpp_source.html#l00284">refreshLive()</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00177">buildLivePage()</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00086">CallStackPanel()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00178">buildLivePage()</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00087">CallStackPanel()</a>.</p>
 
 </div>
 </div>
@@ -591,11 +591,11 @@ Private Attributes</h2></td></tr>
 
 <p>场景列表选中项变化时委托 showScenario 渲染该场景的栈帧序列与注解。 </p>
 
-<p class="definition">Definition at line <a class="el" href="CallStackPanel_8cpp_source.html#l00451">451</a> of file <a class="el" href="CallStackPanel_8cpp_source.html">CallStackPanel.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="CallStackPanel_8cpp_source.html#l00452">452</a> of file <a class="el" href="CallStackPanel_8cpp_source.html">CallStackPanel.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="CallStackPanel_8cpp_source.html#l00457">showScenario()</a>.</p>
+<p class="reference">References <a class="el" href="CallStackPanel_8cpp_source.html#l00458">showScenario()</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00216">buildLibraryPage()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00217">buildLibraryPage()</a>.</p>
 
 </div>
 </div>
@@ -625,9 +625,9 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="CallStackPanel_8h_source.html#l00088">88</a> of file <a class="el" href="CallStackPanel_8h_source.html">CallStackPanel.h</a>.</p>
 
-<p class="reference">References <a class="el" href="CallStackPanel_8h_source.html#l00104">autoRefreshCheck_</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00283">refreshLive()</a>.</p>
+<p class="reference">References <a class="el" href="CallStackPanel_8h_source.html#l00104">autoRefreshCheck_</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00284">refreshLive()</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00154">setController()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00155">setController()</a>.</p>
 
 </div>
 </div>
@@ -656,11 +656,11 @@ Private Attributes</h2></td></tr>
 
 <p>用教学场景库标题填充左侧列表并默认选中首项。 </p>
 
-<p class="definition">Definition at line <a class="el" href="CallStackPanel_8cpp_source.html#l00440">440</a> of file <a class="el" href="CallStackPanel_8cpp_source.html">CallStackPanel.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="CallStackPanel_8cpp_source.html#l00441">441</a> of file <a class="el" href="CallStackPanel_8cpp_source.html">CallStackPanel.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="CallStackPanel_8h_source.html#l00111">scenarioList_</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00029">CallStackLibrary::scenarios()</a>.</p>
+<p class="reference">References <a class="el" href="CallStackPanel_8h_source.html#l00111">scenarioList_</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00030">CallStackLibrary::scenarios()</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00086">CallStackPanel()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00087">CallStackPanel()</a>.</p>
 
 </div>
 </div>
@@ -692,11 +692,11 @@ Private Attributes</h2></td></tr>
 <li>将帧序列倒序（栈顶在上）填入 QTreeWidget，每个帧节点再展开其本地变量 子节点（值/类型经 try/catch 包裹 toString/typeName 防异常）。 该树形结构即运行时调用栈帧来源：函数名/调用深度/当前行号/局部变量。 R121: 重建期间设置 inRefresh_ 守卫避免 currentItemChanged 误触发 setSelectedFrame。 重建后尝试恢复选中之前选中的帧（通过 selectedFrame_ 索引匹配 depth 列）。 </li>
 </ol>
 
-<p class="definition">Definition at line <a class="el" href="CallStackPanel_8cpp_source.html#l00283">283</a> of file <a class="el" href="CallStackPanel_8cpp_source.html">CallStackPanel.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="CallStackPanel_8cpp_source.html#l00284">284</a> of file <a class="el" href="CallStackPanel_8cpp_source.html">CallStackPanel.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="CallStackPanel_8h_source.html#l00094">controller_</a>, <a class="el" href="CallStackPanel_8h_source.html#l00106">frameDetail_</a>, <a class="el" href="IdeController_8h_source.html#l00189">IdeController::getDebugCallStack()</a>, <a class="el" href="IdeController_8h_source.html#l00280">IdeController::getSelectedFrame()</a>, <a class="el" href="IdeController_8h_source.html#l00639">IdeController::getUseRegisterVM()</a>, <a class="el" href="IdeController_8h_source.html#l00117">IdeController::getVmCallStack()</a>, <a class="el" href="CallStackPanel_8h_source.html#l00118">inRefresh_</a>, <a class="el" href="IdeController_8h_source.html#l00194">IdeController::isDebugPaused()</a>, <a class="el" href="IdeController_8h_source.html#l00357">IdeController::isDebugRun()</a>, <a class="el" href="IdeController_8h_source.html#l00356">IdeController::isRunning()</a>, <a class="el" href="IdeController_8h_source.html#l00575">IdeController::isVmInitialized()</a>, <a class="el" href="IdeController_8h_source.html#l00574">IdeController::isVmRunning()</a>, <a class="el" href="CallStackPanel_8h_source.html#l00102">liveStatusLabel_</a>, and <a class="el" href="CallStackPanel_8h_source.html#l00105">stackTree_</a>.</p>
+<p class="reference">References <a class="el" href="CallStackPanel_8h_source.html#l00094">controller_</a>, <a class="el" href="CallStackPanel_8h_source.html#l00106">frameDetail_</a>, <a class="el" href="IdeController_8h_source.html#l00189">IdeController::getDebugCallStack()</a>, <a class="el" href="IdeController_8h_source.html#l00280">IdeController::getSelectedFrame()</a>, <a class="el" href="IdeController_8h_source.html#l00641">IdeController::getUseRegisterVM()</a>, <a class="el" href="IdeController_8h_source.html#l00117">IdeController::getVmCallStack()</a>, <a class="el" href="CallStackPanel_8h_source.html#l00118">inRefresh_</a>, <a class="el" href="IdeController_8h_source.html#l00194">IdeController::isDebugPaused()</a>, <a class="el" href="IdeController_8h_source.html#l00357">IdeController::isDebugRun()</a>, <a class="el" href="IdeController_8h_source.html#l00356">IdeController::isRunning()</a>, <a class="el" href="IdeController_8h_source.html#l00575">IdeController::isVmInitialized()</a>, <a class="el" href="IdeController_8h_source.html#l00574">IdeController::isVmRunning()</a>, <a class="el" href="CallStackPanel_8h_source.html#l00102">liveStatusLabel_</a>, and <a class="el" href="CallStackPanel_8h_source.html#l00105">stackTree_</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00242">onRefresh()</a>, <a class="el" href="CallStackPanel_8h_source.html#l00088">onVmStateChanged()</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00255">showEvent()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00243">onRefresh()</a>, <a class="el" href="CallStackPanel_8h_source.html#l00088">onVmStateChanged()</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00256">showEvent()</a>.</p>
 
 </div>
 </div>
@@ -717,11 +717,11 @@ Private Attributes</h2></td></tr>
 </div><div class="memdoc">
 <p>绑定/换绑 IdeController：注册 vmStateChanged 监听器（owner=this）， 换绑前先反注册旧监听器，避免 controller 持有悬垂回调。 </p>
 
-<p class="definition">Definition at line <a class="el" href="CallStackPanel_8cpp_source.html#l00154">154</a> of file <a class="el" href="CallStackPanel_8cpp_source.html">CallStackPanel.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="CallStackPanel_8cpp_source.html#l00155">155</a> of file <a class="el" href="CallStackPanel_8cpp_source.html">CallStackPanel.cpp</a>.</p>
 
 <p class="reference">References <a class="el" href="IdeController_8h_source.html#l00597">IdeController::addVmStateChangedListener()</a>, <a class="el" href="CallStackPanel_8h_source.html#l00094">controller_</a>, <a class="el" href="CallStackPanel_8h_source.html#l00088">onVmStateChanged()</a>, and <a class="el" href="IdeController_8h_source.html#l00610">IdeController::removeVmStateChangedListener()</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="ide_8cpp_source.html#l04007">Ide::registerDebugInspectorPanels()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="ide_8cpp_source.html#l04024">Ide::registerDebugInspectorPanels()</a>.</p>
 
 </div>
 </div>
@@ -752,9 +752,9 @@ Private Attributes</h2></td></tr>
 <p>面板重新可见时：若已勾选自动刷新则立即刷新并恢复 2s 定时器。 </p>
 <p>面板显示时恢复自动刷新（若用户已勾选），隐藏时停止 QTimer 避免 dock 隐藏后定时器持续触发 controller 查询浪费 CPU </p>
 
-<p class="definition">Definition at line <a class="el" href="CallStackPanel_8cpp_source.html#l00255">255</a> of file <a class="el" href="CallStackPanel_8cpp_source.html">CallStackPanel.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="CallStackPanel_8cpp_source.html#l00256">256</a> of file <a class="el" href="CallStackPanel_8cpp_source.html">CallStackPanel.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="CallStackPanel_8h_source.html#l00104">autoRefreshCheck_</a>, <a class="el" href="CallStackPanel_8h_source.html#l00107">autoTimer_</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00283">refreshLive()</a>.</p>
+<p class="reference">References <a class="el" href="CallStackPanel_8h_source.html#l00104">autoRefreshCheck_</a>, <a class="el" href="CallStackPanel_8h_source.html#l00107">autoTimer_</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00284">refreshLive()</a>.</p>
 
 </div>
 </div>
@@ -783,11 +783,11 @@ Private Attributes</h2></td></tr>
 </div><div class="memdoc">
 <p>根据索引渲染教学场景：标题、ID、Markdown 说明、期望栈帧序列表、源码与 教学注解，写入右侧详情浏览器。 </p>
 
-<p class="definition">Definition at line <a class="el" href="CallStackPanel_8cpp_source.html#l00457">457</a> of file <a class="el" href="CallStackPanel_8cpp_source.html">CallStackPanel.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="CallStackPanel_8cpp_source.html#l00458">458</a> of file <a class="el" href="CallStackPanel_8cpp_source.html">CallStackPanel.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="CallStackPanel_8h_source.html#l00114">currentScenarioIdx_</a>, <a class="el" href="MarkdownRenderer_8cpp_source.html#l00559">MarkdownRenderer::markdownToHtmlFragment()</a>, <a class="el" href="CallStackPanel_8h_source.html#l00112">scenarioDetail_</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00029">CallStackLibrary::scenarios()</a>.</p>
+<p class="reference">References <a class="el" href="CallStackPanel_8h_source.html#l00114">currentScenarioIdx_</a>, <a class="el" href="MarkdownRenderer_8cpp_source.html#l00574">MarkdownRenderer::markdownToHtmlFragment()</a>, <a class="el" href="CallStackPanel_8h_source.html#l00112">scenarioDetail_</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00030">CallStackLibrary::scenarios()</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00086">CallStackPanel()</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00451">onScenarioSelected()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00087">CallStackPanel()</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00452">onScenarioSelected()</a>.</p>
 
 </div>
 </div>
@@ -814,7 +814,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="CallStackPanel_8h_source.html#l00104">104</a> of file <a class="el" href="CallStackPanel_8h_source.html">CallStackPanel.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00177">buildLivePage()</a>, <a class="el" href="CallStackPanel_8h_source.html#l00088">onVmStateChanged()</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00255">showEvent()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00178">buildLivePage()</a>, <a class="el" href="CallStackPanel_8h_source.html#l00088">onVmStateChanged()</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00256">showEvent()</a>.</p>
 
 </div>
 </div>
@@ -840,7 +840,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="CallStackPanel_8h_source.html#l00107">107</a> of file <a class="el" href="CallStackPanel_8h_source.html">CallStackPanel.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00086">CallStackPanel()</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00265">hideEvent()</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00247">onAutoRefreshToggled()</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00255">showEvent()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00087">CallStackPanel()</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00266">hideEvent()</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00248">onAutoRefreshToggled()</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00256">showEvent()</a>.</p>
 
 </div>
 </div>
@@ -866,7 +866,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="CallStackPanel_8h_source.html#l00094">94</a> of file <a class="el" href="CallStackPanel_8h_source.html">CallStackPanel.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00086">CallStackPanel()</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00389">onFrameSelected()</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00283">refreshLive()</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00154">setController()</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00169">~CallStackPanel()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00087">CallStackPanel()</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00390">onFrameSelected()</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00284">refreshLive()</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00155">setController()</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00170">~CallStackPanel()</a>.</p>
 
 </div>
 </div>
@@ -892,7 +892,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="CallStackPanel_8h_source.html#l00114">114</a> of file <a class="el" href="CallStackPanel_8h_source.html">CallStackPanel.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00492">onLoadScenarioCode()</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00457">showScenario()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00493">onLoadScenarioCode()</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00458">showScenario()</a>.</p>
 
 </div>
 </div>
@@ -918,7 +918,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="CallStackPanel_8h_source.html#l00106">106</a> of file <a class="el" href="CallStackPanel_8h_source.html">CallStackPanel.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00177">buildLivePage()</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00389">onFrameSelected()</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00283">refreshLive()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00178">buildLivePage()</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00390">onFrameSelected()</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00284">refreshLive()</a>.</p>
 
 </div>
 </div>
@@ -944,7 +944,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="CallStackPanel_8h_source.html#l00118">118</a> of file <a class="el" href="CallStackPanel_8h_source.html">CallStackPanel.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00389">onFrameSelected()</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00283">refreshLive()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00390">onFrameSelected()</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00284">refreshLive()</a>.</p>
 
 </div>
 </div>
@@ -970,7 +970,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="CallStackPanel_8h_source.html#l00108">108</a> of file <a class="el" href="CallStackPanel_8h_source.html">CallStackPanel.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00086">CallStackPanel()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00087">CallStackPanel()</a>.</p>
 
 </div>
 </div>
@@ -996,7 +996,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="CallStackPanel_8h_source.html#l00102">102</a> of file <a class="el" href="CallStackPanel_8h_source.html">CallStackPanel.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00177">buildLivePage()</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00283">refreshLive()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00178">buildLivePage()</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00284">refreshLive()</a>.</p>
 
 </div>
 </div>
@@ -1022,7 +1022,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="CallStackPanel_8h_source.html#l00113">113</a> of file <a class="el" href="CallStackPanel_8h_source.html">CallStackPanel.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00216">buildLibraryPage()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00217">buildLibraryPage()</a>.</p>
 
 </div>
 </div>
@@ -1048,7 +1048,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="CallStackPanel_8h_source.html#l00098">98</a> of file <a class="el" href="CallStackPanel_8h_source.html">CallStackPanel.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00086">CallStackPanel()</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00505">createGuidedTour()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00087">CallStackPanel()</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00506">createGuidedTour()</a>.</p>
 
 </div>
 </div>
@@ -1074,7 +1074,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="CallStackPanel_8h_source.html#l00097">97</a> of file <a class="el" href="CallStackPanel_8h_source.html">CallStackPanel.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00086">CallStackPanel()</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00505">createGuidedTour()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00087">CallStackPanel()</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00506">createGuidedTour()</a>.</p>
 
 </div>
 </div>
@@ -1100,7 +1100,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="CallStackPanel_8h_source.html#l00103">103</a> of file <a class="el" href="CallStackPanel_8h_source.html">CallStackPanel.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00177">buildLivePage()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00178">buildLivePage()</a>.</p>
 
 </div>
 </div>
@@ -1126,7 +1126,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="CallStackPanel_8h_source.html#l00112">112</a> of file <a class="el" href="CallStackPanel_8h_source.html">CallStackPanel.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00216">buildLibraryPage()</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00457">showScenario()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00217">buildLibraryPage()</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00458">showScenario()</a>.</p>
 
 </div>
 </div>
@@ -1152,7 +1152,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="CallStackPanel_8h_source.html#l00111">111</a> of file <a class="el" href="CallStackPanel_8h_source.html">CallStackPanel.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00216">buildLibraryPage()</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00086">CallStackPanel()</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00440">populateScenarios()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00217">buildLibraryPage()</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00087">CallStackPanel()</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00441">populateScenarios()</a>.</p>
 
 </div>
 </div>
@@ -1178,7 +1178,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="CallStackPanel_8h_source.html#l00099">99</a> of file <a class="el" href="CallStackPanel_8h_source.html">CallStackPanel.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00086">CallStackPanel()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00087">CallStackPanel()</a>.</p>
 
 </div>
 </div>
@@ -1204,7 +1204,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="CallStackPanel_8h_source.html#l00105">105</a> of file <a class="el" href="CallStackPanel_8h_source.html">CallStackPanel.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00177">buildLivePage()</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00389">onFrameSelected()</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00283">refreshLive()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CallStackPanel_8cpp_source.html#l00178">buildLivePage()</a>, <a class="el" href="CallStackPanel_8cpp_source.html#l00390">onFrameSelected()</a>, and <a class="el" href="CallStackPanel_8cpp_source.html#l00284">refreshLive()</a>.</p>
 
 </div>
 </div>

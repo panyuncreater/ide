@@ -138,6 +138,7 @@ var classIde =
     [ "registerLearningPathPanels", "classIde.html#a09cffd8c8604f59e62efdf8603d97d36", null ],
     [ "registerMemoryIrProfilePanels", "classIde.html#a5a7e6dc38588783776b45451db383abd", null ],
     [ "registerTeachingPanelShortcuts", "classIde.html#a316eca5008e7e06ff0494e116a1de5b4", null ],
+    [ "restoreAfterCanceledClose", "classIde.html#af1812aeb53747f9284c4523d7729eae5", null ],
     [ "restoreAstWindowGeometry", "classIde.html#afd2205d2ff9ee465b418dff962407766", null ],
     [ "restoreLayout", "classIde.html#aef78ce98b3a375acfc53d515622523a9", null ],
     [ "runRealTimeSyntaxCheck", "classIde.html#aa0242310915f5c68fcddf3c35a1f1a4c", null ],

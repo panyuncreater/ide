@@ -13,5 +13,6 @@ var searchData=
   ['intermediate_10',['INTERMEDIATE',['../BugHuntPanel_8h.html#a47b0d97a0cd31838cd31b674bc8b0306a41dc7c9e385c4d2b6c1f7836973951bf',1,'BugHuntPanel.h']]],
   ['interpreter_11',['interpreter',['../ExecutionTraceRecorder_8h.html#ae2b45aa609fb20299dc6442a03abd246adf608edb53fcc79c12759cdbdf58d9db',1,'Interpreter:&#160;ExecutionTraceRecorder.h'],['../BackendExecutionService_8h.html#a5a287d45a9e7bfa1bc60fbb68dac5228adf608edb53fcc79c12759cdbdf58d9db',1,'Interpreter:&#160;BackendExecutionService.h'],['../Diagnostic_8h.html#a1158f6747810701dbac41858c4964e34adf608edb53fcc79c12759cdbdf58d9db',1,'Interpreter:&#160;Diagnostic.h']]],
   ['intoverflow_12',['IntOverflow',['../namespaceNumericOps.html#a5dd3d3679b3342ad846808580c9480b5a3d719072d25bf4685236a38fd1b0479e',1,'NumericOps']]],
-  ['irop_5fcount_13',['IROp_COUNT',['../IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a45daf4d9222bba28be24119a958735a4',1,'IR.h']]]
+  ['irop_5fcount_13',['IROp_COUNT',['../IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a45daf4d9222bba28be24119a958735a4',1,'IR.h']]],
+  ['isolated_14',['Isolated',['../classInterpreter.html#a4f4a3b087c65906b068f9bca14b1b5dbad1f847307d4668ee43043ea87f2a00a6',1,'Interpreter']]]
 ];

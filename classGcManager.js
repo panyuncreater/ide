@@ -15,6 +15,7 @@ var classGcManager =
     [ "instance", "classGcManager.html#ab4ac645ee240b88a7c70f7d31dea68a5", null ],
     [ "lastCollectedCount", "classGcManager.html#a0016722182bc14d5ae16bf9bc910268d", null ],
     [ "lastMarkedCount", "classGcManager.html#a14ea8e1614f87fb9e349620b8ccf7c30", null ],
+    [ "markTrackedRoot", "classGcManager.html#a4f09e2f4276c58714350cd8348e87105", null ],
     [ "markValue", "classGcManager.html#a4281be467fd64027aad24e27a6b038ae", null ],
     [ "onDestroyed", "classGcManager.html#a0fe284e9bcbd8ed4d7caf2b32394e235", null ],
     [ "operator=", "classGcManager.html#a3e6a09788d493ed90828cae91d606e78", null ],

@@ -219,102 +219,104 @@ $(document).ready(function(){initNavTree('JITInternal_8h_source.html',''); initR
 <div class="line"><a id="l00119" name="l00119"></a><span class="lineno">  119</span><span class="keywordtype">void</span> jitPrintValue(JitContext* ctx, uint64_t rawBits);</div>
 <div class="line"><a id="l00120" name="l00120"></a><span class="lineno">  120</span><span class="keywordtype">void</span> jitReportError(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* msg);</div>
 <div class="line"><a id="l00121" name="l00121"></a><span class="lineno">  121</span><span class="keywordtype">void</span> jitReportStackOverflow(JitContext* ctx);</div>
-<div class="line"><a id="l00122" name="l00122"></a><span class="lineno">  122</span> </div>
-<div class="line"><a id="l00123" name="l00123"></a><span class="lineno">  123</span><span class="comment">// --- Arithmetic/Comparison (JITRuntime.cpp) ---</span></div>
-<div class="line"><a id="l00124" name="l00124"></a><span class="lineno">  124</span>int64_t jitTruthy(uint64_t bits);</div>
-<div class="line"><a id="l00125" name="l00125"></a><span class="lineno">  125</span>uint64_t jitAddGeneric(JitContext* ctx, uint64_t leftBits, uint64_t rightBits);</div>
-<div class="line"><a id="l00126" name="l00126"></a><span class="lineno">  126</span>uint64_t jitSubGeneric(JitContext* ctx, uint64_t leftBits, uint64_t rightBits);</div>
-<div class="line"><a id="l00127" name="l00127"></a><span class="lineno">  127</span>uint64_t jitMulGeneric(JitContext* ctx, uint64_t leftBits, uint64_t rightBits);</div>
-<div class="line"><a id="l00128" name="l00128"></a><span class="lineno">  128</span>uint64_t jitDivGeneric(JitContext* ctx, uint64_t leftBits, uint64_t rightBits);</div>
-<div class="line"><a id="l00129" name="l00129"></a><span class="lineno">  129</span>uint64_t jitModGeneric(JitContext* ctx, uint64_t leftBits, uint64_t rightBits);</div>
-<div class="line"><a id="l00130" name="l00130"></a><span class="lineno">  130</span>uint64_t jitNegateGeneric(uint64_t bits);</div>
-<div class="line"><a id="l00131" name="l00131"></a><span class="lineno">  131</span>uint64_t jitEqualGeneric(uint64_t leftBits, uint64_t rightBits);</div>
-<div class="line"><a id="l00132" name="l00132"></a><span class="lineno">  132</span>uint64_t jitNotEqualGeneric(uint64_t leftBits, uint64_t rightBits);</div>
-<div class="line"><a id="l00133" name="l00133"></a><span class="lineno">  133</span>uint64_t jitOrderedCompare(uint64_t leftBits, uint64_t rightBits, int64_t cmpType);</div>
-<div class="line"><a id="l00134" name="l00134"></a><span class="lineno">  134</span> </div>
-<div class="line"><a id="l00135" name="l00135"></a><span class="lineno">  135</span><span class="comment">// --- Container operations (JITRuntime.cpp) ---</span></div>
-<div class="line"><a id="l00136" name="l00136"></a><span class="lineno">  136</span><span class="keywordtype">void</span> jitBuildArray(JitContext* ctx, uint8_t count);</div>
-<div class="line"><a id="l00137" name="l00137"></a><span class="lineno">  137</span>uint64_t jitIndexGet(JitContext* ctx, uint64_t objBits, uint64_t idxBits);</div>
-<div class="line"><a id="l00138" name="l00138"></a><span class="lineno">  138</span><span class="keywordtype">void</span> jitIndexSetLocal(JitContext* ctx, uint8_t slot, int64_t* frameBase);</div>
-<div class="line"><a id="l00139" name="l00139"></a><span class="lineno">  139</span><span class="keywordtype">void</span> jitIndexSetGlobal(JitContext* ctx, int64_t* slotPtr);</div>
-<div class="line"><a id="l00140" name="l00140"></a><span class="lineno">  140</span><span class="keywordtype">void</span> jitLen(JitContext* ctx);</div>
-<div class="line"><a id="l00141" name="l00141"></a><span class="lineno">  141</span><span class="keywordtype">void</span> jitIndexSet(JitContext* ctx);</div>
-<div class="line"><a id="l00142" name="l00142"></a><span class="lineno">  142</span><span class="keywordtype">void</span> jitBuildDict(JitContext* ctx, uint8_t pairCount);</div>
-<div class="line"><a id="l00143" name="l00143"></a><span class="lineno">  143</span><span class="keywordtype">void</span> jitBuildTuple(JitContext* ctx, uint8_t count);</div>
-<div class="line"><a id="l00144" name="l00144"></a><span class="lineno">  144</span> </div>
-<div class="line"><a id="l00145" name="l00145"></a><span class="lineno">  145</span><span class="comment">// --- Enum variant (JITRuntime.cpp) ---</span></div>
-<div class="line"><a id="l00146" name="l00146"></a><span class="lineno">  146</span><span class="comment">// 校验逻辑与 VM OP_BUILD_ENUM_VARIANT/OP_ENUM_VARIANT_NAME/OP_ENUM_VARIANT_FIELD 对齐；</span></div>
-<div class="line"><a id="l00147" name="l00147"></a><span class="lineno">  147</span><span class="comment">// 仅依赖 ctx-&gt;enumRegistryPtr/ctx-&gt;classInfoPtr/ctx-&gt;stackTop，x86-64 与 ARM64 后端共用。</span></div>
-<div class="line"><a id="l00148" name="l00148"></a><span class="lineno">  148</span><span class="keywordtype">void</span> jitBuildEnumVariant(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* enumName, <span class="keyword">const</span> <span class="keywordtype">char</span>* variantName, uint8_t argCount);</div>
-<div class="line"><a id="l00149" name="l00149"></a><span class="lineno">  149</span><span class="keywordtype">void</span> jitEnumVariantName(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* enumName, <span class="keyword">const</span> <span class="keywordtype">char</span>* variantName);</div>
-<div class="line"><a id="l00150" name="l00150"></a><span class="lineno">  150</span><span class="keywordtype">void</span> jitEnumVariantField(JitContext* ctx);</div>
-<div class="line"><a id="l00151" name="l00151"></a><span class="lineno">  151</span> </div>
-<div class="line"><a id="l00152" name="l00152"></a><span class="lineno">  152</span><span class="comment">// --- Concurrency builtins (JITRuntime.cpp) ---</span></div>
-<div class="line"><a id="l00153" name="l00153"></a><span class="lineno">  153</span><span class="comment">// spawn/channel/mutex/rwlock：经共享层 executeSharedSpawn/executeSharedBuiltinFunction 实现，</span></div>
-<div class="line"><a id="l00154" name="l00154"></a><span class="lineno">  154</span><span class="comment">// 与 Interpreter/StackVM/RegisterVM 语义天然一致。spawn 的 ClosureInvoker 经</span></div>
-<div class="line"><a id="l00155" name="l00155"></a><span class="lineno">  155</span><span class="comment">// JITBackend::closureTrampoline_ 同步执行 JIT 闭包（仅 x86-64 后端）。</span></div>
-<div class="line"><a id="l00156" name="l00156"></a><span class="lineno">  156</span><span class="keywordtype">void</span> jitCallConcurrency(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* funName, uint8_t argCount);</div>
-<div class="line"><a id="l00157" name="l00157"></a><span class="lineno">  157</span> </div>
-<div class="line"><a id="l00158" name="l00158"></a><span class="lineno">  158</span><span class="comment">// --- OOP (JITRuntime.cpp) ---</span></div>
-<div class="line"><a id="l00159" name="l00159"></a><span class="lineno">  159</span><span class="keywordtype">void</span> jitClassNew(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* className, uint8_t argCount);</div>
-<div class="line"><a id="l00160" name="l00160"></a><span class="lineno">  160</span><span class="keywordtype">void</span> jitInitField(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* fieldName);</div>
-<div class="line"><a id="l00161" name="l00161"></a><span class="lineno">  161</span><span class="keywordtype">void</span> jitDefineClass(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* className, <span class="keyword">const</span> <span class="keywordtype">char</span>* superClassName);</div>
-<div class="line"><a id="l00162" name="l00162"></a><span class="lineno">  162</span><span class="keywordtype">void</span> jitMemberGet(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* fieldName);</div>
-<div class="line"><a id="l00163" name="l00163"></a><span class="lineno">  163</span><span class="keywordtype">void</span> jitMemberGetWithIC(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* fieldName, uint64_t callSiteId, <span class="keywordtype">void</span>* backendPtr);</div>
-<div class="line"><a id="l00164" name="l00164"></a><span class="lineno">  164</span><span class="keywordtype">void</span> jitMemberSetVar(JitContext* ctx, int64_t* slotPtr, <span class="keyword">const</span> <span class="keywordtype">char</span>* fieldName);</div>
-<div class="line"><a id="l00165" name="l00165"></a><span class="lineno">  165</span><span class="keywordtype">void</span> jitMemberSetLocal(JitContext* ctx, uint8_t slot, int64_t* frameBase, <span class="keyword">const</span> <span class="keywordtype">char</span>* fieldName);</div>
-<div class="line"><a id="l00166" name="l00166"></a><span class="lineno">  166</span>int64_t jitMethodReturn(JitContext* ctx, JitFrame* framePtr, int64_t retvalBits);</div>
-<div class="line"><a id="l00167" name="l00167"></a><span class="lineno">  167</span><span class="keywordtype">void</span> jitMethodCall(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* methodName, int64_t packedArgs, int64_t* receiverSlotPtr,</div>
-<div class="line"><a id="l00168" name="l00168"></a><span class="lineno">  168</span>                   <span class="keyword">const</span> <span class="keywordtype">char</span>* superClassName, uint64_t callSiteId, <span class="keywordtype">void</span>* backendPtr);</div>
-<div class="line"><a id="l00169" name="l00169"></a><span class="lineno">  169</span> </div>
-<div class="line"><a id="l00170" name="l00170"></a><span class="lineno">  170</span><span class="comment">// --- Function calls (JITRuntime.cpp) ---</span></div>
-<div class="line"><a id="l00171" name="l00171"></a><span class="lineno">  171</span><span class="keywordtype">void</span> jitCallExpr(JitContext* ctx, uint8_t argCount);</div>
-<div class="line"><a id="l00172" name="l00172"></a><span class="lineno">  172</span><span class="keywordtype">void</span> jitCallByName(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* funName, uint8_t argCount);</div>
-<div class="line"><a id="l00173" name="l00173"></a><span class="lineno">  173</span> </div>
-<div class="line"><a id="l00174" name="l00174"></a><span class="lineno">  174</span><span class="comment">// --- Exception handling (JITRuntime.cpp) ---</span></div>
-<div class="line"><a id="l00175" name="l00175"></a><span class="lineno">  175</span><span class="keywordtype">void</span> jitPushTryHandler(JitContext* ctx, <span class="keywordtype">void</span>* catchAddr, int64_t* stackBase);</div>
-<div class="line"><a id="l00176" name="l00176"></a><span class="lineno">  176</span><span class="keywordtype">void</span> jitPopTryHandler(JitContext* ctx);</div>
-<div class="line"><a id="l00177" name="l00177"></a><span class="lineno">  177</span><span class="keywordtype">void</span> jitPushJumpTarget(JitContext* ctx, <span class="keywordtype">void</span>* targetAddr);</div>
-<div class="line"><a id="l00178" name="l00178"></a><span class="lineno">  178</span><span class="keywordtype">void</span>* jitPopJumpTarget(JitContext* ctx);</div>
-<div class="line"><a id="l00179" name="l00179"></a><span class="lineno">  179</span><span class="keywordtype">void</span>* jitThrow(JitContext* ctx, uint64_t thrownValueBits, int64_t* currentR13);</div>
-<div class="line"><a id="l00180" name="l00180"></a><span class="lineno">  180</span><span class="keywordtype">void</span>* jitRuntimeThrow(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* msg, int64_t* currentR13);</div>
-<div class="line"><a id="l00181" name="l00181"></a><span class="lineno">  181</span><span class="keywordtype">void</span>* jitCheckAndRethrow(JitContext* ctx, int64_t* currentR13);</div>
-<div class="line"><a id="l00182" name="l00182"></a><span class="lineno">  182</span> </div>
-<div class="line"><a id="l00183" name="l00183"></a><span class="lineno">  183</span><span class="comment">// --- Name variables (JITRuntime.cpp) ---</span></div>
-<div class="line"><a id="l00184" name="l00184"></a><span class="lineno">  184</span><span class="keywordtype">void</span> jitDefineVar(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* name);</div>
-<div class="line"><a id="l00185" name="l00185"></a><span class="lineno">  185</span>uint64_t jitGetVar(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* name);</div>
-<div class="line"><a id="l00186" name="l00186"></a><span class="lineno">  186</span><span class="keywordtype">void</span> jitSetVar(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* name);</div>
-<div class="line"><a id="l00187" name="l00187"></a><span class="lineno">  187</span><span class="keywordtype">void</span> jitDeleteVar(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* name);</div>
-<div class="line"><a id="l00188" name="l00188"></a><span class="lineno">  188</span> </div>
-<div class="line"><a id="l00189" name="l00189"></a><span class="lineno">  189</span><span class="comment">// --- Closure/Upvalue (JITClosure.cpp) ---</span></div>
-<div class="line"><a id="l00190" name="l00190"></a><span class="lineno">  190</span>int64_t jitCreateClosure(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* funName, <span class="keyword">const</span> <span class="keywordtype">void</span>* chunkPtr, uint8_t upvalueCount,</div>
-<div class="line"><a id="l00191" name="l00191"></a><span class="lineno">  191</span>                         <span class="keyword">const</span> uint8_t* upvalueDescs);</div>
-<div class="line"><a id="l00192" name="l00192"></a><span class="lineno">  192</span>int64_t jitGetUpvalue(JitContext* ctx, uint8_t uvIdx);</div>
-<div class="line"><a id="l00193" name="l00193"></a><span class="lineno">  193</span><span class="keywordtype">void</span> jitSetUpvalue(JitContext* ctx, uint8_t uvIdx, int64_t valueBits);</div>
-<div class="line"><a id="l00194" name="l00194"></a><span class="lineno">  194</span><span class="keywordtype">void</span> jitCloseUpvalues(JitContext* ctx, int64_t* fromAddr);</div>
-<div class="line"><a id="l00195" name="l00195"></a><span class="lineno">  195</span><span class="keywordtype">void</span> jitPushEmptyFrameUpvalues(JitContext* ctx);</div>
-<div class="line"><a id="l00196" name="l00196"></a><span class="lineno">  196</span><span class="keywordtype">void</span> jitPushClosureUpvalues(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* funName);</div>
-<div class="line"><a id="l00197" name="l00197"></a><span class="lineno">  197</span><span class="keywordtype">void</span> jitReturnCloseUpvalues(JitContext* ctx, int64_t* fromAddr, <span class="keywordtype">size_t</span> newFrameCount);</div>
-<div class="line"><a id="l00198" name="l00198"></a><span class="lineno">  198</span> </div>
-<div class="line"><a id="l00199" name="l00199"></a><span class="lineno">  199</span><span class="comment">// --- Tiering/OSR/Deopt (JITTiering.cpp) ---</span></div>
-<div class="line"><a id="l00200" name="l00200"></a><span class="lineno">  200</span>int64_t jitTriggerRecompile(JitContext* ctx, int64_t chunkIdx);</div>
-<div class="line"><a id="l00201" name="l00201"></a><span class="lineno">  201</span>int64_t jitTriggerOsrRecompile(JitContext* ctx, int64_t chunkIdx);</div>
-<div class="line"><a id="l00202" name="l00202"></a><span class="lineno">  202</span>int64_t jitTriggerOsrMigration(JitContext* ctx, int64_t chunkIdx);</div>
-<div class="line"><a id="l00203" name="l00203"></a><span class="lineno">  203</span>int64_t jitDeoptimize(JitContext* ctx, int64_t chunkIdx);</div>
-<div class="line"><a id="l00204" name="l00204"></a><span class="lineno">  204</span> </div>
-<div class="line"><a id="l00205" name="l00205"></a><span class="lineno">  205</span><span class="comment">// --- Safepoint GC (JIT.cpp) ---</span></div>
-<div class="line"><a id="l00206" name="l00206"></a><span class="lineno">  206</span><span class="keywordtype">void</span> jitSafepointGc(JitContext* ctx);</div>
-<div class="line"><a id="l00207" name="l00207"></a><span class="lineno">  207</span> </div>
-<div class="line"><a id="l00208" name="l00208"></a><span class="lineno">  208</span><span class="comment">// --- 循环迭代限制 (JIT.cpp) ---</span></div>
-<div class="line"><a id="l00209" name="l00209"></a><span class="lineno">  209</span><span class="comment">// OP_LOOP 回边超限时调用：设置错误消息 + hasError（对齐 Interpreter MAX_LOOP_ITERATIONS）</span></div>
-<div class="line"><a id="l00210" name="l00210"></a><span class="lineno">  210</span><span class="keywordtype">void</span> jitLoopLimitExceeded(JitContext* ctx, int64_t limit);</div>
-<div class="line"><a id="l00211" name="l00211"></a><span class="lineno">  211</span>} <span class="comment">// extern &quot;C&quot;</span></div>
-<div class="line"><a id="l00212" name="l00212"></a><span class="lineno">  212</span> </div>
-<div class="line"><a id="l00213" name="l00213"></a><span class="lineno">  213</span><span class="preprocessor">#endif </span><span class="comment">// MINILANG_USE_JIT</span></div>
+<div class="line"><a id="l00122" name="l00122"></a><span class="lineno">  122</span><span class="keywordtype">void</span> jitTypeCheck(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* annotation);</div>
+<div class="line"><a id="l00123" name="l00123"></a><span class="lineno">  123</span> </div>
+<div class="line"><a id="l00124" name="l00124"></a><span class="lineno">  124</span><span class="comment">// --- Arithmetic/Comparison (JITRuntime.cpp) ---</span></div>
+<div class="line"><a id="l00125" name="l00125"></a><span class="lineno">  125</span>int64_t jitTruthy(uint64_t bits);</div>
+<div class="line"><a id="l00126" name="l00126"></a><span class="lineno">  126</span>uint64_t jitAddGeneric(JitContext* ctx, uint64_t leftBits, uint64_t rightBits);</div>
+<div class="line"><a id="l00127" name="l00127"></a><span class="lineno">  127</span>uint64_t jitSubGeneric(JitContext* ctx, uint64_t leftBits, uint64_t rightBits);</div>
+<div class="line"><a id="l00128" name="l00128"></a><span class="lineno">  128</span>uint64_t jitMulGeneric(JitContext* ctx, uint64_t leftBits, uint64_t rightBits);</div>
+<div class="line"><a id="l00129" name="l00129"></a><span class="lineno">  129</span>uint64_t jitDivGeneric(JitContext* ctx, uint64_t leftBits, uint64_t rightBits);</div>
+<div class="line"><a id="l00130" name="l00130"></a><span class="lineno">  130</span>uint64_t jitModGeneric(JitContext* ctx, uint64_t leftBits, uint64_t rightBits);</div>
+<div class="line"><a id="l00131" name="l00131"></a><span class="lineno">  131</span>uint64_t jitNegateGeneric(JitContext* ctx, uint64_t bits);</div>
+<div class="line"><a id="l00132" name="l00132"></a><span class="lineno">  132</span>uint64_t jitEqualGeneric(uint64_t leftBits, uint64_t rightBits);</div>
+<div class="line"><a id="l00133" name="l00133"></a><span class="lineno">  133</span>uint64_t jitNotEqualGeneric(uint64_t leftBits, uint64_t rightBits);</div>
+<div class="line"><a id="l00134" name="l00134"></a><span class="lineno">  134</span>uint64_t jitOrderedCompare(uint64_t leftBits, uint64_t rightBits, int64_t cmpType);</div>
+<div class="line"><a id="l00135" name="l00135"></a><span class="lineno">  135</span> </div>
+<div class="line"><a id="l00136" name="l00136"></a><span class="lineno">  136</span><span class="comment">// --- Container operations (JITRuntime.cpp) ---</span></div>
+<div class="line"><a id="l00137" name="l00137"></a><span class="lineno">  137</span><span class="keywordtype">void</span> jitBuildArray(JitContext* ctx, uint8_t count);</div>
+<div class="line"><a id="l00138" name="l00138"></a><span class="lineno">  138</span>uint64_t jitIndexGet(JitContext* ctx, uint64_t objBits, uint64_t idxBits);</div>
+<div class="line"><a id="l00139" name="l00139"></a><span class="lineno">  139</span><span class="keywordtype">void</span> jitIndexSetLocal(JitContext* ctx, uint8_t slot, int64_t* frameBase);</div>
+<div class="line"><a id="l00140" name="l00140"></a><span class="lineno">  140</span><span class="keywordtype">void</span> jitIndexSetGlobal(JitContext* ctx, int64_t* slotPtr);</div>
+<div class="line"><a id="l00141" name="l00141"></a><span class="lineno">  141</span><span class="keywordtype">void</span> jitLen(JitContext* ctx);</div>
+<div class="line"><a id="l00142" name="l00142"></a><span class="lineno">  142</span><span class="keywordtype">void</span> jitIndexSet(JitContext* ctx);</div>
+<div class="line"><a id="l00143" name="l00143"></a><span class="lineno">  143</span><span class="keywordtype">void</span> jitBuildDict(JitContext* ctx, uint8_t pairCount);</div>
+<div class="line"><a id="l00144" name="l00144"></a><span class="lineno">  144</span><span class="keywordtype">void</span> jitBuildTuple(JitContext* ctx, uint8_t count);</div>
+<div class="line"><a id="l00145" name="l00145"></a><span class="lineno">  145</span> </div>
+<div class="line"><a id="l00146" name="l00146"></a><span class="lineno">  146</span><span class="comment">// --- Enum variant (JITRuntime.cpp) ---</span></div>
+<div class="line"><a id="l00147" name="l00147"></a><span class="lineno">  147</span><span class="comment">// 校验逻辑与 VM OP_BUILD_ENUM_VARIANT/OP_ENUM_VARIANT_NAME/OP_ENUM_VARIANT_FIELD 对齐；</span></div>
+<div class="line"><a id="l00148" name="l00148"></a><span class="lineno">  148</span><span class="comment">// 仅依赖 ctx-&gt;enumRegistryPtr/ctx-&gt;classInfoPtr/ctx-&gt;stackTop，x86-64 与 ARM64 后端共用。</span></div>
+<div class="line"><a id="l00149" name="l00149"></a><span class="lineno">  149</span><span class="keywordtype">void</span> jitBuildEnumVariant(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* enumName, <span class="keyword">const</span> <span class="keywordtype">char</span>* variantName, uint8_t argCount);</div>
+<div class="line"><a id="l00150" name="l00150"></a><span class="lineno">  150</span><span class="keywordtype">void</span> jitEnumVariantName(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* enumName, <span class="keyword">const</span> <span class="keywordtype">char</span>* variantName);</div>
+<div class="line"><a id="l00151" name="l00151"></a><span class="lineno">  151</span><span class="keywordtype">void</span> jitEnumVariantField(JitContext* ctx);</div>
+<div class="line"><a id="l00152" name="l00152"></a><span class="lineno">  152</span> </div>
+<div class="line"><a id="l00153" name="l00153"></a><span class="lineno">  153</span><span class="comment">// --- Concurrency builtins (JITRuntime.cpp) ---</span></div>
+<div class="line"><a id="l00154" name="l00154"></a><span class="lineno">  154</span><span class="comment">// spawn/channel/mutex/rwlock：经共享层 executeSharedSpawn/executeSharedBuiltinFunction 实现，</span></div>
+<div class="line"><a id="l00155" name="l00155"></a><span class="lineno">  155</span><span class="comment">// 与 Interpreter/StackVM/RegisterVM 语义天然一致。spawn 的 ClosureInvoker 经</span></div>
+<div class="line"><a id="l00156" name="l00156"></a><span class="lineno">  156</span><span class="comment">// JITBackend::closureTrampoline_ 同步执行 JIT 闭包（仅 x86-64 后端）。</span></div>
+<div class="line"><a id="l00157" name="l00157"></a><span class="lineno">  157</span><span class="keywordtype">void</span> jitCallConcurrency(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* funName, uint8_t argCount);</div>
+<div class="line"><a id="l00158" name="l00158"></a><span class="lineno">  158</span> </div>
+<div class="line"><a id="l00159" name="l00159"></a><span class="lineno">  159</span><span class="comment">// --- OOP (JITRuntime.cpp) ---</span></div>
+<div class="line"><a id="l00160" name="l00160"></a><span class="lineno">  160</span><span class="keywordtype">void</span> jitClassNew(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* className, uint8_t argCount);</div>
+<div class="line"><a id="l00161" name="l00161"></a><span class="lineno">  161</span><span class="keywordtype">void</span> jitInitField(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* fieldName);</div>
+<div class="line"><a id="l00162" name="l00162"></a><span class="lineno">  162</span><span class="keywordtype">void</span> jitDefineClass(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* className, <span class="keyword">const</span> <span class="keywordtype">char</span>* superClassName);</div>
+<div class="line"><a id="l00163" name="l00163"></a><span class="lineno">  163</span><span class="keywordtype">void</span> jitMemberGet(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* fieldName);</div>
+<div class="line"><a id="l00164" name="l00164"></a><span class="lineno">  164</span><span class="keywordtype">void</span> jitMemberGetWithIC(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* fieldName, uint64_t callSiteId, <span class="keywordtype">void</span>* backendPtr);</div>
+<div class="line"><a id="l00165" name="l00165"></a><span class="lineno">  165</span><span class="keywordtype">void</span> jitMemberSetVar(JitContext* ctx, int64_t* slotPtr, <span class="keyword">const</span> <span class="keywordtype">char</span>* fieldName);</div>
+<div class="line"><a id="l00166" name="l00166"></a><span class="lineno">  166</span><span class="keywordtype">void</span> jitMemberSetLocal(JitContext* ctx, uint8_t slot, int64_t* frameBase, <span class="keyword">const</span> <span class="keywordtype">char</span>* fieldName);</div>
+<div class="line"><a id="l00167" name="l00167"></a><span class="lineno">  167</span>int64_t jitMethodReturn(JitContext* ctx, JitFrame* framePtr, int64_t retvalBits);</div>
+<div class="line"><a id="l00168" name="l00168"></a><span class="lineno">  168</span><span class="keywordtype">void</span> jitMethodCall(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* methodName, int64_t packedArgs, int64_t* receiverSlotPtr,</div>
+<div class="line"><a id="l00169" name="l00169"></a><span class="lineno">  169</span>                   <span class="keyword">const</span> <span class="keywordtype">char</span>* superClassName, uint64_t callSiteId, <span class="keywordtype">void</span>* backendPtr);</div>
+<div class="line"><a id="l00170" name="l00170"></a><span class="lineno">  170</span> </div>
+<div class="line"><a id="l00171" name="l00171"></a><span class="lineno">  171</span><span class="comment">// --- Function calls (JITRuntime.cpp) ---</span></div>
+<div class="line"><a id="l00172" name="l00172"></a><span class="lineno">  172</span><span class="keywordtype">void</span> jitCallExpr(JitContext* ctx, uint8_t argCount);</div>
+<div class="line"><a id="l00173" name="l00173"></a><span class="lineno">  173</span><span class="keywordtype">void</span> jitCallByName(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* funName, uint8_t argCount);</div>
+<div class="line"><a id="l00174" name="l00174"></a><span class="lineno">  174</span> </div>
+<div class="line"><a id="l00175" name="l00175"></a><span class="lineno">  175</span><span class="comment">// --- Exception handling (JITRuntime.cpp) ---</span></div>
+<div class="line"><a id="l00176" name="l00176"></a><span class="lineno">  176</span><span class="keywordtype">void</span> jitPushTryHandler(JitContext* ctx, <span class="keywordtype">void</span>* catchAddr, int64_t* stackBase);</div>
+<div class="line"><a id="l00177" name="l00177"></a><span class="lineno">  177</span><span class="keywordtype">void</span> jitPopTryHandler(JitContext* ctx);</div>
+<div class="line"><a id="l00178" name="l00178"></a><span class="lineno">  178</span><span class="keywordtype">void</span> jitPushJumpTarget(JitContext* ctx, <span class="keywordtype">void</span>* targetAddr);</div>
+<div class="line"><a id="l00179" name="l00179"></a><span class="lineno">  179</span><span class="keywordtype">void</span>* jitPopJumpTarget(JitContext* ctx);</div>
+<div class="line"><a id="l00180" name="l00180"></a><span class="lineno">  180</span><span class="keywordtype">void</span> jitDropPendingJumps(JitContext* ctx, int64_t count);</div>
+<div class="line"><a id="l00181" name="l00181"></a><span class="lineno">  181</span><span class="keywordtype">void</span>* jitThrow(JitContext* ctx, uint64_t thrownValueBits, int64_t* currentR13);</div>
+<div class="line"><a id="l00182" name="l00182"></a><span class="lineno">  182</span><span class="keywordtype">void</span>* jitRuntimeThrow(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* msg, int64_t* currentR13);</div>
+<div class="line"><a id="l00183" name="l00183"></a><span class="lineno">  183</span><span class="keywordtype">void</span>* jitCheckAndRethrow(JitContext* ctx, int64_t* currentR13);</div>
+<div class="line"><a id="l00184" name="l00184"></a><span class="lineno">  184</span> </div>
+<div class="line"><a id="l00185" name="l00185"></a><span class="lineno">  185</span><span class="comment">// --- Name variables (JITRuntime.cpp) ---</span></div>
+<div class="line"><a id="l00186" name="l00186"></a><span class="lineno">  186</span><span class="keywordtype">void</span> jitDefineVar(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* name);</div>
+<div class="line"><a id="l00187" name="l00187"></a><span class="lineno">  187</span>uint64_t jitGetVar(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* name);</div>
+<div class="line"><a id="l00188" name="l00188"></a><span class="lineno">  188</span><span class="keywordtype">void</span> jitSetVar(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* name);</div>
+<div class="line"><a id="l00189" name="l00189"></a><span class="lineno">  189</span><span class="keywordtype">void</span> jitDeleteVar(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* name);</div>
+<div class="line"><a id="l00190" name="l00190"></a><span class="lineno">  190</span> </div>
+<div class="line"><a id="l00191" name="l00191"></a><span class="lineno">  191</span><span class="comment">// --- Closure/Upvalue (JITClosure.cpp) ---</span></div>
+<div class="line"><a id="l00192" name="l00192"></a><span class="lineno">  192</span>int64_t jitCreateClosure(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* funName, <span class="keyword">const</span> <span class="keywordtype">void</span>* chunkPtr, uint8_t upvalueCount,</div>
+<div class="line"><a id="l00193" name="l00193"></a><span class="lineno">  193</span>                         <span class="keyword">const</span> uint8_t* upvalueDescs);</div>
+<div class="line"><a id="l00194" name="l00194"></a><span class="lineno">  194</span>int64_t jitGetUpvalue(JitContext* ctx, uint8_t uvIdx);</div>
+<div class="line"><a id="l00195" name="l00195"></a><span class="lineno">  195</span><span class="keywordtype">void</span> jitSetUpvalue(JitContext* ctx, uint8_t uvIdx, int64_t valueBits);</div>
+<div class="line"><a id="l00196" name="l00196"></a><span class="lineno">  196</span><span class="keywordtype">void</span> jitCloseUpvalues(JitContext* ctx, int64_t* fromAddr);</div>
+<div class="line"><a id="l00197" name="l00197"></a><span class="lineno">  197</span><span class="keywordtype">void</span> jitPushEmptyFrameUpvalues(JitContext* ctx);</div>
+<div class="line"><a id="l00198" name="l00198"></a><span class="lineno">  198</span><span class="keywordtype">void</span> jitPushClosureUpvalues(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* funName);</div>
+<div class="line"><a id="l00199" name="l00199"></a><span class="lineno">  199</span><span class="keywordtype">void</span> jitReturnCloseUpvalues(JitContext* ctx, int64_t* fromAddr, <span class="keywordtype">size_t</span> newFrameCount);</div>
+<div class="line"><a id="l00200" name="l00200"></a><span class="lineno">  200</span> </div>
+<div class="line"><a id="l00201" name="l00201"></a><span class="lineno">  201</span><span class="comment">// --- Tiering/OSR/Deopt (JITTiering.cpp) ---</span></div>
+<div class="line"><a id="l00202" name="l00202"></a><span class="lineno">  202</span>int64_t jitTriggerRecompile(JitContext* ctx, int64_t chunkIdx);</div>
+<div class="line"><a id="l00203" name="l00203"></a><span class="lineno">  203</span>int64_t jitTriggerOsrRecompile(JitContext* ctx, int64_t chunkIdx);</div>
+<div class="line"><a id="l00204" name="l00204"></a><span class="lineno">  204</span>int64_t jitTriggerOsrMigration(JitContext* ctx, int64_t chunkIdx);</div>
+<div class="line"><a id="l00205" name="l00205"></a><span class="lineno">  205</span>int64_t jitDeoptimize(JitContext* ctx, int64_t chunkIdx);</div>
+<div class="line"><a id="l00206" name="l00206"></a><span class="lineno">  206</span> </div>
+<div class="line"><a id="l00207" name="l00207"></a><span class="lineno">  207</span><span class="comment">// --- Safepoint GC (JIT.cpp) ---</span></div>
+<div class="line"><a id="l00208" name="l00208"></a><span class="lineno">  208</span><span class="keywordtype">void</span> jitSafepointGc(JitContext* ctx);</div>
+<div class="line"><a id="l00209" name="l00209"></a><span class="lineno">  209</span> </div>
+<div class="line"><a id="l00210" name="l00210"></a><span class="lineno">  210</span><span class="comment">// --- 循环迭代限制 (JIT.cpp) ---</span></div>
+<div class="line"><a id="l00211" name="l00211"></a><span class="lineno">  211</span><span class="comment">// OP_LOOP 回边超限时调用：设置错误消息 + hasError（对齐 Interpreter MAX_LOOP_ITERATIONS）</span></div>
+<div class="line"><a id="l00212" name="l00212"></a><span class="lineno">  212</span><span class="keywordtype">void</span> jitLoopLimitExceeded(JitContext* ctx, int64_t limit);</div>
+<div class="line"><a id="l00213" name="l00213"></a><span class="lineno">  213</span>} <span class="comment">// extern &quot;C&quot;</span></div>
+<div class="line"><a id="l00214" name="l00214"></a><span class="lineno">  214</span> </div>
+<div class="line"><a id="l00215" name="l00215"></a><span class="lineno">  215</span><span class="preprocessor">#endif </span><span class="comment">// MINILANG_USE_JIT</span></div>
 <div class="ttc" id="aValue_8h_html"><div class="ttname"><a href="Value_8h.html">Value.h</a></div><div class="ttdoc">运行时值结构体 Value（NaN-boxing + 侵入式引用计数）。</div></div>
-<div class="ttc" id="astructValue_html"><div class="ttname"><a href="structValue.html">Value</a></div><div class="ttdef"><b>Definition</b> <a href="Value_8h_source.html#l00100">Value.h:100</a></div></div>
-<div class="ttc" id="astructValue_html_a7ddd2dfd5c683e3518b2252b4349767e"><div class="ttname"><a href="structValue.html#a7ddd2dfd5c683e3518b2252b4349767e">Value::fromBitsBorrowed</a></div><div class="ttdeci">static Value fromBitsBorrowed(uint64_t bits)</div><div class="ttdef"><b>Definition</b> <a href="Value_8h_source.html#l00692">Value.h:692</a></div></div>
-<div class="ttc" id="astructValue_html_ab4525a9f4ba959f18fa63cf001b6ec7c"><div class="ttname"><a href="structValue.html#ab4525a9f4ba959f18fa63cf001b6ec7c">Value::detach</a></div><div class="ttdeci">static uint64_t detach(Value &amp;v)</div><div class="ttdef"><b>Definition</b> <a href="Value_8h_source.html#l00707">Value.h:707</a></div></div>
+<div class="ttc" id="astructValue_html"><div class="ttname"><a href="structValue.html">Value</a></div><div class="ttdef"><b>Definition</b> <a href="Value_8h_source.html#l00102">Value.h:102</a></div></div>
+<div class="ttc" id="astructValue_html_a7ddd2dfd5c683e3518b2252b4349767e"><div class="ttname"><a href="structValue.html#a7ddd2dfd5c683e3518b2252b4349767e">Value::fromBitsBorrowed</a></div><div class="ttdeci">static Value fromBitsBorrowed(uint64_t bits)</div><div class="ttdef"><b>Definition</b> <a href="Value_8h_source.html#l00757">Value.h:757</a></div></div>
+<div class="ttc" id="astructValue_html_ab4525a9f4ba959f18fa63cf001b6ec7c"><div class="ttname"><a href="structValue.html#ab4525a9f4ba959f18fa63cf001b6ec7c">Value::detach</a></div><div class="ttdeci">static uint64_t detach(Value &amp;v)</div><div class="ttdef"><b>Definition</b> <a href="Value_8h_source.html#l00772">Value.h:772</a></div></div>
 </div><!-- fragment --></div><!-- contents -->
 </div><!-- doc-content -->
 <!-- start footer part -->

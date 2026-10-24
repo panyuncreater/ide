@@ -43,6 +43,10 @@ var namespaceminilang =
       [ "CLOSURE", "namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901ab27025b4b0dce496c519e0d5c69acaf8", null ],
       [ "ANY", "namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901a8e1bde3c3d303163521522cf1d62f21f", null ]
     ] ],
+    [ "annotationReferencesTypeParam", "namespaceminilang.html#afd0e5ee77a88c01ae7134999275e61f2", null ],
+    [ "findDictKVSeparator", "namespaceminilang.html#af33eb25640b303fc724b909e61c0dc9c", null ],
     [ "isTypeParameter", "namespaceminilang.html#aa52ae8fee7911ef9b659f4e772b7a52c", null ],
+    [ "mergeTypeParams", "namespaceminilang.html#a36f9630e3188a4697d8cb0a54bedf20b", null ],
+    [ "skipTypeAnnotationFrom", "namespaceminilang.html#a6fd7efeba6fca380cff22b69623e267c", null ],
     [ "typeMatchValue", "namespaceminilang.html#a8ca286a690754ad7a4b067329f2af8fa", null ]
 ];

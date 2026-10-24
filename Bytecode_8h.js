@@ -97,7 +97,11 @@ var Bytecode_8h =
       [ "OP_MUL_INT_SPEC", "Bytecode_8h.html#a7e85f04e30e1c4c4607773335350fe20a2cf4bff95bdc87e22b9ff2b43e6ce4e6", null ],
       [ "OP_LT_INT_SPEC", "Bytecode_8h.html#a7e85f04e30e1c4c4607773335350fe20a04237f8d60571bf432cc0685ac98e043", null ],
       [ "OP_TAIL_CALL", "Bytecode_8h.html#a7e85f04e30e1c4c4607773335350fe20a4a868180a54d70c808b68a6ce15a4e29", null ],
-      [ "OP_AWAIT", "Bytecode_8h.html#a7e85f04e30e1c4c4607773335350fe20a9c21742f9260d0a939c6ca08000471d8", null ]
+      [ "OP_AWAIT", "Bytecode_8h.html#a7e85f04e30e1c4c4607773335350fe20a9c21742f9260d0a939c6ca08000471d8", null ],
+      [ "OP_DROP_PENDING_JUMPS", "Bytecode_8h.html#a7e85f04e30e1c4c4607773335350fe20af6dc67f927ad80195dd0c13c4c2bd3ee", null ],
+      [ "OP_GT_INT_SPEC", "Bytecode_8h.html#a7e85f04e30e1c4c4607773335350fe20a5bd35f3b16713e872859fa207943c05a", null ],
+      [ "OP_GTE_INT_SPEC", "Bytecode_8h.html#a7e85f04e30e1c4c4607773335350fe20a0621737f4461a58fd93fd601d3c4db8b", null ],
+      [ "OP_LTE_INT_SPEC", "Bytecode_8h.html#a7e85f04e30e1c4c4607773335350fe20a83d2a043e55effc8ca248562d36e23f0", null ]
     ] ],
     [ "getOpCodeInfo", "Bytecode_8h.html#a99fe9dfbb48f38256bf8f6d0a9741e6d", null ],
     [ "isOpCodeVariableLength", "Bytecode_8h.html#a84d5d021e07ee251c9a06a8380dfb242", null ],

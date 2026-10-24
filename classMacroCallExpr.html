@@ -157,7 +157,7 @@ Public Attributes</h2></td></tr>
 <a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
 <div class="textblock"><p>宏调用节点：name!(args)。expanded 为 parse 期展开后的语义子树， 四后端求值/编译均直接访问 expanded；args 保留原始实参供 <a class="el" href="classFormatter.html">Formatter</a> 打印。 注：args 子树与 expanded 内的替换点共享同一 shared_ptr 节点。 </p>
 
-<p class="definition">Definition at line <a class="el" href="ASTNode_8h_source.html#l01252">1252</a> of file <a class="el" href="ASTNode_8h_source.html">ASTNode.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="ASTNode_8h_source.html#l01259">1259</a> of file <a class="el" href="ASTNode_8h_source.html">ASTNode.h</a>.</p>
 </div><h2 class="groupheader">Constructor &amp; Destructor Documentation</h2>
 <a id="aa99b730133652565e9d15966dbba0da5" name="aa99b730133652565e9d15966dbba0da5"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#aa99b730133652565e9d15966dbba0da5">&#9670;&#160;</a></span>MacroCallExpr()</h2>
@@ -211,7 +211,7 @@ Public Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="ASTNode_8h_source.html#l01261">1261</a> of file <a class="el" href="ASTNode_8h_source.html">ASTNode.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="ASTNode_8h_source.html#l01268">1268</a> of file <a class="el" href="ASTNode_8h_source.html">ASTNode.h</a>.</p>
 
 <p class="reference">References <a class="el" href="ASTNode_8h.html#acac9cbaeea226ed297804c012dc12b16a4b27d3c4ea9368683830a1076c914064">NODE_MACRO_CALL</a>, and <a class="el" href="ASTNode_8h_source.html#l00095">ASTNode::nodeType</a>.</p>
 
@@ -246,7 +246,7 @@ Public Attributes</h2></td></tr>
 
 <p>Implements <a class="el" href="classASTNode.html#ab19e2a3711c648e10a78f678f8a7aa17">ASTNode</a>.</p>
 
-<p class="definition">Definition at line <a class="el" href="ASTNode_8cpp_source.html#l00285">285</a> of file <a class="el" href="ASTNode_8cpp_source.html">ASTNode.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="ASTNode_8cpp_source.html#l00301">301</a> of file <a class="el" href="ASTNode_8cpp_source.html">ASTNode.cpp</a>.</p>
 
 <p class="reference">References <a class="el" href="classVisitor.html#a5b2eee4a66ef905cebcabd56b7c92e9f">Visitor::visitMacroCallExpr()</a>.</p>
 
@@ -279,9 +279,9 @@ Public Attributes</h2></td></tr>
 
 <p>Implements <a class="el" href="classASTNode.html#a22acccda13969fd35d016137b70748f2">ASTNode</a>.</p>
 
-<p class="definition">Definition at line <a class="el" href="ASTNode_8h_source.html#l01268">1268</a> of file <a class="el" href="ASTNode_8h_source.html">ASTNode.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="ASTNode_8h_source.html#l01275">1275</a> of file <a class="el" href="ASTNode_8h_source.html">ASTNode.h</a>.</p>
 
-<p class="reference">References <a class="el" href="ASTNode_8h_source.html#l01256">expanded</a>.</p>
+<p class="reference">References <a class="el" href="ASTNode_8h_source.html#l01263">expanded</a>.</p>
 
 </div>
 </div>
@@ -312,9 +312,9 @@ Public Attributes</h2></td></tr>
 
 <p>Implements <a class="el" href="classASTNode.html#abea3e85475f6a6a71a38230014599a36">ASTNode</a>.</p>
 
-<p class="definition">Definition at line <a class="el" href="ASTNode_8h_source.html#l01267">1267</a> of file <a class="el" href="ASTNode_8h_source.html">ASTNode.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="ASTNode_8h_source.html#l01274">1274</a> of file <a class="el" href="ASTNode_8h_source.html">ASTNode.h</a>.</p>
 
-<p class="reference">References <a class="el" href="ASTNode_8h_source.html#l01254">name</a>.</p>
+<p class="reference">References <a class="el" href="ASTNode_8h_source.html#l01261">name</a>.</p>
 
 </div>
 </div>
@@ -333,9 +333,9 @@ Public Attributes</h2></td></tr>
 
 <p>原始实参（Formatter 打印用） </p>
 
-<p class="definition">Definition at line <a class="el" href="ASTNode_8h_source.html#l01255">1255</a> of file <a class="el" href="ASTNode_8h_source.html">ASTNode.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="ASTNode_8h_source.html#l01262">1262</a> of file <a class="el" href="ASTNode_8h_source.html">ASTNode.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Formatter_8cpp_source.html#l00542">Formatter::visitMacroCallExpr()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Formatter_8cpp_source.html#l00528">Formatter::visitMacroCallExpr()</a>.</p>
 
 </div>
 </div>
@@ -352,9 +352,9 @@ Public Attributes</h2></td></tr>
 </div><div class="memdoc">
 <p>展开后的语义子树（非空） </p>
 
-<p class="definition">Definition at line <a class="el" href="ASTNode_8h_source.html#l01256">1256</a> of file <a class="el" href="ASTNode_8h_source.html">ASTNode.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="ASTNode_8h_source.html#l01263">1263</a> of file <a class="el" href="ASTNode_8h_source.html">ASTNode.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="ASTNode_8h_source.html#l01268">children()</a>, <a class="el" href="CompilerStmt_8cpp_source.html#l00538">Compiler::visitMacroCallExpr()</a>, and <a class="el" href="Interpreter_8cpp_source.html#l03207">Interpreter::visitMacroCallExpr()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="ASTNode_8h_source.html#l01275">children()</a>, <a class="el" href="CompilerStmt_8cpp_source.html#l00538">Compiler::visitMacroCallExpr()</a>, and <a class="el" href="Interpreter_8cpp_source.html#l03294">Interpreter::visitMacroCallExpr()</a>.</p>
 
 </div>
 </div>
@@ -372,9 +372,9 @@ Public Attributes</h2></td></tr>
 
 <p>宏名 </p>
 
-<p class="definition">Definition at line <a class="el" href="ASTNode_8h_source.html#l01254">1254</a> of file <a class="el" href="ASTNode_8h_source.html">ASTNode.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="ASTNode_8h_source.html#l01261">1261</a> of file <a class="el" href="ASTNode_8h_source.html">ASTNode.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="ASTNode_8h_source.html#l01267">nodeName()</a>, <a class="el" href="CompilerStmt_8cpp_source.html#l00538">Compiler::visitMacroCallExpr()</a>, <a class="el" href="Formatter_8cpp_source.html#l00542">Formatter::visitMacroCallExpr()</a>, and <a class="el" href="Interpreter_8cpp_source.html#l03207">Interpreter::visitMacroCallExpr()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="ASTNode_8h_source.html#l01274">nodeName()</a>, <a class="el" href="CompilerStmt_8cpp_source.html#l00538">Compiler::visitMacroCallExpr()</a>, <a class="el" href="Formatter_8cpp_source.html#l00528">Formatter::visitMacroCallExpr()</a>, and <a class="el" href="Interpreter_8cpp_source.html#l03294">Interpreter::visitMacroCallExpr()</a>.</p>
 
 </div>
 </div>
@@ -391,9 +391,9 @@ Public Attributes</h2></td></tr>
 </div><div class="memdoc">
 <p>七特性宏升级：expanded 是否产生表达式值。表达式宏=true（expanded 压栈一个值）； 语句宏=false（expanded 为 Block，后端执行后补一个 null 作为表达式值，保证栈平衡）。 </p>
 
-<p class="definition">Definition at line <a class="el" href="ASTNode_8h_source.html#l01259">1259</a> of file <a class="el" href="ASTNode_8h_source.html">ASTNode.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="ASTNode_8h_source.html#l01266">1266</a> of file <a class="el" href="ASTNode_8h_source.html">ASTNode.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="CompilerStmt_8cpp_source.html#l00538">Compiler::visitMacroCallExpr()</a>, and <a class="el" href="Interpreter_8cpp_source.html#l03207">Interpreter::visitMacroCallExpr()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CompilerStmt_8cpp_source.html#l00538">Compiler::visitMacroCallExpr()</a>, and <a class="el" href="Interpreter_8cpp_source.html#l03294">Interpreter::visitMacroCallExpr()</a>.</p>
 
 </div>
 </div>

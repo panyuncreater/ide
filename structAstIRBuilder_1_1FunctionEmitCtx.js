@@ -15,6 +15,7 @@ var structAstIRBuilder_1_1FunctionEmitCtx =
     [ "savedCurrentTypeParams", "structAstIRBuilder_1_1FunctionEmitCtx.html#ac7e46290f4c4f9b88a488661ffd137f2", null ],
     [ "savedCurrentUpvalueNames", "structAstIRBuilder_1_1FunctionEmitCtx.html#a5a124535cb812e8611520e065bac7bbf", null ],
     [ "savedCurrentUpvalues", "structAstIRBuilder_1_1FunctionEmitCtx.html#a9494fcdb1a265902587fc659cd8de2e7", null ],
+    [ "savedFinallyBodyDepth", "structAstIRBuilder_1_1FunctionEmitCtx.html#ac300fcb87866104012ea7dfd5c479b2e", null ],
     [ "savedInFunction", "structAstIRBuilder_1_1FunctionEmitCtx.html#af41673059276e9614e7301bef950df01", null ],
     [ "savedInnerFunctions", "structAstIRBuilder_1_1FunctionEmitCtx.html#a677297d7be694219a9c5dd4cf88ad585", null ],
     [ "savedInnerFunctionSlots", "structAstIRBuilder_1_1FunctionEmitCtx.html#a5fab0f61b49dde7fec1268d8afcad440", null ],

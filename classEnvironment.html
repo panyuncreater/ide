@@ -135,6 +135,8 @@ Public Member Functions</h2></td></tr>
 <tr class="separator:aef9c3b8deab6d2bf834865017f00a51a"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:adad49380fb27b840097de425ac4dbfec" id="r_adad49380fb27b840097de425ac4dbfec"><td class="memItemLeft" align="right" valign="top">const <a class="el" href="structValue.html">Value</a> *&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classEnvironment.html#adad49380fb27b840097de425ac4dbfec">getVariableOnly</a> (const std::string &amp;name) const</td></tr>
 <tr class="separator:adad49380fb27b840097de425ac4dbfec"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a7d7663e4085983f4531ef23f79053431" id="r_a7d7663e4085983f4531ef23f79053431"><td class="memItemLeft" align="right" valign="top"><a class="el" href="structValue.html">Value</a> *&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classEnvironment.html#a7d7663e4085983f4531ef23f79053431">getMutableVariableSlot</a> (const std::string &amp;name)</td></tr>
+<tr class="separator:a7d7663e4085983f4531ef23f79053431"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a0287149a4ae2d99ee49463ca3df81494" id="r_a0287149a4ae2d99ee49463ca3df81494"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classEnvironment.html#a0287149a4ae2d99ee49463ca3df81494">set</a> (const std::string &amp;name, const <a class="el" href="structValue.html">Value</a> &amp;val)</td></tr>
 <tr class="memdesc:a0287149a4ae2d99ee49463ca3df81494"><td class="mdescLeft">&#160;</td><td class="mdescRight">设置变量值（沿作用域链查找并更新）  <br /></td></tr>
 <tr class="separator:a0287149a4ae2d99ee49463ca3df81494"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -244,7 +246,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00026">26</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Environment_8h_source.html#l00423">boundInstance_</a>.</p>
+<p class="reference">References <a class="el" href="Environment_8h_source.html#l00441">boundInstance_</a>.</p>
 
 </div>
 </div>
@@ -274,11 +276,11 @@ Private Attributes</h2></td></tr>
 
 <p>获取当前作用域及所有父作用域的变量快照（向量形式，保留遮蔽顺序） </p>
 
-<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00236">236</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00254">254</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Environment_8h_source.html#l00219">collectVariables()</a>.</p>
+<p class="reference">References <a class="el" href="Environment_8h_source.html#l00237">collectVariables()</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Environment_8h_source.html#l00244">allVariablesMap()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Environment_8h_source.html#l00262">allVariablesMap()</a>.</p>
 
 </div>
 </div>
@@ -306,9 +308,9 @@ Private Attributes</h2></td></tr>
 </div><div class="memdoc">
 <p>C1 fix: 获取所有可见变量的扁平 map（用于闭包 capturedVars 快照） 子作用域变量覆盖父作用域同名变量（与 collectVariables 的追加顺序一致） </p>
 
-<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00244">244</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00262">262</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Environment_8h_source.html#l00236">allVariables()</a>.</p>
+<p class="reference">References <a class="el" href="Environment_8h_source.html#l00254">allVariables()</a>.</p>
 
 </div>
 </div>
@@ -336,9 +338,9 @@ Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00285">285</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00303">303</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Environment_8h_source.html#l00423">boundInstance_</a>, <a class="el" href="Value_8h_source.html#l00989">Value::isInstance()</a>, and <a class="el" href="Environment_8h_source.html#l00421">variables</a>.</p>
+<p class="reference">References <a class="el" href="Environment_8h_source.html#l00441">boundInstance_</a>, <a class="el" href="Value_8h_source.html#l01054">Value::isInstance()</a>, and <a class="el" href="Environment_8h_source.html#l00439">variables</a>.</p>
 
 </div>
 </div>
@@ -366,9 +368,9 @@ Private Attributes</h2></td></tr>
 </div><div class="memdoc">
 <p>作用域退出时，将本 env 中被捕获的变量的最终值写回闭包的 capturedVars。 实现等价于 <a class="el" href="classVM.html" title="简单栈式虚拟机">VM</a> 的 OP_CLOSE_UPVALUE（关闭 open upvalue）。 Bug #44 线程安全约束: 此处 const_cast 绕过 COW 直接修改共享 ClosureData。 安全性保证: <a class="el" href="classInterpreter.html" title="访问者模式解释执行器">Interpreter</a> 执行是单线程的，GUI 读取路径通过 snapshot（值拷贝）， 不会与此写入并发。若未来引入多线程执行，必须重新审视此处。 </p>
 
-<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00337">337</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00355">355</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Environment_8h_source.html#l00433">closureCaptures_</a>, and <a class="el" href="Environment_8h_source.html#l00421">variables</a>.</p>
+<p class="reference">References <a class="el" href="Environment_8h_source.html#l00451">closureCaptures_</a>, and <a class="el" href="Environment_8h_source.html#l00439">variables</a>.</p>
 
 </div>
 </div>
@@ -397,11 +399,11 @@ Private Attributes</h2></td></tr>
 </div><div class="memdoc">
 <p>收集所有变量到结果向量（避免N个临时vector深拷贝） Bug #14 fix: 改为迭代实现，避免深 parent 链递归栈溢出 </p>
 
-<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00219">219</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00237">237</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
 <p class="reference">References <a class="el" href="Environment_8h_source.html#l00023">parent</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Environment_8h_source.html#l00236">allVariables()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Environment_8h_source.html#l00254">allVariables()</a>.</p>
 
 </div>
 </div>
@@ -443,7 +445,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00036">36</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Environment_8h_source.html#l00421">variables</a>.</p>
+<p class="reference">References <a class="el" href="Environment_8h_source.html#l00439">variables</a>.</p>
 
 </div>
 </div>
@@ -485,7 +487,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00044">44</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Environment_8h_source.html#l00421">variables</a>.</p>
+<p class="reference">References <a class="el" href="Environment_8h_source.html#l00439">variables</a>.</p>
 
 </div>
 </div>
@@ -525,9 +527,9 @@ Private Attributes</h2></td></tr>
 
 <p>在当前作用域定义类型注解 </p>
 
-<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00394">394</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00412">412</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Environment_8h_source.html#l00422">typeAnnotations_</a>.</p>
+<p class="reference">References <a class="el" href="Environment_8h_source.html#l00440">typeAnnotations_</a>.</p>
 
 </div>
 </div>
@@ -559,9 +561,9 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00063">63</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Environment_8h_source.html#l00423">boundInstance_</a>, <a class="el" href="Value_8h_source.html#l00989">Value::isInstance()</a>, <a class="el" href="Environment_8h_source.html#l00023">parent</a>, and <a class="el" href="Environment_8h_source.html#l00421">variables</a>.</p>
+<p class="reference">References <a class="el" href="Environment_8h_source.html#l00441">boundInstance_</a>, <a class="el" href="Value_8h_source.html#l01054">Value::isInstance()</a>, <a class="el" href="Environment_8h_source.html#l00023">parent</a>, and <a class="el" href="Environment_8h_source.html#l00439">variables</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00510">Interpreter::currentEnvironment()</a>, <a class="el" href="Interpreter_8cpp_source.html#l00820">Interpreter::setupSandboxEnvironment()</a>, and <a class="el" href="Interpreter_8cpp_source.html#l02364">Interpreter::visitFunDecl()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00528">Interpreter::currentEnvironment()</a>, <a class="el" href="Interpreter_8cpp_source.html#l00838">Interpreter::setupSandboxEnvironment()</a>, and <a class="el" href="Interpreter_8cpp_source.html#l02437">Interpreter::visitFunDecl()</a>.</p>
 
 </div>
 </div>
@@ -588,11 +590,11 @@ Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00311">311</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00329">329</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Environment_8h_source.html#l00423">boundInstance_</a>.</p>
+<p class="reference">References <a class="el" href="Environment_8h_source.html#l00441">boundInstance_</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00820">Interpreter::setupSandboxEnvironment()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00838">Interpreter::setupSandboxEnvironment()</a>.</p>
 
 </div>
 </div>
@@ -621,11 +623,42 @@ Private Attributes</h2></td></tr>
 </div><div class="memdoc">
 <p>仅查本作用域的局部变量（不含父作用域和 boundInstance 字段）。 用于确定被捕获变量定义在哪个 env 上。 </p>
 
-<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00321">321</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00339">339</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Environment_8h_source.html#l00421">variables</a>.</p>
+<p class="reference">References <a class="el" href="Environment_8h_source.html#l00439">variables</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l02364">Interpreter::visitFunDecl()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l02437">Interpreter::visitFunDecl()</a>.</p>
+
+</div>
+</div>
+<a id="a7d7663e4085983f4531ef23f79053431" name="a7d7663e4085983f4531ef23f79053431"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a7d7663e4085983f4531ef23f79053431">&#9670;&#160;</a></span>getMutableVariableSlot()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname"><a class="el" href="structValue.html">Value</a> * Environment::getMutableVariableSlot </td>
+          <td>(</td>
+          <td class="paramtype">const std::string &amp;&#160;</td>
+          <td class="paramname"><em>name</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">inline</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+<p>OPT-01: 沿作用域链查找变量槽位（仅 variables，不含 boundInstance 字段）。 返回的指针在本次求值窗口内有效；调用方须在 RHS/参数求值后重新调用， 防止用户代码重绑定变量或 <a class="el" href="classSmallMap.html">SmallMap</a> 晋升导致指针失效。 </p>
+
+<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00119">119</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
+
+<p class="reference">References <a class="el" href="Environment_8h_source.html#l00023">parent</a>, and <a class="el" href="Environment_8h_source.html#l00439">variables</a>.</p>
 
 </div>
 </div>
@@ -655,9 +688,9 @@ Private Attributes</h2></td></tr>
 
 <p>沿作用域链查找类型注解（返回指针，nullptr=无注解） </p>
 
-<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00397">397</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00415">415</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Environment_8h_source.html#l00023">parent</a>, and <a class="el" href="Environment_8h_source.html#l00422">typeAnnotations_</a>.</p>
+<p class="reference">References <a class="el" href="Environment_8h_source.html#l00023">parent</a>, and <a class="el" href="Environment_8h_source.html#l00440">typeAnnotations_</a>.</p>
 
 </div>
 </div>
@@ -688,7 +721,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00100">100</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Environment_8h_source.html#l00023">parent</a>, and <a class="el" href="Environment_8h_source.html#l00421">variables</a>.</p>
+<p class="reference">References <a class="el" href="Environment_8h_source.html#l00023">parent</a>, and <a class="el" href="Environment_8h_source.html#l00439">variables</a>.</p>
 
 </div>
 </div>
@@ -716,9 +749,9 @@ Private Attributes</h2></td></tr>
 </div><div class="memdoc">
 <p>是否有闭包捕获了本 env 的变量（用于判断是否可回收至 envPool_）。 有捕获的 env 不能回收（resetForReuse 会清空 variables，导致 weak_ptr 仍有效但内容陈旧）。 </p>
 
-<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00354">354</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00372">372</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Environment_8h_source.html#l00433">closureCaptures_</a>.</p>
+<p class="reference">References <a class="el" href="Environment_8h_source.html#l00451">closureCaptures_</a>.</p>
 
 </div>
 </div>
@@ -745,9 +778,9 @@ Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00361">361</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00379">379</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Environment_8h_source.html#l00437">hasClosureEnvRef_</a>.</p>
+<p class="reference">References <a class="el" href="Environment_8h_source.html#l00455">hasClosureEnvRef_</a>.</p>
 
 </div>
 </div>
@@ -776,9 +809,9 @@ Private Attributes</h2></td></tr>
 </div><div class="memdoc">
 <p>检查变量是否存在（沿作用域链） P2-10 fix: 与 <a class="el" href="classEnvironment.html#aef9c3b8deab6d2bf834865017f00a51a" title="获取变量值（沿作用域链查找）— 返回指针，nullptr 表示未找到">get()</a> 保持一致，也检查绑定实例的字段 </p>
 
-<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00192">192</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00210">210</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Environment_8h_source.html#l00423">boundInstance_</a>, <a class="el" href="Value_8h_source.html#l00989">Value::isInstance()</a>, <a class="el" href="Environment_8h_source.html#l00023">parent</a>, and <a class="el" href="Environment_8h_source.html#l00421">variables</a>.</p>
+<p class="reference">References <a class="el" href="Environment_8h_source.html#l00441">boundInstance_</a>, <a class="el" href="Value_8h_source.html#l01054">Value::isInstance()</a>, <a class="el" href="Environment_8h_source.html#l00023">parent</a>, and <a class="el" href="Environment_8h_source.html#l00439">variables</a>.</p>
 
 </div>
 </div>
@@ -806,9 +839,9 @@ Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00388">388</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00406">406</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Environment_8h_source.html#l00443">capturedVarNames_</a>.</p>
+<p class="reference">References <a class="el" href="Environment_8h_source.html#l00461">capturedVarNames_</a>.</p>
 
 </div>
 </div>
@@ -837,9 +870,9 @@ Private Attributes</h2></td></tr>
 
 <p>获取当前作用域的类型注解（用于 REPL 状态保存） </p>
 
-<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00414">414</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00432">432</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Environment_8h_source.html#l00422">typeAnnotations_</a>.</p>
+<p class="reference">References <a class="el" href="Environment_8h_source.html#l00440">typeAnnotations_</a>.</p>
 
 </div>
 </div>
@@ -868,11 +901,11 @@ Private Attributes</h2></td></tr>
 
 <p>仅获取当前作用域变量（不含父作用域） </p>
 
-<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00258">258</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00276">276</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Environment_8h_source.html#l00421">variables</a>.</p>
+<p class="reference">References <a class="el" href="Environment_8h_source.html#l00439">variables</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00076">collectEnvLocalGcRoots()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00086">collectEnvLocalGcRoots()</a>.</p>
 
 </div>
 </div>
@@ -900,9 +933,9 @@ Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00387">387</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00405">405</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Environment_8h_source.html#l00443">capturedVarNames_</a>.</p>
+<p class="reference">References <a class="el" href="Environment_8h_source.html#l00461">capturedVarNames_</a>.</p>
 
 </div>
 </div>
@@ -930,9 +963,9 @@ Private Attributes</h2></td></tr>
 </div><div class="memdoc">
 <p>AUDIT-BUG-I1 fix: 是否有闭包以本 env 作为 env weak_ptr 目标。 即使闭包仅捕获父级变量（不在本 env 注册 capture），本 env 也不能回收—— 因为闭包的 env weak_ptr 指向本 env，回收后 resetForReuse 会清空 variables 并替换 parent，导致闭包调用时变量查找失败。 </p>
 
-<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00360">360</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00378">378</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Environment_8h_source.html#l00437">hasClosureEnvRef_</a>.</p>
+<p class="reference">References <a class="el" href="Environment_8h_source.html#l00455">hasClosureEnvRef_</a>.</p>
 
 </div>
 </div>
@@ -971,11 +1004,11 @@ Private Attributes</h2></td></tr>
 </div><div class="memdoc">
 <p>注册闭包捕获 — 记录某个闭包捕获了本 env 中的变量。 closureVal 是闭包值的副本（共享 ClosureData，保持其存活）。 </p>
 
-<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00328">328</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00346">346</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Environment_8h_source.html#l00433">closureCaptures_</a>.</p>
+<p class="reference">References <a class="el" href="Environment_8h_source.html#l00451">closureCaptures_</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l02364">Interpreter::visitFunDecl()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l02437">Interpreter::visitFunDecl()</a>.</p>
 
 </div>
 </div>
@@ -1004,9 +1037,9 @@ Private Attributes</h2></td></tr>
 </div><div class="memdoc">
 <p>PERF-07 fix: 重置 <a class="el" href="classEnvironment.html">Environment</a> 状态以便对象池复用。 清空 variables/typeAnnotations_/boundInstance_，更新 parent 指针。 用于 visitBlock 退出时回收未捕获的块作用域 Environment，避免重复堆分配。 </p>
 
-<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00366">366</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00384">384</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Environment_8h_source.html#l00423">boundInstance_</a>, <a class="el" href="Environment_8h_source.html#l00443">capturedVarNames_</a>, <a class="el" href="Environment_8h_source.html#l00433">closureCaptures_</a>, <a class="el" href="Environment_8h_source.html#l00437">hasClosureEnvRef_</a>, <a class="el" href="Environment_8h_source.html#l00023">parent</a>, <a class="el" href="Environment_8h_source.html#l00422">typeAnnotations_</a>, and <a class="el" href="Environment_8h_source.html#l00421">variables</a>.</p>
+<p class="reference">References <a class="el" href="Environment_8h_source.html#l00441">boundInstance_</a>, <a class="el" href="Environment_8h_source.html#l00461">capturedVarNames_</a>, <a class="el" href="Environment_8h_source.html#l00451">closureCaptures_</a>, <a class="el" href="Environment_8h_source.html#l00455">hasClosureEnvRef_</a>, <a class="el" href="Environment_8h_source.html#l00023">parent</a>, <a class="el" href="Environment_8h_source.html#l00440">typeAnnotations_</a>, and <a class="el" href="Environment_8h_source.html#l00439">variables</a>.</p>
 
 </div>
 </div>
@@ -1034,9 +1067,9 @@ Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00265">265</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00283">283</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Environment_8h_source.html#l00423">boundInstance_</a>, and <a class="el" href="Environment_8h_source.html#l00421">variables</a>.</p>
+<p class="reference">References <a class="el" href="Environment_8h_source.html#l00441">boundInstance_</a>, and <a class="el" href="Environment_8h_source.html#l00439">variables</a>.</p>
 
 </div>
 </div>
@@ -1076,9 +1109,9 @@ Private Attributes</h2></td></tr>
 
 <p>设置变量值（沿作用域链查找并更新） </p>
 
-<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00117">117</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00135">135</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Environment_8h_source.html#l00423">boundInstance_</a>, <a class="el" href="Value_8h_source.html#l01227">Value::fields()</a>, <a class="el" href="Value_8h_source.html#l00989">Value::isInstance()</a>, <a class="el" href="Environment_8h_source.html#l00023">parent</a>, and <a class="el" href="Environment_8h_source.html#l00421">variables</a>.</p>
+<p class="reference">References <a class="el" href="Environment_8h_source.html#l00441">boundInstance_</a>, <a class="el" href="Value_8h_source.html#l01292">Value::fields()</a>, <a class="el" href="Value_8h_source.html#l01054">Value::isInstance()</a>, <a class="el" href="Environment_8h_source.html#l00023">parent</a>, and <a class="el" href="Environment_8h_source.html#l00439">variables</a>.</p>
 
 </div>
 </div>
@@ -1122,9 +1155,9 @@ Private Attributes</h2></td></tr>
 </ul>
 <p>调用方必须检查返回值，否则在 false 路径下若按"已 move"语义使用 val 会得到不一致行为（val 实际仍有效）。需要"无论是否找到都消费 val" 语义时，使用 const <a class="el" href="structValue.html">Value</a>&amp; 重载或在调用后显式 val = <a class="el" href="structValue.html#a536e4cc1d1c9c8b8f70e75b0f1a7edda" title="返回 null 值（等价于默认构造的 Value，NaNBox 编码为 NULL_BITS）。">Value::nullValue()</a>。 </p>
 
-<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00158">158</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00176">176</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Environment_8h_source.html#l00423">boundInstance_</a>, <a class="el" href="Value_8h_source.html#l01227">Value::fields()</a>, <a class="el" href="Value_8h_source.html#l00989">Value::isInstance()</a>, <a class="el" href="Environment_8h_source.html#l00023">parent</a>, and <a class="el" href="Environment_8h_source.html#l00421">variables</a>.</p>
+<p class="reference">References <a class="el" href="Environment_8h_source.html#l00441">boundInstance_</a>, <a class="el" href="Value_8h_source.html#l01292">Value::fields()</a>, <a class="el" href="Value_8h_source.html#l01054">Value::isInstance()</a>, <a class="el" href="Environment_8h_source.html#l00023">parent</a>, and <a class="el" href="Environment_8h_source.html#l00439">variables</a>.</p>
 
 </div>
 </div>
@@ -1151,11 +1184,11 @@ Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00264">264</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00282">282</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Environment_8h_source.html#l00421">variables</a>.</p>
+<p class="reference">References <a class="el" href="Environment_8h_source.html#l00439">variables</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00820">Interpreter::setupSandboxEnvironment()</a>, and <a class="el" href="Interpreter_8cpp_source.html#l03260">Interpreter::tryMatchPattern()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00838">Interpreter::setupSandboxEnvironment()</a>, and <a class="el" href="Interpreter_8cpp_source.html#l03347">Interpreter::tryMatchPattern()</a>.</p>
 
 </div>
 </div>
@@ -1196,9 +1229,9 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00053">53</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Environment_8h_source.html#l00421">variables</a>.</p>
+<p class="reference">References <a class="el" href="Environment_8h_source.html#l00439">variables</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l03260">Interpreter::tryMatchPattern()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l03347">Interpreter::tryMatchPattern()</a>.</p>
 
 </div>
 </div>
@@ -1238,7 +1271,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00057">57</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Environment_8h_source.html#l00421">variables</a>.</p>
+<p class="reference">References <a class="el" href="Environment_8h_source.html#l00439">variables</a>.</p>
 
 </div>
 </div>
@@ -1266,11 +1299,11 @@ Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00389">389</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00407">407</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Environment_8h_source.html#l00443">capturedVarNames_</a>.</p>
+<p class="reference">References <a class="el" href="Environment_8h_source.html#l00461">capturedVarNames_</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l03260">Interpreter::tryMatchPattern()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l03347">Interpreter::tryMatchPattern()</a>.</p>
 
 </div>
 </div>
@@ -1295,9 +1328,9 @@ Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00423">423</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00441">441</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Environment_8h_source.html#l00285">bindInstance()</a>, <a class="el" href="Environment_8h_source.html#l00026">Environment()</a>, <a class="el" href="Environment_8h_source.html#l00063">get()</a>, <a class="el" href="Environment_8h_source.html#l00311">getBoundInstance()</a>, <a class="el" href="Environment_8h_source.html#l00192">hasVariable()</a>, <a class="el" href="Environment_8h_source.html#l00366">resetForReuse()</a>, <a class="el" href="Environment_8h_source.html#l00265">restoreLocalVariables()</a>, <a class="el" href="Environment_8h_source.html#l00117">set()</a>, and <a class="el" href="Environment_8h_source.html#l00158">set()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Environment_8h_source.html#l00303">bindInstance()</a>, <a class="el" href="Environment_8h_source.html#l00026">Environment()</a>, <a class="el" href="Environment_8h_source.html#l00063">get()</a>, <a class="el" href="Environment_8h_source.html#l00329">getBoundInstance()</a>, <a class="el" href="Environment_8h_source.html#l00210">hasVariable()</a>, <a class="el" href="Environment_8h_source.html#l00384">resetForReuse()</a>, <a class="el" href="Environment_8h_source.html#l00283">restoreLocalVariables()</a>, <a class="el" href="Environment_8h_source.html#l00135">set()</a>, and <a class="el" href="Environment_8h_source.html#l00176">set()</a>.</p>
 
 </div>
 </div>
@@ -1321,9 +1354,9 @@ Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00443">443</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00461">461</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Environment_8h_source.html#l00388">isCapturedVar()</a>, <a class="el" href="Environment_8h_source.html#l00387">markAsCaptured()</a>, <a class="el" href="Environment_8h_source.html#l00366">resetForReuse()</a>, and <a class="el" href="Environment_8h_source.html#l00389">unmarkCaptured()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Environment_8h_source.html#l00406">isCapturedVar()</a>, <a class="el" href="Environment_8h_source.html#l00405">markAsCaptured()</a>, <a class="el" href="Environment_8h_source.html#l00384">resetForReuse()</a>, and <a class="el" href="Environment_8h_source.html#l00407">unmarkCaptured()</a>.</p>
 
 </div>
 </div>
@@ -1347,9 +1380,9 @@ Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00433">433</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00451">451</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Environment_8h_source.html#l00337">closeCapturedVariables()</a>, <a class="el" href="Environment_8h_source.html#l00354">hasClosureCaptures()</a>, <a class="el" href="Environment_8h_source.html#l00328">registerClosureCapture()</a>, and <a class="el" href="Environment_8h_source.html#l00366">resetForReuse()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Environment_8h_source.html#l00355">closeCapturedVariables()</a>, <a class="el" href="Environment_8h_source.html#l00372">hasClosureCaptures()</a>, <a class="el" href="Environment_8h_source.html#l00346">registerClosureCapture()</a>, and <a class="el" href="Environment_8h_source.html#l00384">resetForReuse()</a>.</p>
 
 </div>
 </div>
@@ -1373,9 +1406,9 @@ Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00437">437</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00455">455</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Environment_8h_source.html#l00361">hasClosureEnvRef()</a>, <a class="el" href="Environment_8h_source.html#l00360">markClosureEnvRef()</a>, and <a class="el" href="Environment_8h_source.html#l00366">resetForReuse()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Environment_8h_source.html#l00379">hasClosureEnvRef()</a>, <a class="el" href="Environment_8h_source.html#l00378">markClosureEnvRef()</a>, and <a class="el" href="Environment_8h_source.html#l00384">resetForReuse()</a>.</p>
 
 </div>
 </div>
@@ -1395,7 +1428,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00023">23</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Environment_8h_source.html#l00219">collectVariables()</a>, <a class="el" href="Environment_8h_source.html#l00063">get()</a>, <a class="el" href="Environment_8h_source.html#l00397">getTypeAnnotation()</a>, <a class="el" href="Environment_8h_source.html#l00100">getVariableOnly()</a>, <a class="el" href="Environment_8h_source.html#l00192">hasVariable()</a>, <a class="el" href="Environment_8h_source.html#l00366">resetForReuse()</a>, <a class="el" href="Environment_8h_source.html#l00117">set()</a>, <a class="el" href="Environment_8h_source.html#l00158">set()</a>, <a class="el" href="Interpreter_8cpp_source.html#l00820">Interpreter::setupSandboxEnvironment()</a>, and <a class="el" href="Interpreter_8cpp_source.html#l02364">Interpreter::visitFunDecl()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Environment_8h_source.html#l00237">collectVariables()</a>, <a class="el" href="Environment_8h_source.html#l00063">get()</a>, <a class="el" href="Environment_8h_source.html#l00119">getMutableVariableSlot()</a>, <a class="el" href="Environment_8h_source.html#l00415">getTypeAnnotation()</a>, <a class="el" href="Environment_8h_source.html#l00100">getVariableOnly()</a>, <a class="el" href="Environment_8h_source.html#l00210">hasVariable()</a>, <a class="el" href="Environment_8h_source.html#l00384">resetForReuse()</a>, <a class="el" href="Environment_8h_source.html#l00135">set()</a>, <a class="el" href="Environment_8h_source.html#l00176">set()</a>, <a class="el" href="Interpreter_8cpp_source.html#l00838">Interpreter::setupSandboxEnvironment()</a>, and <a class="el" href="Interpreter_8cpp_source.html#l02437">Interpreter::visitFunDecl()</a>.</p>
 
 </div>
 </div>
@@ -1419,9 +1452,9 @@ Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00422">422</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00440">440</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Environment_8h_source.html#l00394">defineTypeAnnotation()</a>, <a class="el" href="Environment_8h_source.html#l00397">getTypeAnnotation()</a>, <a class="el" href="Environment_8h_source.html#l00414">localTypeAnnotations()</a>, and <a class="el" href="Environment_8h_source.html#l00366">resetForReuse()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Environment_8h_source.html#l00412">defineTypeAnnotation()</a>, <a class="el" href="Environment_8h_source.html#l00415">getTypeAnnotation()</a>, <a class="el" href="Environment_8h_source.html#l00432">localTypeAnnotations()</a>, and <a class="el" href="Environment_8h_source.html#l00384">resetForReuse()</a>.</p>
 
 </div>
 </div>
@@ -1445,9 +1478,9 @@ Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00421">421</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Environment_8h_source.html#l00439">439</a> of file <a class="el" href="Environment_8h_source.html">Environment.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Environment_8h_source.html#l00285">bindInstance()</a>, <a class="el" href="Environment_8h_source.html#l00337">closeCapturedVariables()</a>, <a class="el" href="Environment_8h_source.html#l00036">define()</a>, <a class="el" href="Environment_8h_source.html#l00044">define()</a>, <a class="el" href="Environment_8h_source.html#l00063">get()</a>, <a class="el" href="Environment_8h_source.html#l00321">getLocalVariable()</a>, <a class="el" href="Environment_8h_source.html#l00100">getVariableOnly()</a>, <a class="el" href="Environment_8h_source.html#l00192">hasVariable()</a>, <a class="el" href="Environment_8h_source.html#l00258">localVariables()</a>, <a class="el" href="Environment_8h_source.html#l00366">resetForReuse()</a>, <a class="el" href="Environment_8h_source.html#l00265">restoreLocalVariables()</a>, <a class="el" href="Environment_8h_source.html#l00117">set()</a>, <a class="el" href="Environment_8h_source.html#l00158">set()</a>, <a class="el" href="Environment_8h_source.html#l00264">snapshotLocalVariables()</a>, <a class="el" href="Environment_8h_source.html#l00053">tryDefineNew()</a>, and <a class="el" href="Environment_8h_source.html#l00057">tryDefineNew()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Environment_8h_source.html#l00303">bindInstance()</a>, <a class="el" href="Environment_8h_source.html#l00355">closeCapturedVariables()</a>, <a class="el" href="Environment_8h_source.html#l00036">define()</a>, <a class="el" href="Environment_8h_source.html#l00044">define()</a>, <a class="el" href="Environment_8h_source.html#l00063">get()</a>, <a class="el" href="Environment_8h_source.html#l00339">getLocalVariable()</a>, <a class="el" href="Environment_8h_source.html#l00119">getMutableVariableSlot()</a>, <a class="el" href="Environment_8h_source.html#l00100">getVariableOnly()</a>, <a class="el" href="Environment_8h_source.html#l00210">hasVariable()</a>, <a class="el" href="Environment_8h_source.html#l00276">localVariables()</a>, <a class="el" href="Environment_8h_source.html#l00384">resetForReuse()</a>, <a class="el" href="Environment_8h_source.html#l00283">restoreLocalVariables()</a>, <a class="el" href="Environment_8h_source.html#l00135">set()</a>, <a class="el" href="Environment_8h_source.html#l00176">set()</a>, <a class="el" href="Environment_8h_source.html#l00282">snapshotLocalVariables()</a>, <a class="el" href="Environment_8h_source.html#l00053">tryDefineNew()</a>, and <a class="el" href="Environment_8h_source.html#l00057">tryDefineNew()</a>.</p>
 
 </div>
 </div>

@@ -127,7 +127,7 @@ Enumerations</h2></td></tr>
 </table>
 <a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
 <div class="textblock"><p>代码格式化器（AST → 标准代码文本）。 </p>
-<p>将 AST 重新格式化为标准代码文本，统一缩进/空格/换行风格。 继承 DefaultVisitor，统一 AST 分派为 <a class="el" href="classVisitor.html" title="访问者抽象基类，定义 25 个纯虚 visit 方法">Visitor</a> 模式： formatNode 通过 node-&gt;accept(&lt;em&gt;this) 分派到对应的 visit 方法， visit* 方法内部调用原 format* 逻辑并将结果存入 lastFormatResult_。</p>
+<p>将 AST 重新格式化为标准代码文本，统一缩进/空格/换行风格。 继承 DefaultVisitor，统一 AST 分派为 <a class="el" href="classVisitor.html" title="访问者抽象基类，定义 25 个纯虚 visit 方法">Visitor</a> 模式： formatNode 通过 node-&gt;accept(&lt;em&gt;this) 分派到对应的 visit 方法， visit* 方法把格式化文本直接追加到成员输出缓冲 out_（OPT-12 单缓冲）。</p>
 <p>核心特性：</p><ul>
 <li>32 种 AST 节点类型的格式化（覆盖全部 NodeType）</li>
 <li>三种花括号风格预设（compact / allman / tabbed）</li>

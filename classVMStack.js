@@ -12,6 +12,7 @@ var classVMStack =
     [ "pop_back", "classVMStack.html#a010ba2180c4072c41b069ada21a1feb2", null ],
     [ "push_back", "classVMStack.html#af79a9e01f0a0ec1ed7ac45e1a06d84c9", null ],
     [ "push_back", "classVMStack.html#a29b49fd55e69828c25f7e0063486f30c", null ],
+    [ "pushNulls", "classVMStack.html#a3c84e0f5c6273a0e752455ab3fd693f6", null ],
     [ "reserve", "classVMStack.html#add62a77f42b35c884c84754e5c72ac92", null ],
     [ "resize", "classVMStack.html#a99984c41b3fbd85b9273d1eccb839af5", null ],
     [ "size", "classVMStack.html#add2915408807b471fceaaacae94097d1", null ],

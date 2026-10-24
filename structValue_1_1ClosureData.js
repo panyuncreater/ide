@@ -4,6 +4,7 @@ var structValue_1_1ClosureData =
     [ "ClosureData", "structValue_1_1ClosureData.html#acc6c0a9a31699e1168429f31769c3251", null ],
     [ "body", "structValue_1_1ClosureData.html#a3752b9382eb00d77e8b9508e74842490", null ],
     [ "capturedVars", "structValue_1_1ClosureData.html#acadafe3f1cbe583cb674ea9c81152ebd", null ],
+    [ "definingTypeParams", "structValue_1_1ClosureData.html#a18bb5456f9b2f553e58afc8a0e662b13", null ],
     [ "env", "structValue_1_1ClosureData.html#a309a66ec80d3f311ba6b8e1261e56bb8", null ],
     [ "functionId", "structValue_1_1ClosureData.html#a9e2570b883fe6dbabcb95254c777707d", null ],
     [ "name", "structValue_1_1ClosureData.html#af4330995c06f128ce1e955391565a770", null ],

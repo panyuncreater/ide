@@ -179,9 +179,9 @@ Private Attributes</h2></td></tr>
 
 <p>从 <a class="el" href="structIRFunction.html" title="IR 函数（含 main chunk）">IRFunction</a> 构建 CFG。空函数返回单入口空块。 </p>
 
-<p class="definition">Definition at line <a class="el" href="IRSSA_8cpp_source.html#l00108">108</a> of file <a class="el" href="IRSSA_8cpp_source.html">IRSSA.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IRSSA_8cpp_source.html#l00091">91</a> of file <a class="el" href="IRSSA_8cpp_source.html">IRSSA.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="IR_8h_source.html#l00462">IRFunction::blocks</a>, <a class="el" href="IRSSA_8h_source.html#l00059">CFGNode::endInstr</a>, <a class="el" href="IRSSA_8h_source.html#l00053">CFGNode::hasLabel</a>, <a class="el" href="IRSSA_8h_source.html#l00051">CFGNode::id</a>, <a class="el" href="IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a40222410c7347ec4b6bcaba3bcb21f3b">JUMP</a>, <a class="el" href="IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a971bcd38882322fdbe582579ab487528">JUMP_IF_FALSE</a>, <a class="el" href="IRSSA_8h_source.html#l00064">CFGNode::kEntryLabel</a>, <a class="el" href="IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a6f434c508ad901b8667ed22f713e52bb">LABEL</a>, <a class="el" href="IRSSA_8h_source.html#l00052">CFGNode::labelIndex</a>, <a class="el" href="IRSSA_8h_source.html#l00105">labelToNode_</a>, <a class="el" href="IRSSA_8h_source.html#l00095">node()</a>, <a class="el" href="IRSSA_8h_source.html#l00104">nodes_</a>, <a class="el" href="IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93aa2bec276a54439fe011eb523b845dac5">RETURN</a>, <a class="el" href="IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93af3bac75e156378ed3bdd86c981a9d0c3">RETURN_NULL</a>, <a class="el" href="IRSSA_8h_source.html#l00057">CFGNode::sourceBlockIdx</a>, <a class="el" href="IRSSA_8h_source.html#l00058">CFGNode::startInstr</a>, <a class="el" href="IRSSA_8h_source.html#l00062">CFGNode::succs</a>, <a class="el" href="IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a655474de4674aba7a436a73cd8d9a906">THROW</a>, and <a class="el" href="IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a78989d52a0377f76740c1b0faed4e566">TRY_BEGIN</a>.</p>
+<p class="reference">References <a class="el" href="IR_8h_source.html#l00533">IRFunction::blocks</a>, <a class="el" href="IRSSA_8h_source.html#l00059">CFGNode::endInstr</a>, <a class="el" href="IRSSA_8h_source.html#l00053">CFGNode::hasLabel</a>, <a class="el" href="IRSSA_8h_source.html#l00051">CFGNode::id</a>, <a class="el" href="IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a40222410c7347ec4b6bcaba3bcb21f3b">JUMP</a>, <a class="el" href="IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a971bcd38882322fdbe582579ab487528">JUMP_IF_FALSE</a>, <a class="el" href="IRSSA_8h_source.html#l00064">CFGNode::kEntryLabel</a>, <a class="el" href="IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a6f434c508ad901b8667ed22f713e52bb">LABEL</a>, <a class="el" href="IRSSA_8h_source.html#l00052">CFGNode::labelIndex</a>, <a class="el" href="IRSSA_8h_source.html#l00105">labelToNode_</a>, <a class="el" href="IRSSA_8h_source.html#l00095">node()</a>, <a class="el" href="IRSSA_8h_source.html#l00104">nodes_</a>, <a class="el" href="IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93aa2bec276a54439fe011eb523b845dac5">RETURN</a>, <a class="el" href="IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93af3bac75e156378ed3bdd86c981a9d0c3">RETURN_NULL</a>, <a class="el" href="IRSSA_8h_source.html#l00057">CFGNode::sourceBlockIdx</a>, <a class="el" href="IRSSA_8h_source.html#l00058">CFGNode::startInstr</a>, <a class="el" href="IRSSA_8h_source.html#l00062">CFGNode::succs</a>, <a class="el" href="IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a655474de4674aba7a436a73cd8d9a906">THROW</a>, and <a class="el" href="IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a78989d52a0377f76740c1b0faed4e566">TRY_BEGIN</a>.</p>
 
 </div>
 </div>
@@ -213,7 +213,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="IRSSA_8h_source.html#l00093">93</a> of file <a class="el" href="IRSSA_8h_source.html">IRSSA.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l00332">DominatorTree::computeIDom()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00304">DominatorTree::computeRPO()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00932">gvnPass()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00402">DominatorTree::nearestCommonDominator()</a>, and <a class="el" href="IRSSA_8cpp_source.html#l00530">ssaConstructPass()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l00315">DominatorTree::computeIDom()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00287">DominatorTree::computeRPO()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00915">gvnPass()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00385">DominatorTree::nearestCommonDominator()</a>, and <a class="el" href="IRSSA_8cpp_source.html#l00513">ssaConstructPass()</a>.</p>
 
 </div>
 </div>
@@ -243,7 +243,7 @@ Private Attributes</h2></td></tr>
 
 <p>判断指令是否为终结指令（块结束） </p>
 
-<p class="definition">Definition at line <a class="el" href="IRSSA_8cpp_source.html#l00269">269</a> of file <a class="el" href="IRSSA_8cpp_source.html">IRSSA.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IRSSA_8cpp_source.html#l00252">252</a> of file <a class="el" href="IRSSA_8cpp_source.html">IRSSA.cpp</a>.</p>
 
 </div>
 </div>
@@ -277,7 +277,7 @@ Private Attributes</h2></td></tr>
 
 <p class="reference">References <a class="el" href="IRSSA_8h_source.html#l00104">nodes_</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l01505">cfgToString()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00505">NaturalLoopInfo::collectLoopBody()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00332">DominatorTree::computeIDom()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00304">DominatorTree::computeRPO()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00492">NaturalLoopInfo::detectBackEdges()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00434">DominanceFrontier::DominanceFrontier()</a>, <a class="el" href="RegisterBytecodeBackend_8cpp_source.html#l00167">RegisterBytecodeBackend::extendLastUseForLoops()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00932">gvnPass()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00108">IRCFG()</a>, <a class="el" href="IRSSA_8cpp_source.html#l01017">licmPass()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00530">ssaConstructPass()</a>, and <a class="el" href="IRSSA_8cpp_source.html#l00799">ssaDestructPass()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l01488">cfgToString()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00488">NaturalLoopInfo::collectLoopBody()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00315">DominatorTree::computeIDom()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00287">DominatorTree::computeRPO()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00475">NaturalLoopInfo::detectBackEdges()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00417">DominanceFrontier::DominanceFrontier()</a>, <a class="el" href="RegisterBytecodeBackend_8cpp_source.html#l00167">RegisterBytecodeBackend::extendLastUseForLoops()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00915">gvnPass()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00091">IRCFG()</a>, <a class="el" href="IRSSA_8cpp_source.html#l01000">licmPass()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00513">ssaConstructPass()</a>, and <a class="el" href="IRSSA_8cpp_source.html#l00782">ssaDestructPass()</a>.</p>
 
 </div>
 </div>
@@ -299,7 +299,7 @@ Private Attributes</h2></td></tr>
 
 <p>按 LABEL 索引查找节点 id（无则返回 kInvalid） </p>
 
-<p class="definition">Definition at line <a class="el" href="IRSSA_8cpp_source.html#l00273">273</a> of file <a class="el" href="IRSSA_8cpp_source.html">IRSSA.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IRSSA_8cpp_source.html#l00256">256</a> of file <a class="el" href="IRSSA_8cpp_source.html">IRSSA.cpp</a>.</p>
 
 <p class="reference">References <a class="el" href="IRSSA_8h_source.html#l00101">kInvalid</a>, and <a class="el" href="IRSSA_8h_source.html#l00105">labelToNode_</a>.</p>
 
@@ -365,7 +365,7 @@ Private Attributes</h2></td></tr>
 
 <p class="reference">References <a class="el" href="IRSSA_8h_source.html#l00104">nodes_</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l01505">cfgToString()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00304">DominatorTree::computeRPO()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00492">NaturalLoopInfo::detectBackEdges()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00434">DominanceFrontier::DominanceFrontier()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00284">DominatorTree::DominatorTree()</a>, <a class="el" href="RegisterBytecodeBackend_8cpp_source.html#l00167">RegisterBytecodeBackend::extendLastUseForLoops()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00932">gvnPass()</a>, <a class="el" href="IRSSA_8cpp_source.html#l01017">licmPass()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00530">ssaConstructPass()</a>, and <a class="el" href="IRSSA_8cpp_source.html#l00799">ssaDestructPass()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l01488">cfgToString()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00287">DominatorTree::computeRPO()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00475">NaturalLoopInfo::detectBackEdges()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00417">DominanceFrontier::DominanceFrontier()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00267">DominatorTree::DominatorTree()</a>, <a class="el" href="RegisterBytecodeBackend_8cpp_source.html#l00167">RegisterBytecodeBackend::extendLastUseForLoops()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00915">gvnPass()</a>, <a class="el" href="IRSSA_8cpp_source.html#l01000">licmPass()</a>, <a class="el" href="IRSSA_8cpp_source.html#l00513">ssaConstructPass()</a>, and <a class="el" href="IRSSA_8cpp_source.html#l00782">ssaDestructPass()</a>.</p>
 
 </div>
 </div>
@@ -392,7 +392,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="IRSSA_8h_source.html#l00101">101</a> of file <a class="el" href="IRSSA_8h_source.html">IRSSA.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l01017">licmPass()</a>, and <a class="el" href="IRSSA_8cpp_source.html#l00273">nodeOfLabel()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l01000">licmPass()</a>, and <a class="el" href="IRSSA_8cpp_source.html#l00256">nodeOfLabel()</a>.</p>
 
 </div>
 </div>
@@ -418,7 +418,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="IRSSA_8h_source.html#l00105">105</a> of file <a class="el" href="IRSSA_8h_source.html">IRSSA.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l00108">IRCFG()</a>, and <a class="el" href="IRSSA_8cpp_source.html#l00273">nodeOfLabel()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l00091">IRCFG()</a>, and <a class="el" href="IRSSA_8cpp_source.html#l00256">nodeOfLabel()</a>.</p>
 
 </div>
 </div>
@@ -444,7 +444,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="IRSSA_8h_source.html#l00104">104</a> of file <a class="el" href="IRSSA_8h_source.html">IRSSA.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l00108">IRCFG()</a>, <a class="el" href="IRSSA_8h_source.html#l00095">node()</a>, <a class="el" href="IRSSA_8h_source.html#l00097">nodes()</a>, and <a class="el" href="IRSSA_8h_source.html#l00091">size()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="IRSSA_8cpp_source.html#l00091">IRCFG()</a>, <a class="el" href="IRSSA_8h_source.html#l00095">node()</a>, <a class="el" href="IRSSA_8h_source.html#l00097">nodes()</a>, and <a class="el" href="IRSSA_8h_source.html#l00091">size()</a>.</p>
 
 </div>
 </div>

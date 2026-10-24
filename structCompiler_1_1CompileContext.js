@@ -9,6 +9,7 @@ var structCompiler_1_1CompileContext =
     [ "currentTypeParams", "structCompiler_1_1CompileContext.html#a75d22d009473f99a41613bf92feeca09", null ],
     [ "currentUpvalueNames", "structCompiler_1_1CompileContext.html#a1d4262d9e9f6f4e9b04c40f25d8a4e5c", null ],
     [ "currentUpvalues", "structCompiler_1_1CompileContext.html#a2b0947c537cdcbca9e0a7c1f83de6226", null ],
+    [ "finallyBodyDepth", "structCompiler_1_1CompileContext.html#a86d54ae69198c3e7e69acf3135d123d0", null ],
     [ "inFunction", "structCompiler_1_1CompileContext.html#aec345b173a5b30868510ddd16581af19", null ],
     [ "innerFunctions", "structCompiler_1_1CompileContext.html#aa8333749f2c4a1e5933ccf8f30f4be88", null ],
     [ "innerFunctionSlots", "structCompiler_1_1CompileContext.html#a47927114b449706227b87c29aa770737", null ],

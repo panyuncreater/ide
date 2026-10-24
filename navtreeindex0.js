@@ -235,6 +235,8 @@ var NAVTREEINDEX0 =
 "BytecodeIRBackendStackCheck_8cpp_source.html":[2,0,3,3,2],
 "BytecodeIRBackend_8cpp.html":[2,0,3,3,1],
 "BytecodeIRBackend_8cpp_source.html":[2,0,3,3,1],
+"BytecodeMetadata_8h.html":[2,0,2,5],
+"BytecodeMetadata_8h_source.html":[2,0,2,5],
 "BytecodeTracePanel_8cpp.html":[2,0,6,20],
 "BytecodeTracePanel_8cpp_source.html":[2,0,6,20],
 "BytecodeTracePanel_8h.html":[2,0,6,21],
@@ -247,7 +249,5 @@ var NAVTREEINDEX0 =
 "Bytecode_8h.html#a7e85f04e30e1c4c4607773335350fe20a00625f19788ead699d5c73bffde5949a":[2,0,3,2,1,8,21],
 "Bytecode_8h.html#a7e85f04e30e1c4c4607773335350fe20a0234c812ea21c183b05c15d42124185d":[2,0,3,2,1,8,3],
 "Bytecode_8h.html#a7e85f04e30e1c4c4607773335350fe20a032e5d37ff675074550c0b17181b969d":[2,0,3,2,1,8,30],
-"Bytecode_8h.html#a7e85f04e30e1c4c4607773335350fe20a04237f8d60571bf432cc0685ac98e043":[2,0,3,2,1,8,86],
-"Bytecode_8h.html#a7e85f04e30e1c4c4607773335350fe20a056813e47b80d7882b7fb920c17b3d5d":[2,0,3,2,1,8,76],
-"Bytecode_8h.html#a7e85f04e30e1c4c4607773335350fe20a0947ef1c213ec0c847d3197f52db86ae":[2,0,3,2,1,8,68]
+"Bytecode_8h.html#a7e85f04e30e1c4c4607773335350fe20a04237f8d60571bf432cc0685ac98e043":[2,0,3,2,1,8,86]
 };

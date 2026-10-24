@@ -5,6 +5,7 @@ var dir_bdd9a5d540de89e9fe90efdfc6973a4f =
     [ "BoundsCheck.h", "BoundsCheck_8h.html", "BoundsCheck_8h" ],
     [ "BuiltinModules.cpp", "BuiltinModules_8cpp.html", null ],
     [ "BuiltinModules.h", "BuiltinModules_8h.html", "BuiltinModules_8h" ],
+    [ "BytecodeMetadata.h", "BytecodeMetadata_8h.html", "BytecodeMetadata_8h" ],
     [ "ConstFunEval.h", "ConstFunEval_8h.html", "ConstFunEval_8h" ],
     [ "CrashHandler.cpp", "CrashHandler_8cpp.html", null ],
     [ "CrashHandler.h", "CrashHandler_8h.html", "CrashHandler_8h" ],

@@ -91,6 +91,7 @@ $(document).ready(function(){initNavTree('structVMCallFrame.html',''); initResiz
 
 <div class="header">
   <div class="summary">
+<a href="#pub-methods">Public Member Functions</a> &#124;
 <a href="#pub-attribs">Public Attributes</a> &#124;
 <a href="structVMCallFrame-members.html">List of all members</a>  </div>
   <div class="headertitle"><div class="title">VMCallFrame Struct Reference</div></div>
@@ -102,6 +103,15 @@ $(document).ready(function(){initNavTree('structVMCallFrame.html',''); initResiz
 
 <p><code>#include &lt;<a class="el" href="VM_8h_source.html">VM.h</a>&gt;</code></p>
 <table class="memberdecls">
+<tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="pub-methods" name="pub-methods"></a>
+Public Member Functions</h2></td></tr>
+<tr class="memitem:aa6248c2f4285ce702769fd30ede32495" id="r_aa6248c2f4285ce702769fd30ede32495"><td class="memItemLeft" align="right" valign="top">const std::string &amp;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structVMCallFrame.html#aa6248c2f4285ce702769fd30ede32495">functionName</a> () const</td></tr>
+<tr class="separator:aa6248c2f4285ce702769fd30ede32495"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:abeb05e4a8d0429563d3860334c1a4a24" id="r_abeb05e4a8d0429563d3860334c1a4a24"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structVMCallFrame.html#abeb05e4a8d0429563d3860334c1a4a24">setFunctionName</a> (const std::string &amp;name)</td></tr>
+<tr class="separator:abeb05e4a8d0429563d3860334c1a4a24"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a3a80d6810e06ac356ea86bc5781d5551" id="r_a3a80d6810e06ac356ea86bc5781d5551"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structVMCallFrame.html#a3a80d6810e06ac356ea86bc5781d5551">setOwnedFunctionName</a> (const std::string &amp;name)</td></tr>
+<tr class="separator:a3a80d6810e06ac356ea86bc5781d5551"><td class="memSeparator" colspan="2">&#160;</td></tr>
+</table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="pub-attribs" name="pub-attribs"></a>
 Public Attributes</h2></td></tr>
 <tr class="memitem:a6704463e9048bb0ab6fc09f9bd59f569" id="r_a6704463e9048bb0ab6fc09f9bd59f569"><td class="memItemLeft" align="right" valign="top">const <a class="el" href="structBytecodeChunk.html">BytecodeChunk</a> *&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structVMCallFrame.html#a6704463e9048bb0ab6fc09f9bd59f569">chunk</a> = nullptr</td></tr>
@@ -112,8 +122,10 @@ Public Attributes</h2></td></tr>
 <tr class="separator:a60b5a5ee21312b137da12977f40b8055"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a3db6ce4470195a880fedb1ec9bf7dbef" id="r_a3db6ce4470195a880fedb1ec9bf7dbef"><td class="memItemLeft" align="right" valign="top">size_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structVMCallFrame.html#a3db6ce4470195a880fedb1ec9bf7dbef">basePointer</a> = 0</td></tr>
 <tr class="separator:a3db6ce4470195a880fedb1ec9bf7dbef"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a84e6e939ede02a0bc0527093ccd44add" id="r_a84e6e939ede02a0bc0527093ccd44add"><td class="memItemLeft" align="right" valign="top">std::string&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structVMCallFrame.html#a84e6e939ede02a0bc0527093ccd44add">functionName</a></td></tr>
-<tr class="separator:a84e6e939ede02a0bc0527093ccd44add"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a4d5312e1cbcd62913b97e59eec798ac2" id="r_a4d5312e1cbcd62913b97e59eec798ac2"><td class="memItemLeft" align="right" valign="top">const std::string *&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structVMCallFrame.html#a4d5312e1cbcd62913b97e59eec798ac2">functionNamePtr</a> = nullptr</td></tr>
+<tr class="separator:a4d5312e1cbcd62913b97e59eec798ac2"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:aed0b07209de4e506bc4cf94159ba103f" id="r_aed0b07209de4e506bc4cf94159ba103f"><td class="memItemLeft" align="right" valign="top">std::string&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structVMCallFrame.html#aed0b07209de4e506bc4cf94159ba103f">ownedFunctionName</a></td></tr>
+<tr class="separator:aed0b07209de4e506bc4cf94159ba103f"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ac77b11828e209651256cafd557748835" id="r_ac77b11828e209651256cafd557748835"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structVMCallFrame.html#ac77b11828e209651256cafd557748835">isMethodCall</a> = false</td></tr>
 <tr class="separator:ac77b11828e209651256cafd557748835"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:acdd26e25e095c68b9b5f57cbee44d761" id="r_acdd26e25e095c68b9b5f57cbee44d761"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structVMCallFrame.html#acdd26e25e095c68b9b5f57cbee44d761">isInitCall</a> = false</td></tr>
@@ -131,7 +143,101 @@ Public Attributes</h2></td></tr>
 <div class="textblock"><p><a class="el" href="classVM.html" title="简单栈式虚拟机">VM</a> 调用帧 </p>
 
 <p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00155">155</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
-</div><h2 class="groupheader">Member Data Documentation</h2>
+</div><h2 class="groupheader">Member Function Documentation</h2>
+<a id="aa6248c2f4285ce702769fd30ede32495" name="aa6248c2f4285ce702769fd30ede32495"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aa6248c2f4285ce702769fd30ede32495">&#9670;&#160;</a></span>functionName()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">const std::string &amp; VMCallFrame::functionName </td>
+          <td>(</td>
+          <td class="paramname"></td><td>)</td>
+          <td> const</td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">inline</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00164">164</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
+
+<p class="reference">References <a class="el" href="VM_8h_source.html#l00162">functionNamePtr</a>, and <a class="el" href="VM_8h_source.html#l00163">ownedFunctionName</a>.</p>
+
+</div>
+</div>
+<a id="abeb05e4a8d0429563d3860334c1a4a24" name="abeb05e4a8d0429563d3860334c1a4a24"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#abeb05e4a8d0429563d3860334c1a4a24">&#9670;&#160;</a></span>setFunctionName()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">void VMCallFrame::setFunctionName </td>
+          <td>(</td>
+          <td class="paramtype">const std::string &amp;&#160;</td>
+          <td class="paramname"><em>name</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">inline</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00165">165</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
+
+<p class="reference">References <a class="el" href="VM_8h_source.html#l00162">functionNamePtr</a>, and <a class="el" href="VM_8h_source.html#l00163">ownedFunctionName</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="VMCalls_8cpp_source.html#l02002">VM::callCoroutineNext()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00428">VM::executeCallConstructor()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01243">VM::executeClassNew()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01015">VM::executeInstanceMethodCall()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00284">VM::executeTailCall()</a>, <a class="el" href="VM_8cpp_source.html#l01423">VM::initExecution()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00847">VM::setupFunctionCallFrame()</a>, and <a class="el" href="VM_8cpp_source.html#l00833">VM::tryOperatorOverload()</a>.</p>
+
+</div>
+</div>
+<a id="a3a80d6810e06ac356ea86bc5781d5551" name="a3a80d6810e06ac356ea86bc5781d5551"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a3a80d6810e06ac356ea86bc5781d5551">&#9670;&#160;</a></span>setOwnedFunctionName()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">void VMCallFrame::setOwnedFunctionName </td>
+          <td>(</td>
+          <td class="paramtype">const std::string &amp;&#160;</td>
+          <td class="paramname"><em>name</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">inline</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00169">169</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
+
+<p class="reference">References <a class="el" href="VM_8h_source.html#l00162">functionNamePtr</a>, and <a class="el" href="VM_8h_source.html#l00163">ownedFunctionName</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="VMCalls_8cpp_source.html#l01589">VM::invokeClosureSync()</a>, and <a class="el" href="VMCalls_8cpp_source.html#l00847">VM::setupFunctionCallFrame()</a>.</p>
+
+</div>
+</div>
+<h2 class="groupheader">Member Data Documentation</h2>
 <a id="a3db6ce4470195a880fedb1ec9bf7dbef" name="a3db6ce4470195a880fedb1ec9bf7dbef"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a3db6ce4470195a880fedb1ec9bf7dbef">&#9670;&#160;</a></span>basePointer</h2>
 
@@ -146,7 +252,7 @@ Public Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00159">159</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="VMCalls_8cpp_source.html#l01984">VM::callCoroutineNext()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01548">VM::captureMethodUpvalues()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00430">VM::executeCallConstructor()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01254">VM::executeClassNew()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01191">VM::executeClosure()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00452">VM::executeIndexSetLocal()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01027">VM::executeInstanceMethodCall()</a>, <a class="el" href="VM_8cpp_source.html#l02523">VM::executeLocalOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00505">VM::executeMemberOps()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00072">VM::executeReturn()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00284">VM::executeTailCall()</a>, <a class="el" href="VM_8cpp_source.html#l02569">VM::executeUpvalueOps()</a>, <a class="el" href="VM_8cpp_source.html#l01432">VM::initExecution()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01600">VM::invokeClosureSync()</a>, <a class="el" href="VM_8cpp_source.html#l01669">VM::popFrameAndPushReturn()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00861">VM::setupFunctionCallFrame()</a>, <a class="el" href="VM_8cpp_source.html#l00842">VM::tryOperatorOverload()</a>, <a class="el" href="VM_8cpp_source.html#l01077">VM::writeBackReceiver()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00809">VM::writebackToStackSlot()</a>, and <a class="el" href="VMContainers_8cpp_source.html#l00870">VM::writebackToUpvalue()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="VMCalls_8cpp_source.html#l02002">VM::callCoroutineNext()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01537">VM::captureMethodUpvalues()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00428">VM::executeCallConstructor()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01243">VM::executeClassNew()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01180">VM::executeClosure()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00452">VM::executeIndexSetLocal()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01015">VM::executeInstanceMethodCall()</a>, <a class="el" href="VM_8cpp_source.html#l02544">VM::executeLocalOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00505">VM::executeMemberOps()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00072">VM::executeReturn()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00284">VM::executeTailCall()</a>, <a class="el" href="VM_8cpp_source.html#l02590">VM::executeUpvalueOps()</a>, <a class="el" href="VM_8cpp_source.html#l01423">VM::initExecution()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01589">VM::invokeClosureSync()</a>, <a class="el" href="VM_8cpp_source.html#l01661">VM::popFrameAndPushReturn()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00847">VM::setupFunctionCallFrame()</a>, <a class="el" href="VM_8cpp_source.html#l00833">VM::tryOperatorOverload()</a>, <a class="el" href="VM_8cpp_source.html#l01066">VM::writeBackReceiver()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00807">VM::writebackToStackSlot()</a>, and <a class="el" href="VMContainers_8cpp_source.html#l00868">VM::writebackToUpvalue()</a>.</p>
 
 </div>
 </div>
@@ -164,7 +270,7 @@ Public Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00156">156</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="VMCalls_8cpp_source.html#l01984">VM::callCoroutineNext()</a>, <a class="el" href="VM_8cpp_source.html#l00787">VM::currentChunk()</a>, <a class="el" href="VM_8cpp_source.html#l01754">VM::execute()</a>, <a class="el" href="VM_8cpp_source.html#l02043">VM::executeArithOps()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00366">VM::executeCallByName()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00430">VM::executeCallConstructor()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00778">VM::executeCallExprValue()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01254">VM::executeClassNew()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01191">VM::executeClosure()</a>, <a class="el" href="VM_8cpp_source.html#l02198">VM::executeCompareOps()</a>, <a class="el" href="VM_8cpp_source.html#l01982">VM::executeConstantOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00077">VM::executeContainerBuildOps()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01415">VM::executeDefineClass()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00661">VM::executeEnumOps()</a>, <a class="el" href="VM_8cpp_source.html#l02464">VM::executeGlobalSlotOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00452">VM::executeIndexSetLocal()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00405">VM::executeIndexSetVar()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01027">VM::executeInstanceMethodCall()</a>, <a class="el" href="VM_8cpp_source.html#l02523">VM::executeLocalOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00505">VM::executeMemberOps()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00929">VM::executeMethodCall()</a>, <a class="el" href="VMContainers_8cpp_source.html#l01211">VM::executeMiscExceptionOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l01163">VM::executeMiscJumpOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00963">VM::executeMiscStackOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l01077">VM::executeMiscTypeCheck()</a>, <a class="el" href="VMContainers_8cpp_source.html#l01125">VM::executeMiscTypeTest()</a>, <a class="el" href="VM_8cpp_source.html#l01824">VM::executeOneInstruction()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00072">VM::executeReturn()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00284">VM::executeTailCall()</a>, <a class="el" href="VM_8cpp_source.html#l02569">VM::executeUpvalueOps()</a>, <a class="el" href="VM_8cpp_source.html#l02312">VM::executeVarNameOps()</a>, <a class="el" href="VM_8cpp_source.html#l01432">VM::initExecution()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01600">VM::invokeClosureSync()</a>, <a class="el" href="VM_8cpp_source.html#l00408">VM::isCurrentThrowInstruction()</a>, <a class="el" href="VM_8cpp_source.html#l00384">VM::peekCalledFunctionName()</a>, <a class="el" href="VM_8cpp_source.html#l00421">VM::peekWriteTarget()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00861">VM::setupFunctionCallFrame()</a>, <a class="el" href="VM_8cpp_source.html#l01706">VM::stepOnce()</a>, <a class="el" href="VM_8cpp_source.html#l00842">VM::tryOperatorOverload()</a>, <a class="el" href="VM_8cpp_source.html#l01077">VM::writeBackReceiver()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00754">VM::writebackToGlobalVar()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00809">VM::writebackToStackSlot()</a>, and <a class="el" href="VMContainers_8cpp_source.html#l00870">VM::writebackToUpvalue()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="VMCalls_8cpp_source.html#l02002">VM::callCoroutineNext()</a>, <a class="el" href="VM_8cpp_source.html#l00778">VM::currentChunk()</a>, <a class="el" href="VM_8cpp_source.html#l01746">VM::execute()</a>, <a class="el" href="VM_8cpp_source.html#l02039">VM::executeArithOps()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00364">VM::executeCallByName()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00428">VM::executeCallConstructor()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00763">VM::executeCallExprValue()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01243">VM::executeClassNew()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01180">VM::executeClosure()</a>, <a class="el" href="VM_8cpp_source.html#l02219">VM::executeCompareOps()</a>, <a class="el" href="VM_8cpp_source.html#l01978">VM::executeConstantOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00077">VM::executeContainerBuildOps()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01402">VM::executeDefineClass()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00659">VM::executeEnumOps()</a>, <a class="el" href="VM_8cpp_source.html#l02485">VM::executeGlobalSlotOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00452">VM::executeIndexSetLocal()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00405">VM::executeIndexSetVar()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01015">VM::executeInstanceMethodCall()</a>, <a class="el" href="VM_8cpp_source.html#l02544">VM::executeLocalOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00505">VM::executeMemberOps()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00917">VM::executeMethodCall()</a>, <a class="el" href="VMContainers_8cpp_source.html#l01210">VM::executeMiscExceptionOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l01162">VM::executeMiscJumpOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00962">VM::executeMiscStackOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l01076">VM::executeMiscTypeCheck()</a>, <a class="el" href="VMContainers_8cpp_source.html#l01124">VM::executeMiscTypeTest()</a>, <a class="el" href="VM_8cpp_source.html#l01816">VM::executeOneInstruction()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00072">VM::executeReturn()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00284">VM::executeTailCall()</a>, <a class="el" href="VM_8cpp_source.html#l02590">VM::executeUpvalueOps()</a>, <a class="el" href="VM_8cpp_source.html#l02333">VM::executeVarNameOps()</a>, <a class="el" href="VM_8cpp_source.html#l01423">VM::initExecution()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01589">VM::invokeClosureSync()</a>, <a class="el" href="VM_8cpp_source.html#l00403">VM::isCurrentThrowInstruction()</a>, <a class="el" href="VM_8cpp_source.html#l00379">VM::peekCalledFunctionName()</a>, <a class="el" href="VM_8cpp_source.html#l00416">VM::peekWriteTarget()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00847">VM::setupFunctionCallFrame()</a>, <a class="el" href="VM_8cpp_source.html#l01698">VM::stepOnce()</a>, <a class="el" href="VM_8cpp_source.html#l00833">VM::tryOperatorOverload()</a>, <a class="el" href="VM_8cpp_source.html#l01066">VM::writeBackReceiver()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00752">VM::writebackToGlobalVar()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00807">VM::writebackToStackSlot()</a>, and <a class="el" href="VMContainers_8cpp_source.html#l00868">VM::writebackToUpvalue()</a>.</p>
 
 </div>
 </div>
@@ -180,27 +286,27 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00165">165</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00177">177</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="VMContainers_8cpp_source.html#l00452">VM::executeIndexSetLocal()</a>, <a class="el" href="VM_8cpp_source.html#l02523">VM::executeLocalOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00505">VM::executeMemberOps()</a>, <a class="el" href="VM_8cpp_source.html#l02569">VM::executeUpvalueOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00809">VM::writebackToStackSlot()</a>, and <a class="el" href="VMContainers_8cpp_source.html#l00870">VM::writebackToUpvalue()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="VMContainers_8cpp_source.html#l00452">VM::executeIndexSetLocal()</a>, <a class="el" href="VM_8cpp_source.html#l02544">VM::executeLocalOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00505">VM::executeMemberOps()</a>, <a class="el" href="VM_8cpp_source.html#l02590">VM::executeUpvalueOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00807">VM::writebackToStackSlot()</a>, and <a class="el" href="VMContainers_8cpp_source.html#l00868">VM::writebackToUpvalue()</a>.</p>
 
 </div>
 </div>
-<a id="a84e6e939ede02a0bc0527093ccd44add" name="a84e6e939ede02a0bc0527093ccd44add"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a84e6e939ede02a0bc0527093ccd44add">&#9670;&#160;</a></span>functionName</h2>
+<a id="a4d5312e1cbcd62913b97e59eec798ac2" name="a4d5312e1cbcd62913b97e59eec798ac2"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a4d5312e1cbcd62913b97e59eec798ac2">&#9670;&#160;</a></span>functionNamePtr</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">std::string VMCallFrame::functionName</td>
+          <td class="memname">const std::string* VMCallFrame::functionNamePtr = nullptr</td>
         </tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00160">160</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00162">162</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="VMCalls_8cpp_source.html#l01984">VM::callCoroutineNext()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00430">VM::executeCallConstructor()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01254">VM::executeClassNew()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01027">VM::executeInstanceMethodCall()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00284">VM::executeTailCall()</a>, <a class="el" href="VM_8cpp_source.html#l01432">VM::initExecution()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01600">VM::invokeClosureSync()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00861">VM::setupFunctionCallFrame()</a>, and <a class="el" href="VM_8cpp_source.html#l00842">VM::tryOperatorOverload()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="VM_8h_source.html#l00164">functionName()</a>, <a class="el" href="VM_8h_source.html#l00165">setFunctionName()</a>, and <a class="el" href="VM_8h_source.html#l00169">setOwnedFunctionName()</a>.</p>
 
 </div>
 </div>
@@ -218,7 +324,7 @@ Public Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00157">157</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="VMCalls_8cpp_source.html#l01984">VM::callCoroutineNext()</a>, <a class="el" href="VM_8cpp_source.html#l01754">VM::execute()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00430">VM::executeCallConstructor()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00578">VM::executeCallHigherOrder()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00654">VM::executeCallSpawn()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01254">VM::executeClassNew()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01027">VM::executeInstanceMethodCall()</a>, <a class="el" href="VM_8cpp_source.html#l01824">VM::executeOneInstruction()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00072">VM::executeReturn()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00284">VM::executeTailCall()</a>, <a class="el" href="VM_8cpp_source.html#l01432">VM::initExecution()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01600">VM::invokeClosureSync()</a>, <a class="el" href="VM_8cpp_source.html#l00408">VM::isCurrentThrowInstruction()</a>, <a class="el" href="VM_8cpp_source.html#l00384">VM::peekCalledFunctionName()</a>, <a class="el" href="VM_8cpp_source.html#l00421">VM::peekWriteTarget()</a>, <a class="el" href="VM_8cpp_source.html#l01669">VM::popFrameAndPushReturn()</a>, <a class="el" href="VM_8cpp_source.html#l01575">VM::restoreFromSnapshot()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00861">VM::setupFunctionCallFrame()</a>, <a class="el" href="VM_8cpp_source.html#l01706">VM::stepOnce()</a>, <a class="el" href="VM_8cpp_source.html#l00167">VM::throwException()</a>, and <a class="el" href="VM_8cpp_source.html#l00842">VM::tryOperatorOverload()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="VMCalls_8cpp_source.html#l02002">VM::callCoroutineNext()</a>, <a class="el" href="VM_8cpp_source.html#l01746">VM::execute()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00428">VM::executeCallConstructor()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00571">VM::executeCallHigherOrder()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00644">VM::executeCallSpawn()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01243">VM::executeClassNew()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01015">VM::executeInstanceMethodCall()</a>, <a class="el" href="VM_8cpp_source.html#l01816">VM::executeOneInstruction()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00072">VM::executeReturn()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00284">VM::executeTailCall()</a>, <a class="el" href="VM_8cpp_source.html#l01423">VM::initExecution()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01589">VM::invokeClosureSync()</a>, <a class="el" href="VM_8cpp_source.html#l00403">VM::isCurrentThrowInstruction()</a>, <a class="el" href="VM_8cpp_source.html#l00379">VM::peekCalledFunctionName()</a>, <a class="el" href="VM_8cpp_source.html#l00416">VM::peekWriteTarget()</a>, <a class="el" href="VM_8cpp_source.html#l01661">VM::popFrameAndPushReturn()</a>, <a class="el" href="VM_8cpp_source.html#l01567">VM::restoreFromSnapshot()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00847">VM::setupFunctionCallFrame()</a>, <a class="el" href="VM_8cpp_source.html#l01698">VM::stepOnce()</a>, <a class="el" href="VM_8cpp_source.html#l00165">VM::throwException()</a>, and <a class="el" href="VM_8cpp_source.html#l00833">VM::tryOperatorOverload()</a>.</p>
 
 </div>
 </div>
@@ -234,9 +340,9 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00162">162</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00174">174</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="VMCalls_8cpp_source.html#l00430">VM::executeCallConstructor()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01254">VM::executeClassNew()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01027">VM::executeInstanceMethodCall()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00284">VM::executeTailCall()</a>, <a class="el" href="VM_8cpp_source.html#l01669">VM::popFrameAndPushReturn()</a>, and <a class="el" href="VM_8cpp_source.html#l00842">VM::tryOperatorOverload()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="VMCalls_8cpp_source.html#l00428">VM::executeCallConstructor()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01243">VM::executeClassNew()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01015">VM::executeInstanceMethodCall()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00284">VM::executeTailCall()</a>, <a class="el" href="VM_8cpp_source.html#l01661">VM::popFrameAndPushReturn()</a>, and <a class="el" href="VM_8cpp_source.html#l00833">VM::tryOperatorOverload()</a>.</p>
 
 </div>
 </div>
@@ -252,9 +358,27 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00161">161</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00173">173</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="VMCalls_8cpp_source.html#l00430">VM::executeCallConstructor()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01254">VM::executeClassNew()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01027">VM::executeInstanceMethodCall()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00284">VM::executeTailCall()</a>, and <a class="el" href="VM_8cpp_source.html#l00842">VM::tryOperatorOverload()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="VMCalls_8cpp_source.html#l00428">VM::executeCallConstructor()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01243">VM::executeClassNew()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01015">VM::executeInstanceMethodCall()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00284">VM::executeTailCall()</a>, and <a class="el" href="VM_8cpp_source.html#l00833">VM::tryOperatorOverload()</a>.</p>
+
+</div>
+</div>
+<a id="aed0b07209de4e506bc4cf94159ba103f" name="aed0b07209de4e506bc4cf94159ba103f"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aed0b07209de4e506bc4cf94159ba103f">&#9670;&#160;</a></span>ownedFunctionName</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">std::string VMCallFrame::ownedFunctionName</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00163">163</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="VM_8h_source.html#l00164">functionName()</a>, <a class="el" href="VM_8h_source.html#l00165">setFunctionName()</a>, and <a class="el" href="VM_8h_source.html#l00169">setOwnedFunctionName()</a>.</p>
 
 </div>
 </div>
@@ -270,9 +394,9 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00164">164</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00176">176</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="VMCalls_8cpp_source.html#l01027">VM::executeInstanceMethodCall()</a>, and <a class="el" href="VM_8cpp_source.html#l00842">VM::tryOperatorOverload()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="VMCalls_8cpp_source.html#l01015">VM::executeInstanceMethodCall()</a>, and <a class="el" href="VM_8cpp_source.html#l00833">VM::tryOperatorOverload()</a>.</p>
 
 </div>
 </div>
@@ -288,9 +412,9 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00163">163</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00175">175</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="VMCalls_8cpp_source.html#l01027">VM::executeInstanceMethodCall()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="VMCalls_8cpp_source.html#l01015">VM::executeInstanceMethodCall()</a>.</p>
 
 </div>
 </div>
@@ -308,7 +432,7 @@ Public Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00158">158</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="VMCalls_8cpp_source.html#l01984">VM::callCoroutineNext()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00430">VM::executeCallConstructor()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01254">VM::executeClassNew()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01027">VM::executeInstanceMethodCall()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01600">VM::invokeClosureSync()</a>, <a class="el" href="VM_8cpp_source.html#l01669">VM::popFrameAndPushReturn()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00861">VM::setupFunctionCallFrame()</a>, and <a class="el" href="VM_8cpp_source.html#l00842">VM::tryOperatorOverload()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="VMCalls_8cpp_source.html#l02002">VM::callCoroutineNext()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00428">VM::executeCallConstructor()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01243">VM::executeClassNew()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01015">VM::executeInstanceMethodCall()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01589">VM::invokeClosureSync()</a>, <a class="el" href="VM_8cpp_source.html#l01661">VM::popFrameAndPushReturn()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00847">VM::setupFunctionCallFrame()</a>, and <a class="el" href="VM_8cpp_source.html#l00833">VM::tryOperatorOverload()</a>.</p>
 
 </div>
 </div>
@@ -324,9 +448,9 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00167">167</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="VM_8h_source.html#l00179">179</a> of file <a class="el" href="VM_8h_source.html">VM.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="VMCalls_8cpp_source.html#l01984">VM::callCoroutineNext()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01548">VM::captureMethodUpvalues()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01191">VM::executeClosure()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01027">VM::executeInstanceMethodCall()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00284">VM::executeTailCall()</a>, <a class="el" href="VM_8cpp_source.html#l02569">VM::executeUpvalueOps()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01600">VM::invokeClosureSync()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00861">VM::setupFunctionCallFrame()</a>, <a class="el" href="VM_8cpp_source.html#l00842">VM::tryOperatorOverload()</a>, and <a class="el" href="VMContainers_8cpp_source.html#l00870">VM::writebackToUpvalue()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="VMCalls_8cpp_source.html#l02002">VM::callCoroutineNext()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01537">VM::captureMethodUpvalues()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01180">VM::executeClosure()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01015">VM::executeInstanceMethodCall()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00284">VM::executeTailCall()</a>, <a class="el" href="VM_8cpp_source.html#l02590">VM::executeUpvalueOps()</a>, <a class="el" href="VMCalls_8cpp_source.html#l01589">VM::invokeClosureSync()</a>, <a class="el" href="VMCalls_8cpp_source.html#l00847">VM::setupFunctionCallFrame()</a>, <a class="el" href="VM_8cpp_source.html#l00833">VM::tryOperatorOverload()</a>, and <a class="el" href="VMContainers_8cpp_source.html#l00868">VM::writebackToUpvalue()</a>.</p>
 
 </div>
 </div>

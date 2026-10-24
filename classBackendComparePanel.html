@@ -248,11 +248,11 @@ Private Attributes</h2></td></tr>
 <p>计算三后端输出差异（行级比对，标记差异行） </p>
 <p>逐行比对三后端输出（按最大行数对齐，缺失行视为空），统计差异行数， 生成「三后端输出一致 / 差异 N 行」的汇总文本，供差异标签显示。 </p>
 
-<p class="definition">Definition at line <a class="el" href="BackendComparePanel_8cpp_source.html#l00210">210</a> of file <a class="el" href="BackendComparePanel_8cpp_source.html">BackendComparePanel.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="BackendComparePanel_8cpp_source.html#l00215">215</a> of file <a class="el" href="BackendComparePanel_8cpp_source.html">BackendComparePanel.cpp</a>.</p>
 
 <p class="reference">References <a class="el" href="BackendComparePanel_8h_source.html#l00037">BackendComparePanel::BackendResult::outputLines</a>, and <a class="el" href="BackendComparePanel_8h_source.html#l00038">BackendComparePanel::BackendResult::status</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="BackendComparePanel_8cpp_source.html#l00182">renderComparison()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="BackendComparePanel_8cpp_source.html#l00187">renderComparison()</a>.</p>
 
 </div>
 </div>
@@ -299,9 +299,9 @@ Private Attributes</h2></td></tr>
 <p>渲染对比结果到 UI </p>
 <p>将三后端结果渲染到对应列：填充输出文本与状态标签（状态 + 耗时）， 并调用 buildDiffSummary 生成一致性汇总写入差异标签。 </p>
 
-<p class="definition">Definition at line <a class="el" href="BackendComparePanel_8cpp_source.html#l00182">182</a> of file <a class="el" href="BackendComparePanel_8cpp_source.html">BackendComparePanel.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="BackendComparePanel_8cpp_source.html#l00187">187</a> of file <a class="el" href="BackendComparePanel_8cpp_source.html">BackendComparePanel.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="BackendComparePanel_8cpp_source.html#l00210">buildDiffSummary()</a>, <a class="el" href="BackendComparePanel_8h_source.html#l00054">diffLabel_</a>, <a class="el" href="BackendComparePanel_8h_source.html#l00040">BackendComparePanel::BackendResult::elapsedMicros</a>, <a class="el" href="BackendComparePanel_8h_source.html#l00048">interpOutput_</a>, <a class="el" href="BackendComparePanel_8h_source.html#l00051">interpStatus_</a>, <a class="el" href="BackendComparePanel_8h_source.html#l00037">BackendComparePanel::BackendResult::outputLines</a>, <a class="el" href="BackendComparePanel_8h_source.html#l00050">regVmOutput_</a>, <a class="el" href="BackendComparePanel_8h_source.html#l00053">regVmStatus_</a>, <a class="el" href="BackendComparePanel_8h_source.html#l00049">stackVmOutput_</a>, <a class="el" href="BackendComparePanel_8h_source.html#l00052">stackVmStatus_</a>, and <a class="el" href="BackendComparePanel_8h_source.html#l00038">BackendComparePanel::BackendResult::status</a>.</p>
+<p class="reference">References <a class="el" href="BackendComparePanel_8cpp_source.html#l00215">buildDiffSummary()</a>, <a class="el" href="BackendComparePanel_8h_source.html#l00054">diffLabel_</a>, <a class="el" href="BackendComparePanel_8h_source.html#l00040">BackendComparePanel::BackendResult::elapsedMicros</a>, <a class="el" href="BackendComparePanel_8h_source.html#l00048">interpOutput_</a>, <a class="el" href="BackendComparePanel_8h_source.html#l00051">interpStatus_</a>, <a class="el" href="BackendComparePanel_8h_source.html#l00037">BackendComparePanel::BackendResult::outputLines</a>, <a class="el" href="BackendComparePanel_8h_source.html#l00050">regVmOutput_</a>, <a class="el" href="BackendComparePanel_8h_source.html#l00053">regVmStatus_</a>, <a class="el" href="BackendComparePanel_8h_source.html#l00049">stackVmOutput_</a>, <a class="el" href="BackendComparePanel_8h_source.html#l00052">stackVmStatus_</a>, and <a class="el" href="BackendComparePanel_8h_source.html#l00038">BackendComparePanel::BackendResult::status</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="BackendComparePanel_8cpp_source.html#l00072">runComparison()</a>.</p>
 
@@ -327,7 +327,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="BackendComparePanel_8cpp_source.html#l00072">72</a> of file <a class="el" href="BackendComparePanel_8cpp_source.html">BackendComparePanel.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="BackendComparePanel_8h_source.html#l00046">comparing_</a>, <a class="el" href="BackendComparePanel_8h_source.html#l00044">controller_</a>, <a class="el" href="BackendComparePanel_8h_source.html#l00054">diffLabel_</a>, <a class="el" href="IdeController_8h_source.html#l00657">IdeController::lastSource()</a>, <a class="el" href="BackendComparePanel_8cpp_source.html#l00182">renderComparison()</a>, <a class="el" href="BackendComparePanel_8h_source.html#l00055">runButton_</a>, <a class="el" href="BackendComparePanel_8cpp_source.html#l00150">runInterpreter()</a>, <a class="el" href="BackendComparePanel_8cpp_source.html#l00170">runRegisterVM()</a>, and <a class="el" href="BackendComparePanel_8cpp_source.html#l00160">runStackVM()</a>.</p>
+<p class="reference">References <a class="el" href="BackendComparePanel_8h_source.html#l00046">comparing_</a>, <a class="el" href="BackendComparePanel_8h_source.html#l00044">controller_</a>, <a class="el" href="BackendComparePanel_8h_source.html#l00054">diffLabel_</a>, <a class="el" href="IdeController_8h_source.html#l00356">IdeController::isRunning()</a>, <a class="el" href="IdeController_8h_source.html#l00574">IdeController::isVmRunning()</a>, <a class="el" href="IdeController_8h_source.html#l00659">IdeController::lastSource()</a>, <a class="el" href="BackendComparePanel_8cpp_source.html#l00187">renderComparison()</a>, <a class="el" href="BackendComparePanel_8h_source.html#l00055">runButton_</a>, <a class="el" href="BackendComparePanel_8cpp_source.html#l00155">runInterpreter()</a>, <a class="el" href="BackendComparePanel_8cpp_source.html#l00175">runRegisterVM()</a>, and <a class="el" href="BackendComparePanel_8cpp_source.html#l00165">runStackVM()</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="BackendComparePanel_8cpp_source.html#l00029">BackendComparePanel()</a>.</p>
 
@@ -360,9 +360,9 @@ Private Attributes</h2></td></tr>
 <p>三个后端分别执行 </p>
 <p>运行 <a class="el" href="classInterpreter.html" title="访问者模式解释执行器">Interpreter</a> 后端：通过 <a class="el" href="classBackendExecutionService.html">BackendExecutionService</a> 触发。 </p>
 
-<p class="definition">Definition at line <a class="el" href="BackendComparePanel_8cpp_source.html#l00150">150</a> of file <a class="el" href="BackendComparePanel_8cpp_source.html">BackendComparePanel.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="BackendComparePanel_8cpp_source.html#l00155">155</a> of file <a class="el" href="BackendComparePanel_8cpp_source.html">BackendComparePanel.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="BackendComparePanel_8h_source.html#l00044">controller_</a>, <a class="el" href="BackendExecutionService_8cpp_source.html#l00142">BackendExecutionService::execute()</a>, <a class="el" href="BackendExecutionService_8h.html#a5a287d45a9e7bfa1bc60fbb68dac5228adf608edb53fcc79c12759cdbdf58d9db">Interpreter</a>, <a class="el" href="IdeController_8h_source.html#l00657">IdeController::lastSource()</a>, and <a class="el" href="BackendComparePanel_8h_source.html#l00038">BackendComparePanel::BackendResult::status</a>.</p>
+<p class="reference">References <a class="el" href="BackendComparePanel_8h_source.html#l00044">controller_</a>, <a class="el" href="BackendExecutionService_8cpp_source.html#l00142">BackendExecutionService::execute()</a>, <a class="el" href="BackendExecutionService_8h.html#a5a287d45a9e7bfa1bc60fbb68dac5228adf608edb53fcc79c12759cdbdf58d9db">Interpreter</a>, <a class="el" href="IdeController_8h_source.html#l00659">IdeController::lastSource()</a>, and <a class="el" href="BackendComparePanel_8h_source.html#l00038">BackendComparePanel::BackendResult::status</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="BackendComparePanel_8cpp_source.html#l00072">runComparison()</a>.</p>
 
@@ -394,9 +394,9 @@ Private Attributes</h2></td></tr>
 
 <p>运行 <a class="el" href="classRegisterVM.html">RegisterVM</a> 后端：通过 <a class="el" href="classBackendExecutionService.html">BackendExecutionService</a> 触发（寄存器 IR 路径）。 </p>
 
-<p class="definition">Definition at line <a class="el" href="BackendComparePanel_8cpp_source.html#l00170">170</a> of file <a class="el" href="BackendComparePanel_8cpp_source.html">BackendComparePanel.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="BackendComparePanel_8cpp_source.html#l00175">175</a> of file <a class="el" href="BackendComparePanel_8cpp_source.html">BackendComparePanel.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="BackendComparePanel_8h_source.html#l00044">controller_</a>, <a class="el" href="BackendExecutionService_8cpp_source.html#l00142">BackendExecutionService::execute()</a>, <a class="el" href="IdeController_8h_source.html#l00657">IdeController::lastSource()</a>, <a class="el" href="BackendExecutionService_8h.html#a5a287d45a9e7bfa1bc60fbb68dac5228a06bc721f817332bc069a81251b28a788">RegisterVM_IR</a>, and <a class="el" href="BackendComparePanel_8h_source.html#l00038">BackendComparePanel::BackendResult::status</a>.</p>
+<p class="reference">References <a class="el" href="BackendComparePanel_8h_source.html#l00044">controller_</a>, <a class="el" href="BackendExecutionService_8cpp_source.html#l00142">BackendExecutionService::execute()</a>, <a class="el" href="IdeController_8h_source.html#l00659">IdeController::lastSource()</a>, <a class="el" href="BackendExecutionService_8h.html#a5a287d45a9e7bfa1bc60fbb68dac5228a06bc721f817332bc069a81251b28a788">RegisterVM_IR</a>, and <a class="el" href="BackendComparePanel_8h_source.html#l00038">BackendComparePanel::BackendResult::status</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="BackendComparePanel_8cpp_source.html#l00072">runComparison()</a>.</p>
 
@@ -428,9 +428,9 @@ Private Attributes</h2></td></tr>
 
 <p>运行 StackVM 后端：通过 <a class="el" href="classBackendExecutionService.html">BackendExecutionService</a> 触发（IR 路径）。 </p>
 
-<p class="definition">Definition at line <a class="el" href="BackendComparePanel_8cpp_source.html#l00160">160</a> of file <a class="el" href="BackendComparePanel_8cpp_source.html">BackendComparePanel.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="BackendComparePanel_8cpp_source.html#l00165">165</a> of file <a class="el" href="BackendComparePanel_8cpp_source.html">BackendComparePanel.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="BackendComparePanel_8h_source.html#l00044">controller_</a>, <a class="el" href="BackendExecutionService_8cpp_source.html#l00142">BackendExecutionService::execute()</a>, <a class="el" href="IdeController_8h_source.html#l00657">IdeController::lastSource()</a>, <a class="el" href="BackendExecutionService_8h.html#a5a287d45a9e7bfa1bc60fbb68dac5228a685a37e8040bfdf3570c9aea17c3506c">StackVM_IR</a>, and <a class="el" href="BackendComparePanel_8h_source.html#l00038">BackendComparePanel::BackendResult::status</a>.</p>
+<p class="reference">References <a class="el" href="BackendComparePanel_8h_source.html#l00044">controller_</a>, <a class="el" href="BackendExecutionService_8cpp_source.html#l00142">BackendExecutionService::execute()</a>, <a class="el" href="IdeController_8h_source.html#l00659">IdeController::lastSource()</a>, <a class="el" href="BackendExecutionService_8h.html#a5a287d45a9e7bfa1bc60fbb68dac5228a685a37e8040bfdf3570c9aea17c3506c">StackVM_IR</a>, and <a class="el" href="BackendComparePanel_8h_source.html#l00038">BackendComparePanel::BackendResult::status</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="BackendComparePanel_8cpp_source.html#l00072">runComparison()</a>.</p>
 
@@ -464,7 +464,7 @@ Private Attributes</h2></td></tr>
 
 <p class="reference">References <a class="el" href="BackendComparePanel_8h_source.html#l00044">controller_</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="ide_8cpp_source.html#l03817">Ide::registerCompilationPipelinePanels()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="ide_8cpp_source.html#l03834">Ide::registerCompilationPipelinePanels()</a>.</p>
 
 </div>
 </div>
@@ -517,7 +517,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="BackendComparePanel_8h_source.html#l00044">44</a> of file <a class="el" href="BackendComparePanel_8h_source.html">BackendComparePanel.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="BackendComparePanel_8cpp_source.html#l00072">runComparison()</a>, <a class="el" href="BackendComparePanel_8cpp_source.html#l00150">runInterpreter()</a>, <a class="el" href="BackendComparePanel_8cpp_source.html#l00170">runRegisterVM()</a>, <a class="el" href="BackendComparePanel_8cpp_source.html#l00160">runStackVM()</a>, and <a class="el" href="BackendComparePanel_8h_source.html#l00030">setController()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="BackendComparePanel_8cpp_source.html#l00072">runComparison()</a>, <a class="el" href="BackendComparePanel_8cpp_source.html#l00155">runInterpreter()</a>, <a class="el" href="BackendComparePanel_8cpp_source.html#l00175">runRegisterVM()</a>, <a class="el" href="BackendComparePanel_8cpp_source.html#l00165">runStackVM()</a>, and <a class="el" href="BackendComparePanel_8h_source.html#l00030">setController()</a>.</p>
 
 </div>
 </div>
@@ -543,7 +543,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="BackendComparePanel_8h_source.html#l00054">54</a> of file <a class="el" href="BackendComparePanel_8h_source.html">BackendComparePanel.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="BackendComparePanel_8cpp_source.html#l00029">BackendComparePanel()</a>, <a class="el" href="BackendComparePanel_8cpp_source.html#l00182">renderComparison()</a>, and <a class="el" href="BackendComparePanel_8cpp_source.html#l00072">runComparison()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="BackendComparePanel_8cpp_source.html#l00029">BackendComparePanel()</a>, <a class="el" href="BackendComparePanel_8cpp_source.html#l00187">renderComparison()</a>, and <a class="el" href="BackendComparePanel_8cpp_source.html#l00072">runComparison()</a>.</p>
 
 </div>
 </div>
@@ -569,7 +569,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="BackendComparePanel_8h_source.html#l00048">48</a> of file <a class="el" href="BackendComparePanel_8h_source.html">BackendComparePanel.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="BackendComparePanel_8cpp_source.html#l00029">BackendComparePanel()</a>, and <a class="el" href="BackendComparePanel_8cpp_source.html#l00182">renderComparison()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="BackendComparePanel_8cpp_source.html#l00029">BackendComparePanel()</a>, and <a class="el" href="BackendComparePanel_8cpp_source.html#l00187">renderComparison()</a>.</p>
 
 </div>
 </div>
@@ -595,7 +595,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="BackendComparePanel_8h_source.html#l00051">51</a> of file <a class="el" href="BackendComparePanel_8h_source.html">BackendComparePanel.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="BackendComparePanel_8cpp_source.html#l00029">BackendComparePanel()</a>, and <a class="el" href="BackendComparePanel_8cpp_source.html#l00182">renderComparison()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="BackendComparePanel_8cpp_source.html#l00029">BackendComparePanel()</a>, and <a class="el" href="BackendComparePanel_8cpp_source.html#l00187">renderComparison()</a>.</p>
 
 </div>
 </div>
@@ -621,7 +621,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="BackendComparePanel_8h_source.html#l00050">50</a> of file <a class="el" href="BackendComparePanel_8h_source.html">BackendComparePanel.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="BackendComparePanel_8cpp_source.html#l00029">BackendComparePanel()</a>, and <a class="el" href="BackendComparePanel_8cpp_source.html#l00182">renderComparison()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="BackendComparePanel_8cpp_source.html#l00029">BackendComparePanel()</a>, and <a class="el" href="BackendComparePanel_8cpp_source.html#l00187">renderComparison()</a>.</p>
 
 </div>
 </div>
@@ -647,7 +647,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="BackendComparePanel_8h_source.html#l00053">53</a> of file <a class="el" href="BackendComparePanel_8h_source.html">BackendComparePanel.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="BackendComparePanel_8cpp_source.html#l00029">BackendComparePanel()</a>, and <a class="el" href="BackendComparePanel_8cpp_source.html#l00182">renderComparison()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="BackendComparePanel_8cpp_source.html#l00029">BackendComparePanel()</a>, and <a class="el" href="BackendComparePanel_8cpp_source.html#l00187">renderComparison()</a>.</p>
 
 </div>
 </div>
@@ -699,7 +699,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="BackendComparePanel_8h_source.html#l00049">49</a> of file <a class="el" href="BackendComparePanel_8h_source.html">BackendComparePanel.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="BackendComparePanel_8cpp_source.html#l00029">BackendComparePanel()</a>, and <a class="el" href="BackendComparePanel_8cpp_source.html#l00182">renderComparison()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="BackendComparePanel_8cpp_source.html#l00029">BackendComparePanel()</a>, and <a class="el" href="BackendComparePanel_8cpp_source.html#l00187">renderComparison()</a>.</p>
 
 </div>
 </div>
@@ -725,7 +725,7 @@ Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="BackendComparePanel_8h_source.html#l00052">52</a> of file <a class="el" href="BackendComparePanel_8h_source.html">BackendComparePanel.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="BackendComparePanel_8cpp_source.html#l00029">BackendComparePanel()</a>, and <a class="el" href="BackendComparePanel_8cpp_source.html#l00182">renderComparison()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="BackendComparePanel_8cpp_source.html#l00029">BackendComparePanel()</a>, and <a class="el" href="BackendComparePanel_8cpp_source.html#l00187">renderComparison()</a>.</p>
 
 </div>
 </div>

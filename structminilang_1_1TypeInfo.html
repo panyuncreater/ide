@@ -138,7 +138,7 @@ Public Attributes</h2></td></tr>
 <a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
 <div class="textblock"><p>类型信息（预留，未来扩展） </p>
 
-<p class="definition">Definition at line <a class="el" href="TypeChecker_8h_source.html#l00199">199</a> of file <a class="el" href="TypeChecker_8h_source.html">TypeChecker.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="TypeChecker_8h_source.html#l00358">358</a> of file <a class="el" href="TypeChecker_8h_source.html">TypeChecker.h</a>.</p>
 </div><h2 class="groupheader">Constructor &amp; Destructor Documentation</h2>
 <a id="a85ddcc961e0034da27e53c788bab95c6" name="a85ddcc961e0034da27e53c788bab95c6"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a85ddcc961e0034da27e53c788bab95c6">&#9670;&#160;</a></span>TypeInfo() <span class="overload">[1/3]</span></h2>
@@ -189,7 +189,7 @@ Public Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="TypeChecker_8h_source.html#l00207">207</a> of file <a class="el" href="TypeChecker_8h_source.html">TypeChecker.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="TypeChecker_8h_source.html#l00366">366</a> of file <a class="el" href="TypeChecker_8h_source.html">TypeChecker.h</a>.</p>
 
 </div>
 </div>
@@ -227,7 +227,7 @@ Public Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="TypeChecker_8h_source.html#l00208">208</a> of file <a class="el" href="TypeChecker_8h_source.html">TypeChecker.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="TypeChecker_8h_source.html#l00367">367</a> of file <a class="el" href="TypeChecker_8h_source.html">TypeChecker.h</a>.</p>
 
 </div>
 </div>
@@ -258,7 +258,7 @@ Public Attributes</h2></td></tr>
 
 <p>从类型注解字符串构造 <a class="el" href="structminilang_1_1TypeInfo.html" title="类型信息（预留，未来扩展）">TypeInfo</a> </p>
 
-<p class="definition">Definition at line <a class="el" href="TypeChecker_8h_source.html#l00238">238</a> of file <a class="el" href="TypeChecker_8h_source.html">TypeChecker.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="TypeChecker_8h_source.html#l00397">397</a> of file <a class="el" href="TypeChecker_8h_source.html">TypeChecker.h</a>.</p>
 
 <p class="reference">References <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901acb4fb1757fb37c43cded35d3eb857c43">minilang::ARRAY</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901aa97b2c144243b2b9d2c593ec268b62f5">minilang::BOOL</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901ab27025b4b0dce496c519e0d5c69acaf8">minilang::CLOSURE</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901ad7f73f951e7f6c4ed5e17c4204f4032e">minilang::DICT</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901ae738c26bf4ce1037fa81b039a915cbf6">minilang::FLOAT</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901a76425f17a58d9249cadacc9a27771a80">minilang::INSTANCE</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901a53f93baa3057821107c750323892fa92">minilang::INT</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901ab6ae095edaa075ae5e86023fd38c5fc8">minilang::NULL_T</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901a63b588d5559f64f89a416e656880b949">minilang::STRING</a>, and <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901a696b031073e74bf2cb98e5ef201d4aa3">minilang::UNKNOWN</a>.</p>
 
@@ -291,9 +291,9 @@ Public Attributes</h2></td></tr>
 </div><div class="memdoc">
 <p>类型兼容性检查：判断 other 类型的值是否可赋给 this 类型的变量。 规则：UNKNOWN/ANY 兼容一切；float 接受 int（数值提升）； ARRAY/DICT/INSTANCE 按 className/typeArgs 递归检查；其余严格匹配。 </p>
 
-<p class="definition">Definition at line <a class="el" href="TypeChecker_8h_source.html#l00215">215</a> of file <a class="el" href="TypeChecker_8h_source.html">TypeChecker.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="TypeChecker_8h_source.html#l00374">374</a> of file <a class="el" href="TypeChecker_8h_source.html">TypeChecker.h</a>.</p>
 
-<p class="reference">References <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901a8e1bde3c3d303163521522cf1d62f21f">minilang::ANY</a>, <a class="el" href="TypeChecker_8h_source.html#l00201">className</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901ae738c26bf4ce1037fa81b039a915cbf6">minilang::FLOAT</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901a76425f17a58d9249cadacc9a27771a80">minilang::INSTANCE</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901a53f93baa3057821107c750323892fa92">minilang::INT</a>, <a class="el" href="TypeChecker_8h_source.html#l00200">kind</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901ab6ae095edaa075ae5e86023fd38c5fc8">minilang::NULL_T</a>, and <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901a696b031073e74bf2cb98e5ef201d4aa3">minilang::UNKNOWN</a>.</p>
+<p class="reference">References <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901a8e1bde3c3d303163521522cf1d62f21f">minilang::ANY</a>, <a class="el" href="TypeChecker_8h_source.html#l00360">className</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901ae738c26bf4ce1037fa81b039a915cbf6">minilang::FLOAT</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901a76425f17a58d9249cadacc9a27771a80">minilang::INSTANCE</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901a53f93baa3057821107c750323892fa92">minilang::INT</a>, <a class="el" href="TypeChecker_8h_source.html#l00359">kind</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901ab6ae095edaa075ae5e86023fd38c5fc8">minilang::NULL_T</a>, and <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901a696b031073e74bf2cb98e5ef201d4aa3">minilang::UNKNOWN</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="TypeChecker_8cpp_source.html#l00102">minilang::LiteralTypeWalker::checkVarDecl()</a>, <a class="el" href="TypeChecker_8cpp_source.html#l00141">minilang::LiteralTypeWalker::visitAssignment()</a>, and <a class="el" href="TypeChecker_8cpp_source.html#l00248">minilang::LiteralTypeWalker::visitReturnStmt()</a>.</p>
 
@@ -322,9 +322,9 @@ Public Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="TypeChecker_8h_source.html#l00210">210</a> of file <a class="el" href="TypeChecker_8h_source.html">TypeChecker.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="TypeChecker_8h_source.html#l00369">369</a> of file <a class="el" href="TypeChecker_8h_source.html">TypeChecker.h</a>.</p>
 
-<p class="reference">References <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901ae738c26bf4ce1037fa81b039a915cbf6">minilang::FLOAT</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901a53f93baa3057821107c750323892fa92">minilang::INT</a>, and <a class="el" href="TypeChecker_8h_source.html#l00200">kind</a>.</p>
+<p class="reference">References <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901ae738c26bf4ce1037fa81b039a915cbf6">minilang::FLOAT</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901a53f93baa3057821107c750323892fa92">minilang::INT</a>, and <a class="el" href="TypeChecker_8h_source.html#l00359">kind</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="TypeChecker_8cpp_source.html#l00035">minilang::LiteralTypeWalker::inferExprType()</a>.</p>
 
@@ -355,9 +355,9 @@ Public Attributes</h2></td></tr>
 
 <p>类型字符串表示（用于诊断信息） </p>
 
-<p class="definition">Definition at line <a class="el" href="TypeChecker_8h_source.html#l00266">266</a> of file <a class="el" href="TypeChecker_8h_source.html">TypeChecker.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="TypeChecker_8h_source.html#l00425">425</a> of file <a class="el" href="TypeChecker_8h_source.html">TypeChecker.h</a>.</p>
 
-<p class="reference">References <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901a8e1bde3c3d303163521522cf1d62f21f">minilang::ANY</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901acb4fb1757fb37c43cded35d3eb857c43">minilang::ARRAY</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901aa97b2c144243b2b9d2c593ec268b62f5">minilang::BOOL</a>, <a class="el" href="TypeChecker_8h_source.html#l00201">className</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901ab27025b4b0dce496c519e0d5c69acaf8">minilang::CLOSURE</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901ad7f73f951e7f6c4ed5e17c4204f4032e">minilang::DICT</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901ae738c26bf4ce1037fa81b039a915cbf6">minilang::FLOAT</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901a76425f17a58d9249cadacc9a27771a80">minilang::INSTANCE</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901a53f93baa3057821107c750323892fa92">minilang::INT</a>, <a class="el" href="TypeChecker_8h_source.html#l00200">kind</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901ab6ae095edaa075ae5e86023fd38c5fc8">minilang::NULL_T</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901a63b588d5559f64f89a416e656880b949">minilang::STRING</a>, and <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901a696b031073e74bf2cb98e5ef201d4aa3">minilang::UNKNOWN</a>.</p>
+<p class="reference">References <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901a8e1bde3c3d303163521522cf1d62f21f">minilang::ANY</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901acb4fb1757fb37c43cded35d3eb857c43">minilang::ARRAY</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901aa97b2c144243b2b9d2c593ec268b62f5">minilang::BOOL</a>, <a class="el" href="TypeChecker_8h_source.html#l00360">className</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901ab27025b4b0dce496c519e0d5c69acaf8">minilang::CLOSURE</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901ad7f73f951e7f6c4ed5e17c4204f4032e">minilang::DICT</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901ae738c26bf4ce1037fa81b039a915cbf6">minilang::FLOAT</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901a76425f17a58d9249cadacc9a27771a80">minilang::INSTANCE</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901a53f93baa3057821107c750323892fa92">minilang::INT</a>, <a class="el" href="TypeChecker_8h_source.html#l00359">kind</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901ab6ae095edaa075ae5e86023fd38c5fc8">minilang::NULL_T</a>, <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901a63b588d5559f64f89a416e656880b949">minilang::STRING</a>, and <a class="el" href="namespaceminilang.html#a3f0fc93f3520b4ab80c2c27c1a801901a696b031073e74bf2cb98e5ef201d4aa3">minilang::UNKNOWN</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="TypeChecker_8cpp_source.html#l00102">minilang::LiteralTypeWalker::checkVarDecl()</a>, <a class="el" href="TypeChecker_8cpp_source.html#l00141">minilang::LiteralTypeWalker::visitAssignment()</a>, and <a class="el" href="TypeChecker_8cpp_source.html#l00248">minilang::LiteralTypeWalker::visitReturnStmt()</a>.</p>
 
@@ -376,9 +376,9 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="TypeChecker_8h_source.html#l00201">201</a> of file <a class="el" href="TypeChecker_8h_source.html">TypeChecker.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="TypeChecker_8h_source.html#l00360">360</a> of file <a class="el" href="TypeChecker_8h_source.html">TypeChecker.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="TypeChecker_8h_source.html#l00215">isCompatible()</a>, and <a class="el" href="TypeChecker_8h_source.html#l00266">toString()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="TypeChecker_8h_source.html#l00374">isCompatible()</a>, and <a class="el" href="TypeChecker_8h_source.html#l00425">toString()</a>.</p>
 
 </div>
 </div>
@@ -394,9 +394,9 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="TypeChecker_8h_source.html#l00200">200</a> of file <a class="el" href="TypeChecker_8h_source.html">TypeChecker.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="TypeChecker_8h_source.html#l00359">359</a> of file <a class="el" href="TypeChecker_8h_source.html">TypeChecker.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="TypeChecker_8cpp_source.html#l00102">minilang::LiteralTypeWalker::checkVarDecl()</a>, <a class="el" href="TypeChecker_8cpp_source.html#l00035">minilang::LiteralTypeWalker::inferExprType()</a>, <a class="el" href="TypeChecker_8h_source.html#l00215">isCompatible()</a>, <a class="el" href="TypeChecker_8h_source.html#l00210">isNumeric()</a>, <a class="el" href="TypeChecker_8h_source.html#l00266">toString()</a>, <a class="el" href="TypeChecker_8cpp_source.html#l00141">minilang::LiteralTypeWalker::visitAssignment()</a>, and <a class="el" href="TypeChecker_8cpp_source.html#l00248">minilang::LiteralTypeWalker::visitReturnStmt()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="TypeChecker_8cpp_source.html#l00102">minilang::LiteralTypeWalker::checkVarDecl()</a>, <a class="el" href="TypeChecker_8cpp_source.html#l00035">minilang::LiteralTypeWalker::inferExprType()</a>, <a class="el" href="TypeChecker_8h_source.html#l00374">isCompatible()</a>, <a class="el" href="TypeChecker_8h_source.html#l00369">isNumeric()</a>, <a class="el" href="TypeChecker_8h_source.html#l00425">toString()</a>, <a class="el" href="TypeChecker_8cpp_source.html#l00141">minilang::LiteralTypeWalker::visitAssignment()</a>, and <a class="el" href="TypeChecker_8cpp_source.html#l00248">minilang::LiteralTypeWalker::visitReturnStmt()</a>.</p>
 
 </div>
 </div>
@@ -412,7 +412,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="TypeChecker_8h_source.html#l00202">202</a> of file <a class="el" href="TypeChecker_8h_source.html">TypeChecker.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="TypeChecker_8h_source.html#l00361">361</a> of file <a class="el" href="TypeChecker_8h_source.html">TypeChecker.h</a>.</p>
 
 </div>
 </div>

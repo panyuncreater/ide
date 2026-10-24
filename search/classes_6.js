@@ -13,7 +13,8 @@ var searchData=
   ['gcvisualizerpanel_10',['GcVisualizerPanel',['../classGcVisualizerPanel.html',1,'']]],
   ['generatorchunkinfo_11',['GeneratorChunkInfo',['../structGeneratorChunkInfo.html',1,'']]],
   ['globalslotallocator_12',['GlobalSlotAllocator',['../classGlobalSlotAllocator.html',1,'']]],
-  ['glossarypanel_13',['GlossaryPanel',['../classGlossaryPanel.html',1,'']]],
-  ['gradeitem_14',['GradeItem',['../structGradeItem.html',1,'']]],
-  ['guidedtour_15',['GuidedTour',['../classGuidedTour.html',1,'']]]
+  ['globalvarcacheentry_13',['GlobalVarCacheEntry',['../structRegBytecodeChunk_1_1GlobalVarCacheEntry.html',1,'RegBytecodeChunk']]],
+  ['glossarypanel_14',['GlossaryPanel',['../classGlossaryPanel.html',1,'']]],
+  ['gradeitem_15',['GradeItem',['../structGradeItem.html',1,'']]],
+  ['guidedtour_16',['GuidedTour',['../classGuidedTour.html',1,'']]]
 ];
