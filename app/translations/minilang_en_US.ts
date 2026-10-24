@@ -6515,5 +6515,21 @@ Train debugging skills through real bugs accumulated by the project itself: read
         <source>闭包检查器：把 upvalue 的一生（capture / heap / access / close / destroy）画出来。闭包到底是怎么抓住外面那个变量、又怎么一直抱着不放的，这个面板说清楚了。一句话建立直觉：**闭包 = 函数 + 它记住的外层变量（upvalue）**——外层函数返回后局部变量本该消亡，但被捕获的变量会「逃」到堆上继续活着，这就是 close upvalue 的意义。</source>
         <translation type="finished">Closure inspector: upvalue one 生(capture / heap / access / close / destroy)画出来。Closure to bottom is 怎么抓住outside 面那 Variable,又怎么always 抱 not put,this Panel 说clear 楚 。one 句话establish directly 觉:**Closure = Function + it 记住 outer variable(upvalue)**——outer function return after local variable this the 消亡,but capture Variable will"逃"to on the heap Continue live,this 就is close upvalue meaning。</translation>
     </message>
+    <message>
+        <source>状态：运行中，无法重新编译</source>
+        <translation type="finished">Status: running, cannot recompile</translation>
+    </message>
+    <message>
+        <source>运行到当前行失败: %1</source>
+        <translation type="finished">Run to current line failed: %1</translation>
+    </message>
+    <message>
+        <source>导入失败</source>
+        <translation type="finished">Import failed</translation>
+    </message>
+    <message>
+        <source>学习中心</source>
+        <translation type="finished">Learning Center</translation>
+    </message>
 </context>
 </TS>

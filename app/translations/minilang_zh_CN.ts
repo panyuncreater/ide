@@ -5808,5 +5808,21 @@ print(0 or &quot;default&quot;);  // 0（保留原值）</translation>
         <source>闭包检查器：把 upvalue 的一生（capture / heap / access / close / destroy）画出来。闭包到底是怎么抓住外面那个变量、又怎么一直抱着不放的，这个面板说清楚了。一句话建立直觉：**闭包 = 函数 + 它记住的外层变量（upvalue）**——外层函数返回后局部变量本该消亡，但被捕获的变量会「逃」到堆上继续活着，这就是 close upvalue 的意义。</source>
         <translation type="finished">闭包检查器：把 upvalue 的一生（capture / heap / access / close / destroy）画出来。闭包到底是怎么抓住外面那个变量、又怎么一直抱着不放的，这个面板说清楚了。一句话建立直觉：**闭包 = 函数 + 它记住的外层变量（upvalue）**——外层函数返回后局部变量本该消亡，但被捕获的变量会「逃」到堆上继续活着，这就是 close upvalue 的意义。</translation>
     </message>
+    <message>
+        <source>状态：运行中，无法重新编译</source>
+        <translation type="finished">状态：运行中，无法重新编译</translation>
+    </message>
+    <message>
+        <source>运行到当前行失败: %1</source>
+        <translation type="finished">运行到当前行失败: %1</translation>
+    </message>
+    <message>
+        <source>导入失败</source>
+        <translation type="finished">导入失败</translation>
+    </message>
+    <message>
+        <source>学习中心</source>
+        <translation type="finished">学习中心</translation>
+    </message>
 </context>
 </TS>
