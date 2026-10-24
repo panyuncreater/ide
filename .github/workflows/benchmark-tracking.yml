@@ -56,7 +56,12 @@ jobs:
 
       - name: 应用 QFluentKit 本地补丁
         shell: bash
-        run: git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+        run: |
+          if git apply --reverse --check --ignore-whitespace --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch >/dev/null 2>&1; then
+            echo "QFluentKit patch already applied; skipping"
+          else
+            git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+          fi
 
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2.23

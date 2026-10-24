@@ -74,7 +74,12 @@ jobs:
 
       - name: 应用 QFluentKit 本地补丁
         shell: bash
-        run: git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+        run: |
+          if git apply --reverse --check --ignore-whitespace --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch >/dev/null 2>&1; then
+            echo "QFluentKit patch already applied; skipping"
+          else
+            git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+          fi
 
       - name: 安装 Qt6
         uses: jurplel/install-qt-action@v4
@@ -157,7 +162,12 @@ jobs:
 
       - name: 应用 QFluentKit 本地补丁
         shell: bash
-        run: git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+        run: |
+          if git apply --reverse --check --ignore-whitespace --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch >/dev/null 2>&1; then
+            echo "QFluentKit patch already applied; skipping"
+          else
+            git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+          fi
 
       - name: 安装 Qt6
         uses: jurplel/install-qt-action@v4
@@ -222,7 +232,12 @@ jobs:
 
       - name: 应用 QFluentKit 本地补丁
         shell: bash
-        run: git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+        run: |
+          if git apply --reverse --check --ignore-whitespace --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch >/dev/null 2>&1; then
+            echo "QFluentKit patch already applied; skipping"
+          else
+            git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+          fi
 
       - name: 安装 Qt6
         uses: jurplel/install-qt-action@v4
@@ -302,7 +317,12 @@ jobs:
 
       - name: 应用 QFluentKit 本地补丁
         shell: bash
-        run: git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+        run: |
+          if git apply --reverse --check --ignore-whitespace --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch >/dev/null 2>&1; then
+            echo "QFluentKit patch already applied; skipping"
+          else
+            git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+          fi
 
       - name: 安装 Qt6
         uses: jurplel/install-qt-action@v4
@@ -373,7 +393,12 @@ jobs:
       # 应用 QFluentKit 本地补丁（详见 ci.yml build-test 作业同名步骤说明）
       - name: 应用 QFluentKit 本地补丁
         shell: bash
-        run: git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+        run: |
+          if git apply --reverse --check --ignore-whitespace --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch >/dev/null 2>&1; then
+            echo "QFluentKit patch already applied; skipping"
+          else
+            git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+          fi
 
       # ---- 安装 Qt6（Linux，与 ci.yml Linux 作业一致）----
       - name: 安装 Qt6
@@ -437,7 +462,12 @@ jobs:
 
       - name: 应用 QFluentKit 本地补丁
         shell: bash
-        run: git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+        run: |
+          if git apply --reverse --check --ignore-whitespace --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch >/dev/null 2>&1; then
+            echo "QFluentKit patch already applied; skipping"
+          else
+            git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+          fi
 
       - name: 安装 Qt6
         uses: jurplel/install-qt-action@v4
@@ -519,7 +549,12 @@ jobs:
 
       - name: 应用 QFluentKit 本地补丁
         shell: bash
-        run: git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+        run: |
+          if git apply --reverse --check --ignore-whitespace --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch >/dev/null 2>&1; then
+            echo "QFluentKit patch already applied; skipping"
+          else
+            git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+          fi
 
       - name: 安装 Qt6
         uses: jurplel/install-qt-action@v4
@@ -597,7 +632,12 @@ jobs:
 
       - name: 应用 QFluentKit 本地补丁
         shell: bash
-        run: git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+        run: |
+          if git apply --reverse --check --ignore-whitespace --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch >/dev/null 2>&1; then
+            echo "QFluentKit patch already applied; skipping"
+          else
+            git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+          fi
 
       - name: 安装 Qt6 (ARM64)
         uses: jurplel/install-qt-action@v4
