@@ -48,7 +48,7 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: 运行模糊测试
         run: python3 tests_dynamic/fuzz_minilang.py
@@ -68,7 +68,7 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -156,7 +156,7 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -226,7 +226,7 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -311,7 +311,7 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -386,7 +386,7 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -456,7 +456,7 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -543,7 +543,7 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -626,7 +626,7 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
