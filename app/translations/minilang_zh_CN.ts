@@ -5824,5 +5824,9 @@ print(0 or &quot;default&quot;);  // 0（保留原值）</translation>
         <source>学习中心</source>
         <translation type="finished">学习中心</translation>
     </message>
+    <message>
+        <source>丢弃挂起跳转: %1</source>
+        <translation type="finished">丢弃挂起跳转: %1</translation>
+    </message>
 </context>
 </TS>

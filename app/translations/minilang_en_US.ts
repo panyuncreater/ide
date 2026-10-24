@@ -6517,19 +6517,23 @@ Train debugging skills through real bugs accumulated by the project itself: read
     </message>
     <message>
         <source>状态：运行中，无法重新编译</source>
-        <translation type="finished">Status: running, cannot recompile</translation>
+        <translation type="finished">Status:Running,cannot recompile</translation>
     </message>
     <message>
         <source>运行到当前行失败: %1</source>
-        <translation type="finished">Run to current line failed: %1</translation>
+        <translation type="finished">Run to current line fail: %1</translation>
     </message>
     <message>
         <source>导入失败</source>
-        <translation type="finished">Import failed</translation>
+        <translation type="finished">Import fail</translation>
     </message>
     <message>
         <source>学习中心</source>
         <translation type="finished">Learning Center</translation>
+    </message>
+    <message>
+        <source>丢弃挂起跳转: %1</source>
+        <translation type="finished">Discard pending jumps: %1</translation>
     </message>
 </context>
 </TS>

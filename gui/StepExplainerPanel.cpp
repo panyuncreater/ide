@@ -329,9 +329,14 @@ QString describeOperands(const BytecodeChunk& chunk, size_t ip, OpCode op) {
     case OpCode::OP_SUB_INT_SPEC:
     case OpCode::OP_MUL_INT_SPEC:
     case OpCode::OP_LT_INT_SPEC:
+    case OpCode::OP_GT_INT_SPEC:
+    case OpCode::OP_GTE_INT_SPEC:
+    case OpCode::OP_LTE_INT_SPEC:
         return mlTrCtx("StepExplainer", "无操作数");
 
     // 1 字节操作数：槽位 / 计数 / 索引
+    case OpCode::OP_DROP_PENDING_JUMPS:
+        return mlTrCtx("StepExplainer", "丢弃挂起跳转: %1").arg(readByteOperand(chunk, ip));
     case OpCode::OP_CALL_EXPR:
         return mlTrCtx("StepExplainer", "参数个数: %1").arg(readByteOperand(chunk, ip));
     case OpCode::OP_BUILD_ARRAY:
