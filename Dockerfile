@@ -86,7 +86,13 @@ COPY third_party/ third_party/
 # arm64/某些 GCC 版本上会触发链接错误。补丁文件本身变化频率极低，与 third_party/
 # 同层 COPY 以最大化缓存命中率。
 COPY patches/ ./patches/
-RUN cd third_party/QFluentKit && patch -p1 < /app/patches/qfluentkit-local-fixes.patch
+# fork 子模块可能已携带同一补丁：已应用则跳过，避免 patch 交互式询问后退出 1。
+RUN cd third_party/QFluentKit && \
+    if patch -p1 --dry-run --forward < /app/patches/qfluentkit-local-fixes.patch >/dev/null 2>&1; then \
+        patch -p1 < /app/patches/qfluentkit-local-fixes.patch; \
+    else \
+        echo "QFluentKit patch already applied; skipping"; \
+    fi
 
 # 第二层：CMake 配置脚本（变化频率低）
 # 注：cmake/ 必须单独 COPY 到 ./cmake/，不能与文件混合 COPY 到 ./
