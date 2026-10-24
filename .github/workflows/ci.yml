@@ -250,7 +250,7 @@ jobs:
 
       - name: 上传测试结果（失败时）
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: test-results-${{ matrix.os }}
           path: |
@@ -286,7 +286,7 @@ jobs:
 
       - name: 上传安装包
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: minilang-ide-${{ matrix.os }}
           path: |
@@ -423,7 +423,7 @@ jobs:
 
       - name: 上传覆盖率报告
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: code-coverage-windows
           path: |
@@ -528,7 +528,7 @@ jobs:
 
       - name: 上传覆盖率报告
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: code-coverage-linux
           path: |
@@ -643,7 +643,7 @@ jobs:
 
       - name: 上传 cppcheck 报告
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: cppcheck-report
           path: |
@@ -818,7 +818,7 @@ jobs:
 
       - name: 上传 clang-tidy 报告
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: clang-tidy-report
           path: clang-tidy-report.txt
@@ -1097,7 +1097,7 @@ jobs:
 
       - name: 上传性能基准报告（趋势追踪）
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: perf-benchmark-report
           path: |
@@ -1142,7 +1142,7 @@ jobs:
         run: doxygen Doxyfile
 
       - name: 上传文档 artifact（便于审查）
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: doxygen-docs
           path: docs/api/html/
