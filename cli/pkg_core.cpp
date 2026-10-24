@@ -21,6 +21,7 @@
 #include <QTextStream>
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <system_error>
 
@@ -29,6 +30,44 @@ namespace minilang_pkg {
 // ============================================================
 // 辅助函数实现
 // ============================================================
+
+bool isValidPackageName(const std::string& name) {
+    if (name.empty() || name.front() == '.' || name.find("..") != std::string::npos)
+        return false;
+    for (unsigned char c : name) {
+        if (!(std::isalnum(c) || c == '_' || c == '-' || c == '.'))
+            return false;
+    }
+    return true;
+}
+
+bool isValidVersionComponent(const std::string& version) {
+    if (version.empty() || version.front() == '.' || version.find("..") != std::string::npos)
+        return false;
+    for (unsigned char c : version) {
+        if (!(std::isalnum(c) || c == '_' || c == '-' || c == '.' || c == '+'))
+            return false;
+    }
+    return true;
+}
+
+namespace {
+/// 判断 candidate 是否位于 base 目录之内（含 base 本身）。两者均按绝对路径规范化。
+bool isWithinBase(const QString& base, const QString& candidate) {
+    const QString baseClean = QDir::cleanPath(QDir(base).absolutePath());
+    const QString candClean = QDir::cleanPath(QFileInfo(candidate).absoluteFilePath());
+#ifdef _WIN32
+    if (candClean.compare(baseClean, Qt::CaseInsensitive) == 0)
+        return true;
+    return candClean.startsWith(baseClean + '/', Qt::CaseInsensitive) ||
+           candClean.startsWith(baseClean + '\\', Qt::CaseInsensitive);
+#else
+    if (candClean == baseClean)
+        return true;
+    return candClean.startsWith(baseClean + '/');
+#endif
+}
+} // namespace
 
 std::string versionString() {
     return "minilang-pkg 1.0.0 (R165)";
@@ -209,7 +248,7 @@ std::string manifestToJson(const Manifest& manifest) {
 // ============================================================
 
 bool isPackageInstalled(const std::string& packagesDir, const std::string& pkgName) {
-    if (packagesDir.empty() || pkgName.empty())
+    if (packagesDir.empty() || !isValidPackageName(pkgName))
         return false;
     QString pkgPath = QDir(QString::fromStdString(packagesDir)).filePath(QString::fromStdString(pkgName));
     QString pkgJsonPath = QDir(pkgPath).filePath("pkg.json");
@@ -217,6 +256,8 @@ bool isPackageInstalled(const std::string& packagesDir, const std::string& pkgNa
 }
 
 std::string getPackageInstallPath(const std::string& packagesDir, const std::string& pkgName) {
+    if (packagesDir.empty() || !isValidPackageName(pkgName))
+        return {};
     QDir pkgDir = QDir(QString::fromStdString(packagesDir)).filePath(QString::fromStdString(pkgName));
     return pkgDir.absolutePath().toStdString();
 }
@@ -271,12 +312,19 @@ bool PackageManager::saveManifest(const std::string& path, std::string* errorMes
 }
 
 std::string PackageManager::resolvePackagePath(const std::string& pkgName) const {
+    if (config_.packagesDir.empty() || !isValidPackageName(pkgName))
+        return {};
     QDir pkgDir = QDir(QString::fromStdString(config_.packagesDir)).filePath(QString::fromStdString(pkgName));
-    return pkgDir.absolutePath().toStdString();
+    const QString resolved = pkgDir.absolutePath();
+    if (!isWithinBase(QString::fromStdString(config_.packagesDir), resolved))
+        return {};
+    return resolved.toStdString();
 }
 
 std::string PackageManager::findInRegistry(const std::string& pkgName, const std::string& version) const {
-    if (config_.registryDir.empty())
+    if (config_.registryDir.empty() || !isValidPackageName(pkgName))
+        return {};
+    if (!version.empty() && !isValidVersionComponent(version))
         return {};
 
     QDir registryDir(QString::fromStdString(config_.registryDir));
@@ -457,8 +505,8 @@ InstallResult PackageManager::install(const std::string& packageSpec) {
     result.packageName = pkgInfo.name;
     result.version = pkgInfo.version;
 
-    if (pkgInfo.name.empty()) {
-        result.errorMessage = "无效的包描述符: " + packageSpec;
+    if (pkgInfo.name.empty() || !isValidPackageName(pkgInfo.name)) {
+        result.errorMessage = "无效的包描述符（包名仅允许字母/数字/._-，且不得包含 ..）: " + packageSpec;
         return result;
     }
 
@@ -641,14 +689,14 @@ std::string PackageManager::resolveModule(const std::string& modulePath) const {
     if (modulePath.find('/') != std::string::npos) {
         // 自动补 .mini 后缀
         QString candidate = packagesDir.filePath(qModulePath);
-        if (QFile::exists(candidate)) {
+        if (QFile::exists(candidate) && isWithinBase(packagesDir.absolutePath(), candidate)) {
             // BUG-70 fix: QDir(candidate).absolutePath() 把 candidate 当目录处理，返回的是
             // 其父目录路径而非文件本身；改用 QFileInfo::absoluteFilePath() 取文件绝对路径。
             return QFileInfo(candidate).absoluteFilePath().toStdString();
         }
         if (!candidate.endsWith(".mini", Qt::CaseInsensitive)) {
             QString withExt = candidate + ".mini";
-            if (QFile::exists(withExt)) {
+            if (QFile::exists(withExt) && isWithinBase(packagesDir.absolutePath(), withExt)) {
                 // BUG-70 fix: 同上，QFileInfo::absoluteFilePath() 返回文件绝对路径。
                 return QFileInfo(withExt).absoluteFilePath().toStdString();
             }
@@ -658,13 +706,15 @@ std::string PackageManager::resolveModule(const std::string& modulePath) const {
 
     // 不含 "/" 的路径：按 packagesDir/modulePath/modulePath.mini 查找
     // 这是包的"入口模块"约定
+    if (!isValidPackageName(modulePath))
+        return {};
     QDir pkgDir = packagesDir.filePath(qModulePath);
-    if (!pkgDir.exists())
+    if (!pkgDir.exists() || !isWithinBase(packagesDir.absolutePath(), pkgDir.absolutePath()))
         return {};
 
     // 优先查找 packagesDir/modulePath/modulePath.mini
     QString entryFile = pkgDir.filePath(qModulePath + ".mini");
-    if (QFile::exists(entryFile)) {
+    if (QFile::exists(entryFile) && isWithinBase(packagesDir.absolutePath(), entryFile)) {
         // BUG-70 fix: 同上，QFileInfo::absoluteFilePath() 返回文件绝对路径。
         return QFileInfo(entryFile).absoluteFilePath().toStdString();
     }
@@ -673,6 +723,8 @@ std::string PackageManager::resolveModule(const std::string& modulePath) const {
     QStringList miniFiles = pkgDir.entryList({"*.mini"}, QDir::Files);
     if (!miniFiles.isEmpty()) {
         QString first = pkgDir.filePath(miniFiles.first());
+        if (!isWithinBase(packagesDir.absolutePath(), first))
+            return {};
         // BUG-70 fix: 同上，QFileInfo::absoluteFilePath() 返回文件绝对路径。
         return QFileInfo(first).absoluteFilePath().toStdString();
     }
@@ -1299,7 +1351,7 @@ bool PackageManager::checkVersionConstraint(const std::string& pkgName, const Ve
 
 std::string PackageManager::findInRegistryWithConstraint(const std::string& pkgName,
                                                          const VersionConstraint& constraint) const {
-    if (config_.registryDir.empty())
+    if (config_.registryDir.empty() || !isValidPackageName(pkgName))
         return {};
 
     QDir registryDir(QString::fromStdString(config_.registryDir));

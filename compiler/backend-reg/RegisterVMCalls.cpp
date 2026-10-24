@@ -254,6 +254,7 @@ VMResult RegisterVM::executeNewOps(RegOp op, size_t& ip) {
         info.methods.clear();
         info.fieldDefaults.clear();     // BUG-INH-1 fix
         info.flattenedComputed = false; // perf2 fix: 重定义时使预计算缓存失效
+        info.methodCache.clear();       // 重定义后旧方法分发缓存必须失效
 
         // BUG-INH-AUDIT-7 fix: 父类重定义时，所有依赖此父类的子类缓存失效。
         // 遍历所有已注册类，若其继承链包含当前重定义的类，置 flattenedComputed=false
@@ -354,6 +355,17 @@ VMResult RegisterVM::executeNewOps(RegOp op, size_t& ip) {
             }
             info.methods[chunk.constants[mIdx].stringVal()] = chunk.constants[fIdx].stringVal();
             cursor += 4;
+        }
+
+        // 类名作为类型标识写入全局（与 StackVM VMCalls.cpp / Interpreter 一致）。
+        Value classVal(std::string("class:") + className);
+        auto classGsIt = globalNameToSlot_.find(className);
+        if (classGsIt != globalNameToSlot_.end() && classGsIt->second >= 0 &&
+            classGsIt->second < static_cast<int>(globalSlots_.size())) {
+            globalSlots_[classGsIt->second] = std::move(classVal);
+        } else {
+            globals_[className] = std::move(classVal);
+            ++globalsVersion_; // 插入可能 rehash，使名称版全局缓存 Value* 失效
         }
 
         // W3-2-Bug2 fix: 为有 upvalue 的方法创建 upvalue 捕获。

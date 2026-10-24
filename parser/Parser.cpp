@@ -186,7 +186,9 @@ std::unique_ptr<Block> Parser::parse(const std::vector<Token>& tokens) {
     parseDepth_ = 0; // P15 fix: 重置递归深度
     blockDepth_ = 0; // P0-1 fix: 重置块嵌套深度
     diagnostics_.clear();
-    knownEnums_.clear(); // R99: 重置已知 enum 名集合，防止 Parser 复用导致状态泄漏
+    knownEnums_.clear();  // R99: 重置已知 enum 名集合，防止 Parser 复用导致状态泄漏
+    knownMacros_.clear(); // 同一 Parser 复用时，旧 AST 的 MacroDecl* 已失效
+    knownTraits_.clear(); // 同一 Parser 复用时，旧 AST 的 TraitDecl* 已失效
 
     // PERF-21 fix: 预分配 statements 向量容量，避免每个 declaration push_back 触发 realloc。
     // 估算：平均每 4 个 token 产生 1 个声明（关键字 + 名字 + ... + 分号）
@@ -1518,8 +1520,13 @@ std::unique_ptr<EnumDecl> Parser::enumDecl() {
         } catch (const ParseError& e) {
             // 错误恢复：与 classDecl 一致
             diagnostics_.addError(e.what(), e.line, e.column, DiagSource::Parser, e.code);
+            int beforeSync = current_;
             synchronize();
-            // synchronize 在 '}' 处返回（不消费），循环条件 check(RBRACE) 退出
+            // synchronize 在同步关键字（var/fun/class 等）处不消费 token 直接返回，
+            // 而 enum 体不接受这些关键字 → 不强制前进会原地死循环。
+            if (current_ == beforeSync && !isAtEnd() && !check(TokenType::TK_RBRACE)) {
+                advance();
+            }
         }
     }
 

@@ -1063,7 +1063,10 @@ void Formatter::formatFunDecl(FunDecl& node) {
     // 函数体内的 yield 变为非法语法（"yield 只能出现在 fun* 生成器函数体内"）。
     // 七特性 MVP 阶段 4：async fun 打印 `async fun`（优先于 fun*，二者语义等价，
     // 恢复原声明形式；async fun 内部 isGenerator 也为 true，但不应打印 fun*）。
-    const char* funKw = node.isAsync ? "async fun" : (node.isGenerator ? "fun*" : "fun");
+    std::string funKw;
+    if (node.isConstFun)
+        funKw = "const ";
+    funKw += node.isAsync ? "async fun" : (node.isGenerator ? "fun*" : "fun");
     if (node.name.empty()) {
         out_ += funKw;
     } else {

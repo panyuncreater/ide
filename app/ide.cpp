@@ -644,9 +644,32 @@ void Ide::closeEvent(QCloseEvent* event) {
     if (profileDashboardPanel_)
         profileDashboardPanel_->setClosing(true);
 
-    // ROUND-66 fix: 立即停止所有内部定时器，避免 maybeSave 模态对话框的事件循环
-    // 期间定时器触发（completionTimer_/syntaxCheckTimer_/fileTreeFilterTimer_ 的
-    // 回调未受 closing_ 守卫保护，可能访问正在清理的状态）。splitterSaveTimer_ 也停止。
+    // 所有可取消的用户确认必须在不可逆清理之前完成。原实现先 disconnect 再
+    // maybeSave，用户点“取消”后 controller 信号与面板监听器永远不会恢复。
+    if (!maybeSave()) {
+        closing_ = false;
+        if (profileDashboardPanel_)
+            profileDashboardPanel_->setClosing(false);
+        event->ignore();
+        return;
+    }
+
+    if (replPanel_->isReplRunning()) {
+        auto ret = QMessageBox::warning(
+            this, mlTr("REPL 仍在执行"),
+            mlTr("REPL 有异步任务正在执行。\n关闭窗口将发送中止请求并等待最多 5 秒。\n\n是否继续关闭？"),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (ret != QMessageBox::Yes) {
+            closing_ = false;
+            if (profileDashboardPanel_)
+                profileDashboardPanel_->setClosing(false);
+            event->ignore();
+            return;
+        }
+    }
+
+    // ROUND-66 fix: 停止内部定时器，避免后续停止 Worker/REPL 的事件循环期间
+    // 定时器回调访问正在清理的状态。
     if (splitterSaveTimer_)
         splitterSaveTimer_->stop();
     if (completionTimer_)
@@ -662,29 +685,14 @@ void Ide::closeEvent(QCloseEvent* event) {
     // 阶段 2：清理所有活跃的面板特定 GuidedTour
     cleanupActivePanelTours();
 
-    // 阶段 3：尽早切断 controller_ → Ide 信号槽并清空待处理事件
+    // 阶段 3：尽早切断 controller_ → Ide 信号槽并挂起面板监听器
     disconnectControllerEarly();
 
-    if (!maybeSave()) {
-        closing_ = false;
-        event->ignore();
-        return;
-    }
-
-    if (replPanel_->isReplRunning()) {
-        auto ret = QMessageBox::warning(
-            this, mlTr("REPL 仍在执行"),
-            mlTr("REPL 有异步任务正在执行。\n关闭窗口将发送中止请求并等待最多 5 秒。\n\n是否继续关闭？"),
-            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
-        if (ret != QMessageBox::Yes) {
-            event->ignore();
-            return;
-        }
-    }
-
     // 阶段 4：停止运行中的 Worker/VM/REPL（用户取消时返回 false，已 event->ignore()）
-    if (!stopRunningWorkersForClose(event))
+    if (!stopRunningWorkersForClose(event)) {
+        restoreAfterCanceledClose();
         return;
+    }
 
     // Save AST independent window geometry before closing
     if (astWindow_ && !astWindow_->isHidden())
@@ -697,7 +705,7 @@ void Ide::closeEvent(QCloseEvent* event) {
         delete guidedTour_;
         guidedTour_ = nullptr;
     }
-    // ISSUE-7 fix: disconnect 已在 closeEvent 入口执行（ROUND-60 提前到 maybeSave 之前），
+    // ISSUE-7 fix: disconnect/监听器挂起已在不可逆清理阶段开始时执行，
     // 此处保留 removePostedEvents 兜底，清空 stopForClose/processEvents 期间可能重新投递的事件。
     // ROUND-66 P0 fix: 原参数 0 只移除 QEvent::None，改为无参（-1=所有类型）。
     // 同时清空 controller_ 及其协作成员的队列。
@@ -832,11 +840,10 @@ void Ide::cleanupActivePanelTours() {
 /// 双重保险：disconnect 阻止未来投递，removePostedEvents 清空已投递未派发的事件。
 void Ide::disconnectControllerEarly() {
     disconnect(controller_, nullptr, this, nullptr);
-    // ROUND-67 P2 fix: 清空所有 vmStateChangedListener 回调，防止 closeEvent 后续
-    // 操作（vmStop/stopForClose 等）触发 notifyVmStateChanged 时，7 个教学面板的
-    // onVmStateChanged 回调访问正在清理的 UI。
+    // 挂起（而非清空）vmStateChangedListener 回调：防止 closeEvent 后续操作
+    // 触发面板访问正在清理的 UI；若关闭被取消，恢复挂起即可，无需重新注册。
     if (controller_)
-        controller_->clearVmStateChangedListeners();
+        controller_->setVmStateChangedListenersSuspended(true);
     // ROUND-66 P0 fix: removePostedEvents 第二参数 0 表示 QEvent::None（几乎不存在
     // 的事件类型），不是"所有事件"。原代码注释声称"清空已投递未派发的事件"但实际
     // 只移除了 type==0 的事件，QMetaCallEvent（queued slot, type=43）和 QEvent::Timer
@@ -848,6 +855,16 @@ void Ide::disconnectControllerEarly() {
     QCoreApplication::removePostedEvents(this);
     if (controller_)
         controller_->clearPendingEvents();
+}
+
+/// 关闭被用户取消时恢复 controller 信号、面板监听器与关闭标志。
+void Ide::restoreAfterCanceledClose() {
+    closing_ = false;
+    if (profileDashboardPanel_)
+        profileDashboardPanel_->setClosing(false);
+    if (controller_)
+        controller_->setVmStateChangedListenersSuspended(false);
+    connectControllerSignals();
 }
 
 /// closeEvent 阶段 4：停止运行中的 Worker/VM/REPL。

@@ -239,7 +239,7 @@ void SyntaxExplorerPanel::onRunSample() {
             outputEdit_->setPlainText(QString::fromUtf8(out.str().c_str()));
             return;
         }
-        Interpreter interp;
+        Interpreter interp(Interpreter::GcTriggerPolicy::Isolated);
         interp.setOutputCallback([&out](const std::string& s) { out << s << "\n"; });
         interp.execute(*ast);
         out << "[运行完成]";

@@ -9,6 +9,7 @@
 // ============================================================
 
 #include "cli/dap_core.h"
+#include "cli/ProtocolUtils.h"
 
 // DAP 二期：条件断点求值使用临时 Interpreter 沙箱（与 IdeController 的
 // VM 条件断点求值同模式），仅在断点行首次到达时执行，开销可接受。
@@ -807,7 +808,10 @@ std::optional<QJsonObject> DapTransport::read() {
                 if (start != std::string::npos) {
                     val = val.substr(start);
                 }
-                contentLength = static_cast<size_t>(std::stoul(val));
+                auto parsedLength = minilang_cli::parseContentLength(val);
+                if (!parsedLength)
+                    return std::nullopt;
+                contentLength = *parsedLength;
             }
         }
     }
@@ -859,7 +863,10 @@ std::optional<QJsonObject> DapTransport::readFromBuffer() {
                 if (start != std::string::npos) {
                     val = val.substr(start);
                 }
-                contentLength = static_cast<size_t>(std::stoul(val));
+                auto parsedLength = minilang_cli::parseContentLength(val);
+                if (!parsedLength)
+                    return std::nullopt;
+                contentLength = *parsedLength;
             }
         }
     }
@@ -1343,6 +1350,10 @@ QJsonValue DapRequestHandler::handleStackTrace(const QJsonObject& args) {
     int startFrame = args.value("startFrame").toInt(0);
 
     auto frames = session_.getCallStack();
+    const int frameCount = static_cast<int>(frames.size());
+    if (maxLevels < 0)
+        maxLevels = 0;
+    startFrame = std::clamp(startFrame, 0, frameCount);
 
     QJsonArray frameArray;
     int count = 0;

@@ -6,6 +6,12 @@
 // B-008: finally 同帧 abrupt 替换 + 递归同 try 站点异常暂存
 
 #include "common/ThreeBackends.h"
+#include "cli/ProtocolUtils.h"
+#include "cli/pkg_core.h"
+#include "common/RuntimeLimits.h"
+#include "formatter/Formatter.h"
+#include "interpreter/GcManager.h"
+#include "lint/LintPass.h"
 #include <gtest/gtest.h>
 
 namespace {
@@ -332,3 +338,190 @@ TEST(BacklogRegression, OPT07NameVersionGlobalsAcrossBlocks) {
     ASSERT_TRUE(parseClean(src));
     EXPECT_ALL_BACKENDS(src, "[0, 1, 2]");
 }
+
+// ============================================================
+// 2026-10-24 审计修复回归
+// ============================================================
+
+TEST(AuditRound2, ParserEnumBadVariantTerminates) {
+    // enum 体内出现同步关键字时，synchronize() 不消费 token；必须强制前进而不是死循环。
+    Lexer lx;
+    auto tk = lx.scan("enum E { A, var x = 1; } print(1);");
+    Parser p;
+    auto ast = p.parse(tk);
+    EXPECT_NE(ast, nullptr);
+    EXPECT_TRUE(p.hasErrors());
+    EXPECT_LT(p.getDiagnostics().errorCount(), 1000);
+}
+
+TEST(AuditRound2, ParserReuseClearsMacroAndTraitTables) {
+    const std::string src = "macro inc(x) { x + 1 } print(inc!(1));";
+    Lexer lx1;
+    auto tk1 = lx1.scan(src);
+    Parser p;
+    auto ast1 = p.parse(tk1);
+    ASSERT_NE(ast1, nullptr);
+    ASSERT_FALSE(p.hasErrors());
+
+    Lexer lx2;
+    auto tk2 = lx2.scan(src);
+    auto ast2 = p.parse(tk2);
+    EXPECT_NE(ast2, nullptr);
+    EXPECT_FALSE(p.hasErrors()) << "第二次 parse 不应因旧 MacroDecl* 报重复定义";
+}
+
+TEST(AuditRound2, InterpreterGcKeepsClassClosureEnv) {
+    auto& gc = GcManager::instance();
+    const size_t savedThreshold = gc.gcAllocationThreshold();
+    gc.setGcAllocationThreshold(1);
+
+    const std::string src = "fun make() {"
+                            "  var shared = [1, 2, 3];"
+                            "  class C { fun f() { shared.push(4); return len(shared); } }"
+                            "  return C();"
+                            "}"
+                            "var c = make();"
+                            "var i = 0;"
+                            "while (i < 50) { var t = [i]; i = i + 1; }"
+                            "print(c.f());";
+    EXPECT_EQ(minilang_test::runInterpreter(src), "4");
+    gc.setGcAllocationThreshold(savedThreshold);
+}
+
+TEST(AuditRound2, IRDestructureShadowRestoresOuter) {
+    // 块内解构绑定遮蔽外层同名变量：内层 10，块退出后外层恢复 1。
+    const std::string src = "var a = 1; { var (a, b) = (10, 20); print(a); } print(a);";
+    ASSERT_TRUE(parseClean(src));
+    EXPECT_ALL_BACKENDS(src, "101");
+}
+
+TEST(AuditRound2, RegisterVmClassMarker) {
+    const std::string src = "class A { var x = 1; } print(A);";
+    ASSERT_TRUE(parseClean(src));
+    EXPECT_ALL_BACKENDS(src, "class:A");
+}
+
+TEST(AuditRound2, LintFunctionValueCountsAsUsed) {
+    Lexer lx;
+    auto tk = lx.scan("fun d(x) { return x + 1; } var a = [1, 2]; var b = map(a, d); print(b);");
+    Parser p;
+    auto ast = p.parse(tk);
+    ASSERT_NE(ast, nullptr);
+    ASSERT_FALSE(p.hasErrors());
+
+    minilang::lint::LintPass pass;
+    auto result = pass.analyze(*ast);
+    bool unusedFunction = false;
+    for (const auto& d : result.diagnostics.all()) {
+        if (d.code == "lint-unused-function")
+            unusedFunction = true;
+    }
+    EXPECT_FALSE(unusedFunction);
+}
+
+TEST(AuditRound2, FormatterKeepsConstFun) {
+    Lexer lx;
+    auto tk = lx.scan("const fun f(x) { return x + 1; } print(f(1));");
+    Parser p;
+    auto ast = p.parse(tk);
+    ASSERT_NE(ast, nullptr);
+    ASSERT_FALSE(p.hasErrors());
+
+    Formatter fmt;
+    const std::string out = fmt.format(*ast);
+    EXPECT_NE(out.find("const fun"), std::string::npos);
+}
+
+TEST(AuditRound2, PkgRejectsTraversalNames) {
+    EXPECT_FALSE(minilang_pkg::isValidPackageName(".."));
+    EXPECT_FALSE(minilang_pkg::isValidPackageName("../evil"));
+    EXPECT_FALSE(minilang_pkg::isValidPackageName("a/b"));
+    EXPECT_FALSE(minilang_pkg::isValidPackageName("a\\b"));
+    EXPECT_FALSE(minilang_pkg::isValidPackageName(".hidden"));
+    EXPECT_TRUE(minilang_pkg::isValidPackageName("math-utils"));
+    EXPECT_TRUE(minilang_pkg::isValidPackageName("foo.bar"));
+
+    minilang_pkg::PkgConfig cfg;
+    cfg.packagesDir = "C:/tmp/mlpkgs";
+    EXPECT_TRUE(minilang_pkg::getPackageInstallPath(cfg.packagesDir, "../evil").empty());
+    EXPECT_FALSE(minilang_pkg::getPackageInstallPath(cfg.packagesDir, "math-utils").empty());
+}
+
+TEST(AuditRound2, ProtocolContentLengthBounds) {
+    EXPECT_FALSE(minilang_cli::parseContentLength("").has_value());
+    EXPECT_FALSE(minilang_cli::parseContentLength("abc").has_value());
+    EXPECT_FALSE(minilang_cli::parseContentLength("999999999999999999999").has_value());
+    EXPECT_FALSE(minilang_cli::parseContentLength("33554433").has_value());
+    auto ok = minilang_cli::parseContentLength("42");
+    ASSERT_TRUE(ok.has_value());
+    EXPECT_EQ(*ok, 42u);
+}
+
+#ifdef MINILANG_USE_JIT
+TEST(AuditRound2, JitNaNEqualityUsesGenericPath) {
+    const std::string src = "fun eq(x) { return x == x; }"
+                            "var inf = 1e308 * 10;"
+                            "var nan = inf - inf;"
+                            "print(eq(nan));";
+    EXPECT_EQ(minilang_test::runJIT(src), "false");
+    EXPECT_EQ(minilang_test::runJIT(src), minilang_test::runStackVM(src));
+}
+
+TEST(AuditRound2, JitNonNumericArithmeticErrors) {
+    const std::string src = "fun f(x) { return x - 1; } print(f(\"abc\"));";
+    const std::string jit = minilang_test::runJIT(src);
+    EXPECT_NE(jit.find("runtime:"), std::string::npos) << jit;
+    EXPECT_EQ(jit.find("-1"), std::string::npos) << jit;
+}
+
+TEST(AuditRound2, JitTypeCheckEnforced) {
+    const std::string src = "fun g(): int { return \"s\"; } print(g());";
+    const std::string jit = minilang_test::runJIT(src);
+    EXPECT_NE(jit.find("类型注解违反"), std::string::npos) << jit;
+}
+
+TEST(AuditRound2, JitOperandStackBoundsGraceful) {
+    // 8 个局部槽 × 256 帧超过 2048 槽操作数栈；必须报递归深度错误而非越界覆盖。
+    const std::string src = "fun f(n) {"
+                            "  var a = 1; var b = 2; var c = 3; var d = 4;"
+                            "  var e = 5; var g = 6; var h = 7;"
+                            "  if (n == 0) { return 0; }"
+                            "  return f(n - 1) + a + b + c + d + e + g + h;"
+                            "}"
+                            "print(f(300));";
+    const std::string jit = minilang_test::runJIT(src);
+    EXPECT_NE(jit.find("递归深度"), std::string::npos) << jit;
+}
+
+TEST(AuditRound2, JitSafepointKeepsBlockGlobalCycle) {
+    const std::string src = "{"
+                            "  var a = [1, 2, 3];"
+                            "  var i = 0;"
+                            "  while (i < 20000) { var t = [i]; i = i + 1; }"
+                            "  print(a[0]);"
+                            "}";
+    // a 仅由 globals_ 名称表持有；JIT safepoint roots 漏掉它时会被当作孤岛清空。
+    EXPECT_EQ(minilang_test::runJIT(src), "1");
+}
+
+TEST(AuditRound2, JitLoopLimitPerSiteAndPerCall) {
+    auto& cfg = RuntimeLimits::RuntimeConfig::instance();
+    const int64_t savedLimit = cfg.maxLoopIterations();
+    cfg.setMaxLoopIterations(100);
+
+    // 同一 chunk 内两个各 80 次的循环：独立计数，不应累计成 160 触发上限。
+    const std::string twoLoops = "var s = 0; var i = 0;"
+                                 "while (i < 80) { s = s + 1; i = i + 1; }"
+                                 "i = 0;"
+                                 "while (i < 80) { s = s + 1; i = i + 1; }"
+                                 "print(s);";
+    EXPECT_EQ(minilang_test::runJIT(twoLoops), "160");
+
+    // 同一循环站点被函数调用两次：进入 chunk 时计数重置，不应跨调用累计。
+    const std::string repeatedCall = "fun f() { var i = 0; while (i < 80) { i = i + 1; } return i; }"
+                                     "print(f() + f());";
+    EXPECT_EQ(minilang_test::runJIT(repeatedCall), "160");
+
+    cfg.setMaxLoopIterations(savedLimit);
+}
+#endif

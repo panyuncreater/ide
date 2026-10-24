@@ -1030,6 +1030,10 @@ void VmStackSandboxPanel::switchToTracePage() {
 
 /// 从当前关卡提取/编译出字节码，供跟踪页单步执行。
 void VmStackSandboxPanel::loadBytecodeFromCurrentLevel() {
+    if (controller_ && (controller_->isRunning() || controller_->isVmRunning())) {
+        traceStatusLabel_->setText(mlTr("状态：运行中，无法重新编译"));
+        return;
+    }
     bytecodeList_->clear();
     bytecodeOffsets_.clear();
     currentIp_ = 0;

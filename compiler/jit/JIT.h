@@ -330,6 +330,8 @@ struct JitContext {
     // prologue 后全程不变（函数块只用 r13/r15），跨块跳转等价原单体布局的
     // 同块 jmp epilogue。由 commit 阶段在全部块 add 成功后写入。
     void* errorExit = nullptr; // offset 296
+    int64_t* stackBase = nullptr;  // offset 304: 操作数栈初始栈顶（最高地址）
+    int64_t* stackLimit = nullptr; // offset 312: 操作数栈最低安全地址（含临时值余量）
 };
 
 // ============================================================
@@ -371,6 +373,8 @@ constexpr int loopIterationsPtr = 272; // R166 fix: per-chunk 循环迭代计数
 constexpr int maxLoopIterations = 280; // R166 fix: 循环迭代上限
 constexpr int callImportSlots = 288;   // ADR-008: 跨块调用导入槽表指针
 constexpr int errorExit = 296;         // ADR-008: 非 main 块错误退出桩目标
+constexpr int stackBase = 304;         // 操作数栈初始栈顶
+constexpr int stackLimit = 312;        // 操作数栈最低安全地址
 } // namespace jit_offset
 static_assert(offsetof(JitContext, hasError) == jit_offset::hasError, "hasError offset");
 static_assert(offsetof(JitContext, globalSlots) == jit_offset::globalSlots, "globalSlots offset");
@@ -405,12 +409,19 @@ static_assert(offsetof(JitContext, loopIterationsPtr) == jit_offset::loopIterati
 static_assert(offsetof(JitContext, maxLoopIterations) == jit_offset::maxLoopIterations, "maxLoopIterations offset");
 static_assert(offsetof(JitContext, callImportSlots) == jit_offset::callImportSlots, "callImportSlots offset");
 static_assert(offsetof(JitContext, errorExit) == jit_offset::errorExit, "errorExit offset");
+static_assert(offsetof(JitContext, stackBase) == jit_offset::stackBase, "stackBase offset");
+static_assert(offsetof(JitContext, stackLimit) == jit_offset::stackLimit, "stackLimit offset");
 
 // Prologue 栈布局常量
 // 48 = 5 个 callee-saved 寄存器 (r12/r13/r14/r15/rbx) × 8B + 8B 对齐填充
-// 8192 = 操作数栈 1024 × 8B
+// 16384 = 操作数栈 2048 × 8B；256 槽余量供表达式临时值使用。
+// 帧局部槽总量由 stackLimit 在运行期强制检查，超过则按递归深度错误优雅退出。
 constexpr int kJitCalleeSavedArea = 48;
-constexpr int kJitOperandStackBytes = 8192;
+constexpr int kJitOperandStackBytes = 16384;
+constexpr int kJitOperandStackGuardSlots = 256;
+// 每个 chunk 预分配的回边计数器槽位数。独立循环使用独立计数，避免同一函数内
+// 两个有限循环共享 1e7 上限而误报“无限循环”；超过该数量的函数回退到 VM。
+constexpr size_t kJitLoopSitesPerChunk = 16;
 // Windows x64 ABI shadow space / Linux 对齐填充
 constexpr int kJitWinShadowSpace = 32;
 constexpr int kJitLinuxCallAlign = 8;
@@ -727,6 +738,8 @@ public:
     const std::vector<int64_t>& globalSlotsRef() const { return globalSlots_; }
     const JitGlobalNameToSlotMap& globalNameToSlotRef() const { return globalNameToSlot_; }
     const std::unordered_map<std::string, Value>& globalsRef() const { return globals_; }
+    /// 收集 JIT 侧持有的堆对象（globals_/类字段默认值/闭包/upvalue）作为 GC 根。
+    void collectGcRoots(std::vector<const void*>& roots) const;
     ///@}
 
 private:
@@ -850,7 +863,8 @@ private:
     ///@{
     void emitCallBinaryHelper(asmjit::x86::Assembler& a, asmjit::Label epilogue, void* fnPtr, bool needCtx,
                               bool checkError);
-    void emitCallUnaryHelper(asmjit::x86::Assembler& a, void* fnPtr);
+    void emitCallUnaryHelper(asmjit::x86::Assembler& a, void* fnPtr, asmjit::Label& epilogue);
+    void emitRuntimeErrorCheck(asmjit::x86::Assembler& a, asmjit::Label& epilogue);
     void emitCallOrderedCompare(asmjit::x86::Assembler& a, void* fnPtr, int64_t cmpType);
     void emitBuildArray(asmjit::x86::Assembler& a, asmjit::Label epilogue, uint8_t count);
     void emitIndexGet(asmjit::x86::Assembler& a, asmjit::Label epilogue);
@@ -929,7 +943,8 @@ private:
     /// OP_LOOP 代码生成（含 safepoint GC 轮询 + OSR 回边计数 + OSR 入口点生成）
     /// @param jumpTarget 循环回边目标 Label（调用前已验证存在）
     /// @param chunkIdx 当前 chunk 索引（OSR 计数器寻址用）
-    void emitLoop(asmjit::x86::Assembler& a, asmjit::Label epilogue, asmjit::Label jumpTarget, size_t chunkIdx);
+    void emitLoop(asmjit::x86::Assembler& a, asmjit::Label epilogue, asmjit::Label jumpTarget, size_t chunkIdx,
+                  uint32_t loopSiteIdx);
     /// OP_DIVIDE 代码生成（INT 原生路径 + FLOAT SSE2 路径 + 除零错误 + C++ 辅助回退）
     void emitDivide(asmjit::x86::Assembler& a, asmjit::Label epilogue, size_t chunkIdx);
     /// OP_MODULO 代码生成（INT 原生路径 + 除零错误 + C++ 辅助回退）
@@ -998,7 +1013,7 @@ private:
     /// JIT 代码生成/键结构版本——任何 codegen 逻辑变更或缓存键公式/输入集变更必须
     /// 递增，使旧缓存键确定性失效。2026-10-22：enumInfos 全量入键的键结构补全递增至
     /// 2（非正确性必需，保守选择；评估见 JIT.cpp computeBlockCacheKey 尾部注释）
-    static constexpr uint32_t kJitCodegenVersion = 2;
+    static constexpr uint32_t kJitCodegenVersion = 4;
 
     struct JitBlockCacheEntry {
         struct SharedBlock {
@@ -1014,6 +1029,7 @@ private:
         std::vector<std::pair<std::string, JitMethodInfo>> funcEntries;   ///< 函数名 → 元数据
         std::vector<CallImportPatch> importPatches;                       ///< 导入槽回填清单（命中时同索引重填）
         std::vector<std::string> chunkNames;                              ///< 全局 chunk 索引 → 名称
+        std::vector<minilang::JitTier> chunkTiers;                        ///< 缓存命中时恢复 tier 视图
         size_t memberIcCount = 0;                                         ///< memberGetIC_ 尺寸（IC id [0,N) 对齐）
         size_t methodIcCount = 0;                                         ///< methodCallIC_ 尺寸
         std::string capturedAsm;                                          ///< 教学汇编捕获（命中时复用）

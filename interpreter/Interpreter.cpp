@@ -1303,12 +1303,17 @@ void Interpreter::triggerIncrementalGc() {
             collectEnvChainRoots(modPair.second.get());
         }
     }
-    // (3) 类注册表中字段的默认值（可能持有循环容器）
+    // (3) 类注册表中字段的默认值（可能持有循环容器）+ 类定义时的闭包环境
     for (const auto& clsPair : classRegistry_) {
         for (const auto& fldPair : clsPair.second.fields) {
             const void* ptr = fldPair.second.gcRootPtr();
             if (ptr)
                 gcRoots.push_back(ptr);
+        }
+        // 类定义在函数/块内时，方法经 ClassInfo::closureEnv 访问外层容器；
+        // 该环境不在 currentEnv_ 链上，必须显式纳入根集。
+        if (clsPair.second.closureEnv) {
+            collectEnvChainRoots(clsPair.second.closureEnv.get());
         }
     }
     // (4) REPL 暂存状态（若 active，savedGlobalEnv/savedClassRegistry 中的容器仍存活）

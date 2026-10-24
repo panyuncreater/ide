@@ -622,6 +622,8 @@ public:
             cb.fn = nullptr;
         }
     }
+    /// 临时挂起/恢复监听器（closeEvent 取消后恢复面板刷新，无需重新注册）。
+    void setVmStateChangedListenersSuspended(bool suspended) { vmStateChangedListenersSuspended_ = suspended; }
 
     // A1 fix: 启用/禁用 RegisterVM 后端（同步 Compiler 与 VmStepper）
     // 启用后 compile() 走 AST → IR → RegisterBytecode 路径，VmStepper 转发到 regVm_。
@@ -713,7 +715,10 @@ private:
         VmStateChangedCallback fn;
     };
     std::vector<VmStateChangedListener> vmStateChangedListeners_;
+    bool vmStateChangedListenersSuspended_ = false;
     void notifyVmStateChanged() {
+        if (vmStateChangedListenersSuspended_)
+            return;
         // BUG-68 fix (P2 vector 重分配): 回调 fn() 可能在执行期间触发 add/removeVmStateChangedListener
         // （例如面板在状态变更回调中注册/反注册自身或其他面板）。原索引迭代直接持有
         // vmStateChangedListeners_ 引用，push_back 触发 realloc 会使正在迭代的元素引用失效（UAF），

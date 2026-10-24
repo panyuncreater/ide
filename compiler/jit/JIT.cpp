@@ -122,6 +122,35 @@ extern "C" void jitLoopLimitExceeded(JitContext* ctx, int64_t limit) {
 // ============================================================
 // Safepoint GC — JIT 代码在 OP_LOOP 回边处调用
 // ============================================================
+void JITBackend::collectGcRoots(std::vector<const void*>& roots) const {
+    const auto addValue = [&roots](const Value& v) {
+        if (const void* ptr = v.gcRootPtr())
+            roots.push_back(ptr);
+    };
+    for (const auto& kv : globals_)
+        addValue(kv.second);
+    for (const auto& cls : classInfo_) {
+        for (const auto& fld : cls.second.fieldDefaults)
+            addValue(fld.second);
+    }
+    for (const auto& kv : functionClosures_)
+        addValue(kv.second);
+    for (const auto& kv : openUpvalues_) {
+        if (auto uv = kv.second.lock(); uv && uv->isClosed)
+            addValue(uv->value);
+    }
+    for (const auto& frame : frameUpvaluesStack_) {
+        for (const auto& uv : frame) {
+            if (uv && uv->isClosed)
+                addValue(uv->value);
+        }
+    }
+    // lastMutatedReceiver_ 保存 raw bits；bitsToValue 会为指针类型 addRef，
+    // 局部 Value 析构后引用计数恢复。
+    Value lastReceiver = bitsToValue(static_cast<uint64_t>(lastMutatedReceiver_));
+    addValue(lastReceiver);
+}
+
 // 收集 JIT 操作数栈和全局槽位中的存活容器对象作为 GC roots，
 // 然后调用 GcManager::collectCycle 回收循环引用孤岛。
 // JIT 代码在调用前已同步 r15 到 ctx->stackTop。
@@ -135,35 +164,37 @@ extern "C" void jitSafepointGc(JitContext* ctx) {
     std::vector<const void*> roots;
 
     // 1. 扫描全局槽位
-    if (ctx->globalSlots) {
-        auto* backend = static_cast<JITBackend*>(ctx->backendPtr);
-        if (backend) {
-            for (int64_t bits : backend->globalSlotsRef()) {
-                uint64_t ubits = static_cast<uint64_t>(bits);
-                uint64_t tag = ubits & jit_internal::JIT_TAG_FIELD_MASK;
-                if (tag == jit_internal::JIT_PTR_TAG_BASE) {
-                    // 指针类型（堆对象）：提取低 48 位作为 RefCounted*
-                    const void* ptr = reinterpret_cast<const void*>(ubits & jit_internal::JIT_INT48_MASK);
-                    if (ptr)
-                        roots.push_back(ptr);
-                }
+    auto* backend = static_cast<JITBackend*>(ctx->backendPtr);
+    if (backend && ctx->globalSlots) {
+        for (int64_t bits : backend->globalSlotsRef()) {
+            uint64_t ubits = static_cast<uint64_t>(bits);
+            uint64_t tag = ubits & jit_internal::JIT_TAG_FIELD_MASK;
+            if (tag == jit_internal::JIT_PTR_TAG_BASE) {
+                // 指针类型（堆对象）：提取低 48 位作为 RefCounted*
+                const void* ptr = reinterpret_cast<const void*>(ubits & jit_internal::JIT_INT48_MASK);
+                if (ptr)
+                    roots.push_back(ptr);
             }
         }
     }
+    // 名称版全局（globals_）、类字段默认值、闭包/upvalue、lastMutatedReceiver_。
+    // 这些根不依赖 globalSlots 是否为空（纯名称变量的程序 globalSlots 可能为空）。
+    if (backend)
+        backend->collectGcRoots(roots);
 
-    // 2. 扫描操作数栈（从 stackTop 到栈底，栈向下增长，所以 stackTop 是最低地址）
-    // 注：JitContext 中没有 stackBottom 字段（无法精确知道栈底，取决于 prologue
-    // 分配大小），因此使用保守上限 1024 个槽位。依据：当前帧大小约 8240 字节
-    // （8240/8 = 1030 槽），1024 是覆盖单帧的保守上限。
-    // Bug #49 fix: 增加防御性上限钳制——即使未来调高预期扫描量，
-    // 也不会越过栈分配区域误扫邻接内存。
-    if (ctx->stackTop) {
+    // 2. 扫描操作数栈已使用区间 [stackTop, stackBase)。栈向下增长，stackTop 是最低地址。
+    //    原实现固定扫 1024 槽，深调用栈（多帧局部变量）会漏根；stackBase 由 prologue 写入。
+    if (ctx->stackTop && ctx->stackBase) {
         int64_t* sp = ctx->stackTop;
-        // 扫描当前栈上最多 1024 个槽位（操作数栈容量上限）
-        int slotsToScan = 1024;
-        if (slotsToScan > 1024)
-            slotsToScan = 1024; // 防御性上限钳制
-        for (int i = 0; i < slotsToScan && sp; ++i, ++sp) {
+        int64_t* base = ctx->stackBase;
+        size_t slotsToScan = 0;
+        if (sp < base) {
+            slotsToScan = static_cast<size_t>(base - sp);
+            constexpr size_t kMaxScanSlots = static_cast<size_t>(kJitOperandStackBytes / sizeof(int64_t));
+            if (slotsToScan > kMaxScanSlots)
+                slotsToScan = kMaxScanSlots;
+        }
+        for (size_t i = 0; i < slotsToScan; ++i, ++sp) {
             uint64_t ubits = static_cast<uint64_t>(*sp);
             uint64_t tag = ubits & jit_internal::JIT_TAG_FIELD_MASK;
             if (tag == jit_internal::JIT_PTR_TAG_BASE) {
@@ -697,6 +728,9 @@ uint64_t JITBackend::computeBlockCacheKey(const CompileResult& result) {
     // 性隔离（不递增时跨公式失配仅由哈希散列差异概率性保证），并为 ADR-008 阶段 3 磁
     // 盘持久化确立「键结构变更同步递增」的纪律先例。
     mixU64(kJitCodegenVersion);
+    // 汇编捕获开关影响缓存条目的 capturedAsm 可用性（未捕获条目无汇编文本），
+    // 必须纳入键，避免 setAsmCapture(true) 的实例命中无汇编缓存。
+    mixU64(asmCaptureEnabled_ ? 1u : 0u);
     return h;
 }
 
@@ -739,8 +773,8 @@ void JITBackend::initPerChunkState() {
     jitContext_.osrLoopCountsPtr = osrLoopCounts_.data();
     jitContext_.osrLoopThresholdsPtr = osrLoopThresholds_.data();
     jitContext_.osrRecompiledFlagsPtr = osrRecompiledFlags_.data();
-    // R166 fix: 循环迭代上限数组（无限循环防护）
-    loopIterations_.assign(n, 0);
+    // R166 fix: 循环迭代上限数组（无限循环防护）。每个 chunk 预留独立循环站点槽位。
+    loopIterations_.assign(n * kJitLoopSitesPerChunk, 0);
     jitContext_.loopIterationsPtr = loopIterations_.data();
 }
 
@@ -775,6 +809,9 @@ bool JITBackend::tryExecuteFromCache(uint64_t key) {
         funcEntries_.emplace(n, info);
     }
     chunkNames_ = e.chunkNames;
+    chunkTiers_ = e.chunkTiers;
+    if (chunkTiers_.size() < chunkNames_.size())
+        chunkTiers_.resize(chunkNames_.size(), minilang::JitTier::Baseline);
     initPerChunkState();
     // IC 数组：缓存代码的 callSiteId 编号 [0,N) 与新实例分配严格对齐
     // （缓存组覆盖全部 chunk，编号即全量编号）
@@ -860,6 +897,7 @@ void JITBackend::storeBlocksToCache(uint64_t key) {
     }
     entry->importPatches = callImportPatches_;
     entry->chunkNames = chunkNames_;
+    entry->chunkTiers = chunkTiers_;
     entry->memberIcCount = memberGetIC_.size();
     entry->methodIcCount = methodCallIC_.size();
     entry->capturedAsm = capturedAsm_;

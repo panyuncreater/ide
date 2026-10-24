@@ -1081,6 +1081,8 @@ VMResult VM::writeBackReceiver(uint16_t receiverVarIdx, uint8_t receiverLocalSlo
             globalSlots_[gsIt->second] = std::move(mutatedObj);
         } else {
             globals_[recvName] = std::move(mutatedObj);
+            // insert 可能触发 rehash，使 per-chunk varCache_ 中的 Value* 失效。
+            ++globalsVersion_;
         }
     } else if (receiverLocalSlotByte != RuntimeLimits::NO_SLOT) {
         size_t bp = currentFrame().basePointer;

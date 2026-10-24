@@ -2621,32 +2621,41 @@ void AstIRBuilder::visitBlock(Block* node) {
             uint32_t nameIdx;    // GLOBAL_NAME 时的名称索引
         };
         std::vector<ShadowedSave> shadowedSaves;
+        auto collectShadowedSave = [&](const std::string& name, int line) {
+            auto it = varMap_.find(name);
+            if (it == varMap_.end())
+                return;
+            ShadowedSave sv;
+            sv.varName = name;
+            sv.oldInfo = it->second;
+            sv.hadOld = true;
+            sv.savedVreg = ir_->allocVReg();
+            if (it->second.kind == VarInfo::Kind::GLOBAL_SLOT) {
+                sv.wasGlobalSlot = true;
+                sv.slot = static_cast<int>(it->second.index);
+                sv.nameIdx = 0;
+                emitIR(IROp::LOAD_GLOBAL, {sv.savedVreg, IROperand::imm(static_cast<uint32_t>(sv.slot))}, line);
+            } else if (it->second.kind == VarInfo::Kind::GLOBAL_NAME) {
+                sv.wasGlobalSlot = false;
+                sv.slot = -1;
+                sv.nameIdx = it->second.index;
+                emitIR(IROp::LOAD_GLOBAL, {sv.savedVreg, IROperand::global(sv.nameIdx)}, line);
+            } else {
+                // LOCAL/UPVALUE 在顶层不应出现（inFunction_==false），跳过
+                sv.hadOld = false;
+            }
+            shadowedSaves.push_back(std::move(sv));
+        };
         for (auto& s : node->statements) {
-            if (s && s->nodeType == NodeType::NODE_VAR_DECL) {
-                VarDecl* vd = static_cast<VarDecl*>(s.get());
-                auto it = varMap_.find(vd->name);
-                if (it != varMap_.end()) {
-                    ShadowedSave sv;
-                    sv.varName = vd->name;
-                    sv.oldInfo = it->second;
-                    sv.hadOld = true;
-                    sv.savedVreg = ir_->allocVReg();
-                    if (it->second.kind == VarInfo::Kind::GLOBAL_SLOT) {
-                        sv.wasGlobalSlot = true;
-                        sv.slot = static_cast<int>(it->second.index);
-                        sv.nameIdx = 0;
-                        emitIR(IROp::LOAD_GLOBAL, {sv.savedVreg, IROperand::imm(static_cast<uint32_t>(sv.slot))},
-                               vd->line);
-                    } else if (it->second.kind == VarInfo::Kind::GLOBAL_NAME) {
-                        sv.wasGlobalSlot = false;
-                        sv.slot = -1;
-                        sv.nameIdx = it->second.index;
-                        emitIR(IROp::LOAD_GLOBAL, {sv.savedVreg, IROperand::global(sv.nameIdx)}, vd->line);
-                    } else {
-                        // LOCAL/UPVALUE 在顶层不应出现（inFunction_==false），跳过
-                        sv.hadOld = false;
-                    }
-                    shadowedSaves.push_back(std::move(sv));
+            if (!s)
+                continue;
+            if (s->nodeType == NodeType::NODE_VAR_DECL) {
+                auto* vd = static_cast<VarDecl*>(s.get());
+                collectShadowedSave(vd->name, vd->line);
+            } else if (s->nodeType == NodeType::NODE_DESTRUCTURE_BINDING) {
+                // 解构绑定与 var 声明同属块级新声明，必须参与遮蔽保存/恢复
+                for (const auto& name : static_cast<DestructureBinding*>(s.get())->names) {
+                    collectShadowedSave(name, s->line);
                 }
             }
         }

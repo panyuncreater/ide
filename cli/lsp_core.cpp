@@ -6,6 +6,7 @@
 // ============================================================
 
 #include "cli/lsp_core.h"
+#include "cli/ProtocolUtils.h"
 
 #include "common/Diagnostic.h"
 #include "formatter/Formatter.h"
@@ -567,7 +568,10 @@ std::optional<QJsonObject> JsonRpcTransport::read() {
                 size_t start = val.find_first_not_of(" \t");
                 if (start != std::string::npos)
                     val = val.substr(start);
-                contentLength = static_cast<size_t>(std::stoul(val));
+                auto parsedLength = minilang_cli::parseContentLength(val);
+                if (!parsedLength)
+                    return std::nullopt;
+                contentLength = *parsedLength;
             }
         }
     }
@@ -614,7 +618,10 @@ std::optional<QJsonObject> JsonRpcTransport::readFromBuffer() {
                 size_t start = val.find_first_not_of(" \t");
                 if (start != std::string::npos)
                     val = val.substr(start);
-                contentLength = static_cast<size_t>(std::stoul(val));
+                auto parsedLength = minilang_cli::parseContentLength(val);
+                if (!parsedLength)
+                    return std::nullopt;
+                contentLength = *parsedLength;
             }
         }
     }

@@ -73,49 +73,55 @@ void JITBackend::emitCallBinaryHelper(x86::Assembler& a, Label epilogue, void* f
     a.mov(x86::qword_ptr(x86::r15), x86::rax);
     // 可选：检查错误标志（除法/取模的除零检查）
     if (checkError) {
-        // R143 修复：hasError 是 bool（1 字节），不能用 mov rax,[rax] 读取 8 字节，
-        // 否则会读到 bool 之后的 padding/垃圾数据，误判为有错误导致提前跳转 epilogue。
-        // 必须用 movzx 读取 1 字节并零扩展到 64 位。
-        // L14: 不再直接跳 epilogue，而是调用 jitCheckAndRethrow 将错误转为可捕获异常。
-        Label noError = a.new_label();
-        a.mov(x86::rax, x86::qword_ptr(x86::r12, jit_offset::hasError)); // rax = hasError 指针 (bool*)
-        a.movzx(x86::rax, x86::byte_ptr(x86::rax));                      // rax = *hasError (1 字节零扩展)
-        a.test(x86::rax, x86::rax);
-        a.jz(noError);
-        // 有错误：同步栈顶并调用 jitCheckAndRethrow(ctx, r13)
-        a.mov(x86::qword_ptr(x86::r12, jit_offset::stackTop), x86::r15);
-#ifdef _WIN32
-        a.mov(x86::rcx, x86::r12);
-        a.mov(x86::rdx, x86::r13);
-        a.sub(x86::rsp, 32);
-        a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitCheckAndRethrow));
-        a.call(x86::rax);
-        a.add(x86::rsp, 32);
-#else
-        a.mov(x86::rdi, x86::r12);
-        a.mov(x86::rsi, x86::r13);
-        a.sub(x86::rsp, 16);
-        a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitCheckAndRethrow));
-        a.call(x86::rax);
-        a.add(x86::rsp, 16);
-#endif
-        // rax = catchAddr 或 nullptr（未捕获时 hasError 已由 jitThrow 设置）
-        a.test(x86::rax, x86::rax);
-        a.jz(epilogue);
-        // 捕获异常：恢复 r13/r15 并跳转到 catch 块
-        a.mov(x86::r13, x86::qword_ptr(x86::r12, jit_offset::currentBp));
-        a.mov(x86::r15, x86::qword_ptr(x86::r12, jit_offset::stackTop));
-        a.jmp(x86::rax);
-        a.bind(noError);
+        emitRuntimeErrorCheck(a, epilogue);
     }
 }
 
-// 生成"peek 栈顶值 → 设置参数 → 调用辅助函数 → pop → push 结果"的机器码
-void JITBackend::emitCallUnaryHelper(x86::Assembler& a, void* fnPtr) {
+void JITBackend::emitRuntimeErrorCheck(x86::Assembler& a, Label& epilogue) {
+    // R143 修复：hasError 是 bool（1 字节），不能用 mov rax,[rax] 读取 8 字节，
+    // 否则会读到 bool 之后的 padding/垃圾数据，误判为有错误导致提前跳转 epilogue。
+    // 必须用 movzx 读取 1 字节并零扩展到 64 位。
+    // L14: 不再直接跳 epilogue，而是调用 jitCheckAndRethrow 将错误转为可捕获异常。
+    Label noError = a.new_label();
+    a.mov(x86::rax, x86::qword_ptr(x86::r12, jit_offset::hasError)); // rax = hasError 指针 (bool*)
+    a.movzx(x86::rax, x86::byte_ptr(x86::rax));                      // rax = *hasError (1 字节零扩展)
+    a.test(x86::rax, x86::rax);
+    a.jz(noError);
+    // 有错误：同步栈顶并调用 jitCheckAndRethrow(ctx, r13)
+    a.mov(x86::qword_ptr(x86::r12, jit_offset::stackTop), x86::r15);
 #ifdef _WIN32
-    a.mov(x86::rcx, x86::qword_ptr(x86::r15)); // arg1 = value
+    a.mov(x86::rcx, x86::r12);
+    a.mov(x86::rdx, x86::r13);
+    a.sub(x86::rsp, 32);
+    a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitCheckAndRethrow));
+    a.call(x86::rax);
+    a.add(x86::rsp, 32);
 #else
-    a.mov(x86::rdi, x86::qword_ptr(x86::r15));
+    a.mov(x86::rdi, x86::r12);
+    a.mov(x86::rsi, x86::r13);
+    a.sub(x86::rsp, 16);
+    a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitCheckAndRethrow));
+    a.call(x86::rax);
+    a.add(x86::rsp, 16);
+#endif
+    // rax = catchAddr 或 nullptr（未捕获时 hasError 已由 jitThrow 设置）
+    a.test(x86::rax, x86::rax);
+    a.jz(epilogue);
+    // 捕获异常：恢复 r13/r15 并跳转到 catch 块
+    a.mov(x86::r13, x86::qword_ptr(x86::r12, jit_offset::currentBp));
+    a.mov(x86::r15, x86::qword_ptr(x86::r12, jit_offset::stackTop));
+    a.jmp(x86::rax);
+    a.bind(noError);
+}
+
+// 生成"peek 栈顶值 → 设置参数 → 调用辅助函数 → pop → push 结果"的机器码
+void JITBackend::emitCallUnaryHelper(x86::Assembler& a, void* fnPtr, Label& epilogue) {
+#ifdef _WIN32
+    a.mov(x86::rcx, x86::r12);                 // arg1 = ctx
+    a.mov(x86::rdx, x86::qword_ptr(x86::r15)); // arg2 = value
+#else
+    a.mov(x86::rdi, x86::r12);
+    a.mov(x86::rsi, x86::qword_ptr(x86::r15));
 #endif
 #ifdef _WIN32
     a.sub(x86::rsp, 32);
@@ -133,6 +139,8 @@ void JITBackend::emitCallUnaryHelper(x86::Assembler& a, void* fnPtr) {
     // push 结果
     a.sub(x86::r15, 8);
     a.mov(x86::qword_ptr(x86::r15), x86::rax);
+    // 非数值取负等错误需要转为可捕获异常
+    emitRuntimeErrorCheck(a, epilogue);
 }
 
 // 生成"peek 栈顶两个值 → 设置 (left, right, cmpType) 参数 → 调用 → pop 两个 → push 结果"的机器码
@@ -1402,7 +1410,8 @@ void JITBackend::emitModulo(x86::Assembler& a, Label epilogue, size_t chunkIdx) 
 // ------------------------------------------------------------------
 // OP_LOOP：循环回边（含 safepoint GC 轮询 + OSR 回边计数 + OSR 入口点生成）
 // ------------------------------------------------------------------
-void JITBackend::emitLoop(x86::Assembler& a, Label epilogue, Label jumpTarget, size_t chunkIdx) {
+void JITBackend::emitLoop(x86::Assembler& a, Label epilogue, Label jumpTarget, size_t chunkIdx,
+                          uint32_t loopSiteIdx) {
     // R157: OSR 回边计数器注入（仅当 osrLoopThresholds_[chunkIdx] > 0 时）
     // 每次循环回边递增计数器，超阈值时触发特化重编译。
     // 编译期过滤：阈值为 0 时完全跳过代码生成，运行时零开销（R151 教训）。
@@ -1445,13 +1454,14 @@ void JITBackend::emitLoop(x86::Assembler& a, Label epilogue, Label jumpTarget, s
     {
         Label skipLimit = a.new_label();
 
-        // 1. 递增 loopIterations_[chunkIdx]
+        // 1. 递增 loopIterations_[chunkIdx * kJitLoopSitesPerChunk + loopSiteIdx]
+        const int32_t loopSlot = static_cast<int32_t>((chunkIdx * kJitLoopSitesPerChunk + loopSiteIdx) * 8);
         a.mov(x86::rcx, x86::qword_ptr(x86::r12, jit_offset::loopIterationsPtr));
-        a.inc(x86::qword_ptr(x86::rcx, static_cast<int32_t>(chunkIdx * 8)));
+        a.inc(x86::qword_ptr(x86::rcx, loopSlot));
 
         // 2. 读取计数并与上限比较
         a.mov(x86::rcx, x86::qword_ptr(x86::r12, jit_offset::loopIterationsPtr));
-        a.mov(x86::rax, x86::qword_ptr(x86::rcx, static_cast<int32_t>(chunkIdx * 8)));
+        a.mov(x86::rax, x86::qword_ptr(x86::rcx, loopSlot));
         a.cmp(x86::rax, x86::qword_ptr(x86::r12, jit_offset::maxLoopIterations));
         a.jbe(skipLimit); // 未超限（count <= limit），正常回边
 
@@ -1822,6 +1832,13 @@ bool JITBackend::emitCallDispatch(x86::Assembler& a, Label epilogue, const JitFu
         a.mov(x86::rax, static_cast<int32_t>(RuntimeLimits::MAX_FRAMES));
         a.cmp(x86::rdx, x86::rax);
         a.jae(overflowLabel);
+
+        // 2b. 操作数栈边界检查：新帧底部不得低于 stackLimit（含临时值余量）。
+        //     仅检查帧数会让 localCount 较大的深递归覆盖 helper 调用帧。
+        a.lea(x86::rax, x86::qword_ptr(x86::r15, -static_cast<int32_t>(extraSlots * 8)));
+        a.mov(x86::rcx, x86::qword_ptr(x86::r12, jit_offset::stackLimit));
+        a.cmp(x86::rax, x86::rcx);
+        a.jbe(overflowLabel);
 
         // 3. 预分配 extraSlots（填充 JIT_NULL_BITS）
         //    参数已在栈上（r15 指向 argN-1），只需在参数下方 push extraSlots

@@ -474,6 +474,8 @@ void LintPass::visitBlock(Block& node) {
 
 void LintPass::visitVarRef(VarRef& node) {
     useVar(node.name);
+    // 函数作为一等值使用（如 map(arr, d) / var f = d）同样计入引用。
+    useFun(node.name);
 }
 
 void LintPass::visitAssignment(Assignment& node) {

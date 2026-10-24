@@ -119,6 +119,7 @@ void jitPrintInt(JitContext* ctx, int64_t value);
 void jitPrintValue(JitContext* ctx, uint64_t rawBits);
 void jitReportError(JitContext* ctx, const char* msg);
 void jitReportStackOverflow(JitContext* ctx);
+void jitTypeCheck(JitContext* ctx, const char* annotation);
 
 // --- Arithmetic/Comparison (JITRuntime.cpp) ---
 int64_t jitTruthy(uint64_t bits);
@@ -127,7 +128,7 @@ uint64_t jitSubGeneric(JitContext* ctx, uint64_t leftBits, uint64_t rightBits);
 uint64_t jitMulGeneric(JitContext* ctx, uint64_t leftBits, uint64_t rightBits);
 uint64_t jitDivGeneric(JitContext* ctx, uint64_t leftBits, uint64_t rightBits);
 uint64_t jitModGeneric(JitContext* ctx, uint64_t leftBits, uint64_t rightBits);
-uint64_t jitNegateGeneric(uint64_t bits);
+uint64_t jitNegateGeneric(JitContext* ctx, uint64_t bits);
 uint64_t jitEqualGeneric(uint64_t leftBits, uint64_t rightBits);
 uint64_t jitNotEqualGeneric(uint64_t leftBits, uint64_t rightBits);
 uint64_t jitOrderedCompare(uint64_t leftBits, uint64_t rightBits, int64_t cmpType);

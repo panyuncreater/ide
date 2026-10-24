@@ -31,6 +31,7 @@
   - **统计字段为 `std::atomic`（2026-10-04 起）**：`allocationsSinceLastGc_`/`currentPhase_`/`lastMarkedCount_`/`lastCollectedCount_`/`totalGcCount_`/`gcAllocationThreshold_`/`pendingIncrementalGc_` 均为 atomic，写入点在锁内、只读访问（GUI 轮询）无锁；`checkPendingGc` 走无锁快速路径（relaxed 读 + 慢路径锁内复查）。新增统计字段沿用此模式。
   - **登记表为 slots_ 槽位表（2026-10-06 起）**：GcManager 以单一 `slots_` 槽位表取代原 `tracked_` vector + `aliveSet_` unordered_set 双结构——不变量（全局 `recursive_mutex` 内）：非空槽位 ⟺ 槽位被 `gcSlot_==i` 的存活对象占用，nullptr 为已析构墓碑，锁内无悬垂指针；死亡槽位经 `freeSlots_` 复用（LIFO），`trackedCount()` 为 O(1) 精确存活数。对象侧 `RefCounted::gcSlot_` 仅在锁内读写（registerTracked 回写 / Phase 3 压缩回写 / onDestroyed 读取）。**约定**：新增跟踪类型照常「构造函数 `registerTracked` + 基类析构钩子注销」配对，禁止绕过 `onDestroyed` 手工操作槽位（onDestroyed 以 `slots_[gcSlot_]==obj` 指针身份卫兵回收，手工绕过会破坏身份不变量导致槽位复用冲突）；全局锁纪律（分配/析构/collectCycle 全程持锁）不变——分配路径的 thread_local 批量登记去锁化已评估为需 TSan 通道专验，未实施（见优化积压记录）。
   - mark 阶段整个 `collectCycle` 共享一个 worklist（按引用传入 `markValue`），不得在每个根元素内新建。
+  - **类闭包环境根（2026-10-24）**：增量 GC 遍历 `classRegistry_` 时除字段默认值外，必须对 `ClassInfo::closureEnv` 走 `collectEnvChainRoots`；类定义在函数/块内时，方法捕获的外层容器仅经该环境链可达。JIT safepoint 同样必须收集 `globals_`、类字段默认值、闭包/关闭 upvalue、`lastMutatedReceiver_` 与完整已用操作数栈。
 
 ## 4. Copy-On-Write（COW）
 
@@ -44,6 +45,7 @@
 ## 5. 栈与帧约束
 
 - VM 操作数栈：`VMStack` 定长 1024 元素 + 栈顶指针，越界显式 abort（**禁止**改为静默回绕/增长）。
+- JIT 操作数栈：2048 槽（16 KB）+ 256 槽临时值余量；`stackLimit` 在 main prologue 写入，全部建帧路径必须检查，超限按递归深度错误退出（2026-10-24）。
 - 寄存器帧：`std::array<Value, 32>` 零堆分配，32 虚拟寄存器 R0-R31（`docs/architecture.md` L63-64）。
 - **约定**：新增执行路径不得引入无界/变长栈分配；递归深度有 RuntimeLimits 兜底（`common/RuntimeLimits.h`）。
 

@@ -34,6 +34,12 @@
 
 namespace minilang_pkg {
 
+/// 包名是否可安全用于路径拼接（仅 [A-Za-z0-9._-]，拒绝空、前导 '.'、'..'）
+bool isValidPackageName(const std::string& name);
+
+/// 版本号是否可安全用于路径拼接（仅 [A-Za-z0-9._+-]，拒绝空、前导 '.'、'..'）
+bool isValidVersionComponent(const std::string& version);
+
 /// 包描述符
 struct PackageInfo {
     std::string name;        ///< 包名（如 "math-utils"）

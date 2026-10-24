@@ -26,7 +26,7 @@
 | 多闭包捕获语义 | **快照语义**（非 JS/Lua 共享单元格）：作用域关闭后各闭包持有独立 capturedVars | `AuditBatch6ClosureWriteback.SharedCaptureViaIndexCallsSnapshotSemantics`、R2 回归锁 |
 | catch 变量重声明 | catch 块内 `var` 重声明 catch 变量名：块内可见、全局原值不受污染、重声明后可再 throw | `AuditBatch6CatchRedecl.*` |
 | super 非方法上下文 | 顶层/嵌套普通函数中 `super` 为**运行时错误**（"未定义的变量: this"），不崩溃不静默 | `AuditBatch1Super.TopLevelSuperRuntimeError`、`ConsistencyDiff.H7b` |
-| 无限循环防护 | 循环回边注入迭代计数，超限报错（对齐 Interpreter） | R166、`compiler/jit/JIT.cpp` OP_LOOP safepoint |
+| 无限循环防护 | 循环回边注入迭代计数，超限报错（对齐 Interpreter）；JIT 按 chunk 独立循环站点计数，进入 chunk 时重置 | R166、`BacklogRegression.JitLoopLimitPerSiteAndPerCall` |
 | 生成器挂起语义 | `MINILANG_CORO_FIBER=1` 平台三执行后端真挂起（副作用只执行一次），`=0` 统一重放；yield 表达式恢复值 = 自身 yield 值，最终 yield 即 done | 单边启用禁令、快照相对化/returnIp 重定基/嵌套上下文 checklist、`CoroutineSuspension.*` 锁定测试——见 §9 与 [ADR-007](../adr/ADR-007-coroutine-suspension.md) |
 | 字典 NaN 键 | **SameValueZero**（2026-10-22）：所有 NaN 键归一（DictKeyHash 规范化到 quiet_NaN 同一模式 + DictKeyEqual 判 NaN 互等，对齐 JS Map/Set）——可写、可查、重复写覆盖 | `ConsistencyDiff.DictNaNKeySameValueZero`（三后端 `21`）；四后端共享 DictMap 自动一致；共享 DictMap 的 JIT 运行时 helper 同语义 |
 | 泛型注解擦除 | 复合注解只要引用类型参数即整体跳过校验；擦除点共七处（Interpreter `checkType`/枚举载荷、`Compiler::emitTypeCheck`、`AstIRBuilder::emitTypeCheckIR`、StackVM/RegisterVM 枚举载荷、JIT `jitBuildEnumVariant`） | 新增注解形态（`T[]`/`T?`/`dict[..T..]`/`fun(T):T`）必须七处同步；判定统一用 `annotationReferencesTypeParam`；JIT 通道单独回归 |
@@ -87,6 +87,10 @@
 - JIT 遇不支持场景为 **fail-fast**（整体编译失败显式报错，无静默降级继续执行）；`genericXXX` 路径为运行时类型分发兜底，与审计报告 D4 中"FIXME/TODO 标记"无关（该说法为 `XXX` 子串误扫，勘误见报告内注）。
 - **per-chunk 编译架构（[ADR-008](../adr/ADR-008-jit-per-chunk.md)）跨块协议三不变**：`JitContext` 邮箱布局、`JitFrame` 72B 软帧布局、extern "C" helper ABI。跨块引用仅两条通道——跨块 OP_CALL fast path 经 `ctx->callImportSlots` 导入槽（槽位表跨编译代合并追加、`execute()` 入口清空）、非 main 块错误退出经 `ctx->errorExit`。涉及 JIT 代码生成的行为变更**必须递增 `kJitCodegenVersion`**（`JIT.h`），否则进程内块缓存会命中旧版本的陈旧机器码。
 - JIT 不与 StackVM/RegisterVM 发生帧互操作（VM 零 JIT 引用；OSR/反优化两端均为 JIT 块）——三后端一致性验证不涉及 JIT 帧协议；JIT 一致性以「已支持场景 = 与 StackVM 严格一致」断言（TestJIT/TestJITCoverageGaps）为准。
+- **操作数栈边界（2026-10-24）**：JIT 操作数栈固定 2048 槽，底部预留 256 槽临时值余量；`JitContext::stackLimit` 由 main prologue 写入。任何建帧路径（codegen fast path 与 `jitCallExpr`/`jitCallByName`/`jitMethodCall`/`jitClassNew` helper）在分配局部槽前必须检查新栈顶不低于 `stackLimit`，否则按递归深度错误退出。禁止只检查 `MAX_FRAMES`。
+- **Safepoint GC 根（2026-10-24）**：`jitSafepointGc` 必须扫描已用操作数栈区间 `[stackTop, stackBase)`，并收集 `globals_`、类字段默认值、`functionClosures_`、关闭 upvalue、`lastMutatedReceiver_`；这些根不得依赖 `globalSlots` 是否为空。锁定 `AuditRound2.JitSafepointKeepsBlockGlobalCycle`。
+- **类型检查与算术（2026-10-24）**：JIT 必须实现 `OP_TYPE_CHECK`（peek + `typeMatchValue` + 实例继承链，失败报类型注解违反），不得静默跳过或整体回退；通用算术对非数值操作数报“算术运算需要数值类型”；NaN 的 EQ/NEQ 必须走 generic 比较。锁定 `AuditRound2.JitTypeCheckEnforced`、`JitNonNumericArithmeticErrors`、`JitNaNEqualityUsesGenericPath`。
+- **缓存可观测性（2026-10-24）**：`asmCaptureEnabled_` 必须参与块缓存键（否则捕获实例命中无汇编条目）；`chunkTiers_` 随缓存条目保存/恢复。codegen 版本当前为 4。
 
 ## 9. 协程真挂起一致性（2026-10-05 落地，ADR-007）
 

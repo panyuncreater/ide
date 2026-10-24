@@ -1518,6 +1518,8 @@ VMResult VM::executeDefineClass(size_t& ip, OpCode op) {
         globalSlots_[classGsIt->second] = std::move(classVal);
     } else {
         globals_[className] = std::move(classVal);
+        // insert 可能触发 rehash，使 per-chunk varCache_ 中的 Value* 失效。
+        ++globalsVersion_;
     }
 
     // W3-2-Bug2 fix: 为有 upvalue 的方法创建 upvalue 捕获。

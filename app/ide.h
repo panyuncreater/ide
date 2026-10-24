@@ -208,6 +208,8 @@ private:
     /// closeEvent 阶段 4：停止运行中的 Worker/VM/REPL（stopForClose + vmStop + replPanel stop+wait）
     /// 返回 true 表示可继续关闭；返回 false 表示用户取消（已调用 event->ignore()，需 return）
     bool stopRunningWorkersForClose(QCloseEvent* event);
+    /// 关闭被用户取消时恢复 controller 信号、面板监听器与关闭标志。
+    void restoreAfterCanceledClose();
     void showEvent(QShowEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
     bool nativeEvent(const QByteArray& eventType, void* message, qintptr* result) override;

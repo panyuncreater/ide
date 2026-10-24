@@ -212,6 +212,12 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
             // 空栈时 r15 指向栈基址 [rbp-48]（48 = 5 个 callee-saved × 8 + 8B 对齐填充），
             // push: sub r15, 8; mov [r15], rax; pop: mov rax, [r15]; add r15, 8
             pb.a->lea(x86::r15, x86::qword_ptr(x86::rbp, -kJitCalleeSavedArea));
+            // 记录操作数栈边界：stackBase 供 GC 扫描已用区间，stackLimit 供建帧检查。
+            // 底部预留 kJitOperandStackGuardSlots 槽给表达式临时值，避免帧内运算越界。
+            constexpr int kStackGuardBytes = kJitOperandStackGuardSlots * 8;
+            pb.a->mov(x86::qword_ptr(x86::r12, jit_offset::stackBase), x86::r15);
+            pb.a->lea(x86::rax, x86::qword_ptr(x86::r15, -(kJitOperandStackBytes - kStackGuardBytes)));
+            pb.a->mov(x86::qword_ptr(x86::r12, jit_offset::stackLimit), x86::rax);
 
             // R141: 初始化 r13 = 0（mainChunk 无参数，basePointer 无意义）
             pb.a->xor_(x86::r13, x86::r13);
@@ -456,6 +462,7 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
 
     const bool isMain = (chunkIdx == 0);
     currentChunkIdx_ = chunkIdx; // R159: 更新 emitCheckInt 使用的 chunk 索引
+    uint32_t loopSiteCursor = 0;
 
     // ---- 第一遍扫描：收集所有跳转目标位置，为每个位置创建 Label ----
     // R162: 新增 OP_TRY_BEGIN（catchOffset 相对偏移）和 OP_PUSH_JUMP_TARGET（绝对目标）
@@ -495,6 +502,15 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
     if (!isMain) {
         {
             a.bind(currentBlockEntryLabel_);
+            // 每次函数调用重置本 chunk 的所有循环回边计数。否则函数被反复调用时，
+            // 同一循环站点的计数会跨调用累计，误报“疑似无限循环”。
+            {
+                a.mov(x86::rcx, x86::qword_ptr(x86::r12, jit_offset::loopIterationsPtr));
+                for (size_t i = 0; i < kJitLoopSitesPerChunk; ++i) {
+                    const int32_t off = static_cast<int32_t>((chunkIdx * kJitLoopSitesPerChunk + i) * 8);
+                    a.mov(x86::qword_ptr(x86::rcx, off), 0);
+                }
+            }
             // R150: 注入 per-chunk 调用计数器递增指令（热点检测用）
             // JitContext.chunkCallCounts (offset 104) 是指向 uint64_t 数组的指针，
             // 不能直接 inc [r12 + 104 + chunkIdx*8]（那会写穿 JitContext 结构体）。
@@ -872,7 +888,7 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
             // C++ 辅助路径：调用 jitNegateGeneric(value)
             a.bind(genericNeg);
             emitRecordTypeFeedback(a, x86::rax, chunkIdx);
-            emitCallUnaryHelper(a, reinterpret_cast<void*>(&jitNegateGeneric));
+            emitCallUnaryHelper(a, reinterpret_cast<void*>(&jitNegateGeneric), epilogue);
             a.bind(negEnd);
             ip += 1;
             break;
@@ -901,11 +917,15 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
             a.mov(x86::rdx, x86::rax);
             a.shr(x86::rdx, 48);
             a.cmp(x86::edx, 0x7FFB);
-            a.je(genericEq); // POINTER → 可能是 STRING → 走 C++ 辅助
+            a.je(genericEq);
+            a.cmp(x86::edx, 0x7FFC);
+            a.jae(genericEq); // NaN 浮点（0x7FFC）及负 NaN（>=0xFFF8）必须走 generic // POINTER → 可能是 STRING → 走 C++ 辅助
             a.mov(x86::rdx, x86::rcx);
             a.shr(x86::rdx, 48);
             a.cmp(x86::edx, 0x7FFB);
             a.je(genericEq);
+            a.cmp(x86::edx, 0x7FFC);
+            a.jae(genericEq); // NaN 浮点（0x7FFC）及负 NaN（>=0xFFF8）必须走 generic
             // INT/BOOL/NULL 原生路径：raw bits 比较
             a.add(x86::r15, 16); // pop 两个
             a.cmp(x86::rcx, x86::rax);
@@ -944,10 +964,14 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
             a.shr(x86::rdx, 48);
             a.cmp(x86::edx, 0x7FFB);
             a.je(genericNeq);
+            a.cmp(x86::edx, 0x7FFC);
+            a.jae(genericNeq); // NaN 浮点（0x7FFC）及负 NaN（>=0xFFF8）必须走 generic
             a.mov(x86::rdx, x86::rcx);
             a.shr(x86::rdx, 48);
             a.cmp(x86::edx, 0x7FFB);
             a.je(genericNeq);
+            a.cmp(x86::edx, 0x7FFC);
+            a.jae(genericNeq); // NaN 浮点（0x7FFC）及负 NaN（>=0xFFF8）必须走 generic
             // INT/BOOL/NULL 原生路径
             a.add(x86::r15, 16);
             a.cmp(x86::rcx, x86::rax);
@@ -1419,6 +1443,32 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
                 compileError("OP_TYPE_CHECK 操作数越界");
                 return false;
             }
+            const uint16_t typeIdx = static_cast<uint16_t>(bytecodes[ip + 1]) |
+                                     (static_cast<uint16_t>(bytecodes[ip + 2]) << 8);
+            if (typeIdx >= chunk.constants.size() || !chunk.constants[typeIdx].isString()) {
+                compileError("OP_TYPE_CHECK 类型注解常量索引越界");
+                return false;
+            }
+            // 注解字符串由缓存条目持有的 CompileResult 快照保活，可直接嵌入代码。
+            const char* annotation = chunk.constants[typeIdx].stringVal().c_str();
+            a.mov(x86::qword_ptr(x86::r12, jit_offset::stackTop), x86::r15);
+            a.movabs(x86::r10, reinterpret_cast<uint64_t>(annotation));
+#ifdef _WIN32
+            a.mov(x86::rcx, x86::r12);
+            a.mov(x86::rdx, x86::r10);
+            a.sub(x86::rsp, 32);
+            a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitTypeCheck));
+            a.call(x86::rax);
+            a.add(x86::rsp, 32);
+#else
+            a.mov(x86::rdi, x86::r12);
+            a.mov(x86::rsi, x86::r10);
+            a.sub(x86::rsp, 16);
+            a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitTypeCheck));
+            a.call(x86::rax);
+            a.add(x86::rsp, 16);
+#endif
+            emitRuntimeErrorCheck(a, epilogue);
             ip += 3;
             break;
         }
@@ -1521,7 +1571,11 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
             }
             // P0 重构：提取为 emitLoop helper（JITCodeGenHelpers.cpp）
             // 含 safepoint GC 轮询 + OSR 回边计数 + OSR 入口点生成 + jmp target
-            emitLoop(a, epilogue, targetIt->second, chunkIdx);
+            if (loopSiteCursor >= kJitLoopSitesPerChunk) {
+                compileError("单函数循环数超过 JIT 上限，回退到 VM");
+                return false;
+            }
+            emitLoop(a, epilogue, targetIt->second, chunkIdx, loopSiteCursor++);
             ip += 3;
             break;
         }

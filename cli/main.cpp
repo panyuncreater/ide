@@ -137,7 +137,9 @@ static int runLint(const minilang_lint::CliArgs& args) {
     bool anyError = false;
 
     for (const auto& file : args.files) {
-        LintProcessResult r = processFile(file, args.options, args.format, args.quiet);
+        LintProcessResult r = (args.fix || args.fixDryRun)
+                                  ? processFileFix(file, args.options, args.fixDryRun)
+                                  : processFile(file, args.options, args.format, args.quiet);
         if (!r.ok) {
             std::fprintf(stderr, "%s\n", r.errorMessage.c_str());
             anyError = true;

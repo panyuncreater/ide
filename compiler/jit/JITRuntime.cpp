@@ -30,6 +30,20 @@
 
 using namespace jit_internal;
 
+/// 建帧前检查操作数栈剩余空间。返回 false 时已写入 hasError，调用方恢复 callerSp。
+static bool jitEnsureStackRoom(JitContext* ctx, const int64_t* newTop) {
+    if (!ctx || !ctx->stackLimit)
+        return true;
+    if (newTop >= ctx->stackLimit)
+        return true;
+    if (ctx->hasError && ctx->errorBuffer) {
+        *ctx->hasError = true;
+        *ctx->errorBuffer = ErrorFormat::formatStd(ErrorMessages::kRecursionDepthExceededFmtStd,
+                                                   static_cast<int>(RuntimeLimits::MAX_FRAMES));
+    }
+    return false;
+}
+
 extern "C" {
 
 /// 输出 int64_t 值到 outputCallback（R142 之前用，保留用于向后兼容）
@@ -88,6 +102,41 @@ extern "C" int64_t jitTruthy(uint64_t bits) {
     return v.isTruthy() ? 1 : 0;
 }
 
+static uint64_t jitArithmeticTypeError(JitContext* ctx) {
+    if (ctx && ctx->hasError && ctx->errorBuffer) {
+        *ctx->hasError = true;
+        *ctx->errorBuffer = "算术运算需要数值类型";
+    }
+    return jitReturn(Value(0));
+}
+
+/// OP_TYPE_CHECK 运行时检查：peek 栈顶值，类型不匹配时写 hasError。
+/// 与 StackVM executeMiscTypeCheck 同语义（精确匹配 + 实例继承链 64 层）。
+extern "C" void jitTypeCheck(JitContext* ctx, const char* annotation) {
+    if (!ctx || !ctx->stackTop || !annotation)
+        return;
+    Value val = bitsToValue(static_cast<uint64_t>(*ctx->stackTop));
+    if (minilang::typeMatchValue(val, annotation))
+        return;
+    if (val.isInstance() && ctx->classInfoPtr) {
+        auto classIt = ctx->classInfoPtr->find(val.className());
+        int depth = 0;
+        while (classIt != ctx->classInfoPtr->end() && depth < 64) {
+            if (classIt->second.name == annotation)
+                return;
+            if (classIt->second.superClassName.empty())
+                break;
+            classIt = ctx->classInfoPtr->find(classIt->second.superClassName);
+            ++depth;
+        }
+    }
+    if (ctx->hasError && ctx->errorBuffer) {
+        *ctx->hasError = true;
+        *ctx->errorBuffer = ErrorFormat::formatStd(ErrorMessages::kTypeAnnotationViolationFmtStd, annotation,
+                                                   val.typeName());
+    }
+}
+
 /// 通用加法（FLOAT/FLOAT, STRING/STRING, STRING/其他, 其他/STRING）
 /// @param leftBits  左操作数 raw bits
 /// @param rightBits 右操作数 raw bits
@@ -137,11 +186,14 @@ extern "C" uint64_t jitAddGeneric(JitContext* ctx, uint64_t leftBits, uint64_t r
         }
         return jitReturn(Value(l + r)); // Value(int64_t) 自动处理 int48 装箱
     }
+    // 非数值类型检查（字符串拼接已在上方处理）
+    if (!left.isNumber() || !right.isNumber()) {
+        return jitArithmeticTypeError(ctx);
+    }
     // 浮点加法（StackVM computeArith 路径对齐）
     if (left.isFloat() || right.isFloat()) {
         return jitReturn(Value(left.toDouble() + right.toDouble()));
     }
-    // 不支持的类型组合
     return jitReturn(Value(0.0));
 }
 
@@ -149,6 +201,9 @@ extern "C" uint64_t jitAddGeneric(JitContext* ctx, uint64_t leftBits, uint64_t r
 extern "C" uint64_t jitSubGeneric(JitContext* ctx, uint64_t leftBits, uint64_t rightBits) {
     Value left = bitsToValue(leftBits);
     Value right = bitsToValue(rightBits);
+    if (!left.isNumber() || !right.isNumber()) {
+        return jitArithmeticTypeError(ctx);
+    }
     // R145 修复：整数减法（INT + INT，INT48 溢出时从 JIT 原生路径降级到此）
     if (left.isInt() && right.isInt()) {
         int64_t l = left.intVal();
@@ -169,6 +224,9 @@ extern "C" uint64_t jitSubGeneric(JitContext* ctx, uint64_t leftBits, uint64_t r
 extern "C" uint64_t jitMulGeneric(JitContext* ctx, uint64_t leftBits, uint64_t rightBits) {
     Value left = bitsToValue(leftBits);
     Value right = bitsToValue(rightBits);
+    if (!left.isNumber() || !right.isNumber()) {
+        return jitArithmeticTypeError(ctx);
+    }
     // R145 修复：整数乘法（INT + INT，INT48 溢出时从 JIT 原生路径降级到此）
     if (left.isInt() && right.isInt()) {
         int64_t l = left.intVal();
@@ -189,6 +247,9 @@ extern "C" uint64_t jitMulGeneric(JitContext* ctx, uint64_t leftBits, uint64_t r
 extern "C" uint64_t jitDivGeneric(JitContext* ctx, uint64_t leftBits, uint64_t rightBits) {
     Value left = bitsToValue(leftBits);
     Value right = bitsToValue(rightBits);
+    if (!left.isNumber() || !right.isNumber()) {
+        return jitArithmeticTypeError(ctx);
+    }
     double r = right.toDouble();
     if (r == 0.0) {
         if (ctx && ctx->hasError && ctx->errorBuffer) {
@@ -205,6 +266,9 @@ extern "C" uint64_t jitDivGeneric(JitContext* ctx, uint64_t leftBits, uint64_t r
 extern "C" uint64_t jitModGeneric(JitContext* ctx, uint64_t leftBits, uint64_t rightBits) {
     Value left = bitsToValue(leftBits);
     Value right = bitsToValue(rightBits);
+    if (!left.isNumber() || !right.isNumber()) {
+        return jitArithmeticTypeError(ctx);
+    }
     double r = right.toDouble();
     if (r == 0.0) {
         if (ctx && ctx->hasError && ctx->errorBuffer) {
@@ -217,8 +281,11 @@ extern "C" uint64_t jitModGeneric(JitContext* ctx, uint64_t leftBits, uint64_t r
 }
 
 /// 通用取负（FLOAT，含 INT 降级路径）
-extern "C" uint64_t jitNegateGeneric(uint64_t bits) {
+extern "C" uint64_t jitNegateGeneric(JitContext* ctx, uint64_t bits) {
     Value v = bitsToValue(bits);
+    if (!v.isNumber()) {
+        return jitArithmeticTypeError(ctx);
+    }
     // R145 修复：整数取负（INT，INT48 溢出时从 JIT 原生路径降级到此）
     if (v.isInt()) {
         int64_t i = v.intVal();
@@ -834,6 +901,12 @@ extern "C" void jitCallExpr(JitContext* ctx, uint8_t argCount) {
 
     // 7. 构造新帧栈：push args + push defaults + push extraSlots
     //    JIT 栈向下增长：push = sp -= 1; *sp = valueToBits(val)
+    int preAllocated = foundFunc->arity; // 函数 chunk 没有 this/fields
+    int extraSlots = foundFunc->localCount - preAllocated;
+    if (!jitEnsureStackRoom(ctx, sp - (argCount + defaultCount + extraSlots))) {
+        ctx->stackTop = callerSpAfterPop;
+        return;
+    }
     // push args
     for (int i = 0; i < argCount; ++i) {
         sp -= 1;
@@ -845,8 +918,6 @@ extern "C" void jitCallExpr(JitContext* ctx, uint8_t argCount) {
         *sp = valueToBits(defaults[i]); // detach
     }
     // push extraSlots (null)
-    int preAllocated = foundFunc->arity; // 函数 chunk 没有 this/fields
-    int extraSlots = foundFunc->localCount - preAllocated;
     for (int i = 0; i < extraSlots; ++i) {
         sp -= 1;
         *sp = static_cast<int64_t>(JIT_NULL_BITS);
@@ -1443,6 +1514,13 @@ extern "C" void jitClassNew(JitContext* ctx, const char* className, uint8_t argC
     }
 
     // push args
+    int preAllocated = 1 + fieldCount + initMethod->arity;
+    int extraSlots = initMethod->localCount - preAllocated;
+    // fields 已在 sp 上方分配，这里只检查 args/defaults/extraSlots 的剩余空间。
+    if (!jitEnsureStackRoom(ctx, sp - (argCount + defaultCount + extraSlots))) {
+        ctx->stackTop = callerSpAfterPop;
+        return;
+    }
     for (int i = 0; i < argCount; ++i) {
         sp -= 1;
         *sp = valueToBits(args[i]);
@@ -1454,8 +1532,6 @@ extern "C" void jitClassNew(JitContext* ctx, const char* className, uint8_t argC
     }
 
     // push extraSlots (null)
-    int preAllocated = 1 + fieldCount + initMethod->arity;
-    int extraSlots = initMethod->localCount - preAllocated;
     if (extraSlots < 0) {
         if (ctx->hasError && ctx->errorBuffer) {
             *ctx->hasError = true;
@@ -2190,6 +2266,13 @@ method_found:
     }
 
     // push args
+    int preAllocated = 1 + fieldCount + foundMethod->arity;
+    int extraSlots = foundMethod->localCount - preAllocated;
+    // fields 已在 sp 上方分配，这里只检查 args/defaults/extraSlots 的剩余空间。
+    if (!jitEnsureStackRoom(ctx, sp - (argCount + defaultCount + extraSlots))) {
+        ctx->stackTop = callerSpAfterPop;
+        return;
+    }
     for (int i = 0; i < argCount; ++i) {
         sp -= 1;
         *sp = valueToBits(args[i]); // detach
@@ -2201,8 +2284,6 @@ method_found:
     }
 
     // push extraSlots (null)
-    int preAllocated = 1 + fieldCount + foundMethod->arity;
-    int extraSlots = foundMethod->localCount - preAllocated;
     for (int i = 0; i < extraSlots; ++i) {
         sp -= 1;
         *sp = static_cast<int64_t>(JIT_NULL_BITS);
@@ -2388,6 +2469,12 @@ extern "C" void jitCallByName(JitContext* ctx, const char* funName, uint8_t argC
     }
 
     // 6. 构造新帧栈：push args + push defaults + push extraSlots
+    int preAllocated = foundFunc->arity;
+    int extraSlots = foundFunc->localCount - preAllocated;
+    if (!jitEnsureStackRoom(ctx, sp - (argCount + defaultCount + extraSlots))) {
+        ctx->stackTop = callerSpAfterPop;
+        return;
+    }
     // push args
     for (int i = 0; i < argCount; ++i) {
         sp -= 1;
@@ -2399,8 +2486,6 @@ extern "C" void jitCallByName(JitContext* ctx, const char* funName, uint8_t argC
         *sp = valueToBits(defaults[i]); // detach
     }
     // push extraSlots (null)
-    int preAllocated = foundFunc->arity;
-    int extraSlots = foundFunc->localCount - preAllocated;
     for (int i = 0; i < extraSlots; ++i) {
         sp -= 1;
         *sp = static_cast<int64_t>(JIT_NULL_BITS);
