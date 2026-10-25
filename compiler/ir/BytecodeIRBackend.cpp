@@ -54,9 +54,12 @@ bool BytecodeIRBackend::lower(const IRFunction& ir) {
     labelCatchDepth_.clear();
     traceName_ = ir.name; // 临时诊断用
 
-    // 通过 addConstant 复制常量池（保持索引一致，并填充哈希表以便后续去重）
+    // 原序 push_back 复制（与 RegisterBytecodeBackend 对齐），严格保持 IR 索引。
+    // 不可经 chunk_->addConstant 去重复制：其 equals 判等会把 IEEE 相等的
+    // -0.0/0.0 合并，而 IR 侧常量池（scalarKey）按位模式区分两者——池长度
+    // 失配后所有后续 LOAD_CONST 索引整体错位，运行时报"常量池索引越界"。
     for (const auto& c : ir.constants) {
-        chunk_->addConstant(c);
+        chunk_->constants.push_back(c);
     }
 
     // 遍历所有基本块的所有指令，逐条 lowering

@@ -159,7 +159,8 @@ std::unique_ptr<IRFunction> AstIRBuilder::build(Block& program) {
     for (auto& stmt : program.statements) {
         if (!stmt)
             continue;
-        IROperand stmtResult = visitNode(stmt.get());
+        // OPT-21: 统一经 visitStatement（含语句位赋值重载抑制与配对 POP）
+        visitStatement(stmt.get());
         // P2-12 fix (错误恢复): 仅致命错误中止整个编译；可恢复错误记录后继续处理后续语句。
         // 致命错误场景：模块加载失败、内部不变量违反（未支持的 AST 节点/BinOp）等。
         // 可恢复错误场景：变量重定义、循环外 break/continue、enum variant 参数超限等——
@@ -167,11 +168,6 @@ std::unique_ptr<IRFunction> AstIRBuilder::build(Block& program) {
         // 原 fail-fast 设计对任何错误立即 return nullptr，导致用户无法一次性看到所有错误。
         if (irDiagnostics_.hasFatalErrors())
             return nullptr;
-        // Phase-5 fix: POP 携带所消费的 vreg，使 DCE 看到消费关系，不会误删表达式语句的纯计算指令。
-        // AUDIT-R5 BUG-01 fix: 改用节点级重载，覆盖匿名 lambda 表达式语句的闭包值 POP。
-        if (needsPopForExprStmt(stmt.get())) {
-            emitIR(IROp::POP, {stmtResult}, stmt->line);
-        }
     }
     // 将 ir_ 作为 mainFunction 存入 module_
     // 更新 main 的 localCount（顶层代码的 AND/OR 短路等会用 nextLocalSlot_ 分配临时 slot）
@@ -730,7 +726,8 @@ void AstIRBuilder::handleImportStmt(ImportStmt& node) {
     // 6. 内联 visitNode 模块语句（递归处理模块自身的 import）
     for (auto& stmt : moduleAst->statements) {
         if (stmt) {
-            IROperand stmtResult = visitNode(stmt.get());
+            // OPT-21: 统一经 visitStatement（含语句位赋值重载抑制与配对 POP）
+            visitStatement(stmt.get());
             // P2-12 fix (错误恢复): 嵌套模块语句的致命错误中止当前模块加载。
             // 可恢复错误（如模块内变量重定义）不中止模块加载——模块其他部分仍可用。
             // 但模块加载失败本身（路径/解析错误）在前面步骤已用 addErrorFatal 标记。
@@ -738,12 +735,6 @@ void AstIRBuilder::handleImportStmt(ImportStmt& node) {
                 moduleLoadingSet_.erase(cacheKey);
                 moduleLoadingStack_.pop_back(); // BUG-AUDIT-MOD-3
                 return;
-            }
-            // BUG-IR-POP-1 fix: 表达式语句的返回值需 POP（对齐 build() L137-139 中的逻辑）
-            // Phase-5 fix: POP 携带所消费的 vreg，使 DCE 看到消费关系。
-            // AUDIT-R5 BUG-01 fix: 改用节点级重载（覆盖匿名 lambda）。
-            if (needsPopForExprStmt(stmt.get())) {
-                emitIR(IROp::POP, {stmtResult}, stmt->line);
             }
         }
     }
@@ -1227,11 +1218,17 @@ std::unordered_set<std::string> AstIRBuilder::computeFreeVars(const FunDecl& fn)
 void AstIRBuilder::visitStatement(ASTNode* node) {
     if (!node)
         return;
+    // OPT-21: 语句位赋值置位重载抑制——visitAssignment 对全局/成员路径 STORE
+    // 消费值后跳过结果重载（原重载仅供下方配对 POP 消费，成员路径 MEMBER_GET
+    // 可抛错/触发 getter，DCE 不敢消除），并回告以跳过配对 POP 保持栈平衡。
+    stmtAssignSuppressPending_ = (node->nodeType == NodeType::NODE_ASSIGNMENT);
+    stmtAssignSuppressed_ = false;
     IROperand result = visitNode(node);
     // AUDIT-R5 BUG-01 fix: 改用节点级重载（覆盖匿名 lambda）。
-    if (needsPopForExprStmt(node)) {
+    if (needsPopForExprStmt(node) && !stmtAssignSuppressed_) {
         emitIR(IROp::POP, {result}, node->line);
     }
+    stmtAssignSuppressPending_ = false;
 }
 
 IROperand AstIRBuilder::visitNode(ASTNode* node) {
@@ -1601,6 +1598,10 @@ IROperand AstIRBuilder::visitVarRef(VarRef* node) {
 }
 
 IROperand AstIRBuilder::visitAssignment(Assignment* node) {
+    // OPT-21: 捕获并立即复位语句位抑制标志——嵌套在 value 中的赋值
+    // （`x = (y = 1);`）是表达式上下文，其结果必须重载作为外层 RHS 值。
+    const bool suppressReload = stmtAssignSuppressPending_;
+    stmtAssignSuppressPending_ = false;
     IROperand val = visitNode(node->value.get());
     // 2026-06-29: 类型注解运行时检查（赋值时强制）
     const std::string* varType = findVarType(node->name);
@@ -1620,7 +1621,13 @@ IROperand AstIRBuilder::visitAssignment(Assignment* node) {
     bool isMemberStore = (info.kind == VarInfo::Kind::MEMBER);
     emitStoreVar(node->name, val, node->line);
     if (isGlobalStore || isMemberStore) {
-        return emitLoadVar(node->name, node->line);
+        // OPT-21: 语句位（结果仅被配对 POP 消费）跳过重载，POP 由 visitStatement
+        // 按 stmtAssignSuppressed_ 一并跳过；表达式位仍重载供表达式值。
+        if (suppressReload) {
+            stmtAssignSuppressed_ = true;
+        } else {
+            return emitLoadVar(node->name, node->line);
+        }
     }
     return val; // LOCAL/UPVALUE: value still on stack (peek), return original vreg
 }
@@ -1802,12 +1809,10 @@ void AstIRBuilder::visitForStmt(ForStmt* node) {
         enterBlockScope();
     // 编译初始化表达式
     if (node->initializer) {
-        IROperand initResult = visitNode(node->initializer.get());
-        // 表达式初始化器（如 i = 0）的返回值未被消费，需 POP。
-        // VarDecl 初始化器已自行平衡栈（STORE_LOCAL+POP 或 DEFINE_GLOBAL pop），不需 POP。
-        if (needsPopForExprStmt(node->initializer.get())) {
-            emitIR(IROp::POP, {initResult}, node->line);
-        }
+        // 表达式初始化器（如 i = 0）的返回值未被消费。
+        // VarDecl 初始化器已自行平衡栈（STORE_LOCAL+POP 或 DEFINE_GLOBAL pop）。
+        // OPT-21: 统一经 visitStatement（语句位赋值重载抑制 + 配对 POP）
+        visitStatement(node->initializer.get());
     }
     uint32_t startLabel = ir_->allocLabel();
     uint32_t endLabel = ir_->allocLabel(); // break 目标（栈已空，无需 POP）
@@ -1850,12 +1855,10 @@ void AstIRBuilder::visitForStmt(ForStmt* node) {
         leaveBlockScope();
     // 编译 update 表达式
     if (node->update) {
-        IROperand updateResult = visitNode(node->update.get());
-        // update 表达式（如 i = i + 1）的返回值未被消费，需 POP。
+        // update 表达式（如 i = i + 1）的返回值未被消费。
         // 与 Compiler.cpp visitForStmt 对齐：update 后 emit OP_POP。
-        if (needsPopForExprStmt(node->update.get())) {
-            emitIR(IROp::POP, {updateResult}, node->line);
-        }
+        // OPT-21: 统一经 visitStatement（语句位赋值重载抑制 + 配对 POP）
+        visitStatement(node->update.get());
     }
     emitIR(IROp::JUMP, {IROperand::label(startLabel)}, node->line);
     if (node->condition) {
@@ -2592,13 +2595,8 @@ void AstIRBuilder::visitBlock(Block* node) {
         for (auto& s : node->statements) {
             if (!s)
                 continue;
-            IROperand sResult = visitNode(s.get());
-            // 表达式语句的返回值未被消费，需 emit POP。与 build() 对齐使用
-            // needsPopForExprStmt 覆盖全部表达式语句节点类型（AUDIT-R3 P2-7：以枚举为准）。
-            // AUDIT-R5 BUG-01 fix: 改用节点级重载（覆盖匿名 lambda）。
-            if (needsPopForExprStmt(s.get())) {
-                emitIR(IROp::POP, {sResult}, s->line);
-            }
+            // OPT-21: 统一经 visitStatement（语句位赋值重载抑制与配对 POP）
+            visitStatement(s.get());
         }
         leaveBlockScope();
     } else {
@@ -2670,13 +2668,8 @@ void AstIRBuilder::visitBlock(Block* node) {
         for (auto& s : node->statements) {
             if (!s)
                 continue;
-            IROperand sResult = visitNode(s.get());
-            // 表达式语句的返回值未被消费，需 emit POP。与 build() 对齐使用
-            // needsPopForExprStmt 覆盖全部表达式语句节点类型（AUDIT-R3 P2-7）。
-            // AUDIT-R5 BUG-01 fix: 改用节点级重载（覆盖匿名 lambda）。
-            if (needsPopForExprStmt(s.get())) {
-                emitIR(IROp::POP, {sResult}, s->line);
-            }
+            // OPT-21: 统一经 visitStatement（语句位赋值重载抑制与配对 POP）
+            visitStatement(s.get());
         }
         // 恢复：varMap_ 旧条目 + 全局槽位映射 + 运行时原值
         // 逆序恢复以处理多重嵌套遮蔽
@@ -3067,11 +3060,9 @@ IROperand AstIRBuilder::emitMatchCaseBody(ASTNode* body, int nodeLine) {
                 emitIR(IROp::LOAD_NULL, {bodyVReg}, nodeLine);
             } else {
                 // 编译除最后一条外的所有语句（表达式语句补 POP）
+                // OPT-21: 统一经 visitStatement（语句位赋值重载抑制与配对 POP）
                 for (size_t i = 0; i + 1 < blk->statements.size(); ++i) {
-                    IROperand midResult = visitNode(blk->statements[i].get());
-                    if (needsPopForExprStmt(blk->statements[i].get())) {
-                        emitIR(IROp::POP, {midResult}, blk->statements[i]->line);
-                    }
+                    visitStatement(blk->statements[i].get());
                 }
                 // 最后一条语句作为表达式编译（保留值在栈顶）
                 ASTNode* last = blk->statements.back().get();

@@ -1111,22 +1111,10 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
         }
 
         case OpCode::OP_NOT: {
-            // R143 阶段 3b：使用 jitTruthy 修复 FLOAT/STRING 的 truthiness 错误
-            // jitTruthy 返回 1 (truthy) 或 0 (falsy)，取反后编码为 BOOL
-#ifdef _WIN32
-            a.mov(x86::rcx, x86::qword_ptr(x86::r15)); // arg1 = value
-            a.sub(x86::rsp, 32);
-            a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitTruthy));
-            a.call(x86::rax);
-            a.add(x86::rsp, 32);
-#else
-            a.mov(x86::rdi, x86::qword_ptr(x86::r15));
-            a.sub(x86::rsp, 16);
-            a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitTruthy));
-            a.call(x86::rax);
-            a.add(x86::rsp, 16);
-#endif
-            // rax = truthiness (0/1)，取反
+            // R143 阶段 3b：语义锚点 jitTruthy（FLOAT/STRING truthiness）
+            // OPT-19：INT/BOOL/NULL 标量真值内联，仅 FLOAT/PTR 回退 helper
+            // emitTruthyToRax peek 栈顶不弹出；rax = 0/1，取反后编码为 BOOL
+            emitTruthyToRax(a);
             a.xor_(x86::rax, 1);
             a.movzx(x86::rax, x86::al);
             a.movabs(x86::rcx, JIT_BOOL_TAG_BASE);
@@ -1527,7 +1515,6 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
         }
 
         case OpCode::OP_JUMP_IF_FALSE: {
-            // R143 阶段 3b：使用 jitTruthy 修复 FLOAT/STRING 的 truthiness 错误
             // StackVM 语义：不弹出条件值，编译器在后续显式生成 OP_POP
             if (ip + 2 >= bytecodes.size()) {
                 compileError("OP_JUMP_IF_FALSE 操作数越界");
@@ -1540,21 +1527,9 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
                 compileError("OP_JUMP_IF_FALSE 目标位置无 Label: " + std::to_string(target));
                 return false;
             }
-            // 调用 jitTruthy(value) → rax = 0 (falsy) 或 1 (truthy)
-#ifdef _WIN32
-            a.mov(x86::rcx, x86::qword_ptr(x86::r15)); // arg1 = value
-            a.sub(x86::rsp, 32);
-            a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitTruthy));
-            a.call(x86::rax);
-            a.add(x86::rsp, 32);
-#else
-            a.mov(x86::rdi, x86::qword_ptr(x86::r15));
-            a.sub(x86::rsp, 16);
-            a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitTruthy));
-            a.call(x86::rax);
-            a.add(x86::rsp, 16);
-#endif
-            // rax = truthiness，若 0 (falsy) 则跳转
+            // OPT-19：INT/BOOL/NULL 标量真值内联，仅 FLOAT/PTR（含空串）回退
+            // jitTruthy helper（R143 语义锚点）；rax = 0 (falsy) / 1 (truthy)
+            emitTruthyToRax(a);
             a.test(x86::rax, x86::rax);
             a.jz(targetIt->second);
             ip += 3;

@@ -822,6 +822,13 @@ private:
     // visitNode 入口设置；子节点访问会覆盖，父节点指令使用最近子节点的列——
     // 仍比恒 0 精确（调试器列级定位辅助）。
     int currentColumn_ = 0;
+    // OPT-21: 语句位赋值重载抑制。visitStatement（含全部语句上下文站点）对
+    // NODE_ASSIGNMENT 置 pending；visitAssignment 入口捕获并立即复位（嵌套在
+    // value 中的赋值是表达式上下文，仍需重载）。抑制时置 suppressed 供调用方
+    // 跳过配对 POP（STORE 已消费值，重载+POP 在语句位是纯开销；成员路径
+    // MEMBER_GET 可抛错/触发 getter，DCE 不会消除重载）。
+    bool stmtAssignSuppressPending_ = false;
+    bool stmtAssignSuppressed_ = false;
     uint32_t nextLocalSlot_ = 0;
     // PERF: 短路求值暂存槽（顶层共享，见 acquireShortCircuitSlot 说明）
     uint32_t shortCircuitScratchSlot_ = 0;

@@ -887,6 +887,11 @@ private:
                         uint8_t receiverLocalSlotByte, int receiverGlobalSlot, const char* receiverGlobalName,
                         bool isSuperCall, const char* superClassName);
     void emitCheckInt(asmjit::x86::Assembler& a, asmjit::x86::Gp val, asmjit::Label failLabel);
+    /// OPT-19: 栈顶值真值判定内联发射。peek [r15]（不弹出不修改），INT/BOOL
+    /// （payload≠0）与 NULL（恒假）走原生路径，FLOAT/PTR（空串判定等）回退
+    /// jitTruthy helper，语义与 Value::isTruthy 严格一致。
+    /// 返回约定：rax = 1 (truthy) / 0 (falsy)；仅 clobber rax/rcx/rdx。
+    void emitTruthyToRax(asmjit::x86::Assembler& a);
     void emitRecordTypeFeedback(asmjit::x86::Assembler& a, asmjit::x86::Gp val, size_t chunkIdx);
     void emitFloatBinaryArith(asmjit::x86::Assembler& a, int op, asmjit::Label failLabel, asmjit::Label endLabel,
                               size_t chunkIdx, asmjit::Label divByZeroLabel = {});
@@ -973,6 +978,17 @@ private:
     bool singleChunkCompileMode_ = false;
     ///@}
 
+    /// OPT-20: lazy/特化/OSR 编译共享的 funcTable 代缓存。
+    /// compileSingleChunkBlock 每次调用全量扫描 functionChunks 并逐 chunk 扫
+    /// 字节码探测 OP_CLOSURE（F 次 lazy 编译 → O(F²)）；同一 execute() 代内
+    /// CompileResult 内容与 chunkNames_ 均不变，首次构建后整代复用。
+    /// 条目 chunk 指针指向构建时的 CompileResult：换源重建（cacheable 路径
+    /// execute 尾特化传原始 result，而非 currentResult_ 深拷贝副本）；
+    /// execute() 入口随代码块一并失效（指针不跨 execute 有效）。仅编译期
+    /// 复用，不改变任何生成机器码（kJitCodegenVersion 不递增）。
+    std::unordered_map<std::string, JitFuncInfo> tieringFuncTable_;
+    const void* tieringFuncTableSource_ = nullptr; ///< 构建来源（nullptr = 无缓存）
+
     asmjit::JitRuntime runtime_;        ///< JIT 内存分配器
     JitEntryFn currentEntry_ = nullptr; ///< R151: main 块入口镜像（代码块所有权权威为 codeBlocks_）
 
@@ -1022,7 +1038,9 @@ private:
     /// 全局名）的按名解析分支、OP_METHOD_CALL/OP_SUPER_CALL 接收者按名解析、
     /// OP_SET_GLOBAL/OP_DEFINE_GLOBAL 堆类型 addRef 存储、补齐 OP_MEMBER_SET、
     /// 槽位覆盖/删除/写回旧堆值延迟释放（storeJitSlotBits），生成码变更递增至 5。
-    static constexpr uint32_t kJitCodegenVersion = 5;
+    /// 2026-10-25 OPT-19：OP_JUMP_IF_FALSE/OP_NOT 真值判定改 emitTruthyToRax 内联
+    /// （INT/BOOL/NULL 原生路径 + jitTruthy 回退），生成码变更递增至 6。
+    static constexpr uint32_t kJitCodegenVersion = 6;
 
     struct JitBlockCacheEntry {
         struct SharedBlock {

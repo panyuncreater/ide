@@ -510,11 +510,13 @@ void TextDocumentManager::reparse(DocumentState& doc) {
     doc.diagnostics = std::move(diags);
 
     // 4. 构建符号索引（仅当解析成功时）
+    // OPT-22: 整索引存入 DocumentState 供各请求（hover/definition/references/
+    // completion/signatureHelp/semanticTokens/rename）复用，替代每请求全 AST 重建
+    doc.symbolIndex = SymbolIndex{};
     if (doc.ast && !doc.hasParseErrors) {
-        SymbolIndex idx;
-        idx.build(*doc.ast);
+        doc.symbolIndex.build(*doc.ast);
         // 将符号存入 DocumentState
-        for (const auto& sym : idx.symbols())
+        for (const auto& sym : doc.symbolIndex.symbols())
             doc.symbols.push_back(sym);
     }
 }
@@ -863,8 +865,8 @@ QJsonValue LspRequestHandler::handleCompletion(const QJsonObject& params) {
     // 2. 已声明符号补全
     auto* doc = docManager_.get(uri);
     if (doc && doc->ast && !doc->hasParseErrors) {
-        SymbolIndex idx;
-        idx.build(*doc->ast);
+        // OPT-22: 复用 reparse 构建的文档级符号索引
+        const SymbolIndex& idx = doc->symbolIndex;
         for (const auto& item : idx.completions()) {
             items.append(json::completionItem(item));
         }
@@ -905,8 +907,8 @@ QJsonValue LspRequestHandler::handleHover(const QJsonObject& params) {
 
     // 查找声明信息
     if (doc->ast && !doc->hasParseErrors) {
-        SymbolIndex idx;
-        idx.build(*doc->ast);
+        // OPT-22: 复用 reparse 构建的文档级符号索引
+        const SymbolIndex& idx = doc->symbolIndex;
         auto pos = idx.findDefinition(*idName);
         if (pos) {
             // 查找详情
@@ -954,8 +956,8 @@ QJsonValue LspRequestHandler::handleDefinition(const QJsonObject& params) {
     if (!idName)
         return QJsonValue();
 
-    SymbolIndex idx;
-    idx.build(*doc->ast);
+    // OPT-22: 复用 reparse 构建的文档级符号索引
+    const SymbolIndex& idx = doc->symbolIndex;
     auto pos = idx.findDefinition(*idName);
     if (!pos)
         return QJsonValue();
@@ -971,8 +973,8 @@ QJsonValue LspRequestHandler::handleDocumentSymbol(const QJsonObject& params) {
     if (!doc || !doc->ast || doc->hasParseErrors)
         return QJsonArray(); // 空数组
 
-    SymbolIndex idx;
-    idx.build(*doc->ast);
+    // OPT-22: 复用 reparse 构建的文档级符号索引
+    const SymbolIndex& idx = doc->symbolIndex;
 
     QJsonArray symbols;
     for (const auto& sym : idx.symbols())
@@ -1058,8 +1060,8 @@ QJsonValue LspRequestHandler::handleReferences(const QJsonObject& params) {
     if (params.contains("context"))
         includeDecl = params.value("context").toObject().value("includeDeclaration").toBool(true);
 
-    SymbolIndex idx;
-    idx.build(*doc->ast);
+    // OPT-22: 复用 reparse 构建的文档级符号索引
+    const SymbolIndex& idx = doc->symbolIndex;
     auto positions = idx.findReferences(*idName, includeDecl);
     if (positions.empty())
         return QJsonValue();
@@ -1100,8 +1102,8 @@ QJsonValue LspRequestHandler::handleRename(const QJsonObject& params) {
     if (!isValidIdentifier(newName) || Lexer::keywords().count(newName) > 0)
         return QJsonValue();
 
-    SymbolIndex idx;
-    idx.build(*doc->ast);
+    // OPT-22: 复用 reparse 构建的文档级符号索引
+    const SymbolIndex& idx = doc->symbolIndex;
     auto positions = idx.findReferences(*idName, /*includeDeclaration=*/true);
     if (positions.empty())
         return QJsonValue();
@@ -1155,8 +1157,8 @@ QJsonValue LspRequestHandler::handleSignatureHelp(const QJsonObject& params) {
     if (!funTok)
         return QJsonValue();
 
-    SymbolIndex idx;
-    idx.build(*doc->ast);
+    // OPT-22: 复用 reparse 构建的文档级符号索引
+    const SymbolIndex& idx = doc->symbolIndex;
     const auto* decl = idx.findDecl(funTok->lexeme);
     if (!decl || (decl->kind != LspSymbolKind::Function && decl->kind != LspSymbolKind::Method))
         return QJsonValue();
@@ -1209,8 +1211,8 @@ QJsonValue LspRequestHandler::handleSemanticTokens(const QJsonObject& params) {
     // 仅关键字/字面量着色，标识符默认 variable）
     std::unordered_map<std::string, int> nameToType;
     if (doc->ast && !doc->hasParseErrors) {
-        SymbolIndex idx;
-        idx.build(*doc->ast);
+        // OPT-22: 复用 reparse 构建的文档级符号索引
+        const SymbolIndex& idx = doc->symbolIndex;
         for (const auto& decl : idx.decls()) {
             int type = 3; // variable
             switch (decl.kind) {

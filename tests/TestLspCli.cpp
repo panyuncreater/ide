@@ -1164,3 +1164,65 @@ TEST(LspPhase2Test, SemanticTokensProducesDeltaEncodedData) {
     EXPECT_EQ(data[2].toInt(), 3);
     EXPECT_EQ(data[3].toInt(), 0);
 }
+
+// ============================================================
+// OPT-22: 文档级符号索引缓存（reparse 构建一次，各请求复用）
+// ============================================================
+
+TEST(Opt22SymbolIndexCacheTest, DidOpenPopulatesIndexAndChangeRebuilds) {
+    TextDocumentManager mgr;
+    mgr.didOpen("file:///t.ml", "fun foo() {}\nvar x = 1;");
+    auto* doc = mgr.get("file:///t.ml");
+    ASSERT_NE(doc, nullptr);
+    ASSERT_NE(doc->ast, nullptr);
+    EXPECT_TRUE(doc->symbolIndex.findDefinition("foo").has_value());
+    EXPECT_TRUE(doc->symbolIndex.findDefinition("x").has_value());
+    // symbols 列表与索引一致（同一来源构建）
+    EXPECT_EQ(doc->symbolIndex.symbols().size(), doc->symbols.size());
+
+    // didChange 重建索引：新增 bar、foo 消失
+    mgr.didChange("file:///t.ml", "fun bar() {}\nvar y = 2;");
+    doc = mgr.get("file:///t.ml");
+    ASSERT_NE(doc->ast, nullptr);
+    EXPECT_TRUE(doc->symbolIndex.findDefinition("bar").has_value());
+    EXPECT_FALSE(doc->symbolIndex.findDefinition("foo").has_value());
+}
+
+TEST(Opt22SymbolIndexCacheTest, ParseErrorLeavesIndexEmpty) {
+    TextDocumentManager mgr;
+    mgr.didOpen("file:///t.ml", "var x = 1;");
+    mgr.didChange("file:///t.ml", "var x = ;");
+    auto* doc = mgr.get("file:///t.ml");
+    ASSERT_NE(doc, nullptr);
+    EXPECT_TRUE(doc->hasParseErrors);
+    EXPECT_TRUE(doc->symbolIndex.decls().empty());
+    EXPECT_FALSE(doc->symbolIndex.findDefinition("x").has_value());
+}
+
+TEST(Opt22SymbolIndexCacheTest, RequestsShareCachedIndex) {
+    LspRequestHandler handler;
+    handler.handleMessage(
+        makeDidOpen("file:///t.ml", "fun foo(a: int) -> int {\n  return a;\n}\nvar r = foo(1);"));
+
+    // definition：foo 引用处（0-based 3:8）→ 声明在第 1 行（0-based 0）
+    auto responses = handler.handleMessage(
+        makeRequest(2, "textDocument/definition", makeTextDocPositionParams("file:///t.ml", 3, 8)));
+    ASSERT_EQ(responses.size(), 1u);
+    auto range = responses[0].value("result").toObject().value("range").toObject();
+    EXPECT_EQ(range.value("start").toObject().value("line").toInt(), 0);
+
+    // references：同一缓存索引（声明 + 调用点非空）
+    auto responses2 = handler.handleMessage(
+        makeRequest(3, "textDocument/references", makeTextDocPositionParams("file:///t.ml", 3, 8)));
+    ASSERT_EQ(responses2.size(), 1u);
+    EXPECT_FALSE(responses2[0].value("result").toArray().empty());
+
+    // documentSymbol：同一缓存索引
+    QJsonObject params;
+    QJsonObject textDoc;
+    textDoc["uri"] = "file:///t.ml";
+    params["textDocument"] = textDoc;
+    auto responses3 = handler.handleMessage(makeRequest(4, "textDocument/documentSymbol", params));
+    ASSERT_EQ(responses3.size(), 1u);
+    EXPECT_FALSE(responses3[0].value("result").toArray().empty());
+}

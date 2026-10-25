@@ -125,49 +125,6 @@ struct LspCompletionItem {
 };
 
 // ============================================================
-// 文档状态
-// ============================================================
-
-struct DocumentState {
-    std::string uri;
-    std::string source;
-    std::vector<Token> tokens;
-    std::shared_ptr<Block> ast; // 可能为 nullptr（解析失败）
-    std::vector<LspDiagnostic> diagnostics;
-    std::vector<LspSymbol> symbols;
-    bool hasParseErrors = false;
-};
-
-// ============================================================
-// 文档管理器
-// ============================================================
-
-class TextDocumentManager {
-public:
-    /// 处理 textDocument/didOpen
-    void didOpen(const std::string& uri, const std::string& text);
-
-    /// 处理 textDocument/didChange（全量替换模式）
-    void didChange(const std::string& uri, const std::string& text);
-
-    /// 处理 textDocument/didClose
-    void didClose(const std::string& uri);
-
-    /// 获取文档状态（不存在返回 nullptr）
-    DocumentState* get(const std::string& uri);
-    const DocumentState* get(const std::string& uri) const;
-
-    /// 获取所有已打开文档的 URI
-    std::vector<std::string> uris() const;
-
-private:
-    std::unordered_map<std::string, DocumentState> docs_;
-
-    /// 重新解析文档（Lexer → Parser → 收集诊断 + 符号）
-    void reparse(DocumentState& doc);
-};
-
-// ============================================================
 // 符号索引
 // ============================================================
 
@@ -222,6 +179,53 @@ private:
 
     /// 将 DeclInfo 转换为 LspSymbol（含 children）
     LspSymbol toSymbol(const DeclInfo& info) const;
+};
+
+// ============================================================
+// 文档状态
+// ============================================================
+
+struct DocumentState {
+    std::string uri;
+    std::string source;
+    std::vector<Token> tokens;
+    std::shared_ptr<Block> ast; // 可能为 nullptr（解析失败）
+    std::vector<LspDiagnostic> diagnostics;
+    std::vector<LspSymbol> symbols;
+    /// OPT-22: reparse 时构建一次的符号索引，hover/definition/references/
+    /// completion/signatureHelp/semanticTokens/rename 复用（原为每请求
+    /// 全 AST 重建）。解析失败时为空索引（hasParseErrors 同步指示）。
+    SymbolIndex symbolIndex;
+    bool hasParseErrors = false;
+};
+
+// ============================================================
+// 文档管理器
+// ============================================================
+
+class TextDocumentManager {
+public:
+    /// 处理 textDocument/didOpen
+    void didOpen(const std::string& uri, const std::string& text);
+
+    /// 处理 textDocument/didChange（全量替换模式）
+    void didChange(const std::string& uri, const std::string& text);
+
+    /// 处理 textDocument/didClose
+    void didClose(const std::string& uri);
+
+    /// 获取文档状态（不存在返回 nullptr）
+    DocumentState* get(const std::string& uri);
+    const DocumentState* get(const std::string& uri) const;
+
+    /// 获取所有已打开文档的 URI
+    std::vector<std::string> uris() const;
+
+private:
+    std::unordered_map<std::string, DocumentState> docs_;
+
+    /// 重新解析文档（Lexer → Parser → 收集诊断 + 符号）
+    void reparse(DocumentState& doc);
 };
 
 // ============================================================

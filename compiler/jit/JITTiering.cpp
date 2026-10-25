@@ -157,29 +157,36 @@ JitEntryFn JITBackend::compileSingleChunkBlock(const CompileResult& result, cons
     }
 
     // funcTable 元数据（chunkId 按全局索引，供同块递归直连判定）
-    std::unordered_map<std::string, JitFuncInfo> funcTable;
-    for (const auto& [name, fc] : result.functionChunks) {
-        JitFuncInfo info;
-        info.localCount = fc.localCount;
-        info.arity = fc.arity;
-        info.requiredArity = fc.requiredArity;
-        info.chunk = &fc;
-        const auto& chunkCode = fc.code;
-        for (size_t i = 0; i < chunkCode.size();) {
-            if (static_cast<OpCode>(chunkCode[i]) == OpCode::OP_CLOSURE) {
-                info.hasInnerClosures = true;
-                break;
+    // OPT-20: 同一 execute() 代内整表复用（首次构建），消除逐次全量扫描
+    // functionChunks + 逐 chunk 探测 OP_CLOSURE 的 O(F²)；换源即重建
+    // （cacheable 路径 execute 尾特化传原始 result，非 currentResult_ 副本）。
+    if (tieringFuncTableSource_ != &result) {
+        tieringFuncTable_.clear();
+        for (const auto& [name, fc] : result.functionChunks) {
+            JitFuncInfo info;
+            info.localCount = fc.localCount;
+            info.arity = fc.arity;
+            info.requiredArity = fc.requiredArity;
+            info.chunk = &fc;
+            const auto& chunkCode = fc.code;
+            for (size_t i = 0; i < chunkCode.size();) {
+                if (static_cast<OpCode>(chunkCode[i]) == OpCode::OP_CLOSURE) {
+                    info.hasInnerClosures = true;
+                    break;
+                }
+                i += fc.instructionSizeAt(i);
             }
-            i += fc.instructionSizeAt(i);
+            tieringFuncTable_.emplace(name, std::move(info));
         }
-        funcTable.emplace(name, std::move(info));
-    }
-    for (size_t i = 1; i < chunkNames_.size(); ++i) {
-        auto fit = funcTable.find(chunkNames_[i]);
-        if (fit != funcTable.end()) {
-            fit->second.chunkId = i;
+        for (size_t i = 1; i < chunkNames_.size(); ++i) {
+            auto fit = tieringFuncTable_.find(chunkNames_[i]);
+            if (fit != tieringFuncTable_.end()) {
+                fit->second.chunkId = i;
+            }
         }
+        tieringFuncTableSource_ = &result;
     }
+    const auto& funcTable = tieringFuncTable_;
 
     const size_t patchBegin = callImportPatches_.size(); // 本次编译代 patch 区段起点
     const size_t memberIcBegin = memberGetIC_.size();    // memberGet IC 追加编号起点

@@ -878,6 +878,61 @@ void JITBackend::emitMethodCall(x86::Assembler& a, Label epilogue, const char* m
 }
 
 // ============================================================
+// OPT-19：栈顶值真值判定内联（INT/BOOL/NULL 快路径 + helper 回退）
+// ============================================================
+// 语义与 Value::isTruthy 严格一致（四后端一致不变量）：
+//   INT payload != 0 为真（负数为 48 位符号扩展，非零位全覆盖）；
+//   BOOL payload != 0 为真；NULL 恒假；
+//   FLOAT 需与 0.0 浮点比较、PTR 需解引用判空串（STRING）/对象存在
+//   （ARRAY/DICT/INSTANCE/...），统一回退 jitTruthy helper。
+// 约定：peek [r15]，不弹出不修改栈值；返回 rax = 1 (truthy) / 0 (falsy)。
+// 仅 clobber rax/rcx/rdx（helper 路径按 ABI 附加调用破坏）。
+void JITBackend::emitTruthyToRax(x86::Assembler& a) {
+    Label scalar = a.new_label();
+    Label falsy = a.new_label();
+    Label done = a.new_label();
+
+    a.mov(x86::rax, x86::qword_ptr(x86::r15)); // rax = value bits
+    // tag 分派：右移 48 位取高 16 位 tag 后逐一比较
+    // （注意不可对 tag 清位归并：PTR(0x7FFB) 清 bit0 会与 NULL(0x7FFA) 混淆）
+    a.mov(x86::rcx, x86::rax);
+    a.shr(x86::rcx, 48);
+    a.cmp(x86::ecx, 0x7FF8);
+    a.je(scalar); // INT → payload 判定
+    a.cmp(x86::ecx, 0x7FF9);
+    a.je(scalar); // BOOL → payload 判定
+    a.cmp(x86::ecx, 0x7FFA);
+    a.je(falsy); // NULL → 恒假
+    // FLOAT / PTR（含空串 STRING、对象）→ helper（R143 语义锚点）
+#ifdef _WIN32
+    a.mov(x86::rcx, x86::rax); // arg1 = value bits
+    a.sub(x86::rsp, 32);
+    a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitTruthy));
+    a.call(x86::rax);
+    a.add(x86::rsp, 32);
+#else
+    a.mov(x86::rdi, x86::rax); // arg1 = value bits
+    a.sub(x86::rsp, 16);
+    a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitTruthy));
+    a.call(x86::rax);
+    a.add(x86::rsp, 16);
+#endif
+    a.jmp(done); // helper 返回 rax = 0/1
+
+    a.bind(scalar);
+    a.movabs(x86::rcx, JIT_INT48_MASK);
+    a.test(x86::rax, x86::rcx);
+    a.setne(x86::al);
+    a.movzx(x86::eax, x86::al); // eax = 0/1（32 位写零扩展至 rax）
+    a.jmp(done);
+
+    a.bind(falsy);
+    a.xor_(x86::eax, x86::eax);
+
+    a.bind(done);
+}
+
+// ============================================================
 // R144/R152/R153/R161：类型检查与类型反馈
 // ============================================================
 

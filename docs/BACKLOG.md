@@ -22,18 +22,10 @@
 ## 2. 优化候选
 
 2026-10-23 的 17 项已清偿（见 CHANGELOG 与 `docs/audit/2026-10-24.md`）；2026-10-25 性能轮
-又清偿 15 项（解释器 4 / VM-JIT 4 / 编译器 1 / 前端 3 / GUI-格式化 3）。当前未立项候选：
-
-- **OPT-19** `candidate`：JIT `OP_JUMP_IF_FALSE`/`OP_NOT` 对 INT/BOOL/NULL 内联真值判定
-  （当前每个 if/while 条件调用一次 `jitTruthy`），FLOAT/PTR（空串）回落 helper；生成码变更需
-  `kJitCodegenVersion` 5→6 + JIT 差分回归。证据：`compiler/jit/JITCodeGen.cpp:1116-1133,1541-1556`。
-- **OPT-20** `candidate`：JIT lazy/特化/OSR 编译每次重建 `funcTable`（`JITTiering.cpp:160-179`
-  全量扫描 functionChunks 与字节码，F 个函数 O(F²)）；按 CompileResult 缓存。仅编译期，无机器码变化。
-- **OPT-21** `candidate`：IR 路径全局/成员赋值语句在 STORE 后仍重载结果再 POP
-  （`AstIRBuilder.cpp` `visitAssignment`；DCE 保守保留可抛错的 LOAD），语句上下文可跳过重载；
-  RegisterVM 收益，需栈平衡核对。
-- **OPT-22** `candidate`：LSP hover/definition/completion/documentSymbol 每请求重建
-  SymbolIndex（`cli/lsp_core.cpp:866` 等）；按文档版本缓存，reparse 失效。
+清偿 15 项（解释器 4 / VM-JIT 4 / 编译器 1 / 前端 3 / GUI-格式化 3）；同日第二轮清偿
+OPT-19~22（见 CHANGELOG 与 `docs/audit/2026-10-25-optimizations.md`）。当前无未立项候选。
 
 性能路径不变量见 `docs/specs/backend-consistency.md` §10 与 `docs/specs/memory-model.md` §4；
 未实施的 OPT-18 B4/B5 见 `docs/specs/rejected-decisions.md` R-19/R-20。
+JIT 基准对机器码布局敏感（同义发射序列变化可致数倍漂移），A/B 必须同轮交错测量并核对输出，
+禁止单批次先后对比（2026-10-25 归因实验，详见审计报告）。

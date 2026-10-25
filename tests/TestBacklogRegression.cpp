@@ -308,6 +308,167 @@ TEST(BacklogRegression, OPT18IntComparisonSpecializationsJIT) {
 #endif
 
 // ============================================================
+// OPT-19: JIT OP_JUMP_IF_FALSE/OP_NOT 真值判定内联
+// （INT/BOOL/NULL 原生路径 + jitTruthy helper 回退；kJitCodegenVersion 6）
+// 锁定：真值语义与 Value::isTruthy 五后端一致，内联不得改变任何类型判定
+// ============================================================
+TEST(BacklogRegression, OPT19TruthyInlineScalarConditions) {
+    // 内联路径全覆盖：INT 零/正/负、BOOL 真/假、NULL 经函数参数传递进 if 条件
+    const std::string src = "fun probe(v) { if (v) { return 1; } return 0; }"
+                            "print(probe(0)); print(\"|\");"
+                            "print(probe(7)); print(\"|\");"
+                            "print(probe(-3)); print(\"|\");"
+                            "print(probe(true)); print(\"|\");"
+                            "print(probe(false)); print(\"|\");"
+                            "print(probe(null));";
+    ASSERT_TRUE(parseClean(src));
+    EXPECT_FIVE_BACKENDS(src, "0|1|1|1|0|0");
+}
+
+TEST(BacklogRegression, OPT19TruthyInlineNotOperator) {
+    // OP_NOT：内联标量 + helper 回退类型（空串/非空串/FLOAT/容器）逐项锁定
+    const std::string src = "print(!0); print(\"|\"); print(!5); print(\"|\"); print(!-2); print(\"|\");"
+                            "print(!true); print(\"|\"); print(!false); print(\"|\"); print(!null); print(\"|\");"
+                            "print(!!7); print(\"|\"); print(!!0); print(\"|\");"
+                            "print(!\"\"); print(\"|\"); print(!\"x\"); print(\"|\");"
+                            "print(!0.0); print(\"|\"); print(!0.5); print(\"|\"); print(!-0.0); print(\"|\");"
+                            "print(![]); print(\"|\"); print(!{\"k\": 1});";
+    ASSERT_TRUE(parseClean(src));
+    EXPECT_FIVE_BACKENDS(src,
+                         "true|false|false|false|true|true|true|false|true|false|true|false|true|false|false");
+}
+
+TEST(BacklogRegression, OPT19TruthyInlineHelperFallbackConditions) {
+    // helper 回退路径：空串/非空串/FLOAT 0.0/0.5/数组/字典/闭包作 if 条件
+    const std::string src = "var s = \"\";"
+                            "if (s) { print(1); } else { print(0); }"
+                            "s = \"x\";"
+                            "if (s) { print(1); } else { print(0); }"
+                            "if (0.0) { print(1); } else { print(0); }"
+                            "if (0.5) { print(1); } else { print(0); }"
+                            "if ([]) { print(1); } else { print(0); }"
+                            "if ({\"k\": 1}) { print(1); } else { print(0); }"
+                            "var f = fun() { return 2; };"
+                            "if (f) { print(1); } else { print(0); }";
+    ASSERT_TRUE(parseClean(src));
+    EXPECT_FIVE_BACKENDS(src, "0101111");
+}
+
+TEST(BacklogRegression, OPT19TruthyInlineWhileIntCondition) {
+    // while 的每次回边都走 OP_JUMP_IF_FALSE：INT 内联热路径 + 数组元素真值混合
+    const std::string src = "var i = 3;"
+                            "var sum = 0;"
+                            "while (i) { sum = sum + i; i = i - 1; }"
+                            "print(sum); print(\"|\");"
+                            "var items = [1, 0, 3];"
+                            "var j = 0;"
+                            "var hit = 0;"
+                            "while (j < 3) { if (items[j]) { hit = hit + 1; } j = j + 1; }"
+                            "print(hit);";
+    ASSERT_TRUE(parseClean(src));
+    EXPECT_FIVE_BACKENDS(src, "6|2");
+}
+
+// ============================================================
+// 2026-10-25 OPT-19 轮发现：IR 常量池复制 -0.0/0.0 位模式失配
+// IR 侧 scalarKey 按位模式区分 -0.0/0.0，而 StackVM lowering 曾经
+// addConstant 去重复制（equals 判等把 IEEE 相等的两者合并），池长度缩短
+// 导致其后所有 LOAD_CONST 索引越界（运行时报"常量池索引越界"）。
+// 触发条件：-0.0 常量之后还需引用新常量（"tail"）。
+// ============================================================
+TEST(BacklogRegression, IRConstPoolCopyKeepsNegativeZeroDistinct) {
+    const std::string src = "var z = -0.0;"
+                            "var s = \"tail\";"
+                            "print(s); print(\"|\"); print(!z);";
+    ASSERT_TRUE(parseClean(src));
+    EXPECT_FIVE_BACKENDS(src, "tail|true");
+}
+
+#ifdef MINILANG_USE_JIT
+// ============================================================
+// OPT-20: lazy/特化编译 funcTable 代缓存
+// 同一 execute() 内 F 次 lazy 编译复用一份 funcTable（原为逐次全量重建，
+// O(F²)）。锁定：多函数（含闭包/upvalue/互递归）lazy 编译语义不变。
+// ============================================================
+TEST(BacklogRegression, OPT20LazyFuncTableReuseMultipleChunks) {
+    const std::string src =
+        "fun makeCounter() { var n = 0; return fun() { n = n + 1; return n; }; }"
+        "fun fib(n) { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); }"
+        "fun isEven(n) { if (n == 0) { return true; } return isOdd(n - 1); }"
+        "fun isOdd(n) { if (n == 0) { return false; } return isEven(n - 1); }"
+        "var c = makeCounter();"
+        "c(); c(); print(c()); print(\"|\");"
+        "print(fib(12)); print(\"|\");"
+        "print(isEven(10)); print(\"|\"); print(isOdd(10));";
+    Lexer lx;
+    auto tk = lx.scan(src);
+    Parser p;
+    auto ast = p.parse(tk);
+    ASSERT_TRUE(ast != nullptr);
+    Compiler c;
+    auto cr = c.compile(*ast);
+    ASSERT_FALSE(c.getDiagnostics().hasErrors());
+    JITBackend jit;
+    jit.setLazyCompilation(true);
+    std::string out;
+    jit.setOutputCallback([&](const std::string& s) { out += s; });
+    EXPECT_EQ(jit.execute(cr), JitResult::OK);
+    EXPECT_EQ(out, "3|144|true|false");
+    // 多 chunk 完成 lazy 编译（代缓存在其间被反复复用）
+    EXPECT_GE(jit.getLazyCompiledChunks().size(), 4u);
+}
+#endif
+
+// ============================================================
+// OPT-21: IR 路径语句位赋值跳过结果重载
+// 语句位 `x = v;`（全局/成员路径）原实现 STORE 消费值后重载再 POP；
+// 现跳过重载+配对 POP（表达式位仍重载）。锁定：值语义、栈平衡、
+// for update 热路径与 null 接收者报错行为五后端一致。
+// ============================================================
+TEST(BacklogRegression, OPT21StmtAssignmentValueSemantics) {
+    const std::string src =
+        "var g = 1;"
+        "g = g + 1;"
+        "print(g); print(\"|\");"
+        "class C { var f = 0; init(x) { this.f = x; } }"
+        "var o = C(5);"
+        "o.f = o.f * 2;"
+        "print(o.f); print(\"|\");"
+        "var y = (g = g + 10);"
+        "print(y); print(\"|\"); print(g); print(\"|\");"
+        "var z = 0; z = y = g;"
+        "print(z); print(y); print(\"|\");"
+        "var sum = 0;"
+        "for (var i = 0; i < 3; i = i + 1) { sum = sum + i; }"
+        "print(sum);";
+    ASSERT_TRUE(parseClean(src));
+    EXPECT_FIVE_BACKENDS(src, "2|10|12|12|1212|3");
+}
+
+TEST(BacklogRegression, OPT21StmtAssignInBlocksAndLoops) {
+    const std::string src =
+        "var acc = 0;"
+        "{ var b = 1; b = b + 1; acc = acc + b; }"
+        "if (true) { acc = acc * 10; }"
+        "var k = 0;"
+        "while (k < 2) { k = k + 1; }"
+        "print(acc); print(\"|\"); print(k);";
+    ASSERT_TRUE(parseClean(src));
+    EXPECT_FIVE_BACKENDS(src, "20|2");
+}
+
+TEST(BacklogRegression, OPT21NullReceiverMemberSetStillErrors) {
+    // MEMBER_SET 自身对 null 接收者报错（kTypeNotMemberAssignable），
+    // 语句位跳过重载不得吞掉该错误
+    const std::string src = "var o = null; o.f = 1; print(\"unreachable\");";
+    ASSERT_TRUE(parseClean(src));
+    EXPECT_NE(minilang_test::runInterpreter(src).find("<runtime:"), std::string::npos);
+    EXPECT_NE(minilang_test::runStackVM(src).find("<runtime:"), std::string::npos);
+    EXPECT_NE(minilang_test::runStackVM_IR(src).find("<runtime:"), std::string::npos);
+    EXPECT_NE(minilang_test::runRegVM(src).find("<runtime:"), std::string::npos);
+}
+
+// ============================================================
 // OPT-05/OPT-13: 方法返回接收者整体写回——COW 别名隔离
 // ============================================================
 TEST(BacklogRegression, OPT05ReceiverWholeWritebackAliasIsolation) {

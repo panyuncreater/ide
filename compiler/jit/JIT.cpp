@@ -370,6 +370,10 @@ JitResult JITBackend::execute(const CompileResult& result) {
     }
     ownedLazyEntries_.clear();
     lazyCompiledChunksList_.clear();
+    // OPT-20: 失效 lazy/特化编译 funcTable 代缓存（条目 chunk 指针指向上一代
+    // CompileResult 的 functionChunks，不跨 execute 有效）
+    tieringFuncTable_.clear();
+    tieringFuncTableSource_ = nullptr;
 
     // ADR-008 阶段 2: 进程内编译块缓存
     // 门控 = 纯 eager 教学路径（!lazyMode_ && !tieredMode_ && 无自定义阈值）：
