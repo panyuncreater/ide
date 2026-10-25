@@ -1223,17 +1223,17 @@ jobs:
           cmake --build out/build/release --target minilang_gui_smoke --parallel
           cmake --build out/build/release --target minilang_perf_test --parallel
 
-      # Pass 1 训练集取前 400 项（Lexer/Parser/Value/Interpreter 等基础族）
+      # Pass 1 训练集取前 200 项（Lexer/Parser/Value/Interpreter 等基础族）
       # 且 -j 1 串行：全量 -j 4 实测 107/143 项耗满 300s 超时（2026-10-07 首跑），
-      # 本地复现并发进程挂起、单进程偶发（LexerTest.Number_HexPrefixError
-      # 串行超时一次）——疑似插桩 EXE 与 QFluent DLL（根 CMakeLists 全局
-      # /GL+/LTCG+/GENPROFILE 波及第三方，只读无法排除）的 pgort profile
-      # 写出间歇性死锁；根因调查与"第三方排除插桩"需改只读 CMakeLists，
-      # 记录待办。子集串行训练为有界替代（约 20 分钟，profile 质量足够
-      # Pass 2 的相对性能验证）
+      # 本地复现并发进程挂起、单进程偶发——疑似插桩 EXE 与 QFluent DLL（根
+      # CMakeLists 全局 /GL+/LTCG+/GENPROFILE 波及第三方，只读无法排除）的
+      # pgort profile 写出间歇性死锁。2026-10-25 实测 1-400 子集仍有两例
+      # 超时（#216 ValueToStringTest.ZeroIntToString、#248
+      # ValueEqualsTest.DictDifferentSizeNotEqual），收到 1-200 避开该区间；
+      # 200 项已覆盖基础族，profile 质量足够 Pass 2 的相对性能验证。
       - name: "PGO Pass 1: 运行测试 (生成 profile)"
         working-directory: out/build/release
-        run: ctest -C Release -j 1 --output-on-failure -I 1,400
+        run: ctest -C Release -j 1 --output-on-failure -I 1,200
 
       # perf 族单独训练：minilang_perf_test 的 pgd 只在其二进制运行时创建，
       # 不训练则 Pass 2 /USEPROFILE 链接该目标时 LNK1266（2026-10-07 实测，
