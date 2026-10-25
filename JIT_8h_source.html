@@ -429,7 +429,7 @@ $(document).ready(function(){initNavTree('JIT_8h_source.html',''); initResizable
 <div class="line"><a id="l00329" name="l00329"></a><span class="lineno">  329</span>    <span class="comment">// 该标签绑定为退出桩：mov rax,[ctx+errorExit]; jmp rax —— rbp 自 main 块</span></div>
 <div class="line"><a id="l00330" name="l00330"></a><span class="lineno">  330</span>    <span class="comment">// prologue 后全程不变（函数块只用 r13/r15），跨块跳转等价原单体布局的</span></div>
 <div class="line"><a id="l00331" name="l00331"></a><span class="lineno">  331</span>    <span class="comment">// 同块 jmp epilogue。由 commit 阶段在全部块 add 成功后写入。</span></div>
-<div class="line"><a id="l00332" name="l00332"></a><span class="lineno">  332</span>    <span class="keywordtype">void</span>* errorExit = <span class="keyword">nullptr</span>; <span class="comment">// offset 296</span></div>
+<div class="line"><a id="l00332" name="l00332"></a><span class="lineno">  332</span>    <span class="keywordtype">void</span>* errorExit = <span class="keyword">nullptr</span>;     <span class="comment">// offset 296</span></div>
 <div class="line"><a id="l00333" name="l00333"></a><span class="lineno">  333</span>    int64_t* stackBase = <span class="keyword">nullptr</span>;  <span class="comment">// offset 304: 操作数栈初始栈顶（最高地址）</span></div>
 <div class="line"><a id="l00334" name="l00334"></a><span class="lineno">  334</span>    int64_t* stackLimit = <span class="keyword">nullptr</span>; <span class="comment">// offset 312: 操作数栈最低安全地址（含临时值余量）</span></div>
 <div class="line"><a id="l00335" name="l00335"></a><span class="lineno">  335</span>};</div>
@@ -1418,7 +1418,7 @@ $(document).ready(function(){initNavTree('JIT_8h_source.html',''); initResizable
 <div class="line"><a id="l01318" name="l01318"></a><span class="lineno"> 1318</span><span class="comment"></span>    std::unordered_map&lt;std::string, Value&gt; globals_;</div>
 <div class="line"><a id="l01319" name="l01319"></a><span class="lineno"> 1319</span><span class="comment"></span> </div>
 <div class="line"><a id="l01320" name="l01320"></a><span class="lineno"> 1320</span><span class="comment">    /// R162: extern &quot;C&quot; helper（jitDefineVar 等）通过 backendPtr 访问，故声明在 public 区</span></div>
-<div class="line"><a id="l01321" name="l01321"></a><span class="lineno"> 1321</span><span class="comment"></span>    std::vector&lt;int64_t&gt; globalSlots_; <span class="comment">///&lt; R139: 全局变量 slot 存储（与 StackVM globalSlots_ 等价）</span></div>
+<div class="line"><a id="l01321" name="l01321"></a><span class="lineno"> 1321</span><span class="comment"></span>    std::vector&lt;int64_t&gt; globalSlots_;        <span class="comment">///&lt; R139: 全局变量 slot 存储（与 StackVM globalSlots_ 等价）</span></div>
 <div class="line"><a id="l01322" name="l01322"></a><span class="lineno"> 1322</span>    JitGlobalNameToSlotMap globalNameToSlot_; <span class="comment">///&lt; R147: 名称→slot 映射（OPT-15 透明查找）</span></div>
 <div class="line"><a id="l01323" name="l01323"></a><span class="lineno"> 1323</span><span class="comment"></span> </div>
 <div class="line"><a id="l01324" name="l01324"></a><span class="lineno"> 1324</span><span class="comment">    /// 闭包同步调用跳板入口（compileAllChunks 末尾发射，runtime_.add 后解析地址）。</span></div>

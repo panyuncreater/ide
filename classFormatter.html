@@ -423,7 +423,7 @@ Static Private Attributes</h2></td></tr>
 
 <p class="reference">References <a class="el" href="Formatter_8h_source.html#l00234">binOpKey_</a>, <a class="el" href="Formatter_8h_source.html#l00235">binOpVal_</a>, <a class="el" href="Formatter_8h_source.html#l00203">options_</a>, and <a class="el" href="Formatter_8h_source.html#l00089">FormatOptions::spaceAroundOperators</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Formatter_8cpp_source.html#l00819">formatAssignment()</a>, <a class="el" href="Formatter_8cpp_source.html#l00714">formatBinaryOp()</a>, <a class="el" href="Formatter_8cpp_source.html#l01555">formatIndexAssign()</a>, <a class="el" href="Formatter_8cpp_source.html#l01672">formatMemberAssign()</a>, and <a class="el" href="Formatter_8cpp_source.html#l00802">formatVarDecl()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Formatter_8cpp_source.html#l00819">formatAssignment()</a>, <a class="el" href="Formatter_8cpp_source.html#l00714">formatBinaryOp()</a>, <a class="el" href="Formatter_8cpp_source.html#l01554">formatIndexAssign()</a>, <a class="el" href="Formatter_8cpp_source.html#l01669">formatMemberAssign()</a>, and <a class="el" href="Formatter_8cpp_source.html#l00802">formatVarDecl()</a>.</p>
 
 </div>
 </div>
@@ -457,7 +457,7 @@ Static Private Attributes</h2></td></tr>
 
 <p class="reference">References <a class="el" href="Formatter_8h_source.html#l00232">commaCache_</a>, <a class="el" href="Formatter_8h_source.html#l00233">commaCacheValid_</a>, <a class="el" href="Formatter_8h_source.html#l00203">options_</a>, and <a class="el" href="Formatter_8h_source.html#l00090">FormatOptions::spaceAfterComma</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Formatter_8cpp_source.html#l01283">formatArrayLiteral()</a>, <a class="el" href="Formatter_8cpp_source.html#l01573">formatClassDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l01326">formatDestructureBinding()</a>, <a class="el" href="Formatter_8cpp_source.html#l01294">formatDictLiteral()</a>, <a class="el" href="Formatter_8cpp_source.html#l01357">formatEnumDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l01417">formatEnumVariantExpr()</a>, <a class="el" href="Formatter_8cpp_source.html#l01131">formatFunCall()</a>, <a class="el" href="Formatter_8cpp_source.html#l01056">formatFunDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l01486">formatMatchPattern()</a>, <a class="el" href="Formatter_8cpp_source.html#l01689">formatMethodCall()</a>, <a class="el" href="Formatter_8cpp_source.html#l01169">formatPrintStmt()</a>, and <a class="el" href="Formatter_8cpp_source.html#l01308">formatTupleLiteral()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Formatter_8cpp_source.html#l01283">formatArrayLiteral()</a>, <a class="el" href="Formatter_8cpp_source.html#l01571">formatClassDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l01326">formatDestructureBinding()</a>, <a class="el" href="Formatter_8cpp_source.html#l01294">formatDictLiteral()</a>, <a class="el" href="Formatter_8cpp_source.html#l01357">formatEnumDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l01417">formatEnumVariantExpr()</a>, <a class="el" href="Formatter_8cpp_source.html#l01131">formatFunCall()</a>, <a class="el" href="Formatter_8cpp_source.html#l01056">formatFunDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l01486">formatMatchPattern()</a>, <a class="el" href="Formatter_8cpp_source.html#l01685">formatMethodCall()</a>, <a class="el" href="Formatter_8cpp_source.html#l01169">formatPrintStmt()</a>, and <a class="el" href="Formatter_8cpp_source.html#l01308">formatTupleLiteral()</a>.</p>
 
 </div>
 </div>
@@ -680,7 +680,7 @@ Static Private Attributes</h2></td></tr>
 </div><div class="memdoc">
 <p>格式化类声明：输出 "class Name extends Super { members }"，相邻方法成员间按 blankLineBetweenFunctions 选项补空行，成员自终止时无需额外 ';'。 </p>
 
-<p class="definition">Definition at line <a class="el" href="Formatter_8cpp_source.html#l01573">1573</a> of file <a class="el" href="Formatter_8cpp_source.html">Formatter.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Formatter_8cpp_source.html#l01571">1571</a> of file <a class="el" href="Formatter_8cpp_source.html">Formatter.cpp</a>.</p>
 
 <p class="reference">References <a class="el" href="Formatter_8h_source.html#l00091">FormatOptions::blankLineBetweenFunctions</a>, <a class="el" href="ASTNode_8h_source.html#l00821">ClassDecl::closingBraceLine</a>, <a class="el" href="Formatter_8cpp_source.html#l00203">comma()</a>, <a class="el" href="Formatter_8h_source.html#l00208">commentIndex_</a>, <a class="el" href="Formatter_8h_source.html#l00207">comments_</a>, <a class="el" href="Formatter_8h_source.html#l00204">currentIndent_</a>, <a class="el" href="Formatter_8cpp_source.html#l00293">formatNode()</a>, <a class="el" href="Formatter_8cpp_source.html#l00172">indent()</a>, <a class="el" href="Formatter_8cpp_source.html#l00238">isSelfTerminating()</a>, <a class="el" href="ASTNode_8h_source.html#l00818">ClassDecl::members</a>, <a class="el" href="ASTNode_8h_source.html#l00816">ClassDecl::name</a>, <a class="el" href="ASTNode_8h.html#acac9cbaeea226ed297804c012dc12b16a8be7573e28d58a46648e736457b8ac62">NODE_FUN_DECL</a>, <a class="el" href="Formatter_8cpp_source.html#l00213">openBrace()</a>, <a class="el" href="Formatter_8h_source.html#l00203">options_</a>, <a class="el" href="Formatter_8h_source.html#l00221">out_</a>, <a class="el" href="ASTNode_8h_source.html#l00832">ClassDecl::ownMemberCount</a>, <a class="el" href="Formatter_8cpp_source.html#l00277">reindentBlockComment()</a>, <a class="el" href="ASTNode_8h_source.html#l00817">ClassDecl::superClassName</a>, <a class="el" href="ASTNode_8h_source.html#l00831">ClassDecl::traits</a>, and <a class="el" href="ASTNode_8h_source.html#l00824">ClassDecl::typeParams</a>.</p>
 
@@ -1010,7 +1010,7 @@ Static Private Attributes</h2></td></tr>
 
 <p>格式化下标赋值：obj[index] = value；obj 为低优先级表达式时加括号。 </p>
 
-<p class="definition">Definition at line <a class="el" href="Formatter_8cpp_source.html#l01555">1555</a> of file <a class="el" href="Formatter_8cpp_source.html">Formatter.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Formatter_8cpp_source.html#l01554">1554</a> of file <a class="el" href="Formatter_8cpp_source.html">Formatter.cpp</a>.</p>
 
 <p class="reference">References <a class="el" href="Formatter_8cpp_source.html#l00190">binOp()</a>, <a class="el" href="Formatter_8cpp_source.html#l00293">formatNode()</a>, <a class="el" href="ASTNode_8h_source.html#l00801">IndexAssign::index</a>, <a class="el" href="ASTNode_8h.html#acac9cbaeea226ed297804c012dc12b16aa16f9361814689c06e9290877926accb">NODE_BINARY_OP</a>, <a class="el" href="ASTNode_8h.html#acac9cbaeea226ed297804c012dc12b16a3e7540eab02d8df5c820caec8c7de225">NODE_UNARY_OP</a>, <a class="el" href="ASTNode_8h_source.html#l00800">IndexAssign::object</a>, <a class="el" href="Formatter_8h_source.html#l00221">out_</a>, and <a class="el" href="ASTNode_8h_source.html#l00802">IndexAssign::value</a>.</p>
 
@@ -1042,7 +1042,7 @@ Static Private Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Formatter_8cpp_source.html#l01717">1717</a> of file <a class="el" href="Formatter_8cpp_source.html">Formatter.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Formatter_8cpp_source.html#l01712">1712</a> of file <a class="el" href="Formatter_8cpp_source.html">Formatter.cpp</a>.</p>
 
 <p class="reference">References <a class="el" href="Formatter_8h_source.html#l00208">commentIndex_</a>, <a class="el" href="Formatter_8h_source.html#l00207">comments_</a>, <a class="el" href="ASTNode_8h_source.html#l00340">InterpolatedString::endLine</a>, <a class="el" href="Formatter_8cpp_source.html#l00023">escapeStringContent()</a>, <a class="el" href="ASTNode_8h_source.html#l00333">InterpolatedString::expressions</a>, <a class="el" href="Formatter_8cpp_source.html#l00293">formatNode()</a>, <a class="el" href="Formatter_8h_source.html#l00227">lastNodeEndLine_</a>, <a class="el" href="ASTNode_8h_source.html#l00332">InterpolatedString::literals</a>, and <a class="el" href="Formatter_8h_source.html#l00221">out_</a>.</p>
 
@@ -1141,7 +1141,7 @@ Static Private Attributes</h2></td></tr>
 
 <p>格式化成员访问：obj.field；obj 为低优先级表达式时加括号，避免被错误解析为方法调用。 </p>
 
-<p class="definition">Definition at line <a class="el" href="Formatter_8cpp_source.html#l01658">1658</a> of file <a class="el" href="Formatter_8cpp_source.html">Formatter.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Formatter_8cpp_source.html#l01656">1656</a> of file <a class="el" href="Formatter_8cpp_source.html">Formatter.cpp</a>.</p>
 
 <p class="reference">References <a class="el" href="ASTNode_8h_source.html#l00852">MemberAccess::fieldName</a>, <a class="el" href="Formatter_8cpp_source.html#l00293">formatNode()</a>, <a class="el" href="ASTNode_8h.html#acac9cbaeea226ed297804c012dc12b16aa16f9361814689c06e9290877926accb">NODE_BINARY_OP</a>, <a class="el" href="ASTNode_8h.html#acac9cbaeea226ed297804c012dc12b16a3e7540eab02d8df5c820caec8c7de225">NODE_UNARY_OP</a>, <a class="el" href="ASTNode_8h_source.html#l00851">MemberAccess::object</a>, and <a class="el" href="Formatter_8h_source.html#l00221">out_</a>.</p>
 
@@ -1175,7 +1175,7 @@ Static Private Attributes</h2></td></tr>
 
 <p>格式化成员赋值：obj.field = value；obj 为低优先级表达式时加括号。 </p>
 
-<p class="definition">Definition at line <a class="el" href="Formatter_8cpp_source.html#l01672">1672</a> of file <a class="el" href="Formatter_8cpp_source.html">Formatter.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Formatter_8cpp_source.html#l01669">1669</a> of file <a class="el" href="Formatter_8cpp_source.html">Formatter.cpp</a>.</p>
 
 <p class="reference">References <a class="el" href="Formatter_8cpp_source.html#l00190">binOp()</a>, <a class="el" href="ASTNode_8h_source.html#l00866">MemberAssign::fieldName</a>, <a class="el" href="Formatter_8cpp_source.html#l00293">formatNode()</a>, <a class="el" href="ASTNode_8h.html#acac9cbaeea226ed297804c012dc12b16aa16f9361814689c06e9290877926accb">NODE_BINARY_OP</a>, <a class="el" href="ASTNode_8h.html#acac9cbaeea226ed297804c012dc12b16a3e7540eab02d8df5c820caec8c7de225">NODE_UNARY_OP</a>, <a class="el" href="ASTNode_8h_source.html#l00865">MemberAssign::object</a>, <a class="el" href="Formatter_8h_source.html#l00221">out_</a>, and <a class="el" href="ASTNode_8h_source.html#l00867">MemberAssign::value</a>.</p>
 
@@ -1208,7 +1208,7 @@ Static Private Attributes</h2></td></tr>
 </div><div class="memdoc">
 <p>格式化方法调用：obj.method(args...)；obj 为低优先级表达式时加括号， 否则形如 (a+b).foo() 会被错误重新解析为独立 FunCall。 </p>
 
-<p class="definition">Definition at line <a class="el" href="Formatter_8cpp_source.html#l01689">1689</a> of file <a class="el" href="Formatter_8cpp_source.html">Formatter.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Formatter_8cpp_source.html#l01685">1685</a> of file <a class="el" href="Formatter_8cpp_source.html">Formatter.cpp</a>.</p>
 
 <p class="reference">References <a class="el" href="ASTNode_8h_source.html#l00883">MethodCall::arguments</a>, <a class="el" href="Formatter_8cpp_source.html#l00203">comma()</a>, <a class="el" href="Formatter_8cpp_source.html#l00293">formatNode()</a>, <a class="el" href="ASTNode_8h_source.html#l00882">MethodCall::methodName</a>, <a class="el" href="ASTNode_8h.html#acac9cbaeea226ed297804c012dc12b16aa16f9361814689c06e9290877926accb">NODE_BINARY_OP</a>, <a class="el" href="ASTNode_8h.html#acac9cbaeea226ed297804c012dc12b16a3e7540eab02d8df5c820caec8c7de225">NODE_UNARY_OP</a>, <a class="el" href="ASTNode_8h_source.html#l00881">MethodCall::object</a>, and <a class="el" href="Formatter_8h_source.html#l00221">out_</a>.</p>
 
@@ -1247,7 +1247,7 @@ Static Private Attributes</h2></td></tr>
 
 <p class="reference">References <a class="el" href="classASTNode.html#ab19e2a3711c648e10a78f678f8a7aa17">ASTNode::accept()</a>, <a class="el" href="Formatter_8h_source.html#l00205">formatDepth_</a>, <a class="el" href="Formatter_8h_source.html#l00206">MAX_FORMAT_DEPTH</a>, and <a class="el" href="Formatter_8h_source.html#l00221">out_</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Formatter_8cpp_source.html#l01283">formatArrayLiteral()</a>, <a class="el" href="Formatter_8cpp_source.html#l00819">formatAssignment()</a>, <a class="el" href="Formatter_8cpp_source.html#l00714">formatBinaryOp()</a>, <a class="el" href="Formatter_8cpp_source.html#l01181">formatBlock()</a>, <a class="el" href="Formatter_8cpp_source.html#l01573">formatClassDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l01326">formatDestructureBinding()</a>, <a class="el" href="Formatter_8cpp_source.html#l01294">formatDictLiteral()</a>, <a class="el" href="Formatter_8cpp_source.html#l01417">formatEnumVariantExpr()</a>, <a class="el" href="Formatter_8cpp_source.html#l00991">formatForStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l01131">formatFunCall()</a>, <a class="el" href="Formatter_8cpp_source.html#l01056">formatFunDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l00837">formatIfStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l01540">formatIndexAccess()</a>, <a class="el" href="Formatter_8cpp_source.html#l01555">formatIndexAssign()</a>, <a class="el" href="Formatter_8cpp_source.html#l01717">formatInterpolatedString()</a>, <a class="el" href="Formatter_8cpp_source.html#l01444">formatMatchExpr()</a>, <a class="el" href="Formatter_8cpp_source.html#l01486">formatMatchPattern()</a>, <a class="el" href="Formatter_8cpp_source.html#l01658">formatMemberAccess()</a>, <a class="el" href="Formatter_8cpp_source.html#l01672">formatMemberAssign()</a>, <a class="el" href="Formatter_8cpp_source.html#l01689">formatMethodCall()</a>, <a class="el" href="Formatter_8cpp_source.html#l01169">formatPrintStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l01160">formatReturnStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l01308">formatTupleLiteral()</a>, <a class="el" href="Formatter_8cpp_source.html#l00733">formatUnaryOp()</a>, <a class="el" href="Formatter_8cpp_source.html#l00802">formatVarDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l00949">formatWhileStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l00560">visitAwaitExpr()</a>, <a class="el" href="Formatter_8cpp_source.html#l00650">visitExportStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l00528">visitMacroCallExpr()</a>, <a class="el" href="Formatter_8cpp_source.html#l00500">visitMacroDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l00475">visitThrowStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l00541">visitTraitDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l00566">visitTryStmt()</a>, and <a class="el" href="Formatter_8cpp_source.html#l00487">visitYieldExpr()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Formatter_8cpp_source.html#l01283">formatArrayLiteral()</a>, <a class="el" href="Formatter_8cpp_source.html#l00819">formatAssignment()</a>, <a class="el" href="Formatter_8cpp_source.html#l00714">formatBinaryOp()</a>, <a class="el" href="Formatter_8cpp_source.html#l01181">formatBlock()</a>, <a class="el" href="Formatter_8cpp_source.html#l01571">formatClassDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l01326">formatDestructureBinding()</a>, <a class="el" href="Formatter_8cpp_source.html#l01294">formatDictLiteral()</a>, <a class="el" href="Formatter_8cpp_source.html#l01417">formatEnumVariantExpr()</a>, <a class="el" href="Formatter_8cpp_source.html#l00991">formatForStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l01131">formatFunCall()</a>, <a class="el" href="Formatter_8cpp_source.html#l01056">formatFunDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l00837">formatIfStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l01540">formatIndexAccess()</a>, <a class="el" href="Formatter_8cpp_source.html#l01554">formatIndexAssign()</a>, <a class="el" href="Formatter_8cpp_source.html#l01712">formatInterpolatedString()</a>, <a class="el" href="Formatter_8cpp_source.html#l01444">formatMatchExpr()</a>, <a class="el" href="Formatter_8cpp_source.html#l01486">formatMatchPattern()</a>, <a class="el" href="Formatter_8cpp_source.html#l01656">formatMemberAccess()</a>, <a class="el" href="Formatter_8cpp_source.html#l01669">formatMemberAssign()</a>, <a class="el" href="Formatter_8cpp_source.html#l01685">formatMethodCall()</a>, <a class="el" href="Formatter_8cpp_source.html#l01169">formatPrintStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l01160">formatReturnStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l01308">formatTupleLiteral()</a>, <a class="el" href="Formatter_8cpp_source.html#l00733">formatUnaryOp()</a>, <a class="el" href="Formatter_8cpp_source.html#l00802">formatVarDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l00949">formatWhileStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l00560">visitAwaitExpr()</a>, <a class="el" href="Formatter_8cpp_source.html#l00650">visitExportStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l00528">visitMacroCallExpr()</a>, <a class="el" href="Formatter_8cpp_source.html#l00500">visitMacroDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l00475">visitThrowStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l00541">visitTraitDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l00566">visitTryStmt()</a>, and <a class="el" href="Formatter_8cpp_source.html#l00487">visitYieldExpr()</a>.</p>
 
 </div>
 </div>
@@ -1277,7 +1277,7 @@ Static Private Attributes</h2></td></tr>
 
 <p>格式化 null 字面量：裸输出 "null" 关键字。 </p>
 
-<p class="definition">Definition at line <a class="el" href="Formatter_8cpp_source.html#l01710">1710</a> of file <a class="el" href="Formatter_8cpp_source.html">Formatter.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Formatter_8cpp_source.html#l01705">1705</a> of file <a class="el" href="Formatter_8cpp_source.html">Formatter.cpp</a>.</p>
 
 <p class="reference">References <a class="el" href="Formatter_8h_source.html#l00221">out_</a>.</p>
 
@@ -1312,7 +1312,7 @@ Static Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="Formatter_8cpp_source.html#l00759">759</a> of file <a class="el" href="Formatter_8cpp_source.html">Formatter.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="ASTNode_8cpp_source.html#l00013">NumberLiteral::getValue()</a>, <a class="el" href="Value_8h_source.html#l01048">Value::isFloat()</a>, <a class="el" href="Formatter_8h_source.html#l00221">out_</a>, and <a class="el" href="Value_8h_source.html#l01575">Value::toString()</a>.</p>
+<p class="reference">References <a class="el" href="ASTNode_8cpp_source.html#l00013">NumberLiteral::getValue()</a>, <a class="el" href="Value_8h_source.html#l01050">Value::isFloat()</a>, <a class="el" href="Formatter_8h_source.html#l00221">out_</a>, and <a class="el" href="Value_8h_source.html#l01577">Value::toString()</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="Formatter_8cpp_source.html#l00335">visitNumberLiteral()</a>.</p>
 
@@ -1639,7 +1639,7 @@ Static Private Attributes</h2></td></tr>
 
 <p class="reference">References <a class="el" href="Formatter_8h_source.html#l00231">cachedIndentLevel_</a>, <a class="el" href="Formatter_8h_source.html#l00204">currentIndent_</a>, <a class="el" href="Formatter_8h_source.html#l00230">indentCache_</a>, <a class="el" href="Formatter_8h_source.html#l00086">FormatOptions::indentSize</a>, <a class="el" href="Formatter_8h_source.html#l00203">options_</a>, and <a class="el" href="Formatter_8h_source.html#l00087">FormatOptions::useTabs</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Formatter_8cpp_source.html#l01181">formatBlock()</a>, <a class="el" href="Formatter_8cpp_source.html#l01573">formatClassDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l01357">formatEnumDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l00991">formatForStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l01056">formatFunDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l00837">formatIfStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l01444">formatMatchExpr()</a>, <a class="el" href="Formatter_8cpp_source.html#l00949">formatWhileStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l00213">openBrace()</a>, <a class="el" href="Formatter_8cpp_source.html#l00387">visitBlock()</a>, <a class="el" href="Formatter_8cpp_source.html#l00541">visitTraitDecl()</a>, and <a class="el" href="Formatter_8cpp_source.html#l00566">visitTryStmt()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Formatter_8cpp_source.html#l01181">formatBlock()</a>, <a class="el" href="Formatter_8cpp_source.html#l01571">formatClassDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l01357">formatEnumDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l00991">formatForStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l01056">formatFunDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l00837">formatIfStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l01444">formatMatchExpr()</a>, <a class="el" href="Formatter_8cpp_source.html#l00949">formatWhileStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l00213">openBrace()</a>, <a class="el" href="Formatter_8cpp_source.html#l00387">visitBlock()</a>, <a class="el" href="Formatter_8cpp_source.html#l00541">visitTraitDecl()</a>, and <a class="el" href="Formatter_8cpp_source.html#l00566">visitTryStmt()</a>.</p>
 
 </div>
 </div>
@@ -1707,7 +1707,7 @@ Static Private Attributes</h2></td></tr>
 
 <p class="reference">References <a class="el" href="Formatter_8h_source.html#l00088">FormatOptions::braceStyle</a>, <a class="el" href="Formatter_8cpp_source.html#l00172">indent()</a>, <a class="el" href="Formatter_8h.html#ad755b18970770495e18a5259e3eb5c9fac37080d23c7e0e5bcc7be7fa31215d2d">NEXT_LINE</a>, and <a class="el" href="Formatter_8h_source.html#l00203">options_</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Formatter_8cpp_source.html#l01573">formatClassDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l01357">formatEnumDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l00991">formatForStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l01056">formatFunDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l00837">formatIfStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l01444">formatMatchExpr()</a>, <a class="el" href="Formatter_8cpp_source.html#l00949">formatWhileStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l00387">visitBlock()</a>, and <a class="el" href="Formatter_8cpp_source.html#l00541">visitTraitDecl()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Formatter_8cpp_source.html#l01571">formatClassDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l01357">formatEnumDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l00991">formatForStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l01056">formatFunDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l00837">formatIfStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l01444">formatMatchExpr()</a>, <a class="el" href="Formatter_8cpp_source.html#l00949">formatWhileStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l00387">visitBlock()</a>, and <a class="el" href="Formatter_8cpp_source.html#l00541">visitTraitDecl()</a>.</p>
 
 </div>
 </div>
@@ -2071,7 +2071,7 @@ Static Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="Formatter_8cpp_source.html#l00442">442</a> of file <a class="el" href="Formatter_8cpp_source.html">Formatter.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="Formatter_8cpp_source.html#l01573">formatClassDecl()</a>.</p>
+<p class="reference">References <a class="el" href="Formatter_8cpp_source.html#l01571">formatClassDecl()</a>.</p>
 
 </div>
 </div>
@@ -2487,7 +2487,7 @@ Static Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="Formatter_8cpp_source.html#l00438">438</a> of file <a class="el" href="Formatter_8cpp_source.html">Formatter.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="Formatter_8cpp_source.html#l01555">formatIndexAssign()</a>.</p>
+<p class="reference">References <a class="el" href="Formatter_8cpp_source.html#l01554">formatIndexAssign()</a>.</p>
 
 </div>
 </div>
@@ -2519,7 +2519,7 @@ Static Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="Formatter_8cpp_source.html#l00656">656</a> of file <a class="el" href="Formatter_8cpp_source.html">Formatter.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="Formatter_8cpp_source.html#l01717">formatInterpolatedString()</a>.</p>
+<p class="reference">References <a class="el" href="Formatter_8cpp_source.html#l01712">formatInterpolatedString()</a>.</p>
 
 </div>
 </div>
@@ -2647,7 +2647,7 @@ Static Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="Formatter_8cpp_source.html#l00446">446</a> of file <a class="el" href="Formatter_8cpp_source.html">Formatter.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="Formatter_8cpp_source.html#l01658">formatMemberAccess()</a>.</p>
+<p class="reference">References <a class="el" href="Formatter_8cpp_source.html#l01656">formatMemberAccess()</a>.</p>
 
 </div>
 </div>
@@ -2679,7 +2679,7 @@ Static Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="Formatter_8cpp_source.html#l00450">450</a> of file <a class="el" href="Formatter_8cpp_source.html">Formatter.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="Formatter_8cpp_source.html#l01672">formatMemberAssign()</a>.</p>
+<p class="reference">References <a class="el" href="Formatter_8cpp_source.html#l01669">formatMemberAssign()</a>.</p>
 
 </div>
 </div>
@@ -2711,7 +2711,7 @@ Static Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="Formatter_8cpp_source.html#l00454">454</a> of file <a class="el" href="Formatter_8cpp_source.html">Formatter.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="Formatter_8cpp_source.html#l01689">formatMethodCall()</a>.</p>
+<p class="reference">References <a class="el" href="Formatter_8cpp_source.html#l01685">formatMethodCall()</a>.</p>
 
 </div>
 </div>
@@ -2743,7 +2743,7 @@ Static Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="Formatter_8cpp_source.html#l00458">458</a> of file <a class="el" href="Formatter_8cpp_source.html">Formatter.cpp</a>.</p>
 
-<p class="reference">References <a class="el" href="Formatter_8cpp_source.html#l01710">formatNullLiteral()</a>.</p>
+<p class="reference">References <a class="el" href="Formatter_8cpp_source.html#l01705">formatNullLiteral()</a>.</p>
 
 </div>
 </div>
@@ -3348,7 +3348,7 @@ Static Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="Formatter_8h_source.html#l00208">208</a> of file <a class="el" href="Formatter_8h_source.html">Formatter.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Formatter_8cpp_source.html#l00224">format()</a>, <a class="el" href="Formatter_8cpp_source.html#l01181">formatBlock()</a>, <a class="el" href="Formatter_8cpp_source.html#l01573">formatClassDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l01357">formatEnumDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l01717">formatInterpolatedString()</a>, <a class="el" href="Formatter_8cpp_source.html#l00132">setComments()</a>, and <a class="el" href="Formatter_8cpp_source.html#l00566">visitTryStmt()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Formatter_8cpp_source.html#l00224">format()</a>, <a class="el" href="Formatter_8cpp_source.html#l01181">formatBlock()</a>, <a class="el" href="Formatter_8cpp_source.html#l01571">formatClassDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l01357">formatEnumDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l01712">formatInterpolatedString()</a>, <a class="el" href="Formatter_8cpp_source.html#l00132">setComments()</a>, and <a class="el" href="Formatter_8cpp_source.html#l00566">visitTryStmt()</a>.</p>
 
 </div>
 </div>
@@ -3374,7 +3374,7 @@ Static Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="Formatter_8h_source.html#l00207">207</a> of file <a class="el" href="Formatter_8h_source.html">Formatter.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Formatter_8cpp_source.html#l01181">formatBlock()</a>, <a class="el" href="Formatter_8cpp_source.html#l01573">formatClassDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l01357">formatEnumDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l01717">formatInterpolatedString()</a>, <a class="el" href="Formatter_8cpp_source.html#l00132">setComments()</a>, and <a class="el" href="Formatter_8cpp_source.html#l00566">visitTryStmt()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Formatter_8cpp_source.html#l01181">formatBlock()</a>, <a class="el" href="Formatter_8cpp_source.html#l01571">formatClassDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l01357">formatEnumDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l01712">formatInterpolatedString()</a>, <a class="el" href="Formatter_8cpp_source.html#l00132">setComments()</a>, and <a class="el" href="Formatter_8cpp_source.html#l00566">visitTryStmt()</a>.</p>
 
 </div>
 </div>
@@ -3400,7 +3400,7 @@ Static Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="Formatter_8h_source.html#l00204">204</a> of file <a class="el" href="Formatter_8h_source.html">Formatter.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Formatter_8cpp_source.html#l00224">format()</a>, <a class="el" href="Formatter_8cpp_source.html#l01573">formatClassDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l01357">formatEnumDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l00991">formatForStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l01056">formatFunDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l00837">formatIfStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l01444">formatMatchExpr()</a>, <a class="el" href="Formatter_8cpp_source.html#l00949">formatWhileStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l00172">indent()</a>, <a class="el" href="Formatter_8cpp_source.html#l00387">visitBlock()</a>, and <a class="el" href="Formatter_8cpp_source.html#l00541">visitTraitDecl()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Formatter_8cpp_source.html#l00224">format()</a>, <a class="el" href="Formatter_8cpp_source.html#l01571">formatClassDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l01357">formatEnumDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l00991">formatForStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l01056">formatFunDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l00837">formatIfStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l01444">formatMatchExpr()</a>, <a class="el" href="Formatter_8cpp_source.html#l00949">formatWhileStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l00172">indent()</a>, <a class="el" href="Formatter_8cpp_source.html#l00387">visitBlock()</a>, and <a class="el" href="Formatter_8cpp_source.html#l00541">visitTraitDecl()</a>.</p>
 
 </div>
 </div>
@@ -3478,7 +3478,7 @@ Static Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="Formatter_8h_source.html#l00227">227</a> of file <a class="el" href="Formatter_8h_source.html">Formatter.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Formatter_8cpp_source.html#l01181">formatBlock()</a>, and <a class="el" href="Formatter_8cpp_source.html#l01717">formatInterpolatedString()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Formatter_8cpp_source.html#l01181">formatBlock()</a>, and <a class="el" href="Formatter_8cpp_source.html#l01712">formatInterpolatedString()</a>.</p>
 
 </div>
 </div>
@@ -3530,7 +3530,7 @@ Static Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="Formatter_8h_source.html#l00203">203</a> of file <a class="el" href="Formatter_8h_source.html">Formatter.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Formatter_8cpp_source.html#l00190">binOp()</a>, <a class="el" href="Formatter_8cpp_source.html#l00203">comma()</a>, <a class="el" href="Formatter_8cpp_source.html#l01181">formatBlock()</a>, <a class="el" href="Formatter_8cpp_source.html#l01573">formatClassDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l00167">getOptions()</a>, <a class="el" href="Formatter_8cpp_source.html#l00172">indent()</a>, <a class="el" href="Formatter_8cpp_source.html#l00213">openBrace()</a>, <a class="el" href="Formatter_8cpp_source.html#l00151">setIndentSize()</a>, and <a class="el" href="Formatter_8cpp_source.html#l00159">setOptions()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Formatter_8cpp_source.html#l00190">binOp()</a>, <a class="el" href="Formatter_8cpp_source.html#l00203">comma()</a>, <a class="el" href="Formatter_8cpp_source.html#l01181">formatBlock()</a>, <a class="el" href="Formatter_8cpp_source.html#l01571">formatClassDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l00167">getOptions()</a>, <a class="el" href="Formatter_8cpp_source.html#l00172">indent()</a>, <a class="el" href="Formatter_8cpp_source.html#l00213">openBrace()</a>, <a class="el" href="Formatter_8cpp_source.html#l00151">setIndentSize()</a>, and <a class="el" href="Formatter_8cpp_source.html#l00159">setOptions()</a>.</p>
 
 </div>
 </div>
@@ -3556,7 +3556,7 @@ Static Private Attributes</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="Formatter_8h_source.html#l00221">221</a> of file <a class="el" href="Formatter_8h_source.html">Formatter.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Formatter_8cpp_source.html#l00224">format()</a>, <a class="el" href="Formatter_8cpp_source.html#l01283">formatArrayLiteral()</a>, <a class="el" href="Formatter_8cpp_source.html#l00819">formatAssignment()</a>, <a class="el" href="Formatter_8cpp_source.html#l00714">formatBinaryOp()</a>, <a class="el" href="Formatter_8cpp_source.html#l01181">formatBlock()</a>, <a class="el" href="Formatter_8cpp_source.html#l00796">formatBoolLiteral()</a>, <a class="el" href="Formatter_8cpp_source.html#l01573">formatClassDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l01326">formatDestructureBinding()</a>, <a class="el" href="Formatter_8cpp_source.html#l01294">formatDictLiteral()</a>, <a class="el" href="Formatter_8cpp_source.html#l01357">formatEnumDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l01417">formatEnumVariantExpr()</a>, <a class="el" href="Formatter_8cpp_source.html#l00991">formatForStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l01131">formatFunCall()</a>, <a class="el" href="Formatter_8cpp_source.html#l01056">formatFunDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l00837">formatIfStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l01540">formatIndexAccess()</a>, <a class="el" href="Formatter_8cpp_source.html#l01555">formatIndexAssign()</a>, <a class="el" href="Formatter_8cpp_source.html#l01717">formatInterpolatedString()</a>, <a class="el" href="Formatter_8cpp_source.html#l01444">formatMatchExpr()</a>, <a class="el" href="Formatter_8cpp_source.html#l01486">formatMatchPattern()</a>, <a class="el" href="Formatter_8cpp_source.html#l01658">formatMemberAccess()</a>, <a class="el" href="Formatter_8cpp_source.html#l01672">formatMemberAssign()</a>, <a class="el" href="Formatter_8cpp_source.html#l01689">formatMethodCall()</a>, <a class="el" href="Formatter_8cpp_source.html#l00293">formatNode()</a>, <a class="el" href="Formatter_8cpp_source.html#l01710">formatNullLiteral()</a>, <a class="el" href="Formatter_8cpp_source.html#l00759">formatNumberLiteral()</a>, <a class="el" href="Formatter_8cpp_source.html#l01169">formatPrintStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l01160">formatReturnStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l00789">formatStringLiteral()</a>, <a class="el" href="Formatter_8cpp_source.html#l01308">formatTupleLiteral()</a>, <a class="el" href="Formatter_8cpp_source.html#l00733">formatUnaryOp()</a>, <a class="el" href="Formatter_8cpp_source.html#l00802">formatVarDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l00831">formatVarRef()</a>, <a class="el" href="Formatter_8cpp_source.html#l00949">formatWhileStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l00560">visitAwaitExpr()</a>, <a class="el" href="Formatter_8cpp_source.html#l00387">visitBlock()</a>, <a class="el" href="Formatter_8cpp_source.html#l00467">visitBreakStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l00471">visitContinueStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l00650">visitExportStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l00627">visitImportStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l00528">visitMacroCallExpr()</a>, <a class="el" href="Formatter_8cpp_source.html#l00500">visitMacroDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l00462">visitSuperExpr()</a>, <a class="el" href="Formatter_8cpp_source.html#l00475">visitThrowStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l00541">visitTraitDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l00566">visitTryStmt()</a>, and <a class="el" href="Formatter_8cpp_source.html#l00487">visitYieldExpr()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Formatter_8cpp_source.html#l00224">format()</a>, <a class="el" href="Formatter_8cpp_source.html#l01283">formatArrayLiteral()</a>, <a class="el" href="Formatter_8cpp_source.html#l00819">formatAssignment()</a>, <a class="el" href="Formatter_8cpp_source.html#l00714">formatBinaryOp()</a>, <a class="el" href="Formatter_8cpp_source.html#l01181">formatBlock()</a>, <a class="el" href="Formatter_8cpp_source.html#l00796">formatBoolLiteral()</a>, <a class="el" href="Formatter_8cpp_source.html#l01571">formatClassDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l01326">formatDestructureBinding()</a>, <a class="el" href="Formatter_8cpp_source.html#l01294">formatDictLiteral()</a>, <a class="el" href="Formatter_8cpp_source.html#l01357">formatEnumDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l01417">formatEnumVariantExpr()</a>, <a class="el" href="Formatter_8cpp_source.html#l00991">formatForStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l01131">formatFunCall()</a>, <a class="el" href="Formatter_8cpp_source.html#l01056">formatFunDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l00837">formatIfStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l01540">formatIndexAccess()</a>, <a class="el" href="Formatter_8cpp_source.html#l01554">formatIndexAssign()</a>, <a class="el" href="Formatter_8cpp_source.html#l01712">formatInterpolatedString()</a>, <a class="el" href="Formatter_8cpp_source.html#l01444">formatMatchExpr()</a>, <a class="el" href="Formatter_8cpp_source.html#l01486">formatMatchPattern()</a>, <a class="el" href="Formatter_8cpp_source.html#l01656">formatMemberAccess()</a>, <a class="el" href="Formatter_8cpp_source.html#l01669">formatMemberAssign()</a>, <a class="el" href="Formatter_8cpp_source.html#l01685">formatMethodCall()</a>, <a class="el" href="Formatter_8cpp_source.html#l00293">formatNode()</a>, <a class="el" href="Formatter_8cpp_source.html#l01705">formatNullLiteral()</a>, <a class="el" href="Formatter_8cpp_source.html#l00759">formatNumberLiteral()</a>, <a class="el" href="Formatter_8cpp_source.html#l01169">formatPrintStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l01160">formatReturnStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l00789">formatStringLiteral()</a>, <a class="el" href="Formatter_8cpp_source.html#l01308">formatTupleLiteral()</a>, <a class="el" href="Formatter_8cpp_source.html#l00733">formatUnaryOp()</a>, <a class="el" href="Formatter_8cpp_source.html#l00802">formatVarDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l00831">formatVarRef()</a>, <a class="el" href="Formatter_8cpp_source.html#l00949">formatWhileStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l00560">visitAwaitExpr()</a>, <a class="el" href="Formatter_8cpp_source.html#l00387">visitBlock()</a>, <a class="el" href="Formatter_8cpp_source.html#l00467">visitBreakStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l00471">visitContinueStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l00650">visitExportStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l00627">visitImportStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l00528">visitMacroCallExpr()</a>, <a class="el" href="Formatter_8cpp_source.html#l00500">visitMacroDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l00462">visitSuperExpr()</a>, <a class="el" href="Formatter_8cpp_source.html#l00475">visitThrowStmt()</a>, <a class="el" href="Formatter_8cpp_source.html#l00541">visitTraitDecl()</a>, <a class="el" href="Formatter_8cpp_source.html#l00566">visitTryStmt()</a>, and <a class="el" href="Formatter_8cpp_source.html#l00487">visitYieldExpr()</a>.</p>
 
 </div>
 </div>

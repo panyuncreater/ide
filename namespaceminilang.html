@@ -270,7 +270,7 @@ Functions</h2></td></tr>
 <tr><td class="fieldname"><a id="a3f0fc93f3520b4ab80c2c27c1a801901a8e1bde3c3d303163521522cf1d62f21f" name="a3f0fc93f3520b4ab80c2c27c1a801901a8e1bde3c3d303163521522cf1d62f21f"></a>ANY&#160;</td><td class="fielddoc"></td></tr>
 </table>
 
-<p class="definition">Definition at line <a class="el" href="TypeChecker_8h_source.html#l00343">343</a> of file <a class="el" href="TypeChecker_8h_source.html">TypeChecker.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="TypeChecker_8h_source.html#l00341">341</a> of file <a class="el" href="TypeChecker_8h_source.html">TypeChecker.h</a>.</p>
 
 </div>
 </div>
@@ -309,11 +309,11 @@ Functions</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="TypeChecker_8h_source.html#l00287">287</a> of file <a class="el" href="TypeChecker_8h_source.html">TypeChecker.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="TypeChecker_8h_source.html#l00285">285</a> of file <a class="el" href="TypeChecker_8h_source.html">TypeChecker.h</a>.</p>
 
-<p class="reference">References <a class="el" href="TypeChecker_8h_source.html#l00287">annotationReferencesTypeParam()</a>, <a class="el" href="TypeChecker_8h_source.html#l00151">findDictKVSeparator()</a>, and <a class="el" href="TypeChecker_8h_source.html#l00257">isTypeParameter()</a>.</p>
+<p class="reference">References <a class="el" href="TypeChecker_8h_source.html#l00285">annotationReferencesTypeParam()</a>, <a class="el" href="TypeChecker_8h_source.html#l00150">findDictKVSeparator()</a>, and <a class="el" href="TypeChecker_8h_source.html#l00256">isTypeParameter()</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="TypeChecker_8h_source.html#l00287">annotationReferencesTypeParam()</a>, <a class="el" href="Interpreter_8h_source.html#l00764">Interpreter::checkType()</a>, <a class="el" href="Compiler_8cpp_source.html#l00547">Compiler::emitTypeCheck()</a>, <a class="el" href="AstIRBuilder_8cpp_source.html#l00961">AstIRBuilder::emitTypeCheckIR()</a>, <a class="el" href="RegisterVMExec_8cpp_source.html#l00724">RegisterVM::executeArrayBuildOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00077">VM::executeContainerBuildOps()</a>, and <a class="el" href="Interpreter_8cpp_source.html#l03065">Interpreter::visitEnumVariantExpr()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="TypeChecker_8h_source.html#l00285">annotationReferencesTypeParam()</a>, <a class="el" href="Interpreter_8h_source.html#l00764">Interpreter::checkType()</a>, <a class="el" href="Compiler_8cpp_source.html#l00547">Compiler::emitTypeCheck()</a>, <a class="el" href="AstIRBuilder_8cpp_source.html#l00961">AstIRBuilder::emitTypeCheckIR()</a>, <a class="el" href="RegisterVMExec_8cpp_source.html#l00724">RegisterVM::executeArrayBuildOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00077">VM::executeContainerBuildOps()</a>, and <a class="el" href="Interpreter_8cpp_source.html#l03064">Interpreter::visitEnumVariantExpr()</a>.</p>
 
 </div>
 </div>
@@ -341,11 +341,11 @@ Functions</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="TypeChecker_8h_source.html#l00151">151</a> of file <a class="el" href="TypeChecker_8h_source.html">TypeChecker.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="TypeChecker_8h_source.html#l00150">150</a> of file <a class="el" href="TypeChecker_8h_source.html">TypeChecker.h</a>.</p>
 
 <p class="reference">References <a class="el" href="TypeChecker_8h_source.html#l00090">skipTypeAnnotationFrom()</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="TypeChecker_8h_source.html#l00287">annotationReferencesTypeParam()</a>, and <a class="el" href="TypeChecker_8h_source.html#l00158">typeMatchValue()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="TypeChecker_8h_source.html#l00285">annotationReferencesTypeParam()</a>, and <a class="el" href="TypeChecker_8h_source.html#l00157">typeMatchValue()</a>.</p>
 
 </div>
 </div>
@@ -384,9 +384,9 @@ Functions</h2></td></tr>
 </div><div class="memdoc">
 <p>R163 泛型扩展：判断类型名是否是类型参数（如 T、E、K、V）。 用于四后端（Interpreter/StackVM/RegisterVM/IR）的类型参数擦除—— 类型参数运行时不校验，仅跳过类型检查。 （注：曾与 Interpreter::isTypeParameter 成员构成双事实源，后者已于 2026-10-22 移除，本自由函数为唯一判定入口；复合注解请用 annotationReferencesTypeParam，精确匹配仅适用于已剥离的基础类型名。） </p>
 
-<p class="definition">Definition at line <a class="el" href="TypeChecker_8h_source.html#l00257">257</a> of file <a class="el" href="TypeChecker_8h_source.html">TypeChecker.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="TypeChecker_8h_source.html#l00256">256</a> of file <a class="el" href="TypeChecker_8h_source.html">TypeChecker.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="TypeChecker_8h_source.html#l00287">annotationReferencesTypeParam()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="TypeChecker_8h_source.html#l00285">annotationReferencesTypeParam()</a>.</p>
 
 </div>
 </div>
@@ -425,9 +425,9 @@ Functions</h2></td></tr>
 </div><div class="memdoc">
 <p>泛型擦除补全（2026-10-07）：判断注解是否（递归地）引用了类型参数。 R163 原实现仅精确匹配裸类型名，复合注解（T[] / T? / dict[string:T] / fun(T):T） 漏擦——Interpreter 侧 typeMatch 将 "T[]" 当具体数组元素类型校验而拒绝合法程序， 而 <a class="el" href="classVM.html" title="简单栈式虚拟机">VM</a> 路径因编译期发射的 OP_TYPE_CHECK 未发出/通过而接受（四后端不一致， 由 TestGenerics 探针发现）。规则：注解结构中任一基础类型是类型参数 → 整个注解视为泛型注解 → 整体跳过运行时校验（对齐 R163"类型参数运行时不校验"； dict 具体键的校验一并放弃，属记录的简化，重启条件 = 泛型运行时强检立项）。 注解字符串格式与 <a class="el" href="classParser.html#a7e9c1ba350223b68b025d0c2e06da7b5">Parser::parseTypeAnnotation</a> 的生成格式一一对应。 </p>
 
-<p class="definition">Definition at line <a class="el" href="TypeChecker_8h_source.html#l00278">278</a> of file <a class="el" href="TypeChecker_8h_source.html">TypeChecker.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="TypeChecker_8h_source.html#l00277">277</a> of file <a class="el" href="TypeChecker_8h_source.html">TypeChecker.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="InterpreterCalls_8cpp_source.html#l00142">Interpreter::callClosureValue()</a>, <a class="el" href="InterpreterCalls_8cpp_source.html#l00905">Interpreter::callNamedFunction()</a>, <a class="el" href="CompilerStmt_8cpp_source.html#l00566">Compiler::declareFunction()</a>, <a class="el" href="AstIRBuilder_8cpp_source.html#l02127">AstIRBuilder::emitFunctionBody()</a>, <a class="el" href="CompilerClass_8cpp_source.html#l00140">Compiler::emitMethodBody()</a>, <a class="el" href="InterpreterCalls_8cpp_source.html#l00410">Interpreter::invokeClosureSync()</a>, <a class="el" href="AstIRBuilder_8cpp_source.html#l03638">AstIRBuilder::visitClassDecl()</a>, <a class="el" href="InterpreterClasses_8cpp_source.html#l00015">Interpreter::visitClassDecl()</a>, <a class="el" href="AstIRBuilder_8cpp_source.html#l02742">AstIRBuilder::visitEnumDecl()</a>, <a class="el" href="CompilerExpr_8cpp_source.html#l00702">Compiler::visitEnumDecl()</a>, and <a class="el" href="Interpreter_8cpp_source.html#l03034">Interpreter::visitEnumDecl()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="InterpreterCalls_8cpp_source.html#l00142">Interpreter::callClosureValue()</a>, <a class="el" href="InterpreterCalls_8cpp_source.html#l00906">Interpreter::callNamedFunction()</a>, <a class="el" href="CompilerStmt_8cpp_source.html#l00566">Compiler::declareFunction()</a>, <a class="el" href="AstIRBuilder_8cpp_source.html#l02127">AstIRBuilder::emitFunctionBody()</a>, <a class="el" href="CompilerClass_8cpp_source.html#l00140">Compiler::emitMethodBody()</a>, <a class="el" href="InterpreterCalls_8cpp_source.html#l00411">Interpreter::invokeClosureSync()</a>, <a class="el" href="AstIRBuilder_8cpp_source.html#l03638">AstIRBuilder::visitClassDecl()</a>, <a class="el" href="InterpreterClasses_8cpp_source.html#l00015">Interpreter::visitClassDecl()</a>, <a class="el" href="AstIRBuilder_8cpp_source.html#l02742">AstIRBuilder::visitEnumDecl()</a>, <a class="el" href="CompilerExpr_8cpp_source.html#l00699">Compiler::visitEnumDecl()</a>, and <a class="el" href="Interpreter_8cpp_source.html#l03033">Interpreter::visitEnumDecl()</a>.</p>
 
 </div>
 </div>
@@ -470,7 +470,7 @@ Functions</h2></td></tr>
 
 <p class="reference">References <a class="el" href="TypeChecker_8h_source.html#l00090">skipTypeAnnotationFrom()</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="TypeChecker_8h_source.html#l00151">findDictKVSeparator()</a>, and <a class="el" href="TypeChecker_8h_source.html#l00090">skipTypeAnnotationFrom()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="TypeChecker_8h_source.html#l00150">findDictKVSeparator()</a>, and <a class="el" href="TypeChecker_8h_source.html#l00090">skipTypeAnnotationFrom()</a>.</p>
 
 </div>
 </div>
@@ -508,11 +508,11 @@ Functions</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="TypeChecker_8h_source.html#l00158">158</a> of file <a class="el" href="TypeChecker_8h_source.html">TypeChecker.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="TypeChecker_8h_source.html#l00157">157</a> of file <a class="el" href="TypeChecker_8h_source.html">TypeChecker.h</a>.</p>
 
-<p class="reference">References <a class="el" href="ValueTypes_8h_source.html#l00064">TypeName::ARRAY</a>, <a class="el" href="Value_8h_source.html#l01165">Value::arrayVal()</a>, <a class="el" href="ValueTypes_8h_source.html#l00061">TypeName::BOOL</a>, <a class="el" href="Value_8h_source.html#l01278">Value::className()</a>, <a class="el" href="ValueTypes_8h_source.html#l00065">TypeName::DICT</a>, <a class="el" href="Value_8h_source.html#l01180">Value::dictVal()</a>, <a class="el" href="ValueTypes_8h_source.html#l00069">TypeName::ENUM</a>, <a class="el" href="Value_8h_source.html#l01208">Value::enumVariantEnumName()</a>, <a class="el" href="TypeChecker_8h_source.html#l00151">findDictKVSeparator()</a>, <a class="el" href="ValueTypes_8h_source.html#l00060">TypeName::FLOAT</a>, <a class="el" href="ValueTypes_8h_source.html#l00059">TypeName::INT</a>, <a class="el" href="Value_8h_source.html#l01052">Value::isArray()</a>, <a class="el" href="Value_8h_source.html#l01049">Value::isBool()</a>, <a class="el" href="Value_8h_source.html#l01055">Value::isClosure()</a>, <a class="el" href="Value_8h_source.html#l01053">Value::isDict()</a>, <a class="el" href="Value_8h_source.html#l01057">Value::isEnumVariant()</a>, <a class="el" href="Value_8h_source.html#l01048">Value::isFloat()</a>, <a class="el" href="Value_8h_source.html#l01054">Value::isInstance()</a>, <a class="el" href="Value_8h_source.html#l01040">Value::isInt()</a>, <a class="el" href="Value_8h_source.html#l01050">Value::isNull()</a>, <a class="el" href="Value_8h_source.html#l01051">Value::isString()</a>, <a class="el" href="Value_8h_source.html#l01056">Value::isTuple()</a>, <a class="el" href="ValueTypes_8h_source.html#l00063">TypeName::NULL_T</a>, <a class="el" href="ValueTypes_8h_source.html#l00062">TypeName::STRING</a>, <a class="el" href="ValueTypes_8h_source.html#l00068">TypeName::TUPLE</a>, and <a class="el" href="TypeChecker_8h_source.html#l00158">typeMatchValue()</a>.</p>
+<p class="reference">References <a class="el" href="ValueTypes_8h_source.html#l00064">TypeName::ARRAY</a>, <a class="el" href="Value_8h_source.html#l01167">Value::arrayVal()</a>, <a class="el" href="ValueTypes_8h_source.html#l00061">TypeName::BOOL</a>, <a class="el" href="Value_8h_source.html#l01280">Value::className()</a>, <a class="el" href="ValueTypes_8h_source.html#l00065">TypeName::DICT</a>, <a class="el" href="Value_8h_source.html#l01182">Value::dictVal()</a>, <a class="el" href="ValueTypes_8h_source.html#l00069">TypeName::ENUM</a>, <a class="el" href="Value_8h_source.html#l01210">Value::enumVariantEnumName()</a>, <a class="el" href="TypeChecker_8h_source.html#l00150">findDictKVSeparator()</a>, <a class="el" href="ValueTypes_8h_source.html#l00060">TypeName::FLOAT</a>, <a class="el" href="ValueTypes_8h_source.html#l00059">TypeName::INT</a>, <a class="el" href="Value_8h_source.html#l01054">Value::isArray()</a>, <a class="el" href="Value_8h_source.html#l01051">Value::isBool()</a>, <a class="el" href="Value_8h_source.html#l01057">Value::isClosure()</a>, <a class="el" href="Value_8h_source.html#l01055">Value::isDict()</a>, <a class="el" href="Value_8h_source.html#l01059">Value::isEnumVariant()</a>, <a class="el" href="Value_8h_source.html#l01050">Value::isFloat()</a>, <a class="el" href="Value_8h_source.html#l01056">Value::isInstance()</a>, <a class="el" href="Value_8h_source.html#l01042">Value::isInt()</a>, <a class="el" href="Value_8h_source.html#l01052">Value::isNull()</a>, <a class="el" href="Value_8h_source.html#l01053">Value::isString()</a>, <a class="el" href="Value_8h_source.html#l01058">Value::isTuple()</a>, <a class="el" href="ValueTypes_8h_source.html#l00063">TypeName::NULL_T</a>, <a class="el" href="ValueTypes_8h_source.html#l00062">TypeName::STRING</a>, <a class="el" href="ValueTypes_8h_source.html#l00068">TypeName::TUPLE</a>, and <a class="el" href="TypeChecker_8h_source.html#l00157">typeMatchValue()</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="RegisterVMExec_8cpp_source.html#l00724">RegisterVM::executeArrayBuildOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00077">VM::executeContainerBuildOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l01076">VM::executeMiscTypeCheck()</a>, <a class="el" href="VMContainers_8cpp_source.html#l01124">VM::executeMiscTypeTest()</a>, <a class="el" href="RegisterVMExec_8cpp_source.html#l01458">RegisterVM::executeTypeCheckOps()</a>, and <a class="el" href="TypeChecker_8h_source.html#l00158">typeMatchValue()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="RegisterVMExec_8cpp_source.html#l00724">RegisterVM::executeArrayBuildOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l00077">VM::executeContainerBuildOps()</a>, <a class="el" href="VMContainers_8cpp_source.html#l01076">VM::executeMiscTypeCheck()</a>, <a class="el" href="VMContainers_8cpp_source.html#l01124">VM::executeMiscTypeTest()</a>, <a class="el" href="RegisterVMExec_8cpp_source.html#l01458">RegisterVM::executeTypeCheckOps()</a>, and <a class="el" href="TypeChecker_8h_source.html#l00157">typeMatchValue()</a>.</p>
 
 </div>
 </div>

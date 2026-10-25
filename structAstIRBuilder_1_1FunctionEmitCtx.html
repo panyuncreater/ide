@@ -165,7 +165,7 @@ Public Attributes</h2></td></tr>
 <a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
 <div class="textblock"><p>R98 重构：visitFunDecl 三阶段拆分的编译期上下文。 进入子函数前保存父函数 22 个成员状态（避免 moved-from 状态被复用）， 子函数编译完成或异常时由 restoreParentFunctionState 恢复。 对齐 <a class="el" href="Compiler_8cpp.html">Compiler.cpp</a> 的 CompileContextGuard RAII 模式。 </p>
 
-<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01037">1037</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01034">1034</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
 </div><h2 class="groupheader">Member Data Documentation</h2>
 <a id="a1e9753faef7ed68194fa6851db425de3" name="a1e9753faef7ed68194fa6851db425de3"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a1e9753faef7ed68194fa6851db425de3">&#9670;&#160;</a></span>lambdaName</h2>
@@ -180,7 +180,7 @@ Public Attributes</h2></td></tr>
 </div><div class="memdoc">
 <p>R98 W3 fix: 匿名 lambda 的合成名（$lambda_N）。在 visitFunDecl 入口提前生成 并递增 lambdaCounter_，避免嵌套 lambda 在 emitFunctionPrologue（读计数器） 与 emitFunctionClosureRegistration（递增计数器）之间产生重名。 具名函数此字段为空。 </p>
 
-<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01079">1079</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01076">1076</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l01975">AstIRBuilder::emitFunctionPrologue()</a>, and <a class="el" href="AstIRBuilder_8cpp_source.html#l01896">AstIRBuilder::visitFunDecl()</a>.</p>
 
@@ -198,7 +198,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01039">1039</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01036">1036</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l02182">AstIRBuilder::restoreParentFunctionState()</a>, and <a class="el" href="AstIRBuilder_8cpp_source.html#l01896">AstIRBuilder::visitFunDecl()</a>.</p>
 
@@ -216,7 +216,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01048">1048</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01045">1045</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l02182">AstIRBuilder::restoreParentFunctionState()</a>, and <a class="el" href="AstIRBuilder_8cpp_source.html#l01896">AstIRBuilder::visitFunDecl()</a>.</p>
 
@@ -234,7 +234,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01047">1047</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01044">1044</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l02182">AstIRBuilder::restoreParentFunctionState()</a>, and <a class="el" href="AstIRBuilder_8cpp_source.html#l01896">AstIRBuilder::visitFunDecl()</a>.</p>
 
@@ -252,7 +252,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01056">1056</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01053">1053</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l02182">AstIRBuilder::restoreParentFunctionState()</a>, and <a class="el" href="AstIRBuilder_8cpp_source.html#l01896">AstIRBuilder::visitFunDecl()</a>.</p>
 
@@ -270,7 +270,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01059">1059</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01056">1056</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l02182">AstIRBuilder::restoreParentFunctionState()</a>.</p>
 
@@ -288,7 +288,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01055">1055</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01052">1052</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l02182">AstIRBuilder::restoreParentFunctionState()</a>, and <a class="el" href="AstIRBuilder_8cpp_source.html#l01896">AstIRBuilder::visitFunDecl()</a>.</p>
 
@@ -306,7 +306,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01072">1072</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01069">1069</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l02182">AstIRBuilder::restoreParentFunctionState()</a>, and <a class="el" href="AstIRBuilder_8cpp_source.html#l01896">AstIRBuilder::visitFunDecl()</a>.</p>
 
@@ -324,7 +324,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01073">1073</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01070">1070</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l02182">AstIRBuilder::restoreParentFunctionState()</a>, and <a class="el" href="AstIRBuilder_8cpp_source.html#l01896">AstIRBuilder::visitFunDecl()</a>.</p>
 
@@ -342,7 +342,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01074">1074</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01071">1071</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l02182">AstIRBuilder::restoreParentFunctionState()</a>, and <a class="el" href="AstIRBuilder_8cpp_source.html#l01896">AstIRBuilder::visitFunDecl()</a>.</p>
 
@@ -360,7 +360,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01071">1071</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01068">1068</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l02182">AstIRBuilder::restoreParentFunctionState()</a>, and <a class="el" href="AstIRBuilder_8cpp_source.html#l01896">AstIRBuilder::visitFunDecl()</a>.</p>
 
@@ -378,7 +378,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01057">1057</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01054">1054</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l02182">AstIRBuilder::restoreParentFunctionState()</a>, and <a class="el" href="AstIRBuilder_8cpp_source.html#l01896">AstIRBuilder::visitFunDecl()</a>.</p>
 
@@ -396,7 +396,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01058">1058</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01055">1055</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l02127">AstIRBuilder::emitFunctionBody()</a>, <a class="el" href="AstIRBuilder_8cpp_source.html#l02182">AstIRBuilder::restoreParentFunctionState()</a>, and <a class="el" href="AstIRBuilder_8cpp_source.html#l01896">AstIRBuilder::visitFunDecl()</a>.</p>
 
@@ -414,7 +414,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01064">1064</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01061">1061</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l02182">AstIRBuilder::restoreParentFunctionState()</a>, and <a class="el" href="AstIRBuilder_8cpp_source.html#l01896">AstIRBuilder::visitFunDecl()</a>.</p>
 
@@ -432,7 +432,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01063">1063</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01060">1060</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l02182">AstIRBuilder::restoreParentFunctionState()</a>, and <a class="el" href="AstIRBuilder_8cpp_source.html#l01896">AstIRBuilder::visitFunDecl()</a>.</p>
 
@@ -450,7 +450,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01050">1050</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01047">1047</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l02182">AstIRBuilder::restoreParentFunctionState()</a>, and <a class="el" href="AstIRBuilder_8cpp_source.html#l01896">AstIRBuilder::visitFunDecl()</a>.</p>
 
@@ -468,7 +468,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01042">1042</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01039">1039</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l02182">AstIRBuilder::restoreParentFunctionState()</a>, and <a class="el" href="AstIRBuilder_8cpp_source.html#l01896">AstIRBuilder::visitFunDecl()</a>.</p>
 
@@ -486,7 +486,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01065">1065</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01062">1062</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l02182">AstIRBuilder::restoreParentFunctionState()</a>, and <a class="el" href="AstIRBuilder_8cpp_source.html#l01896">AstIRBuilder::visitFunDecl()</a>.</p>
 
@@ -504,7 +504,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01066">1066</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01063">1063</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l02182">AstIRBuilder::restoreParentFunctionState()</a>, and <a class="el" href="AstIRBuilder_8cpp_source.html#l01896">AstIRBuilder::visitFunDecl()</a>.</p>
 
@@ -522,7 +522,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01038">1038</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01035">1035</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l02182">AstIRBuilder::restoreParentFunctionState()</a>, and <a class="el" href="AstIRBuilder_8cpp_source.html#l01896">AstIRBuilder::visitFunDecl()</a>.</p>
 
@@ -540,7 +540,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01043">1043</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01040">1040</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l02182">AstIRBuilder::restoreParentFunctionState()</a>, and <a class="el" href="AstIRBuilder_8cpp_source.html#l01896">AstIRBuilder::visitFunDecl()</a>.</p>
 
@@ -558,7 +558,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01044">1044</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01041">1041</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l02182">AstIRBuilder::restoreParentFunctionState()</a>, and <a class="el" href="AstIRBuilder_8cpp_source.html#l01896">AstIRBuilder::visitFunDecl()</a>.</p>
 
@@ -576,7 +576,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01046">1046</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01043">1043</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l02182">AstIRBuilder::restoreParentFunctionState()</a>, and <a class="el" href="AstIRBuilder_8cpp_source.html#l01896">AstIRBuilder::visitFunDecl()</a>.</p>
 
@@ -594,7 +594,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01062">1062</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01059">1059</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l02182">AstIRBuilder::restoreParentFunctionState()</a>, and <a class="el" href="AstIRBuilder_8cpp_source.html#l01896">AstIRBuilder::visitFunDecl()</a>.</p>
 
@@ -612,7 +612,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01060">1060</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01057">1057</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l02182">AstIRBuilder::restoreParentFunctionState()</a>, and <a class="el" href="AstIRBuilder_8cpp_source.html#l01896">AstIRBuilder::visitFunDecl()</a>.</p>
 
@@ -630,7 +630,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01061">1061</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01058">1058</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l02182">AstIRBuilder::restoreParentFunctionState()</a>, and <a class="el" href="AstIRBuilder_8cpp_source.html#l01896">AstIRBuilder::visitFunDecl()</a>.</p>
 
@@ -648,7 +648,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01045">1045</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01042">1042</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l02182">AstIRBuilder::restoreParentFunctionState()</a>, and <a class="el" href="AstIRBuilder_8cpp_source.html#l01896">AstIRBuilder::visitFunDecl()</a>.</p>
 
@@ -666,7 +666,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01049">1049</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01046">1046</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l02182">AstIRBuilder::restoreParentFunctionState()</a>, and <a class="el" href="AstIRBuilder_8cpp_source.html#l01896">AstIRBuilder::visitFunDecl()</a>.</p>
 
@@ -684,7 +684,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01054">1054</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01051">1051</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l02182">AstIRBuilder::restoreParentFunctionState()</a>, and <a class="el" href="AstIRBuilder_8cpp_source.html#l01896">AstIRBuilder::visitFunDecl()</a>.</p>
 
@@ -702,7 +702,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01040">1040</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01037">1037</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l01975">AstIRBuilder::emitFunctionPrologue()</a>, <a class="el" href="AstIRBuilder_8cpp_source.html#l02182">AstIRBuilder::restoreParentFunctionState()</a>, and <a class="el" href="AstIRBuilder_8cpp_source.html#l01896">AstIRBuilder::visitFunDecl()</a>.</p>
 
@@ -720,7 +720,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01041">1041</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="IR_8h_source.html#l01038">1038</a> of file <a class="el" href="IR_8h_source.html">IR.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="AstIRBuilder_8cpp_source.html#l02182">AstIRBuilder::restoreParentFunctionState()</a>, and <a class="el" href="AstIRBuilder_8cpp_source.html#l01896">AstIRBuilder::visitFunDecl()</a>.</p>
 
