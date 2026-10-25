@@ -11,6 +11,7 @@
 | 多后端语义细则、新增特性 checklist 与性能路径不变量 | `docs/specs/backend-consistency.md` §1-§3、§10 | `AGENTS.md` §3、`docs/testing.md`、skill | CHANGELOG、BACKLOG |
 | 协程挂起语义与实现 checklist | `docs/adr/ADR-007-*.md` + `backend-consistency.md` §9 | `AGENTS.md` §3、taxonomy K13 | 其他 spec |
 | JIT per-chunk 与缓存协议 | `docs/adr/ADR-008-*.md` + `backend-consistency.md` §8 | `AGENTS.md` §3、taxonomy K14 | CHANGELOG |
+| JIT 堆值生命周期、PIC 安全与槽位延迟释放 | `docs/adr/ADR-006-*.md` + `backend-consistency.md` §10 | `memory-model.md`（GC 根集）、taxonomy K14 | CHANGELOG |
 | 值与内存/COW/GC/宿主隔离 | `docs/specs/memory-model.md` + ADR-001/004 | `AGENTS.md` §3、taxonomy K15 | development |
 | 缺陷模式与审计入口 | `docs/specs/defect-taxonomy.md` | `AGENTS.md` §1/§4、bughunt skill | CHANGELOG |
 | 已否决方案与重启条件 | `docs/specs/rejected-decisions.md` | `docs/BACKLOG.md`（只引用 ID） | CHANGELOG |

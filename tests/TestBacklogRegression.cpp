@@ -540,3 +540,121 @@ TEST(AuditRound2, JitLoopLimitPerSiteAndPerCall) {
     cfg.setMaxLoopIterations(savedLimit);
 }
 #endif
+
+// ============================================================
+// PERF: 语句级赋值结果丢弃 + 赋值表达式嵌套（栈平衡回归）
+// ============================================================
+TEST(BacklogRegression, PERFAssignmentStatementStackBalance) {
+    const std::string src = "var a = 0; var b = 0;"
+                            "var i = 0;"
+                            "while (i < 3) { a = i; b = (a = a + 1); i = i + 1; }"
+                            "print(a); print(\"|\"); print(b); print(\"|\");"
+                            "var sum = 0;"
+                            "for (var j = 0; j < 3; j = j + 1) { sum = sum + j; }"
+                            "print(sum); print(\"|\");"
+                            "fun f() { var x = 1; x = x + 2; return x; }"
+                            "print(f());";
+    ASSERT_TRUE(parseClean(src));
+    EXPECT_FIVE_BACKENDS(src, "3|3|3|3");
+}
+
+// ============================================================
+// PERF: 成员链内联存储——浅链（内联槽）与深链（溢出回退）读写一致
+// 仅直译解释器支持深链写入（StackVM/JIT 编译器限制 3 层及以上成员赋值），
+// 浅链读写已由既有四后端用例覆盖；此处同时锁定 ChainInfo 两条存储路径。
+// ============================================================
+TEST(BacklogRegression, PERFChainInlineStorageDeepAndShallow) {
+    // 反向建链：新节点独占时设置 next 再赋给 root，避免 COW 别名写克隆。
+    const std::string src = "class Node { var next = null; var v = 0;"
+                            "  init(x: int) { this.v = x; } }"
+                            "var root = Node(0);"
+                            "var i = 0;"
+                            "while (i < 10) {"
+                            "  var n = Node(i + 1);"
+                            "  n.next = root;"
+                            "  root = n;"
+                            "  i = i + 1;"
+                            "}"
+                            "print(root.next.v); print(\"|\");"
+                            "root.next.next.next.next.next.next.next.next.next.next.v = 42;"
+                            "print(root.next.next.next.next.next.next.next.next.next.next.v);";
+    ASSERT_TRUE(parseClean(src));
+    EXPECT_EQ(minilang_test::runInterpreter(src), "9|42");
+}
+
+
+// ============================================================
+// B-010/B-011: 顶层块 fresh 全局变量的成员/索引赋值
+// 根因：currentLocals_ 用 -1 哨兵标记块变量，visitMemberAssign/visitIndexAssign
+// 把 -1 当成局部槽 255 发射 OP_MEMBER_SET_LOCAL/OP_INDEX_SET_LOCAL。
+// ============================================================
+TEST(BacklogRegression, B010BlockScopedGlobalMemberAssign) {
+    const std::string src = "class Node { var next = null; var v = 0;"
+                            "  init(x: int) { this.v = x; } }"
+                            "var root = Node(0);"
+                            "var i = 0;"
+                            "while (i < 3) { var n = Node(i + 1); n.next = root; root = n; i = i + 1; }"
+                            "print(root.v); print(\"|\"); print(root.next.v);";
+    EXPECT_FIVE_BACKENDS(src, "3|2");
+}
+
+TEST(BacklogRegression, B010BlockScopedGlobalIndexAssign) {
+    const std::string src = "var i = 0;"
+                            "while (i < 2) { var a = [0, 0]; a[0] = i + 1; print(a[0]); i = i + 1; }";
+    EXPECT_FIVE_BACKENDS(src, "12");
+}
+
+TEST(BacklogRegression, B010BlockScopedGlobalMethodCall) {
+    const std::string src = "class Node { var v = 0;"
+                            "  init(x: int) { this.v = x; }"
+                            "  fun get(): int { return this.v; } }"
+                            "var i = 0;"
+                            "var sum = 0;"
+                            "while (i < 3) { var n = Node(i + 1); sum = sum + n.get(); i = i + 1; }"
+                            "print(sum);";
+    EXPECT_FIVE_BACKENDS(src, "6");
+}
+
+// B-013: JIT 补齐 OP_MEMBER_SET——2 层嵌套成员赋值（全局/块作用域基变量）
+TEST(BacklogRegression, B013NestedMemberAssign) {
+    const std::string src = "class Inner { var v = 0; }"
+                            "class Node { var next = null; }"
+                            "var n = Node(); n.next = Inner(); n.next.v = 9;"
+                            "print(n.next.v); print(\"|\");"
+                            "var i = 0;"
+                            "while (i < 2) { var m = Node(); m.next = Inner(); m.next.v = i + 1;"
+                            "  print(m.next.v); i = i + 1; }"
+                            // 压力段：100 轮块变量创建/删除，覆盖 PIC 地址复用与延迟释放
+                            "var k = 0; var sum = 0;"
+                            "while (k < 100) { var q = Node(); q.next = Inner(); q.next.v = k; sum = sum + q.next.v;"
+                            "  k = k + 1; }"
+                            "print(\"|\"); print(sum);";
+    EXPECT_FIVE_BACKENDS(src, "9|12|4950");
+}
+
+#ifdef MINILANG_USE_JIT
+// B-012: 同一 JITBackend 多次 execute——延迟释放表在下次执行前清空，
+// 全局槽/名称全局覆盖与块变量删除后仍保持正确结果。
+TEST(BacklogRegression, B012JitRepeatedExecuteRetiresValues) {
+    const std::string src = "class Node { var next = null; var v = 0;"
+                            "  init(x: int) { this.v = x; } }"
+                            "var root = Node(0); var i = 0;"
+                            "while (i < 20) { var n = Node(i + 1); n.next = root; root = n; i = i + 1; }"
+                            "print(root.v); print(\"|\"); print(root.next.v);";
+    Lexer lx;
+    auto tk = lx.scan(src);
+    Parser parser;
+    auto ast = parser.parse(tk);
+    ASSERT_TRUE(ast);
+    Compiler compiler;
+    auto compiled = compiler.compile(*ast);
+    ASSERT_FALSE(compiler.getDiagnostics().hasErrors());
+    JITBackend jit;
+    for (int round = 0; round < 5; ++round) {
+        std::string out;
+        jit.setOutputCallback([&](const std::string& s) { out += s; });
+        EXPECT_EQ(jit.execute(compiled), JitResult::OK) << "round " << round;
+        EXPECT_EQ(out, "20|19") << "round " << round;
+    }
+}
+#endif

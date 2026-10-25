@@ -126,6 +126,18 @@ JIT 生成的本地代码无法直接持有 C++ 对象引用（asmjit::Label 是
 | R162 | 异常处理（try/catch/throw + finally）+ 名称变量表 |
 | R165-R166 | 覆盖缺口测试系列（浮点边界/递归深度/异常边角）+ GC 集成（Safepoint 轮询替代回调抑制） |
 | 2026-07-29~31 | 运算符重载 dunder 适配 + enum variant 校验 + 并发原语同步方法邮箱 + Linux SysV ABI 修复（运行时回调参数寄存器） |
+| 2026-10-25 | 名称全局按名写回 + `OP_MEMBER_SET` + 槽位旧堆值延迟释放（codegen v5） |
+
+## 运行时堆值生命周期与 PIC 安全（2026-10-25）
+
+JIT 操作数栈为**借用模型**（push 不 addRef、pop 不 release），而 member-get PIC 以 `InstanceData*` 地址 + 字段 `Value*` 为键。任何执行期立即 `release` 都可能造成借用悬垂或地址复用假命中，因此：
+
+- **执行期零释放**：槽位/名称全局的覆盖、删除、`OP_WRITEBACK_*` 与成员/索引写回的旧堆值统一经 `storeJitSlotBits` 移入 `JITBackend::retiredValues_`；该表作为 GC 根，并在下一次 `execute()` 清空 PIC 后统一释放（`JIT.cpp` 执行初始化）。
+- **全局槽新值所有权**：`OP_SET_GLOBAL`/`OP_DEFINE_GLOBAL` 与 `jitSetVar`/`jitDefineVar` 的槽路径对堆类型 addRef（标量走无调用快路径），名称全局走 `globals_` 的 Value 语义。
+- **无预分配槽全局名**：`OP_MEMBER_SET_VAR`/`OP_INDEX_SET_VAR` 使用 `jitMemberSetVarByName`/`jitIndexSetGlobalByName`，方法/超类接收者经 `jitResolveGlobalPtr` 运行时解析。
+- **嵌套左值赋值**：`OP_MEMBER_SET`/`OP_INDEX_SET` 将 COW 变异后的容器写入 `lastMutatedReceiver_`，再由 `LOAD_MUTATED + *_SET_VAR/_SET_LOCAL` 原地写回基容器。
+- 生成码变更统一递增 `kJitCodegenVersion`（当前 5）。
+- **已知限制**：栈借用模型本身无引用计数（BACKLOG B-012）；新增会在执行期释放堆值的路径必须先转入延迟释放表。
 
 ## 参考
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <utility>
 #include <variant>
 // A1 fix: Token.h 不再 include interpreter/Value.h。
 // lexer 层是比 interpreter 层更底层的模块，不应反向依赖。
@@ -127,6 +128,9 @@ struct Token {
 
     Token(TokenType t, const std::string& lex, TokenLiteral lit, int ln, int col)
         : type(t), lexeme(lex), literal(std::move(lit)), line(ln), column(col) {}
+
+    Token(TokenType t, std::string&& lex, TokenLiteral lit, int ln, int col)
+        : type(t), lexeme(std::move(lex)), literal(std::move(lit)), line(ln), column(col) {}
 
     // A1 fix: 字面量类型查询（替代原 Value::isXxx()）
     bool literalIsInt() const { return std::holds_alternative<int64_t>(literal); }

@@ -124,12 +124,7 @@ private:
     /// 不检查 autoRefresh 按钮是因为 MemoryModelPanel 第 4 子页的"自动刷新"
     /// 由 animAutoRefreshBtn_ 的 checked 状态控制 animTimer_，监听器作为补充通道。
     /// R113 A 项: 同步刷新第 5 子页 RegisterVM 寄存器帧状态。
-    void onVmStateChanged() {
-        if (isVisible()) {
-            refreshAnimState();
-            refreshRegVmState();
-        }
-    }
+    void onVmStateChanged();
 
     IdeController* controller_ = nullptr;
 

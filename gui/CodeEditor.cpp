@@ -943,6 +943,7 @@ void CodeEditor::onContentsChange(int position, int charsRemoved, int charsAdded
             // 断点 line > lastDeletedLine：平移 delta
             QSet<int> newBreakpoints;
             QSet<int> breakpointsToRemove;
+            bool breakpointsMoved = false;
             for (int line : breakpoints_) {
                 if (line <= firstDeletedLine) {
                     newBreakpoints.insert(line);
@@ -950,6 +951,7 @@ void CodeEditor::onContentsChange(int position, int charsRemoved, int charsAdded
                     int newLine = line + delta;
                     if (newLine > 0)
                         newBreakpoints.insert(newLine);
+                    breakpointsMoved = true;
                 } else {
                     breakpointsToRemove.insert(line);
                 }
@@ -979,7 +981,10 @@ void CodeEditor::onContentsChange(int position, int charsRemoved, int charsAdded
             }
             foldedBlocks_ = newFolded;
             update();
-            emit breakpointsChanged();
+            // PERF: 断点集合未发生变化时不触发上层全量重同步。
+            if (breakpointsMoved || !breakpointsToRemove.isEmpty()) {
+                emit breakpointsChanged();
+            }
             return;
         }
         // linesRemoved == 0：单行内删除（不改变行数，但 delta < 0 不应到达此处）
@@ -1062,7 +1067,15 @@ void CodeEditor::onContentsChange(int position, int charsRemoved, int charsAdded
     // AUDIT-P3-ROUND50 fix: 单行插入/删除偏移路径未发射 breakpointsChanged，
     // 与多行删除路径（L715）不一致。当前因调试期只读而未被触发，但若未来放开
     // 某模式下编辑，断点行号偏移后调试器将持有陈旧行号。
-    emit breakpointsChanged();
+    // PERF: 仅当起始行及之后确有断点需要偏移时才发射，避免每次换行触发全量重同步。
+    if (delta != 0) {
+        for (int line : breakpoints_) {
+            if (line >= startLine) {
+                emit breakpointsChanged();
+                break;
+            }
+        }
+    }
 
     update();
 }

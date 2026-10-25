@@ -117,8 +117,13 @@ MemoryModelPanel::MemoryModelPanel(QWidget* parent) : QWidget(parent) {
     animTimer_->setInterval(2000);
     animTimer_->setSingleShot(false);
     connect(animTimer_, &QTimer::timeout, this, [this]() {
-        refreshAnimState();
-        refreshRegVmState();
+        // PERF: 定时器仅驱动当前可见子页，避免停留在其他子页时无谓重建两张表。
+        const int idx = subPageBar_ ? subPageBar_->currentIndex() : -1;
+        if (idx == 3) {
+            refreshAnimState();
+        } else if (idx == 4) {
+            refreshRegVmState();
+        }
     });
 
     // 子页切换时触发对应刷新（GC 统计 / 动画状态 / RegisterVM 状态）
@@ -160,6 +165,20 @@ void MemoryModelPanel::hideEvent(QHideEvent* event) {
 
 /// 绑定/换绑 IdeController：注册 vmStateChanged 监听器（owner=this），
 /// 换绑前先反注册旧监听器，避免 controller 持有悬垂回调。
+/// OPT-1: vmStateChanged 监听回调——仅刷新当前可见子页，避免停留在其他子页时
+/// 同时重建两张表（切页时 currentChanged 已负责目标页刷新）。
+void MemoryModelPanel::onVmStateChanged() {
+    if (!isVisible()) {
+        return;
+    }
+    const int idx = subPageBar_ ? subPageBar_->currentIndex() : -1;
+    if (idx == 3) {
+        refreshAnimState();
+    } else if (idx == 4) {
+        refreshRegVmState();
+    }
+}
+
 void MemoryModelPanel::setController(IdeController* controller) {
     if (controller_ == controller)
         return;

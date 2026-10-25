@@ -31,7 +31,7 @@
   - **统计字段为 `std::atomic`（2026-10-04 起）**：`allocationsSinceLastGc_`/`currentPhase_`/`lastMarkedCount_`/`lastCollectedCount_`/`totalGcCount_`/`gcAllocationThreshold_`/`pendingIncrementalGc_` 均为 atomic，写入点在锁内、只读访问（GUI 轮询）无锁；`checkPendingGc` 走无锁快速路径（relaxed 读 + 慢路径锁内复查）。新增统计字段沿用此模式。
   - **登记表为 slots_ 槽位表（2026-10-06 起）**：GcManager 以单一 `slots_` 槽位表取代原 `tracked_` vector + `aliveSet_` unordered_set 双结构——不变量（全局 `recursive_mutex` 内）：非空槽位 ⟺ 槽位被 `gcSlot_==i` 的存活对象占用，nullptr 为已析构墓碑，锁内无悬垂指针；死亡槽位经 `freeSlots_` 复用（LIFO），`trackedCount()` 为 O(1) 精确存活数。对象侧 `RefCounted::gcSlot_` 仅在锁内读写（registerTracked 回写 / Phase 3 压缩回写 / onDestroyed 读取）。**约定**：新增跟踪类型照常「构造函数 `registerTracked` + 基类析构钩子注销」配对，禁止绕过 `onDestroyed` 手工操作槽位（onDestroyed 以 `slots_[gcSlot_]==obj` 指针身份卫兵回收，手工绕过会破坏身份不变量导致槽位复用冲突）；全局锁纪律（分配/析构/collectCycle 全程持锁）不变——分配路径的 thread_local 批量登记去锁化已评估为需 TSan 通道专验，未实施（见优化积压记录）。
   - mark 阶段整个 `collectCycle` 共享一个 worklist（按引用传入 `markValue`），不得在每个根元素内新建。
-  - **类闭包环境根（2026-10-24）**：增量 GC 遍历 `classRegistry_` 时除字段默认值外，必须对 `ClassInfo::closureEnv` 走 `collectEnvChainRoots`；类定义在函数/块内时，方法捕获的外层容器仅经该环境链可达。JIT safepoint 同样必须收集 `globals_`、类字段默认值、闭包/关闭 upvalue、`lastMutatedReceiver_` 与完整已用操作数栈。
+  - **类闭包环境根（2026-10-24）**：增量 GC 遍历 `classRegistry_` 时除字段默认值外，必须对 `ClassInfo::closureEnv` 走 `collectEnvChainRoots`；类定义在函数/块内时，方法捕获的外层容器仅经该环境链可达。JIT safepoint 同样必须收集 `globals_`、类字段默认值、闭包/关闭 upvalue、`lastMutatedReceiver_`、延迟释放表 `retiredValues_` 与完整已用操作数栈。
 
 ## 4. Copy-On-Write（COW）
 
@@ -41,6 +41,7 @@
 - 新增可变容器 API 时，写路径必须复用既有 COW 检查，禁止绕过。
 - **单节点 VarRef 原位变异快路径（OPT-01，2026-10-23）**：写目标为直接变量且链长 1 时，必须在 RHS/索引/参数求值**之后**重新取环境槽位指针，并用 `Value::sharesStorageWith` 确认槽位仍持有求值时捕获的对象；不满足即回退旧写回路径。RHS 副作用可重绑定变量、SmallMap 晋升可使旧指针失效；无别名时释放链求值副本令 rc==1 跳过 COW 克隆，真别名仍由 `ensureUnique` 分离。锁定：`BacklogRegression.OPT01InPlaceMutationPreservesCowIsolation`。
 - 审计点：所有 `visit*`/内建方法的写路径逐一核对 COW 检查存在。
+- **JIT 槽位旧堆值延迟释放（2026-10-25）**：JIT 借用模型下，槽位/名称全局覆盖、删除与写回的旧堆值**禁止执行期 release**；必须经 `retiredValues_` 延迟到下次 `execute`（PIC 清空后）释放，并作为 GC 根。机制见 [ADR-006](../adr/ADR-006-jit-backend.md)，checklist 见 `backend-consistency.md` §10；栈借用模型限制见 BACKLOG B-012。
 
 ## 5. 栈与帧约束
 

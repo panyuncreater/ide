@@ -179,6 +179,10 @@ private:
     // 使 std::move 给 CompileResult 时类型匹配。
     std::map<std::string, BytecodeChunk> functionChunks_; // 函数字节码块
     std::unordered_map<std::string, int> currentLocals_;  // 当前函数的局部变量槽位映射
+    // 顶层块作用域的 fresh 全局变量名（无槽位，值存于 globals_，块退出发射 OP_DELETE_VAR）。
+    // 与 currentLocals_ 分离：currentLocals_ 只允许真实局部槽（>=0），避免 -1 哨兵被
+    // OP_MEMBER_SET_LOCAL/OP_INDEX_SET_LOCAL 等 slot 发射路径误当成槽位 255。
+    std::unordered_set<std::string> blockScopedGlobals_;
     // BUG-IDE-12 fix: 局部变量槽位→名称映射（索引即 slot），跨作用域累积（不随作用域退出清除）。
     // 函数最终化时复制到 chunk_.localSlotNames，供 VM 条件断点求值反查变量名。
     std::vector<std::string> localSlotNames_;
@@ -188,6 +192,7 @@ private:
     std::vector<BytecodeChunk::SlotNameRange> slotNameRanges_;
     std::unordered_map<std::string, std::string> varTypes_; // 2026-06-29: 变量名→类型注解（local+global）
     bool inFunction_ = false;                               // 是否在函数体内
+    bool discardAssignmentResult_ = false;                  // 语句级赋值：结果不被消费，跳过 DUP
     std::string currentFunctionReturnType_;                 // BUG-TYPE-1 fix: 当前函数返回类型注解（empty 表示无注解）
     std::vector<std::string>
         currentTypeParams_; // R163 泛型扩展：当前函数/方法的类型参数（empty=非泛型），用于 emitTypeCheck 擦除
@@ -379,6 +384,7 @@ private:
         BytecodeChunk chunk;
         std::unordered_map<std::string, uint16_t> varIndex;
         std::unordered_map<std::string, int> currentLocals;
+        std::unordered_set<std::string> blockScopedGlobals;
         std::unordered_map<std::string, std::string> varTypes; // 2026-06-29: 类型注解快照
         bool inFunction = false;
         std::unordered_map<std::string, int> outerLocals;

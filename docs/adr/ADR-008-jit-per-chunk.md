@@ -55,6 +55,7 @@ Accepted。2026-10-10/11 分阶段落地：阶段 1a（per-chunk 独立代码块
 - **缓存键** = `fnv1a64(字节码内容) ^ kJitCodegenVersion`。字节码内容指纹遍历全部 chunk（名称/代码字节/常量/元数据）+ globalSlotNames/enumInfos；任何影响 codegen 的字节码差异或 codegen 版本递增都会改变键值。**字符串常量按内容指纹**（raw bits 是每次编译新分配的堆指针，按位混入会导致同源码键不稳定——BlockCache 回归测试捕获）；标量按 NaN-boxing 原位编码（保守：内容不同必不同键，永不假命中）。
 - **共享存活**：未命中时深拷贝 `CompileResult` 作为编译宿主（块内嵌指针——常量池 `StringData*`、`c_str()`、`chunkPtr`、upvalueDescs——天然指向缓存持有的副本），代码块从**进程级共享 `JitRuntime`** 分配（块生命周期归缓存，实例侧 `JitCodeBlock.owned=false` 不释放）；副本+块+映射元数据+导入槽清单+IC 尺寸一并入缓存（LRU 容量 8）。
 - **命中路径**：新实例直接引用共享块与元数据重建映射/统计（`initPerChunkState`，与全量编译共用）/导入槽（同索引重填）/`errorExit`/闭包跳板，跳过重编译——**零重绑定、零字节拷贝**。
+- **版本代际**：`kJitCodegenVersion` 当前 5（2026-10-25 变更：名称全局按名写回、全局槽存储所有权、`OP_MEMBER_SET`、槽位旧堆值延迟释放）。执行期状态（member-get PIC、`retiredValues_`）不进入缓存键——它们不属于生成机器码；生命周期规则见 [ADR-006](ADR-006-jit-backend.md) 与 `backend-consistency.md` §10。
 - **门控**：仅纯 eager 路径（`!lazyMode_ && !tieredMode_ && customThresholds_/customOsrThresholds_` 均空）——lazy/tiering/自定义阈值的生成代码依赖运行模式与阈值，按需重编译绕过缓存。
 - **重定位记录层归入阶段 3**（磁盘持久化必须把代码从宿主实例解耦，A/B/C 类内嵌地址按 `{块内偏移, 类别, 符号}` 记录并在加载期重写）；进程内复用不需要它。
 

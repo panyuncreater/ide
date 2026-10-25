@@ -230,22 +230,23 @@ std::vector<Token> Lexer::scan(const std::string& source) {
     tokens_.emplace_back(TokenType::TK_EOF, "", std::monostate{}, line_, currentColumn());
 
     // 从 TK_ERROR Token 中提取诊断信息，并将注释 Token 分离到 comments_
-    // P0 fix: 不再 reserve(tokens_.size())——原代码会瞬时分配与 tokens_ 等大的内存，
-    // 峰值达 tokens_ + cleanTokens 双倍（~220MB）。改为让 cleanTokens 自然增长，
-    // 注释 Token 通常很少，cleanTokens.size() ≈ tokens_.size() - comments_.size()，
-    // move 后 tokens_ 释放，最终 cleanTokens 占用 ≈ 原大小。略多几次 realloc 但避免峰值翻倍。
-    std::vector<Token> cleanTokens;
-    for (auto& tok : tokens_) {
+    // PERF: 原地压缩 tokens_，避免第二个 Token 数组的分配与全量 move；
+    // 被移出的注释槽位与尾部元素由 resize 统一销毁。
+    size_t write = 0;
+    for (size_t read = 0; read < tokens_.size(); ++read) {
+        Token& tok = tokens_[read];
         if (tok.type == TokenType::TK_ERROR) {
             diagnostics_.addError(tok.lexeme, tok.line, tok.column, DiagSource::Lexer);
-            cleanTokens.push_back(std::move(tok));
         } else if (tok.type == TokenType::TK_LINE_COMMENT || tok.type == TokenType::TK_BLOCK_COMMENT) {
             comments_.push_back(std::move(tok));
-        } else {
-            cleanTokens.push_back(std::move(tok));
+            continue;
         }
+        if (write != read) {
+            tokens_[write] = std::move(tok);
+        }
+        ++write;
     }
-    tokens_ = std::move(cleanTokens);
+    tokens_.resize(write);
 
     return std::move(tokens_);
 }
@@ -798,13 +799,18 @@ void Lexer::string(bool isInterp) {
     int startCol = columnAt(start_);
     std::string value;
     // P-07 fix: 预估字符串容量，避免逐字符 += 反复 realloc
-    // P0 fix: 限制 reserve 上限，防止未闭合字符串触发 GB 级内存分配
-    // BUG-LEX-AUDIT-5 fix: 上限从 1MB 降为 64KB。原 1MB 在 MAX_INTERP_DEPTH=64 嵌套场景
-    // 峰值 reserved 达 64MB 但大多未使用；64KB 上限下嵌套峰值仅 4MB，平衡 OOM 防护与内存压力。
-    size_t reserveCap =
-        static_cast<size_t>(current_) < source_.size() ? (source_.size() - static_cast<size_t>(current_)) : 0;
-    if (reserveCap > 64 * 1024)
-        reserveCap = 64 * 1024;
+    // PERF: 只按到下一个引号的距离预留（扫描上限 4KB）；转义/插值只会让预留
+    // 偏离实际长度，容量提示不影响正确性，超长字符串由 std::string 正常增长。
+    constexpr size_t kReserveScanLimit = 4 * 1024;
+    size_t reserveCap = 0;
+    const size_t scanStart = static_cast<size_t>(current_);
+    const size_t scanEnd = std::min(source_.size(), scanStart + kReserveScanLimit);
+    for (size_t i = scanStart; i < scanEnd; ++i) {
+        if (source_[i] == '"') {
+            reserveCap = i - scanStart;
+            break;
+        }
+    }
     value.reserve(reserveCap);
 
     while (!isAtEnd() && peek() != '"') {

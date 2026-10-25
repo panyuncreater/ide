@@ -233,6 +233,10 @@ VMResult VM::throwException(Value thrownValue) {
 }
 
 VMResult VM::closeUpvaluesFrom(size_t fromSlot) {
+    // PERF: 无 open upvalue 时（递归/普通函数返回的热路径）跳过 multimap 查找。
+    if (openUpvalues_.empty()) {
+        return VMResult::VM_OK;
+    }
     // F11-fix: 关闭指向 [fromSlot, stack_.size()) 范围内栈槽的 open upvalues
     // B5 fix: openUpvalues_ 现为按 stackSlot 排序的 multimap，lower_bound(fromSlot) 定位起始点，
     // 一次性关闭并擦除 [fromSlot, ∞) 全部条目，复杂度从 O(n) 降为 O(log n + k)。
@@ -958,6 +962,50 @@ VMResult VM::numericOp(int opType) {
             stack_.pop_back();
             return VMResult::VM_OK;
         }
+    }
+
+    // P-7 perf: int-int 快速路径，镜像 RegisterVM executeArith 的既有实现，
+    // 避免 toDouble() 与 ArithOp 枚举分发；溢出/除零语义与 computeArith 逐项一致。
+    if (leftRef.isInt() && rightRef.isInt()) {
+        const int64_t a = leftRef.intVal();
+        const int64_t b = rightRef.intVal();
+        int64_t result = 0;
+        switch (opType) {
+        case OP_ADD_INT:
+            if (OverflowCheck::addOverflow(a, b))
+                return runtimeError("整数运算溢出");
+            result = a + b;
+            break;
+        case OP_SUB_INT:
+            if (OverflowCheck::subOverflow(a, b))
+                return runtimeError("整数运算溢出");
+            result = a - b;
+            break;
+        case OP_MUL_INT:
+            if (OverflowCheck::mulOverflow(a, b))
+                return runtimeError("整数运算溢出");
+            result = a * b;
+            break;
+        case OP_DIV_INT:
+            if (b == 0)
+                return runtimeError("除零错误", DiagCodes::kDivisionByZero);
+            if (OverflowCheck::divOverflow(a, b))
+                return runtimeError("整数运算溢出");
+            result = a / b;
+            break;
+        case OP_MOD_INT:
+            if (b == 0)
+                return runtimeError("除零错误", DiagCodes::kDivisionByZero);
+            if (OverflowCheck::modOverflow(a, b))
+                return runtimeError("整数运算溢出");
+            result = a % b;
+            break;
+        default:
+            return runtimeError("未知算术运算类型");
+        }
+        stack_[stack_.size() - 2] = Value(result);
+        stack_.pop_back();
+        return VMResult::VM_OK;
     }
 
     // 非数值类型检查（字符串拼接已在上面处理）
@@ -2347,9 +2395,14 @@ VMResult VM::executeVarNameOps(OpCode op, size_t& ip) {
             gsIt->second < static_cast<int>(globalSlots_.size())) {
             globalSlots_[gsIt->second] = std::move(val);
         } else {
-            globals_[name] = std::move(val);
-            // P-1 perf: insert 可能触发 rehash，递增版本号使所有 per-chunk varCache_ 失效
-            ++globalsVersion_;
+            // P-1 perf: 仅真正插入可能触发 rehash；覆盖已有条目不影响名称→槽位映射，
+            // 无需递增版本号使全部 per-chunk varCache_ 失效。
+            auto [gIt, inserted] = globals_.try_emplace(name, std::move(val));
+            if (inserted) {
+                ++globalsVersion_;
+            } else {
+                gIt->second = std::move(val);
+            }
         }
         notifyStep(ip, op);
         ip += 3;

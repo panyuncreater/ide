@@ -90,7 +90,7 @@
 - **操作数栈边界（2026-10-24）**：JIT 操作数栈固定 2048 槽，底部预留 256 槽临时值余量；`JitContext::stackLimit` 由 main prologue 写入。任何建帧路径（codegen fast path 与 `jitCallExpr`/`jitCallByName`/`jitMethodCall`/`jitClassNew` helper）在分配局部槽前必须检查新栈顶不低于 `stackLimit`，否则按递归深度错误退出。禁止只检查 `MAX_FRAMES`。
 - **Safepoint GC 根（2026-10-24）**：`jitSafepointGc` 必须扫描已用操作数栈区间 `[stackTop, stackBase)`，并收集 `globals_`、类字段默认值、`functionClosures_`、关闭 upvalue、`lastMutatedReceiver_`；这些根不得依赖 `globalSlots` 是否为空。锁定 `AuditRound2.JitSafepointKeepsBlockGlobalCycle`。
 - **类型检查与算术（2026-10-24）**：JIT 必须实现 `OP_TYPE_CHECK`（peek + `typeMatchValue` + 实例继承链，失败报类型注解违反），不得静默跳过或整体回退；通用算术对非数值操作数报“算术运算需要数值类型”；NaN 的 EQ/NEQ 必须走 generic 比较。锁定 `AuditRound2.JitTypeCheckEnforced`、`JitNonNumericArithmeticErrors`、`JitNaNEqualityUsesGenericPath`。
-- **缓存可观测性（2026-10-24）**：`asmCaptureEnabled_` 必须参与块缓存键（否则捕获实例命中无汇编条目）；`chunkTiers_` 随缓存条目保存/恢复。codegen 版本当前为 4。
+- **缓存可观测性（2026-10-24）**：`asmCaptureEnabled_` 必须参与块缓存键（否则捕获实例命中无汇编条目）；`chunkTiers_` 随缓存条目保存/恢复。codegen 版本当前为 5（见 §10）。
 
 ## 9. 协程真挂起一致性（2026-10-05 落地，ADR-007）
 
@@ -115,3 +115,13 @@
 - **JIT init 入口缓存**：`JitClassInfo::cachedInit` 依赖 `OP_DEFINE_CLASS` 整体替换类条目而自然失效；若未来支持类定义增量更新或方法表原地重建，必须显式重置 `initResolved`。
 - **int 比较特化**：`OP_GT/GTE/LTE_INT_SPEC` 仅由直译编译器在 `isExprKnownInt` 双侧为真时发射；StackVM 原生比较，JIT 复用通用比较代码。新增 `_SPEC` 操作码必须同步 opcode 元数据表、分派与 JIT 判定，锁定 `BacklogRegression.OPT18IntComparisonSpecializations*`。
 - **字节码行列元数据**：`BytecodeLineColumnMap` 每字节 4B（`line<<16|column`，超界饱和）；新增序列化/读写路径必须维持打包格式与 `kFormatVersion`。锁定 `BytecodeMetadata.LineColumnPackingRoundtripAndSaturation` 与缓存往返测试。
+- **只读访问器必须走 const 重载**：`Value::className()/stringVal()/arrayVal()/dictVal()/fields()` 的非 const 重载会 `ensureUnique` 触发 COW 深拷贝；只读路径必须用 `std::as_const(v)` 或 const 引用。方法调用类名读取、字符串拼接/比较曾因非 const 读取每次多克隆整实例/整串（2026-10-25）。新增只读热点代码必须检查重载选择。
+- **语句级赋值不物化结果**：直译编译器 `compileStatement(NODE_ASSIGNMENT)` 置 `discardAssignmentResult_`，`visitAssignment` 跳过 DUP（局部/upvalue 仍 peek+SET+POP，全局 SET 直接消费）；该标志必须在编译 RHS 前清除，否则嵌套赋值 `a = (b = 5)` 丢失内层结果。锁定 `BacklogRegression.PERFAssignmentStatementStackBalance`（五后端）。
+- **成员链内联存储**：`ChainInfo` 深度 ≤8 内联、更深回落 vector；链访问必须统一经 `nodeAt/valAt/idxAt`，并与 `depth` 保持一致，禁止再直接访问底层数组。锁定 `BacklogRegression.PERFChainInlineStorageDeepAndShallow`（五后端）。
+- **JIT 实参缓冲**：`JitArgBuffer` 按实际 `argCount` 构造（≤8 内联，超出堆回退），不得回退为恒构造 `MAX_JIT_ARGS=256` 个 Value；该优化仅在 helper 内部，不改变生成机器码与缓存键。
+- **编译器局部槽不变量**：`currentLocals_` 只允许真实局部槽（值 ≥0）；顶层块作用域 fresh 全局名由 `blockScopedGlobals_` 跟踪（随 `CompileContext` 保存/恢复，块退出发射 `OP_DELETE_VAR`）。任何把 `currentLocals_` 条目当槽位发射（`OP_*_LOCAL`）的路径必须确认值 ≥0；禁止再引入 `-1` 哨兵。锁定 `BacklogRegression.B010*`（五后端）。
+- **JIT 名称全局写回**：无预分配槽的全局名（块作用域 fresh 名）必须走运行时按名解析——`OP_MEMBER_SET_VAR`/`OP_INDEX_SET_VAR` 用 `jitMemberSetVarByName`/`jitIndexSetGlobalByName`，`OP_METHOD_CALL`/`OP_SUPER_CALL` 接收者经 `jitResolveGlobalPtr`，禁止以“未定义全局变量/接收者”编译失败收尾。全局槽存储（`OP_SET_GLOBAL`/`OP_DEFINE_GLOBAL` 与 `jitSetVar`/`jitDefineVar` 槽路径）对堆类型必须 addRef（`emitStoreGlobalOwned`/`jitStoreGlobalSlotAddRef`），否则块变量删除后槽位悬垂（B-010 根因）。锁定 `BacklogRegression.B010*`（五后端）。
+- **JIT 嵌套左值赋值**：`OP_MEMBER_SET`/`OP_INDEX_SET` 必须 pop `obj/val`（或 `obj/idx/val`）并将 COW 变异后的容器写入 `lastMutatedReceiver_`，随后 `OP_LOAD_MUTATED` + `OP_MEMBER_SET_VAR`/`OP_INDEX_SET_VAR` 原地写回基容器；禁止整体替换基变量。锁定 `BacklogRegression.B013NestedMemberAssign`。
+- **JIT PIC 生命周期**：member-get PIC 以 InstanceData 地址 + 字段 Value 指针为键，缓存存活期内实例不得被释放。全局/局部槽的覆盖、删除、`OP_WRITEBACK_*` 与成员/索引写回，必须经 `storeJitSlotBits`/`retireJitValue` 把旧堆值移入 `retiredValues_`（下一次 execute 清空 PIC 后统一 release，并纳入 `collectGcRoots`）；禁止在执行期直接 release 槽位旧值。操作数栈借用模型（push 不 addRef、pop 不 release）为已知限制（B-012），新增会释放执行期堆值的路径必须先转入延迟释放表。锁定 `BacklogRegression.B012JitRepeatedExecuteRetiresValues` 与 `B013*`。
+- **JIT 缓存版本**：`kJitCodegenVersion` 当前 5（2026-10-25 名称全局写回、全局槽存储所有权与 `OP_MEMBER_SET` 变更）。
+

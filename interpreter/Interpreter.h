@@ -25,6 +25,7 @@
  */
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <functional>
 #include <map> // evaluateCondition 沙箱 instSnaps 用 std::map 按指针去重
@@ -736,11 +737,56 @@ private:
     void writeBack(ASTNode* objectNode, const Value& modifiedValue, int line, int col);
 
     /// 链收集与求值结果
+    /// PERF: 成员/索引链绝大多数深度 ≤ 8，内联存储避免每条链 3 次堆分配；
+    /// 更深的链回落 vector（访问统一经 nodeAt/valAt/idxAt）。
     struct ChainInfo {
-        std::vector<ASTNode*> chain;
-        std::vector<Value> vals;
-        std::vector<Value> idxs;
-        VarRef* varRef; // nullptr if root is not a VarRef
+        static constexpr size_t kInlineDepth = 8;
+
+        void appendNode(ASTNode* node) {
+            if (depth < kInlineDepth) {
+                chainInline[depth] = node;
+            } else {
+                chainOverflow.push_back(node);
+            }
+            ++depth;
+        }
+
+        void resizeValues(size_t n) {
+            if (n > kInlineDepth) {
+                valsOverflow.resize(n - kInlineDepth);
+                idxsOverflow.resize(n - kInlineDepth);
+            }
+        }
+
+        ASTNode* nodeAt(size_t i) const {
+            return i < kInlineDepth ? chainInline[i] : chainOverflow[i - kInlineDepth];
+        }
+
+        Value& valAt(size_t i) { return i < kInlineDepth ? valsInline[i] : valsOverflow[i - kInlineDepth]; }
+        const Value& valAt(size_t i) const {
+            return i < kInlineDepth ? valsInline[i] : valsOverflow[i - kInlineDepth];
+        }
+
+        Value& idxAt(size_t i) { return i < kInlineDepth ? idxsInline[i] : idxsOverflow[i - kInlineDepth]; }
+        const Value& idxAt(size_t i) const {
+            return i < kInlineDepth ? idxsInline[i] : idxsOverflow[i - kInlineDepth];
+        }
+
+        void clearValues() {
+            for (auto& v : valsInline) {
+                v = Value::nullValue();
+            }
+            valsOverflow.clear();
+        }
+
+        std::array<ASTNode*, kInlineDepth> chainInline{};
+        std::array<Value, kInlineDepth> valsInline{};
+        std::array<Value, kInlineDepth> idxsInline{};
+        std::vector<ASTNode*> chainOverflow;
+        std::vector<Value> valsOverflow;
+        std::vector<Value> idxsOverflow;
+        size_t depth = 0;
+        VarRef* varRef = nullptr; // nullptr if root is not a VarRef
     };
 
     /// 收集从 objectNode 到 VarRef 的节点链，并从外到内逐级求值

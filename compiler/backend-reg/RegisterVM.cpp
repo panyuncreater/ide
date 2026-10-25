@@ -545,6 +545,10 @@ VMResult RegisterVM::throwException(Value thrownValue) {
 }
 
 VMResult RegisterVM::closeUpvaluesFrom(size_t fromSlot) {
+    // PERF: 无 open upvalue 时（递归/普通函数返回的热路径）跳过 multimap 查找。
+    if (openUpvalues_.empty()) {
+        return VMResult::VM_OK;
+    }
     // C-3 fix: stackSlot 编码为 frameIdx*32+slot，按全局地址范围 [fromSlot, ∞) 关闭。
     // 从对应帧（由 frameIdx 解码）读取当前值并标记为已关闭，防止帧弹出后悬垂引用。
     // AUDIT-P2.5 fix: 返回类型 void→VMResult，调用方可 fail-fast 传播错误。

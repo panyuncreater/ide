@@ -1303,10 +1303,11 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
             const std::string& varName = chunk.constants[nameIdx].stringVal();
             auto it = globalNameToSlot_.find(varName);
             if (it == globalNameToSlot_.end()) {
-                compileError("OP_INDEX_SET_VAR 未定义的全局变量: " + varName);
-                return false;
+                // 块作用域 fresh 全局名无预分配槽：运行时按名解析 globals_/globalSlots。
+                emitIndexSetGlobalByName(a, epilogue, varName.c_str());
+            } else {
+                emitIndexSetGlobal(a, epilogue, it->second);
             }
-            emitIndexSetGlobal(a, epilogue, it->second);
             ip += 3;
             break;
         }
@@ -1410,10 +1411,12 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
             const std::string& varName = chunk.constants[varIdx].stringVal();
             auto varIt = globalNameToSlot_.find(varName);
             if (varIt == globalNameToSlot_.end()) {
-                compileError("OP_MEMBER_SET_VAR 未定义的全局变量: " + varName);
-                return false;
+                // 块作用域 fresh 全局名无预分配槽：运行时按名解析 globals_/globalSlots。
+                emitMemberSetVarByName(a, epilogue, varName.c_str(),
+                                       chunk.constants[fieldIdx].stringVal().c_str());
+            } else {
+                emitMemberSetVar(a, epilogue, varIt->second, chunk.constants[fieldIdx].stringVal().c_str());
             }
-            emitMemberSetVar(a, epilogue, varIt->second, chunk.constants[fieldIdx].stringVal().c_str());
             ip += 5;
             break;
         }
@@ -1602,10 +1605,7 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
                 return false;
             }
             uint16_t slot = static_cast<uint16_t>(bytecodes[ip + 1]) | (static_cast<uint16_t>(bytecodes[ip + 2]) << 8);
-            a.mov(x86::rax, x86::qword_ptr(x86::r15));
-            a.add(x86::r15, 8);
-            a.mov(x86::rcx, x86::qword_ptr(x86::r12, jit_offset::globalSlots));
-            a.mov(x86::qword_ptr(x86::rcx, static_cast<int32_t>(slot) * 8), x86::rax);
+            emitStoreGlobalOwned(a, slot);
             ip += 3;
             break;
         }
@@ -1617,10 +1617,7 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
                 return false;
             }
             uint16_t slot = static_cast<uint16_t>(bytecodes[ip + 1]) | (static_cast<uint16_t>(bytecodes[ip + 2]) << 8);
-            a.mov(x86::rax, x86::qword_ptr(x86::r15));
-            a.add(x86::r15, 8);
-            a.mov(x86::rcx, x86::qword_ptr(x86::r12, jit_offset::globalSlots));
-            a.mov(x86::qword_ptr(x86::rcx, static_cast<int32_t>(slot) * 8), x86::rax);
+            emitStoreGlobalOwned(a, slot);
             ip += 3;
             break;
         }
@@ -1715,6 +1712,7 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
 
             // 编译期解析 receiverVarIdx → 全局 slot（若 receiverVarIdx != RuntimeLimits::NO_INDEX）
             int receiverGlobalSlot = -1;
+            const char* receiverGlobalName = nullptr;
             if (receiverLocalSlotByte == RuntimeLimits::NO_SLOT && receiverVarIdx != RuntimeLimits::NO_INDEX) {
                 if (receiverVarIdx >= chunk.constants.size()) {
                     compileError("OP_METHOD_CALL 接收者变量名常量池索引越界");
@@ -1723,14 +1721,15 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
                 const std::string& varName = chunk.constants[receiverVarIdx].stringVal();
                 auto it = globalNameToSlot_.find(varName);
                 if (it == globalNameToSlot_.end()) {
-                    compileError("OP_METHOD_CALL 未定义的全局接收者: " + varName);
-                    return false;
+                    // 块作用域 fresh 全局名：运行时解析 globals_ 地址供接收者写回。
+                    receiverGlobalName = varName.c_str();
+                } else {
+                    receiverGlobalSlot = it->second;
                 }
-                receiverGlobalSlot = it->second;
             }
 
             emitMethodCall(a, epilogue, methodName, argCount, receiverLocalSlotByte, receiverGlobalSlot,
-                           /*isSuperCall=*/false, /*superClassName=*/nullptr);
+                           receiverGlobalName, /*isSuperCall=*/false, /*superClassName=*/nullptr);
             ip += 7;
             break;
         }
@@ -1764,6 +1763,7 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
             const char* superClassName = chunk.constants[classIdx].stringVal().c_str();
 
             int receiverGlobalSlot = -1;
+            const char* receiverGlobalName = nullptr;
             if (receiverLocalSlotByte == RuntimeLimits::NO_SLOT && receiverVarIdx != RuntimeLimits::NO_INDEX) {
                 if (receiverVarIdx >= chunk.constants.size()) {
                     compileError("OP_SUPER_CALL 接收者变量名常量池索引越界");
@@ -1772,14 +1772,15 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
                 const std::string& varName = chunk.constants[receiverVarIdx].stringVal();
                 auto it = globalNameToSlot_.find(varName);
                 if (it == globalNameToSlot_.end()) {
-                    compileError("OP_SUPER_CALL 未定义的全局接收者: " + varName);
-                    return false;
+                    // 块作用域 fresh 全局名：运行时解析 globals_ 地址供接收者写回。
+                    receiverGlobalName = varName.c_str();
+                } else {
+                    receiverGlobalSlot = it->second;
                 }
-                receiverGlobalSlot = it->second;
             }
 
             emitMethodCall(a, epilogue, methodName, argCount, receiverLocalSlotByte, receiverGlobalSlot,
-                           /*isSuperCall=*/true, superClassName);
+                           receiverGlobalName, /*isSuperCall=*/true, superClassName);
             ip += 9;
             break;
         }
@@ -2002,6 +2003,24 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
             // 栈布局：[...] → [..., lastMutatedReceiver_]
             emitLoadMutated(a);
             ip += 1;
+            break;
+        }
+
+        case OpCode::OP_MEMBER_SET: {
+            // 3B 操作数：opcode + fieldIdx(2B)
+            // 栈布局：[..., obj, val] → [...]（pop 2，变异后容器存入 lastMutatedReceiver_）
+            if (ip + 2 >= bytecodes.size()) {
+                compileError("OP_MEMBER_SET 操作数越界");
+                return false;
+            }
+            uint16_t fieldIdx =
+                static_cast<uint16_t>(bytecodes[ip + 1]) | (static_cast<uint16_t>(bytecodes[ip + 2]) << 8);
+            if (fieldIdx >= chunk.constants.size()) {
+                compileError("OP_MEMBER_SET 常量池索引越界");
+                return false;
+            }
+            emitMemberSet(a, epilogue, chunk.constants[fieldIdx].stringVal().c_str());
+            ip += 3;
             break;
         }
 

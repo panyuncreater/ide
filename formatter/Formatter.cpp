@@ -169,7 +169,7 @@ const FormatOptions& Formatter::getOptions() const {
 }
 
 /// 生成当前缩进字符串：带缓存，仅当缩进级别变化时才重建（useTabs 时生成 tab，否则空格）。
-std::string Formatter::indent() const {
+const std::string& Formatter::indent() const {
     // P3 fix: 缓存缩进字符串，仅在级别变化时重建
     if (cachedIndentLevel_ != currentIndent_) {
         cachedIndentLevel_ = currentIndent_;
@@ -200,7 +200,7 @@ std::string Formatter::binOp(const std::string& op) const {
 }
 
 /// 生成逗号分隔符：按 spaceAfterComma 选项决定逗号后是否加空格，结果带缓存。
-std::string Formatter::comma() {
+const std::string& Formatter::comma() {
     // P3 fix: 缓存逗号分隔符
     if (!commaCacheValid_) {
         commaCache_ = options_.spaceAfterComma ? ", " : ",";

@@ -36,7 +36,7 @@
 5. **协程门控与快照**：`MINILANG_CORO_FIBER` 为平台级整体开关，禁止单后端切换；快照内绝对索引必须相对化；最外层生成器帧 `returnIp` 重定基；挂起窗口 upvalue 快照式关闭；失败后 `.next()` 语义按平台分列。见 ADR-007 与 spec §9。
 6. **协程 GC 根**：挂起快照的环境链、栈后缀、寄存器窗口、已关闭 upvalue 必须贡献根；丢弃快照同步置空回调。见 spec §9。
 7. **临时 Interpreter 隔离**：与常驻解释器并存的短生命周期实例必须 `GcTriggerPolicy::Isolated`；面板入口必须 `isRunning()/isVmRunning()` 守卫。见 `docs/specs/memory-model.md` §8。
-8. **JIT 缓存键**：块缓存键覆盖全部影响机器码的声明；codegen 行为变更必须递增 `kJitCodegenVersion`；缓存共享块实例 `owned=false`。见 ADR-008 与 spec §8。
+8. **JIT 缓存键**：块缓存键覆盖全部影响机器码的声明；codegen 行为变更必须递增 `kJitCodegenVersion`；缓存共享块实例 `owned=false`。见 ADR-006/ADR-008 与 spec §8/§10。
 9. **作用域协议**：顶层块内 fresh 声明、祖先遮蔽、catch 变量、解构绑定必须在直译与 IR 两侧同规格登记，块退出清理/恢复。见 spec §2 与 taxonomy K12。
 10. **验证门禁**：`/W4+/WX` 零警告；每次代码修改后立即构建 + 全量 ctest，未通过不交付。
 

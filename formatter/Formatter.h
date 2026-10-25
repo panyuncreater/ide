@@ -235,13 +235,13 @@ private:
     mutable std::string binOpVal_; // binOp 缓存值
 
     /// 生成缩进字符串（P3: 带缓存）
-    std::string indent() const;
+    const std::string& indent() const;
 
     /// 生成二元运算符（根据 spaceAroundOperators 选项）
     std::string binOp(const std::string& op) const;
 
     /// 生成逗号分隔符（P3: 带缓存）
-    std::string comma();
+    const std::string& comma();
 
     /// 生成开括号（根据 braceStyle 选项）
     std::string openBrace() const;

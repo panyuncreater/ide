@@ -369,6 +369,83 @@ void JITBackend::emitIndexSetGlobal(x86::Assembler& a, Label epilogue, int slot)
     a.jnz(epilogue);
 }
 
+// OP_SET_GLOBAL/OP_DEFINE_GLOBAL：全局槽拥有型存储。
+// 栈顶 bits 来自借用（如 OP_GET_VAR 读取 globals_），堆类型必须 addRef 后才能落入
+// 预分配槽——否则源名称被 OP_DELETE_VAR 删除后槽位持有悬垂指针（块作用域 fresh
+// 全局名传给顶层槽的典型场景）。标量走无调用快路径。
+void JITBackend::emitStoreGlobalOwned(x86::Assembler& a, int slot) {
+    Label ownedStore = a.new_label();
+    Label done = a.new_label();
+    a.mov(x86::rax, x86::qword_ptr(x86::r15));
+    a.add(x86::r15, 8);
+    a.mov(x86::rcx, x86::qword_ptr(x86::r12, jit_offset::globalSlots));
+    a.lea(x86::r10, x86::qword_ptr(x86::rcx, static_cast<int32_t>(slot) * 8));
+    a.mov(x86::r11, x86::rax);
+    // 旧堆值需要延迟释放；新堆值需要 addRef。两侧均为标量时走无调用快路径。
+    a.mov(x86::rdx, x86::qword_ptr(x86::r10));
+    a.shr(x86::rdx, 48);
+    a.cmp(x86::edx, 0x7FFB);
+    a.je(ownedStore);
+    a.mov(x86::rdx, x86::rax);
+    a.shr(x86::rdx, 48);
+    a.cmp(x86::edx, 0x7FFB); // PTR tag：STRING/ARRAY/DICT/INSTANCE/CLOSURE/TUPLE/ENUM
+    a.je(ownedStore);
+    a.mov(x86::qword_ptr(x86::r10), x86::rax);
+    a.jmp(done);
+    a.bind(ownedStore);
+#ifdef _WIN32
+    a.mov(x86::rcx, x86::r12);
+    a.mov(x86::rdx, x86::r10);
+    a.mov(x86::r8, x86::r11);
+#else
+    a.mov(x86::rdi, x86::r12);
+    a.mov(x86::rsi, x86::r10);
+    a.mov(x86::rdx, x86::r11);
+#endif
+#ifdef _WIN32
+    a.sub(x86::rsp, 32);
+    a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitStoreGlobalSlotAddRef));
+    a.call(x86::rax);
+    a.add(x86::rsp, 32);
+#else
+    a.sub(x86::rsp, 16);
+    a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitStoreGlobalSlotAddRef));
+    a.call(x86::rax);
+    a.add(x86::rsp, 16);
+#endif
+    a.bind(done);
+}
+
+// OP_INDEX_SET_VAR（名称版）：void jitIndexSetGlobalByName(JitContext* ctx, const char* varName)
+// 用于块作用域 fresh 全局名（无预分配槽），运行时按名解析 globalSlots/globals_。
+void JITBackend::emitIndexSetGlobalByName(x86::Assembler& a, Label epilogue, const char* varName) {
+    a.mov(x86::qword_ptr(x86::r12, jit_offset::stackTop), x86::r15);
+    a.movabs(x86::r10, reinterpret_cast<uint64_t>(varName));
+#ifdef _WIN32
+    a.mov(x86::rcx, x86::r12);
+    a.mov(x86::rdx, x86::r10);
+#else
+    a.mov(x86::rdi, x86::r12);
+    a.mov(x86::rsi, x86::r10);
+#endif
+#ifdef _WIN32
+    a.sub(x86::rsp, 32);
+    a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitIndexSetGlobalByName));
+    a.call(x86::rax);
+    a.add(x86::rsp, 32);
+#else
+    a.sub(x86::rsp, 16);
+    a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitIndexSetGlobalByName));
+    a.call(x86::rax);
+    a.add(x86::rsp, 16);
+#endif
+    a.mov(x86::r15, x86::qword_ptr(x86::r12, jit_offset::stackTop));
+    a.mov(x86::rax, x86::qword_ptr(x86::r12, jit_offset::hasError));
+    a.movzx(x86::rax, x86::byte_ptr(x86::rax));
+    a.test(x86::rax, x86::rax);
+    a.jnz(epilogue);
+}
+
 // ============================================================
 // R148 阶段 4c：类支持辅助函数
 // ============================================================
@@ -582,6 +659,41 @@ void JITBackend::emitMemberSetVar(x86::Assembler& a, Label epilogue, int slot, c
     a.jnz(epilogue);
 }
 
+// OP_MEMBER_SET_VAR（名称版）：void jitMemberSetVarByName(JitContext* ctx, const char* varName,
+//                                                          const char* fieldName)
+// 用于块作用域 fresh 全局名（无预分配槽），运行时按名解析 globalSlots/globals_。
+void JITBackend::emitMemberSetVarByName(x86::Assembler& a, Label epilogue, const char* varName,
+                                        const char* fieldName) {
+    a.mov(x86::qword_ptr(x86::r12, jit_offset::stackTop), x86::r15);
+    a.movabs(x86::r10, reinterpret_cast<uint64_t>(varName));
+    a.movabs(x86::r11, reinterpret_cast<uint64_t>(fieldName));
+#ifdef _WIN32
+    a.mov(x86::rcx, x86::r12);
+    a.mov(x86::rdx, x86::r10);
+    a.mov(x86::r8, x86::r11);
+#else
+    a.mov(x86::rdi, x86::r12);
+    a.mov(x86::rsi, x86::r10);
+    a.mov(x86::rdx, x86::r11);
+#endif
+#ifdef _WIN32
+    a.sub(x86::rsp, 32);
+    a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitMemberSetVarByName));
+    a.call(x86::rax);
+    a.add(x86::rsp, 32);
+#else
+    a.sub(x86::rsp, 16);
+    a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitMemberSetVarByName));
+    a.call(x86::rax);
+    a.add(x86::rsp, 16);
+#endif
+    a.mov(x86::r15, x86::qword_ptr(x86::r12, jit_offset::stackTop));
+    a.mov(x86::rax, x86::qword_ptr(x86::r12, jit_offset::hasError));
+    a.movzx(x86::rax, x86::byte_ptr(x86::rax));
+    a.test(x86::rax, x86::rax);
+    a.jnz(epilogue);
+}
+
 // OP_MEMBER_SET_LOCAL: void jitMemberSetLocal(JitContext* ctx, uint8_t slot, int64_t* frameBase, const char*
 // fieldName) frameBase = r13（当前帧 basePointer） 栈布局：[val]，辅助函数 pop val 写入 *(frameBase - slot).field
 void JITBackend::emitMemberSetLocal(x86::Assembler& a, Label epilogue, uint8_t slot, const char* fieldName) {
@@ -620,8 +732,8 @@ void JITBackend::emitMemberSetLocal(x86::Assembler& a, Label epilogue, uint8_t s
 // 栈布局（调用前，向低地址增长）：[argN-1]...[arg0][receiver] ← r15 指向 argN-1
 // 栈布局（调用后）：[extraSlots...][defaults...][args...][fields...][this] ← r15 指向最后一个 extraSlot
 void JITBackend::emitMethodCall(x86::Assembler& a, Label epilogue, const char* methodName, uint8_t argCount,
-                                uint8_t receiverLocalSlotByte, int receiverGlobalSlot, bool isSuperCall,
-                                const char* superClassName) {
+                                uint8_t receiverLocalSlotByte, int receiverGlobalSlot,
+                                const char* receiverGlobalName, bool isSuperCall, const char* superClassName) {
     Label returnLabel = a.new_label();
 
     // 方法调用 IC：分配 callSiteId 并确保 methodCallIC_ 容量
@@ -638,6 +750,28 @@ void JITBackend::emitMethodCall(x86::Assembler& a, Label epilogue, const char* m
         // 接收者是全局变量：r10 = globalSlots + receiverGlobalSlot * 8
         a.mov(x86::r10, x86::qword_ptr(x86::r12, jit_offset::globalSlots)); // r10 = globalSlots base
         a.lea(x86::r10, x86::qword_ptr(x86::r10, static_cast<int32_t>(receiverGlobalSlot) * 8));
+    } else if (receiverGlobalName) {
+        // 块作用域 fresh 全局名（无预分配槽）：运行时解析 globalSlots/globals_ 地址。
+        a.movabs(x86::r10, reinterpret_cast<uint64_t>(receiverGlobalName));
+#ifdef _WIN32
+        a.mov(x86::rcx, x86::r12);
+        a.mov(x86::rdx, x86::r10);
+#else
+        a.mov(x86::rdi, x86::r12);
+        a.mov(x86::rsi, x86::r10);
+#endif
+#ifdef _WIN32
+        a.sub(x86::rsp, 32);
+        a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitResolveGlobalPtr));
+        a.call(x86::rax);
+        a.add(x86::rsp, 32);
+#else
+        a.sub(x86::rsp, 16);
+        a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitResolveGlobalPtr));
+        a.call(x86::rax);
+        a.add(x86::rsp, 16);
+#endif
+        a.mov(x86::r10, x86::rax);
     } else {
         a.xor_(x86::r10, x86::r10); // nullptr（无 writeBack）
     }
@@ -1034,29 +1168,103 @@ void JITBackend::emitIndexSet(x86::Assembler& a, Label epilogue) {
     a.jnz(epilogue);
 }
 
-// OP_WRITEBACK_*_VAR: inline *globalSlots[slot] = lastMutatedReceiver_; lastMutatedReceiver_ = NULL
-void JITBackend::emitWritebackVar(x86::Assembler& a, int slot) {
-    // 1. 加载 lastMutatedReceiver_ raw bits
-    a.mov(x86::rax, x86::qword_ptr(x86::r12, jit_offset::lastMutatedReceiverPtr)); // rax = lastMutatedReceiverPtr
-    a.mov(x86::rax, x86::qword_ptr(x86::rax)); // rax = *lastMutatedReceiverPtr = lastMutatedReceiver_ bits
-    // 2. 写入 globalSlots[slot]
-    a.mov(x86::rcx, x86::qword_ptr(x86::r12, jit_offset::globalSlots)); // rcx = globalSlots base
-    a.mov(x86::qword_ptr(x86::rcx, static_cast<int32_t>(slot) * 8), x86::rax);
-    // 3. 清空 lastMutatedReceiver_ = JIT_NULL_BITS
-    a.mov(x86::rax, x86::qword_ptr(x86::r12, jit_offset::lastMutatedReceiverPtr)); // rax = lastMutatedReceiverPtr
-    a.mov(x86::qword_ptr(x86::rax), static_cast<int64_t>(JIT_NULL_BITS));          // *lastMutatedReceiverPtr = NULL
+// OP_MEMBER_SET: void jitMemberSet(JitContext* ctx, const char* fieldName)
+// 栈布局：[..., obj, val] → [...]（pop 2，变异后容器存入 lastMutatedReceiver_）
+void JITBackend::emitMemberSet(x86::Assembler& a, Label epilogue, const char* fieldName) {
+    a.mov(x86::qword_ptr(x86::r12, jit_offset::stackTop), x86::r15);
+    a.movabs(x86::r10, reinterpret_cast<uint64_t>(fieldName));
+#ifdef _WIN32
+    a.mov(x86::rcx, x86::r12);
+    a.mov(x86::rdx, x86::r10);
+#else
+    a.mov(x86::rdi, x86::r12);
+    a.mov(x86::rsi, x86::r10);
+#endif
+#ifdef _WIN32
+    a.sub(x86::rsp, 32);
+    a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitMemberSet));
+    a.call(x86::rax);
+    a.add(x86::rsp, 32);
+#else
+    a.sub(x86::rsp, 16);
+    a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitMemberSet));
+    a.call(x86::rax);
+    a.add(x86::rsp, 16);
+#endif
+    a.mov(x86::r15, x86::qword_ptr(x86::r12, jit_offset::stackTop));
+    a.mov(x86::rax, x86::qword_ptr(x86::r12, jit_offset::hasError));
+    a.movzx(x86::rax, x86::byte_ptr(x86::rax));
+    a.test(x86::rax, x86::rax);
+    a.jnz(epilogue);
 }
 
-// OP_WRITEBACK_*_LOCAL: inline stack_[bp - slot*8] = lastMutatedReceiver_; lastMutatedReceiver_ = NULL
+// OP_WRITEBACK_*_VAR: jitStoreSlotBits(ctx, &globalSlots[slot], lastMutatedReceiver_);
+// 旧堆值延迟释放，lastMutatedReceiver_ 清空（引用转移给槽位）。
+void JITBackend::emitWritebackVar(x86::Assembler& a, int slot) {
+    // 1. 加载 lastMutatedReceiver_ raw bits → r11
+    a.mov(x86::r11, x86::qword_ptr(x86::r12, jit_offset::lastMutatedReceiverPtr));
+    a.mov(x86::r11, x86::qword_ptr(x86::r11));
+    // 2. slotPtr = globalSlots + slot*8 → r10
+    a.mov(x86::r10, x86::qword_ptr(x86::r12, jit_offset::globalSlots));
+    a.lea(x86::r10, x86::qword_ptr(x86::r10, static_cast<int32_t>(slot) * 8));
+    // 3. jitStoreSlotBits(ctx, slotPtr, bits)
+#ifdef _WIN32
+    a.mov(x86::rcx, x86::r12);
+    a.mov(x86::rdx, x86::r10);
+    a.mov(x86::r8, x86::r11);
+#else
+    a.mov(x86::rdi, x86::r12);
+    a.mov(x86::rsi, x86::r10);
+    a.mov(x86::rdx, x86::r11);
+#endif
+#ifdef _WIN32
+    a.sub(x86::rsp, 32);
+    a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitStoreSlotBits));
+    a.call(x86::rax);
+    a.add(x86::rsp, 32);
+#else
+    a.sub(x86::rsp, 16);
+    a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitStoreSlotBits));
+    a.call(x86::rax);
+    a.add(x86::rsp, 16);
+#endif
+    // 4. 清空 lastMutatedReceiver_ = JIT_NULL_BITS
+    a.mov(x86::rax, x86::qword_ptr(x86::r12, jit_offset::lastMutatedReceiverPtr));
+    a.mov(x86::qword_ptr(x86::rax), static_cast<int64_t>(JIT_NULL_BITS));
+}
+
+// OP_WRITEBACK_*_LOCAL: jitStoreSlotBits(ctx, &stack_[bp - slot*8], lastMutatedReceiver_)；
+// 旧堆值延迟释放，lastMutatedReceiver_ 清空（引用转移给局部槽）。
 void JITBackend::emitWritebackLocal(x86::Assembler& a, uint8_t slot) {
-    // 1. 加载 lastMutatedReceiver_ raw bits
-    a.mov(x86::rax, x86::qword_ptr(x86::r12, jit_offset::lastMutatedReceiverPtr)); // rax = lastMutatedReceiverPtr
-    a.mov(x86::rax, x86::qword_ptr(x86::rax)); // rax = *lastMutatedReceiverPtr = lastMutatedReceiver_ bits
-    // 2. 写入 [r13 - slot*8]（局部变量栈槽）
-    a.mov(x86::qword_ptr(x86::r13, -static_cast<int32_t>(slot) * 8), x86::rax);
-    // 3. 清空 lastMutatedReceiver_ = JIT_NULL_BITS
-    a.mov(x86::rax, x86::qword_ptr(x86::r12, jit_offset::lastMutatedReceiverPtr)); // rax = lastMutatedReceiverPtr
-    a.mov(x86::qword_ptr(x86::rax), static_cast<int64_t>(JIT_NULL_BITS));          // *lastMutatedReceiverPtr = NULL
+    // 1. 加载 lastMutatedReceiver_ raw bits → r11
+    a.mov(x86::r11, x86::qword_ptr(x86::r12, jit_offset::lastMutatedReceiverPtr));
+    a.mov(x86::r11, x86::qword_ptr(x86::r11));
+    // 2. slotPtr = r13 - slot*8 → r10
+    a.lea(x86::r10, x86::qword_ptr(x86::r13, -static_cast<int32_t>(slot) * 8));
+    // 3. jitStoreSlotBits(ctx, slotPtr, bits)
+#ifdef _WIN32
+    a.mov(x86::rcx, x86::r12);
+    a.mov(x86::rdx, x86::r10);
+    a.mov(x86::r8, x86::r11);
+#else
+    a.mov(x86::rdi, x86::r12);
+    a.mov(x86::rsi, x86::r10);
+    a.mov(x86::rdx, x86::r11);
+#endif
+#ifdef _WIN32
+    a.sub(x86::rsp, 32);
+    a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitStoreSlotBits));
+    a.call(x86::rax);
+    a.add(x86::rsp, 32);
+#else
+    a.sub(x86::rsp, 16);
+    a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitStoreSlotBits));
+    a.call(x86::rax);
+    a.add(x86::rsp, 16);
+#endif
+    // 4. 清空 lastMutatedReceiver_ = JIT_NULL_BITS
+    a.mov(x86::rax, x86::qword_ptr(x86::r12, jit_offset::lastMutatedReceiverPtr));
+    a.mov(x86::qword_ptr(x86::rax), static_cast<int64_t>(JIT_NULL_BITS));
 }
 
 // ============================================================

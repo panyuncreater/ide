@@ -131,12 +131,8 @@ void Interpreter::visitMemberAccess(MemberAccess& node) {
     // 字典的成员访问（同索引访问，键为 string 类型字段名）
     if (objC.isDict()) {
         const auto& dict = objC.dictVal();
-        auto it = dict.find(Value::DictKey{node.fieldName});
-        if (it != dict.end()) {
-            lastValue_ = it->second;
-            return;
-        }
-        lastValue_ = Value::nullValue();
+        const Value* found = Value::dictFindFieldRef(dict, node.fieldName);
+        lastValue_ = found ? *found : Value::nullValue();
         return;
     }
 

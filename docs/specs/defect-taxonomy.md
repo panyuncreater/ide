@@ -83,10 +83,10 @@
 
 ## K12 作用域遮蔽与块内 fresh
 
-- **触发**：顶层块内新声明、祖先块遮蔽、catch 变量遮蔽、解构绑定、块退出清理。
-- **不变量**：直译路径与 IR 路径必须同规格登记 fresh/shadow，块退出 `DELETE_VAR` 清理或保存/恢复；嵌套块重声明走保存/恢复。
-- **入口**：`Compiler::visitBlock`/`visitVarDecl`/`bindDestructureVar`、`AstIRBuilder::visitBlock`/`visitDestructureBinding`、`shadowedGlobalNames_`/`topLevelBlockFreshGlobals_`。
-- **锁定**：`ConsistencyDiff.BlockFresh*`、`CatchVarShadowNestedBlockRestored`、`BlockFreshDestructureScopeEndsAtBrace`（四路锁定）。
+- **触发**：顶层块内新声明、祖先块遮蔽、catch 变量遮蔽、解构绑定、块退出清理；块内 fresh 全局名被塞入局部槽映射（`-1` 哨兵）后误当槽位 255（B-010）。
+- **不变量**：直译路径与 IR 路径必须同规格登记 fresh/shadow，块退出 `DELETE_VAR` 清理或保存/恢复；嵌套块重声明走保存/恢复；`currentLocals_` 只允许真实局部槽（≥0），块 fresh 全局名由独立集合跟踪（直译 `blockScopedGlobals_` / IR `topLevelBlockFreshGlobals_`）。
+- **入口**：`Compiler::visitBlock`/`visitVarDecl`/`bindDestructureVar`、`AstIRBuilder::visitBlock`/`visitDestructureBinding`、`shadowedGlobalNames_`/`blockScopedGlobals_`/`topLevelBlockFreshGlobals_`。
+- **锁定**：`ConsistencyDiff.BlockFresh*`、`CatchVarShadowNestedBlockRestored`、`BlockFreshDestructureScopeEndsAtBrace`（四路锁定）、`BacklogRegression.B010*`（五后端）。
 
 ## K13 协程挂起与 GC 根
 
@@ -97,10 +97,10 @@
 
 ## K14 JIT 缓存与所有权
 
-- **触发**：缓存键漏字段、codegen 变更未递增版本、共享块 owned 标志、同键重复 store、只读 helper 触发 COW。
-- **不变量**：键覆盖全部影响机器码的声明；`kJitCodegenVersion` 递增纪律；缓存共享块实例 `owned=false`；只读 helper 接收者 const。
-- **入口**：`compiler/jit/BlockCache`、`compiler/jit/JIT.cpp`、`compiler/jit/JITRuntime.cpp`。
-- **锁定**：`BlockCache*`、`TestJIT*`、`TestJITCoverageGaps`。
+- **触发**：缓存键漏字段、codegen 变更未递增版本、共享块 owned 标志、同键重复 store、只读 helper 触发 COW；member-get PIC 缓存 `InstanceData*` 地址后实例被覆盖/删除释放（地址复用假命中）；槽位裸 bits 覆盖泄漏；无预分配槽全局名被编译期拒绝（B-010/B-013）。
+- **不变量**：键覆盖全部影响机器码的声明；`kJitCodegenVersion` 递增纪律（当前 5）；缓存共享块实例 `owned=false`；只读 helper 接收者 const；执行期堆值零释放（槽位覆盖/删除/写回经 `retiredValues_` 延迟到下次 execute，PIC 存活期实例不得释放）；name-based 全局写回必须运行时解析。
+- **入口**：`compiler/jit/BlockCache`、`compiler/jit/JIT.cpp`、`compiler/jit/JITRuntime.cpp`、`JITBackend::retiredValues_`/`storeJitSlotBits`/`emitStoreGlobalOwned`/`jitResolveGlobalPtr`。
+- **锁定**：`BlockCache*`、`TestJIT*`、`TestJITCoverageGaps`、`BacklogRegression.B010*`/`B012*`/`B013*`。
 
 ## K15 宿主嵌入生命周期
 

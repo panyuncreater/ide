@@ -313,12 +313,12 @@ void Compiler::visitVarDecl(VarDecl& node) {
             chunk_.writeOp(OpCode::OP_DEFINE_VAR, node.line);
             chunk_.writeShort(nameIdx, node.line);
             // V11 fix（2026-10-22）：块作用域新声明全局（非预分配槽位名且非祖先遮蔽名）
-            // 登记进 currentLocals_，visitBlock 块退出经 blockVars 发射 OP_DELETE_VAR 清理
+            // 登记进 blockScopedGlobals_，visitBlock 块退出经 blockVars 发射 OP_DELETE_VAR 清理
             // globals_ 残留——此前顶层分支从不登记，blockVars 恒空，变量块外仍可读
             // （与解释器环境链不一致，diff_test V11 实证）。祖先遮蔽名走 visitBlock
             // 保存/恢复协议，清理由协议负责；预分配槽位名（顶层 pre-scan）永不过期。
             if (blockDepth_ > 0 && lookupGlobalSlot(node.name) < 0 && shadowedGlobalNames_.count(node.name) == 0) {
-                currentLocals_[node.name] = -1;
+                blockScopedGlobals_.insert(node.name);
             }
         }
         // B4: topLevelGlobals_ 已删除（write-only 死代码，从未被读取）
@@ -327,6 +327,11 @@ void Compiler::visitVarDecl(VarDecl& node) {
 }
 
 void Compiler::visitAssignment(Assignment& node) {
+    // 语句级赋值的结果被丢弃；必须在编译 RHS 前清除，避免嵌套赋值
+    // （a = (b = 5);）误丢内层结果。
+    const bool discardResult = discardAssignmentResult_;
+    discardAssignmentResult_ = false;
+
     compileNode(node.value.get());
 
     // 2026-06-29: 类型注解运行时检查（赋值时强制）
@@ -338,7 +343,10 @@ void Compiler::visitAssignment(Assignment& node) {
 
     // C2 fix: 赋值作为表达式应产生值。先 DUP 保留一份在栈上，
     // SET 操作消费原始值后，DUP 的副本留在栈顶供外层表达式使用。
-    chunk_.writeOp(OpCode::OP_DUP, node.line);
+    // PERF: 语句级赋值的结果不被消费，跳过 DUP（局部路径仍由下方 POP 清理原值）。
+    if (!discardResult) {
+        chunk_.writeOp(OpCode::OP_DUP, node.line);
+    }
 
     if (inFunction_) {
         auto it = currentLocals_.find(node.name);
@@ -679,10 +687,10 @@ void Compiler::bindDestructureVar(const std::string& name, int line, int col) {
             chunk_.writeOp(OpCode::OP_DEFINE_VAR, line);
             chunk_.writeShort(nameIdx, line);
             // V11 同族收尾（2026-10-22）：块内解构绑定的 fresh 全局名与 visitVarDecl 同规格
-            // 登记 currentLocals_，visitBlock 块退出经 blockVars 发射 OP_DELETE_VAR 清理——
+            // 登记 blockScopedGlobals_，visitBlock 块退出经 blockVars 发射 OP_DELETE_VAR 清理——
             // 此前解构名字永不登记，块外仍可读（与解释器环境链不一致）。
             if (blockDepth_ > 0 && lookupGlobalSlot(name) < 0 && shadowedGlobalNames_.count(name) == 0) {
-                currentLocals_[name] = -1;
+                blockScopedGlobals_.insert(name);
             }
         }
     }

@@ -227,6 +227,10 @@ void jitReturnCloseUpvalues(JitContext* ctx, int64_t* fromAddr, size_t newFrameC
 // R156: closeUpvaluesFrom — 关闭 open upvalues（JIT 栈向下增长版本）
 // ============================================================
 void JITBackend::closeUpvaluesFrom(int64_t* fromAddr) {
+    // PERF: 无 open upvalue 时（递归/普通函数返回的热路径）跳过 multimap 查找。
+    if (openUpvalues_.empty()) {
+        return;
+    }
     auto endIt = openUpvalues_.upper_bound(fromAddr);
     auto it = openUpvalues_.begin();
     while (it != endIt) {

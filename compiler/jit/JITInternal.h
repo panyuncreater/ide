@@ -138,8 +138,11 @@ void jitBuildArray(JitContext* ctx, uint8_t count);
 uint64_t jitIndexGet(JitContext* ctx, uint64_t objBits, uint64_t idxBits);
 void jitIndexSetLocal(JitContext* ctx, uint8_t slot, int64_t* frameBase);
 void jitIndexSetGlobal(JitContext* ctx, int64_t* slotPtr);
+void jitIndexSetGlobalByName(JitContext* ctx, const char* varName);
+int64_t* jitResolveGlobalPtr(JitContext* ctx, const char* name);
 void jitLen(JitContext* ctx);
 void jitIndexSet(JitContext* ctx);
+void jitMemberSet(JitContext* ctx, const char* fieldName);
 void jitBuildDict(JitContext* ctx, uint8_t pairCount);
 void jitBuildTuple(JitContext* ctx, uint8_t count);
 
@@ -163,6 +166,7 @@ void jitDefineClass(JitContext* ctx, const char* className, const char* superCla
 void jitMemberGet(JitContext* ctx, const char* fieldName);
 void jitMemberGetWithIC(JitContext* ctx, const char* fieldName, uint64_t callSiteId, void* backendPtr);
 void jitMemberSetVar(JitContext* ctx, int64_t* slotPtr, const char* fieldName);
+void jitMemberSetVarByName(JitContext* ctx, const char* varName, const char* fieldName);
 void jitMemberSetLocal(JitContext* ctx, uint8_t slot, int64_t* frameBase, const char* fieldName);
 int64_t jitMethodReturn(JitContext* ctx, JitFrame* framePtr, int64_t retvalBits);
 void jitMethodCall(JitContext* ctx, const char* methodName, int64_t packedArgs, int64_t* receiverSlotPtr,
@@ -184,6 +188,8 @@ void* jitCheckAndRethrow(JitContext* ctx, int64_t* currentR13);
 
 // --- Name variables (JITRuntime.cpp) ---
 void jitDefineVar(JitContext* ctx, const char* name);
+void jitStoreGlobalSlotAddRef(JitContext* ctx, int64_t* slotPtr, uint64_t bits);
+void jitStoreSlotBits(JitContext* ctx, int64_t* slotPtr, uint64_t bits);
 uint64_t jitGetVar(JitContext* ctx, const char* name);
 void jitSetVar(JitContext* ctx, const char* name);
 void jitDeleteVar(JitContext* ctx, const char* name);

@@ -30,6 +30,58 @@
 
 using namespace jit_internal;
 
+namespace {
+
+/// PERF: JIT 调用实参缓冲。MAX_JIT_ARGS=256 的定长数组每次调用都会构造/析构
+/// 256 个 Value（2KB），而常见实参只有 1–3 个；这里按实际数量构造，≤8 内联。
+class JitArgBuffer {
+public:
+    void reset(size_t count) {
+        if (count <= kInlineArgs) {
+            data_ = inline_.data();
+        } else {
+            heap_.resize(count);
+            data_ = heap_.data();
+        }
+    }
+
+    Value* data() { return data_; }
+    const Value* data() const { return data_; }
+    Value& operator[](size_t i) { return data_[i]; }
+    const Value& operator[](size_t i) const { return data_[i]; }
+
+private:
+    static constexpr size_t kInlineArgs = 8;
+    std::array<Value, kInlineArgs> inline_{};
+    std::vector<Value> heap_;
+    Value* data_ = inline_.data();
+};
+
+/// 堆值延迟释放（见 JITBackend::retiredValues_）：PIC 可能缓存实例地址/字段指针，
+/// 执行期立即 release 会造成地址复用假命中或借用悬垂，统一推迟到下次 execute。
+void retireJitValue(JITBackend* backend, Value&& v) {
+    if (backend && v.isPointer()) {
+        backend->retiredValuesMut().push_back(std::move(v));
+    }
+}
+
+/// 写入原始 bits 到槽位（转移语义，不 addRef）；旧堆值延迟释放。
+void storeJitSlotBits(JitContext* ctx, int64_t* slotPtr, uint64_t bits) {
+    if (!slotPtr) {
+        return;
+    }
+    auto* backend = static_cast<JITBackend*>(ctx ? ctx->backendPtr : nullptr);
+    retireJitValue(backend, bitsToValue(static_cast<uint64_t>(*slotPtr)));
+    *slotPtr = static_cast<int64_t>(bits);
+}
+
+} // namespace
+
+/// codegen 调用的槽位写入入口（OP_WRITEBACK_* 使用）。
+extern "C" void jitStoreSlotBits(JitContext* ctx, int64_t* slotPtr, uint64_t bits) {
+    storeJitSlotBits(ctx, slotPtr, bits);
+}
+
 /// 建帧前检查操作数栈剩余空间。返回 false 时已写入 hasError，调用方恢复 callerSp。
 static bool jitEnsureStackRoom(JitContext* ctx, const int64_t* newTop) {
     if (!ctx || !ctx->stackLimit)
@@ -571,7 +623,7 @@ extern "C" void jitIndexSetLocal(JitContext* ctx, uint8_t slot, int64_t* frameBa
         obj.arrayVal()[static_cast<size_t>(i)] = val;
         // 写回栈槽（detach 后可能产生新 ArrayData，需更新栈槽的 raw bits）
         // obj 的内部 box_ 已被 ensureUnique 更新，提取新的 raw bits
-        *slotPtr = valueToBits(obj); // detach 转移所有权到栈槽
+        storeJitSlotBits(ctx, slotPtr, valueToBits(obj)); // detach 转移所有权到栈槽
         return;
     }
     // R147 阶段 4b：字典索引赋值（键支持 string/int/bool/float，与 StackVM 对齐）
@@ -586,7 +638,7 @@ extern "C" void jitIndexSetLocal(JitContext* ctx, uint8_t slot, int64_t* frameBa
         // 触发 COW detach（非 const dictVal 重载调用 ensureUnique<DictData>）；
         // PERF（2026-10-22）: 透明写路径，覆盖赋值零 DictKey 拷贝（对齐 StackVM OP_INDEX_SET_LOCAL）
         Value::dictGetOrInsertRef(obj.dictVal(), idx) = val;
-        *slotPtr = valueToBits(obj); // 写回栈槽
+        storeJitSlotBits(ctx, slotPtr, valueToBits(obj)); // 写回栈槽
         return;
     }
     if (obj.isArray()) {
@@ -601,6 +653,102 @@ extern "C" void jitIndexSetLocal(JitContext* ctx, uint8_t slot, int64_t* frameBa
         *ctx->hasError = true;
         *ctx->errorBuffer = ErrorMessages::kTypeNotIndexAssignable;
     }
+}
+
+namespace {
+
+/// 名称全局的运行时解析结果：globalSlots 槽（原始 bits）或 globals_ 条目（拥有型 Value）。
+struct JitGlobalRef {
+    JITBackend* backend = nullptr;
+    int64_t* bits = nullptr;
+    Value* value = nullptr;
+};
+
+JitGlobalRef resolveJitGlobalRef(JITBackend* backend, const char* name) {
+    auto& nameToSlot = backend->globalNameToSlotMut();
+    auto& slots = backend->globalSlotsMut();
+    auto it = nameToSlot.find(std::string_view(name));
+    if (it != nameToSlot.end() && it->second >= 0 && it->second < static_cast<int>(slots.size())) {
+        return {backend, &slots[it->second], nullptr};
+    }
+    auto mapIt = backend->globals_.find(name);
+    if (mapIt != backend->globals_.end()) {
+        return {backend, nullptr, &mapIt->second};
+    }
+    return {};
+}
+
+void writeBackJitGlobalRef(const JitGlobalRef& ref, Value&& obj) {
+    if (ref.bits) {
+        retireJitValue(ref.backend, bitsToValue(static_cast<uint64_t>(*ref.bits)));
+        *ref.bits = valueToBits(obj);
+    } else if (ref.value) {
+        retireJitValue(ref.backend, std::move(*ref.value));
+        *ref.value = std::move(obj);
+    }
+}
+
+/// obj[idx] = val（COW 由非 const 访问器触发）。返回 false 表示已向 ctx 写入错误。
+bool applyJitIndexSet(JitContext* ctx, Value& obj, const Value& idx, const Value& val) {
+    if (obj.isArray() && idx.isInt()) {
+        int64_t i = idx.intVal();
+        const auto& arr = std::as_const(obj).arrayVal();
+        if (i < 0 || static_cast<size_t>(i) >= arr.size()) {
+            if (ctx->hasError && ctx->errorBuffer) {
+                *ctx->hasError = true;
+                *ctx->errorBuffer =
+                    "数组索引越界: " + std::to_string(i) + ", 有效范围 [0, " + std::to_string(arr.size()) + ")";
+            }
+            return false;
+        }
+        obj.arrayVal()[static_cast<size_t>(i)] = val;
+        return true;
+    }
+    if (obj.isDict()) {
+        if (!Value::dictKeyIsValid(idx)) {
+            if (ctx->hasError && ctx->errorBuffer) {
+                *ctx->hasError = true;
+                *ctx->errorBuffer = ErrorMessages::kDictKeyInvalidType;
+            }
+            return false;
+        }
+        Value::dictGetOrInsertRef(obj.dictVal(), idx) = val;
+        return true;
+    }
+    if (obj.isArray()) {
+        if (ctx->hasError && ctx->errorBuffer) {
+            *ctx->hasError = true;
+            *ctx->errorBuffer = ErrorMessages::kArrayIndexMustBeInt;
+        }
+        return false;
+    }
+    if (ctx->hasError && ctx->errorBuffer) {
+        *ctx->hasError = true;
+        *ctx->errorBuffer = ErrorMessages::kTypeNotIndexAssignable;
+    }
+    return false;
+}
+
+} // namespace
+
+/// 名称全局的存储地址解析（供 OP_METHOD_CALL 的接收者写回使用）。
+/// 返回 globalSlots 槽或 globals_ 条目的 raw bits 指针；未找到返回 nullptr。
+extern "C" int64_t* jitResolveGlobalPtr(JitContext* ctx, const char* name) {
+    if (!ctx || !name) {
+        return nullptr;
+    }
+    auto* backend = static_cast<JITBackend*>(ctx->backendPtr);
+    if (!backend) {
+        return nullptr;
+    }
+    JitGlobalRef ref = resolveJitGlobalRef(backend, name);
+    if (ref.bits) {
+        return ref.bits;
+    }
+    if (ref.value) {
+        return reinterpret_cast<int64_t*>(ref.value);
+    }
+    return nullptr;
 }
 
 /// R147 阶段 4b：OP_INDEX_SET_VAR 全局变量数组/字典索引赋值
@@ -621,47 +769,38 @@ extern "C" void jitIndexSetGlobal(JitContext* ctx, int64_t* slotPtr) {
     ctx->stackTop = sp; // 更新栈顶（pop 2 个，不 push）
 
     Value obj = bitsToValue(*slotPtr);
+    if (applyJitIndexSet(ctx, obj, idx, val)) {
+        storeJitSlotBits(ctx, slotPtr, valueToBits(obj));
+    }
+}
 
-    if (obj.isArray() && idx.isInt()) {
-        int64_t i = idx.intVal();
-        // PERF（2026-10-22）: 越界检查改 const 重载——修复前非 const 在越界错误路径也整容器深拷贝
-        const auto& arr = std::as_const(obj).arrayVal();
-        if (i < 0 || static_cast<size_t>(i) >= arr.size()) {
-            if (ctx->hasError && ctx->errorBuffer) {
-                *ctx->hasError = true;
-                *ctx->errorBuffer =
-                    "数组索引越界: " + std::to_string(i) + ", 有效范围 [0, " + std::to_string(arr.size()) + ")";
-            }
-            return;
-        }
-        obj.arrayVal()[static_cast<size_t>(i)] = val; // COW detach
-        *slotPtr = valueToBits(obj);                  // 写回全局槽
+/// OP_INDEX_SET_VAR 的名称版：块作用域 fresh 全局名（无预分配槽）按名解析。
+extern "C" void jitIndexSetGlobalByName(JitContext* ctx, const char* varName) {
+    if (!ctx || !ctx->stackTop || !varName) {
         return;
     }
-    if (obj.isDict()) {
-        if (!Value::dictKeyIsValid(idx)) {
-            if (ctx->hasError && ctx->errorBuffer) {
-                *ctx->hasError = true;
-                *ctx->errorBuffer = ErrorMessages::kDictKeyInvalidType;
-            }
-            return;
-        }
-        // 触发 COW detach（非 const dictVal 重载调用 ensureUnique<DictData>）；
-        // PERF（2026-10-22）: 透明写路径，覆盖赋值零 DictKey 拷贝
-        Value::dictGetOrInsertRef(obj.dictVal(), idx) = val;
-        *slotPtr = valueToBits(obj);
+    auto* backend = static_cast<JITBackend*>(ctx->backendPtr);
+    if (!backend) {
         return;
     }
-    if (obj.isArray()) {
+    int64_t* sp = ctx->stackTop;
+    Value val = bitsToValue(*sp);
+    sp += 1; // pop val
+    Value idx = bitsToValue(*sp);
+    sp += 1;            // pop idx
+    ctx->stackTop = sp; // 更新栈顶（pop 2 个，不 push）
+
+    JitGlobalRef ref = resolveJitGlobalRef(backend, varName);
+    if (!ref.bits && !ref.value) {
         if (ctx->hasError && ctx->errorBuffer) {
             *ctx->hasError = true;
-            *ctx->errorBuffer = ErrorMessages::kArrayIndexMustBeInt;
+            *ctx->errorBuffer = "未定义的变量: " + std::string(varName);
         }
         return;
     }
-    if (ctx->hasError && ctx->errorBuffer) {
-        *ctx->hasError = true;
-        *ctx->errorBuffer = ErrorMessages::kTypeNotIndexAssignable;
+    Value obj = ref.bits ? bitsToValue(*ref.bits) : Value(*ref.value);
+    if (applyJitIndexSet(ctx, obj, idx, val)) {
+        writeBackJitGlobalRef(ref, std::move(obj));
     }
 }
 
@@ -767,6 +906,38 @@ extern "C" void jitIndexSet(JitContext* ctx) {
     }
     // 变异后的容器存入 lastMutatedReceiver_（valueToBits detach 转移所有权）
     // 与 StackVM lastMutatedReceiver_ = std::move(obj) 等价
+    retireJitValue(static_cast<JITBackend*>(ctx->backendPtr),
+                   bitsToValue(static_cast<uint64_t>(*ctx->lastMutatedReceiverPtr)));
+    *ctx->lastMutatedReceiverPtr = valueToBits(obj);
+}
+
+/// R154: OP_MEMBER_SET — 嵌套成员赋值的内层写入。
+/// 栈布局（调用前）：[..., obj, val]（val 在栈顶）→ pop 2，不 push；
+/// 变异后容器存入 lastMutatedReceiver_（与 StackVM 的 lastMutatedReceiver_ 对齐）。
+extern "C" void jitMemberSet(JitContext* ctx, const char* fieldName) {
+    if (!ctx || !ctx->stackTop || !ctx->lastMutatedReceiverPtr || !fieldName) {
+        return;
+    }
+    int64_t* sp = ctx->stackTop;
+    Value val = bitsToValue(*sp);
+    sp += 1; // pop val
+    Value obj = bitsToValue(*sp);
+    sp += 1;            // pop obj
+    ctx->stackTop = sp; // 更新栈顶（pop 2 个，不 push）
+
+    if (obj.isInstance()) {
+        obj.fields()[fieldName] = val; // COW detach
+    } else if (obj.isDict()) {
+        Value::dictGetOrInsertFieldRef(obj.dictVal(), fieldName) = val; // COW detach
+    } else {
+        if (ctx->hasError && ctx->errorBuffer) {
+            *ctx->hasError = true;
+            *ctx->errorBuffer = ErrorMessages::kTypeNotMemberAssignable;
+        }
+        return;
+    }
+    retireJitValue(static_cast<JITBackend*>(ctx->backendPtr),
+                   bitsToValue(static_cast<uint64_t>(*ctx->lastMutatedReceiverPtr)));
     *ctx->lastMutatedReceiverPtr = valueToBits(obj);
 }
 
@@ -793,7 +964,8 @@ extern "C" void jitCallExpr(JitContext* ctx, uint8_t argCount) {
     int64_t* sp = ctx->stackTop;
 
     // 1. pop args（借用，不 detach）
-    std::array<Value, RuntimeLimits::MAX_JIT_ARGS> args;
+    JitArgBuffer args;
+    args.reset(static_cast<size_t>(argCount));
     for (int i = argCount - 1; i >= 0; --i) {
         args[i] = bitsToValue(*sp); // 借用
         sp += 1;                    // pop
@@ -1278,7 +1450,8 @@ extern "C" void jitCallConcurrency(JitContext* ctx, const char* funName, uint8_t
 
     // pop args（借用）
     int64_t* sp = ctx->stackTop;
-    std::array<Value, RuntimeLimits::MAX_JIT_ARGS> args;
+    JitArgBuffer args;
+    args.reset(static_cast<size_t>(argCount));
     for (int i = argCount - 1; i >= 0; --i) {
         args[i] = bitsToValue(*sp);
         sp += 1; // pop
@@ -1359,7 +1532,8 @@ extern "C" void jitClassNew(JitContext* ctx, const char* className, uint8_t argC
     int64_t* sp = ctx->stackTop;
 
     // 1. pop args（反向填充：栈顶是 argN-1）
-    std::array<Value, RuntimeLimits::MAX_JIT_ARGS> args;
+    JitArgBuffer args;
+    args.reset(static_cast<size_t>(argCount));
     for (int i = argCount - 1; i >= 0; --i) {
         args[i] = bitsToValue(*sp); // 借用
         sp += 1;                    // pop
@@ -1853,14 +2027,53 @@ extern "C" void jitMemberSetVar(JitContext* ctx, int64_t* slotPtr, const char* f
     Value obj = bitsToValue(*slotPtr); // 借用（addRef）
     if (obj.isInstance()) {
         obj.fields()[fieldName] = val; // 非 const 触发 COW detach
-        *slotPtr = valueToBits(obj);   // 写回新 bits
+        storeJitSlotBits(ctx, slotPtr, valueToBits(obj));   // 写回新 bits
         return;
     }
     if (obj.isDict()) {
         // PERF（2026-10-22）: 字段名透明写路径——覆盖赋值零拷贝，仅真正插入新键才构造
         // 拥有型键（修复前每次 Value(std::string) + DictKey 双重堆分配；COW detach 语义不变）
         Value::dictGetOrInsertFieldRef(obj.dictVal(), fieldName) = val;
-        *slotPtr = valueToBits(obj);
+        storeJitSlotBits(ctx, slotPtr, valueToBits(obj));
+        return;
+    }
+    if (ctx->hasError && ctx->errorBuffer) {
+        *ctx->hasError = true;
+        *ctx->errorBuffer = ErrorMessages::kTypeNotMemberAssignable;
+    }
+}
+
+/// OP_MEMBER_SET_VAR 的名称版：块作用域 fresh 全局名（无预分配槽）按名解析。
+extern "C" void jitMemberSetVarByName(JitContext* ctx, const char* varName, const char* fieldName) {
+    if (!ctx || !ctx->stackTop || !varName || !fieldName) {
+        return;
+    }
+    auto* backend = static_cast<JITBackend*>(ctx->backendPtr);
+    if (!backend) {
+        return;
+    }
+    int64_t* sp = ctx->stackTop;
+    Value val = bitsToValue(*sp);
+    sp += 1; // pop val
+    ctx->stackTop = sp;
+
+    JitGlobalRef ref = resolveJitGlobalRef(backend, varName);
+    if (!ref.bits && !ref.value) {
+        if (ctx->hasError && ctx->errorBuffer) {
+            *ctx->hasError = true;
+            *ctx->errorBuffer = "未定义的变量: " + std::string(varName);
+        }
+        return;
+    }
+    Value obj = ref.bits ? bitsToValue(*ref.bits) : Value(*ref.value);
+    if (obj.isInstance()) {
+        obj.fields()[fieldName] = val;
+        writeBackJitGlobalRef(ref, std::move(obj));
+        return;
+    }
+    if (obj.isDict()) {
+        Value::dictGetOrInsertFieldRef(obj.dictVal(), fieldName) = val;
+        writeBackJitGlobalRef(ref, std::move(obj));
         return;
     }
     if (ctx->hasError && ctx->errorBuffer) {
@@ -1885,7 +2098,7 @@ extern "C" void jitMemberSetLocal(JitContext* ctx, uint8_t slot, int64_t* frameB
     Value obj = bitsToValue(*slotPtr);   // 借用
     if (obj.isInstance()) {
         obj.fields()[fieldName] = val; // 非 const 触发 COW detach
-        *slotPtr = valueToBits(obj);   // 写回新 bits
+        storeJitSlotBits(ctx, slotPtr, valueToBits(obj));   // 写回新 bits
         // BUG-JIT-FIELDSLOT fix: 若接收者是当前方法帧的 this（slot 0），同步更新方法帧
         // 字段槽。否则 jitMethodReturn 返回时用未同步的陈旧字段槽（字段默认值拷贝）覆盖
         // 回写 this.fields()，导致 init/方法内的字段赋值丢失（字段默认值 + init 覆盖
@@ -1908,7 +2121,7 @@ extern "C" void jitMemberSetLocal(JitContext* ctx, uint8_t slot, int64_t* frameB
     if (obj.isDict()) {
         // PERF（2026-10-22）: 字段名透明写路径（同 jitMemberSetVar）
         Value::dictGetOrInsertFieldRef(obj.dictVal(), fieldName) = val;
-        *slotPtr = valueToBits(obj);
+        storeJitSlotBits(ctx, slotPtr, valueToBits(obj));
         return;
     }
     if (ctx->hasError && ctx->errorBuffer) {
@@ -2002,7 +2215,7 @@ extern "C" int64_t jitMethodReturn(JitContext* ctx, JitFrame* framePtr, int64_t 
                 // 与逐字段写回时 ensureUnique 的分离结果一致。receiver 析构释放
                 // 槽位旧引用，newRef detach 后槽位获得新实例引用，净引用计数正确。
                 Value newRef = modifiedThis;
-                *slotPtr = valueToBits(newRef);
+                storeJitSlotBits(ctx, slotPtr, valueToBits(newRef));
             }
         }
     }
@@ -2049,7 +2262,8 @@ extern "C" void jitMethodCall(JitContext* ctx, const char* methodName, int64_t p
     // 1. pop argCount 个参数（反向填充：栈顶是 argN-1）
     //    JIT 栈向下增长，sp += 1 是 pop（向高地址移动）
     //    argCount 为 uint8_t（上限 255），MAX_JIT_ARGS=256 覆盖全部合法值
-    std::array<Value, RuntimeLimits::MAX_JIT_ARGS> args;
+    JitArgBuffer args;
+    args.reset(static_cast<size_t>(argCount));
     for (int i = argCount - 1; i >= 0; --i) {
         args[i] = bitsToValue(*sp); // 借用
         sp += 1;                    // pop
@@ -2065,7 +2279,7 @@ extern "C" void jitMethodCall(JitContext* ctx, const char* methodName, int64_t p
         // shared_ptr<Inner> 共享，无需 writeBack。thread.join 的 pending 闭包经
         // pendingInvoker（spawn 时由 jitCallConcurrency 注入的跳板 invoker）同步执行。
         if (receiver.isChannel() || receiver.isMutex() || receiver.isRwLock() || receiver.isThread()) {
-            std::vector<Value> argsVec(args.begin(), args.begin() + argCount);
+            std::vector<Value> argsVec(args.data(), args.data() + argCount);
             try {
                 BuiltinMethodResult br = handleSyncObjectMethod(methodName, receiver, argsVec, 0, 0);
                 Value res = std::move(br.result);
@@ -2376,7 +2590,8 @@ extern "C" void jitCallByName(JitContext* ctx, const char* funName, uint8_t argC
     int64_t* sp = ctx->stackTop;
 
     // 1. pop args（借用，不 detach）
-    std::array<Value, RuntimeLimits::MAX_JIT_ARGS> args;
+    JitArgBuffer args;
+    args.reset(static_cast<size_t>(argCount));
     for (int i = argCount - 1; i >= 0; --i) {
         args[i] = bitsToValue(*sp); // 借用
         sp += 1;                    // pop
@@ -2783,6 +2998,18 @@ extern "C" void* jitCheckAndRethrow(JitContext* ctx, int64_t* currentR13) {
 // ============================================================
 
 /// R162: OP_DEFINE_VAR — pop 栈顶值，存入 globals_[name]（或 globalSlots_ 若 slot 存在）
+/// R162: 全局 slot 的拥有型存储。bits 来自操作数栈（借用），若为堆类型需 addRef，
+/// 否则源名称被 OP_DELETE_VAR 删除后槽位中的 bits 悬垂（块作用域 fresh 全局名逃逸到
+/// 预分配槽的典型场景）。标量直接写 bits。旧值不 release——与 JIT 全局槽既有
+/// 覆盖语义一致（详见 BACKLOG B-012 的栈所有权模型长期方案）。
+extern "C" void jitStoreGlobalSlotAddRef(JitContext* ctx, int64_t* slotPtr, uint64_t bits) {
+    if (!slotPtr) {
+        return;
+    }
+    Value v = bitsToValue(bits);
+    storeJitSlotBits(ctx, slotPtr, valueToBits(v));
+}
+
 /// 栈布局：[val] → []（pop val）
 extern "C" void jitDefineVar(JitContext* ctx, const char* name) {
     if (!ctx || !ctx->stackTop || !name) {
@@ -2808,9 +3035,15 @@ extern "C" void jitDefineVar(JitContext* ctx, const char* name) {
     auto& globalSlots = backend->globalSlotsMut();
     auto gsIt = globalNameToSlot.find(std::string_view(name));
     if (gsIt != globalNameToSlot.end() && gsIt->second < static_cast<int>(globalSlots.size())) {
-        globalSlots[gsIt->second] = static_cast<int64_t>(bits);
+        storeJitSlotBits(ctx, &globalSlots[gsIt->second], valueToBits(val));
     } else {
-        backend->globals_[name] = std::move(val);
+        auto oldIt = backend->globals_.find(name);
+        if (oldIt != backend->globals_.end()) {
+            retireJitValue(backend, std::move(oldIt->second));
+            oldIt->second = std::move(val);
+        } else {
+            backend->globals_.emplace(name, std::move(val));
+        }
     }
 }
 
@@ -2876,7 +3109,7 @@ extern "C" void jitSetVar(JitContext* ctx, const char* name) {
     auto& globalSlots = backend->globalSlotsMut();
     auto gsIt = globalNameToSlot.find(std::string_view(name));
     if (gsIt != globalNameToSlot.end() && gsIt->second < static_cast<int>(globalSlots.size())) {
-        globalSlots[gsIt->second] = static_cast<int64_t>(bits);
+        storeJitSlotBits(ctx, &globalSlots[gsIt->second], valueToBits(val));
         return;
     }
     auto it = backend->globals_.find(name);
@@ -2887,6 +3120,7 @@ extern "C" void jitSetVar(JitContext* ctx, const char* name) {
             *ctx->errorBuffer = "未定义的变量: " + std::string(name);
         return;
     }
+    retireJitValue(backend, std::move(it->second));
     it->second = std::move(val);
 }
 
@@ -2905,9 +3139,13 @@ extern "C" void jitDeleteVar(JitContext* ctx, const char* name) {
     auto& globalSlots = backend->globalSlotsMut();
     auto gsIt = globalNameToSlot.find(std::string_view(name));
     if (gsIt != globalNameToSlot.end() && gsIt->second < static_cast<int>(globalSlots.size())) {
-        globalSlots[gsIt->second] = static_cast<int64_t>(JIT_NULL_BITS);
+        storeJitSlotBits(ctx, &globalSlots[gsIt->second], static_cast<uint64_t>(JIT_NULL_BITS));
     } else {
-        backend->globals_.erase(name);
+        auto it = backend->globals_.find(name);
+        if (it != backend->globals_.end()) {
+            retireJitValue(backend, std::move(it->second));
+            backend->globals_.erase(it);
+        }
     }
 }
 

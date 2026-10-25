@@ -872,16 +872,20 @@ private:
     void emitBuildDict(asmjit::x86::Assembler& a, asmjit::Label epilogue, uint8_t pairCount);
     void emitBuildTuple(asmjit::x86::Assembler& a, asmjit::Label epilogue, uint8_t count);
     void emitIndexSetGlobal(asmjit::x86::Assembler& a, asmjit::Label epilogue, int slot);
+    void emitIndexSetGlobalByName(asmjit::x86::Assembler& a, asmjit::Label epilogue, const char* varName);
+    void emitStoreGlobalOwned(asmjit::x86::Assembler& a, int slot);
     void emitClassNew(asmjit::x86::Assembler& a, asmjit::Label epilogue, const char* className, uint8_t argCount);
     void emitInitField(asmjit::x86::Assembler& a, asmjit::Label epilogue, const char* fieldName);
     void emitDefineClass(asmjit::x86::Assembler& a, asmjit::Label epilogue, const char* className,
                          const char* superClassName);
     void emitMemberGet(asmjit::x86::Assembler& a, asmjit::Label epilogue, const char* fieldName);
     void emitMemberSetVar(asmjit::x86::Assembler& a, asmjit::Label epilogue, int slot, const char* fieldName);
+    void emitMemberSetVarByName(asmjit::x86::Assembler& a, asmjit::Label epilogue, const char* varName,
+                                const char* fieldName);
     void emitMemberSetLocal(asmjit::x86::Assembler& a, asmjit::Label epilogue, uint8_t slot, const char* fieldName);
     void emitMethodCall(asmjit::x86::Assembler& a, asmjit::Label epilogue, const char* methodName, uint8_t argCount,
-                        uint8_t receiverLocalSlotByte, int receiverGlobalSlot, bool isSuperCall,
-                        const char* superClassName);
+                        uint8_t receiverLocalSlotByte, int receiverGlobalSlot, const char* receiverGlobalName,
+                        bool isSuperCall, const char* superClassName);
     void emitCheckInt(asmjit::x86::Assembler& a, asmjit::x86::Gp val, asmjit::Label failLabel);
     void emitRecordTypeFeedback(asmjit::x86::Assembler& a, asmjit::x86::Gp val, size_t chunkIdx);
     void emitFloatBinaryArith(asmjit::x86::Assembler& a, int op, asmjit::Label failLabel, asmjit::Label endLabel,
@@ -905,6 +909,7 @@ private:
     void emitDupN(asmjit::x86::Assembler& a, uint8_t depth);
     void emitLoadMutated(asmjit::x86::Assembler& a);
     void emitIndexSet(asmjit::x86::Assembler& a, asmjit::Label epilogue);
+    void emitMemberSet(asmjit::x86::Assembler& a, asmjit::Label epilogue, const char* fieldName);
     void emitWritebackVar(asmjit::x86::Assembler& a, int slot);
     void emitWritebackLocal(asmjit::x86::Assembler& a, uint8_t slot);
     /// 扫描 chunk 统计 OP_MEMBER_GET 数量，累加到 nextCallSiteId_
@@ -1012,8 +1017,12 @@ private:
     // ============================================================
     /// JIT 代码生成/键结构版本——任何 codegen 逻辑变更或缓存键公式/输入集变更必须
     /// 递增，使旧缓存键确定性失效。2026-10-22：enumInfos 全量入键的键结构补全递增至
-    /// 2（非正确性必需，保守选择；评估见 JIT.cpp computeBlockCacheKey 尾部注释）
-    static constexpr uint32_t kJitCodegenVersion = 4;
+    /// 2（非正确性必需，保守选择；评估见 JIT.cpp computeBlockCacheKey 尾部注释）。
+    /// 2026-10-25：OP_MEMBER_SET_VAR/OP_INDEX_SET_VAR 增加无预分配槽（块作用域 fresh
+    /// 全局名）的按名解析分支、OP_METHOD_CALL/OP_SUPER_CALL 接收者按名解析、
+    /// OP_SET_GLOBAL/OP_DEFINE_GLOBAL 堆类型 addRef 存储、补齐 OP_MEMBER_SET、
+    /// 槽位覆盖/删除/写回旧堆值延迟释放（storeJitSlotBits），生成码变更递增至 5。
+    static constexpr uint32_t kJitCodegenVersion = 5;
 
     struct JitBlockCacheEntry {
         struct SharedBlock {
@@ -1320,6 +1329,13 @@ public:
     /// R162: extern "C" helper（jitDefineVar 等）通过 backendPtr 访问，故声明在 public 区
     std::vector<int64_t> globalSlots_;        ///< R139: 全局变量 slot 存储（与 StackVM globalSlots_ 等价）
     JitGlobalNameToSlotMap globalNameToSlot_; ///< R147: 名称→slot 映射（OPT-15 透明查找）
+
+    /// 延迟释放的堆值：名称全局覆盖/删除、按名写回替换出的旧值。
+    /// member-get PIC 缓存 InstanceData 地址与字段 Value 指针；若立即 release，
+    /// 实例地址会在后续分配中复用，PIC 假命中会读到已释放字段（B-013 实证）。
+    /// 统一推迟到下一次 execute（PIC 已清空）后释放，见 JIT.cpp 执行初始化。
+    std::vector<Value> retiredValues_;
+    std::vector<Value>& retiredValuesMut() { return retiredValues_; }
 
     /// 闭包同步调用跳板入口（compileAllChunks 末尾发射，runtime_.add 后解析地址）。
     /// jitInvokeClosureSync（JITRuntime.cpp）用它从 C++ 同步调用 JIT 编译的闭包：

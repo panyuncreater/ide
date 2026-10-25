@@ -113,6 +113,7 @@ CompileResult Compiler::compile(Block& program) {
     }
     functionChunks_.clear();
     currentLocals_.clear();
+    blockScopedGlobals_.clear();
     inFunction_ = false;
     classFieldNames_.clear();
     outerLocals_.clear();
@@ -638,6 +639,7 @@ Compiler::CompileContext Compiler::saveCompileContext() {
     ctx.chunk = std::move(chunk_);
     ctx.varIndex = std::move(varIndex_);
     ctx.currentLocals = std::move(currentLocals_);
+    ctx.blockScopedGlobals = std::move(blockScopedGlobals_);
     ctx.varTypes = std::move(varTypes_); // 2026-06-29: 类型注解快照
     ctx.inFunction = inFunction_;
     ctx.outerLocals = std::move(outerLocals_);
@@ -672,6 +674,7 @@ void Compiler::restoreCompileContext(CompileContext&& ctx) {
     chunk_ = std::move(ctx.chunk);
     varIndex_ = std::move(ctx.varIndex);
     currentLocals_ = std::move(ctx.currentLocals);
+    blockScopedGlobals_ = std::move(ctx.blockScopedGlobals);
     varTypes_ = std::move(ctx.varTypes); // 2026-06-29: 类型注解恢复
     inFunction_ = ctx.inFunction;
     outerLocals_ = std::move(ctx.outerLocals);
@@ -722,6 +725,15 @@ void Compiler::compileNode(ASTNode* node) {
 void Compiler::compileStatement(ASTNode* node) {
     if (!node)
         return;
+
+    // PERF: 赋值语句的结果不被消费——visitAssignment 在 discard 模式下自行平衡栈
+    // （局部/upvalue 用 peek+SET+POP，全局用 pop+SET），此处不再补 POP。
+    if (node->nodeType == NodeType::NODE_ASSIGNMENT) {
+        discardAssignmentResult_ = true;
+        compileNode(node);
+        discardAssignmentResult_ = false;
+        return;
+    }
 
     compileNode(node);
 

@@ -2777,6 +2777,7 @@ void Compiler::visitBlock(Block& node) {
 
     if (!inFunction_) {
         blockDepth_++;
+        auto savedBlockGlobals = blockScopedGlobals_;
 
         // 收集块作用域中将要声明的变量名，以便在编译前保存被遮蔽的全局变量
         std::vector<std::pair<std::string, std::string>> shadowedSaves; // (blockVarName, tempSaveName)
@@ -2793,7 +2794,7 @@ void Compiler::visitBlock(Block& node) {
             // V11 fix（2026-10-22）：祖先顶层块 fresh 声明的名字（在 currentLocals_、无槽位映射）——
             // 嵌套块重声明同样必须保存当前有效值并在退出恢复（hash 存储同段覆写问题），
             // 对齐解释器环境链遮蔽语义；槽位遮蔽名（ancestorShadowed）由 V10 协议负责。
-            bool ancestorFresh = (gsSlot < 0) && !ancestorShadowed && (currentLocals_.count(varName) > 0);
+            bool ancestorFresh = (gsSlot < 0) && !ancestorShadowed && (blockScopedGlobals_.count(varName) > 0);
             if (gsSlot < 0 && !ancestorShadowed && !ancestorFresh)
                 return; // 从未定义：无需保存（既有行为）
             std::string saveName =
@@ -2840,13 +2841,19 @@ void Compiler::visitBlock(Block& node) {
             compileStatement(stmt.get());
         }
 
-        // 找出块作用域内新声明的变量
+        // 找出块作用域内新声明的变量（顶层 fresh 块全局 + 任何真实局部）
         std::vector<std::string> blockVars;
+        for (const auto& name : blockScopedGlobals_) {
+            if (savedBlockGlobals.find(name) == savedBlockGlobals.end()) {
+                blockVars.push_back(name);
+            }
+        }
         for (auto& [name, slot] : currentLocals_) {
             if (savedLocals.find(name) == savedLocals.end()) {
                 blockVars.push_back(name);
             }
         }
+        blockScopedGlobals_ = std::move(savedBlockGlobals);
 
         // 恢复外层作用域（P28: swap）
         currentLocals_.swap(savedLocals);

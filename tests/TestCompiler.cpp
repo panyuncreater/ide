@@ -216,13 +216,19 @@ TEST(CompilerVariableTest, VarDeclWithoutInit) {
     EXPECT_TRUE(containsOpSequence(chunk, {OpCode::OP_NULL, OpCode::OP_DEFINE_GLOBAL}));
 }
 
-/// `var x; x = 1;` → 验证赋值生成 OP_INT OP_DUP OP_SET_GLOBAL
+/// `var x; x = 1;` → 语句级赋值结果不被消费，直接 OP_INT OP_SET_GLOBAL（无 DUP）
 TEST(CompilerVariableTest, VarAssignment) {
     auto result = compileSource("var x; x = 1;");
     auto& chunk = result.mainChunk;
-    // 赋值表达式：编译值 → DUP → SET_GLOBAL
-    EXPECT_TRUE(containsOpSequence(chunk, {OpCode::OP_INT, OpCode::OP_DUP, OpCode::OP_SET_GLOBAL}));
+    EXPECT_TRUE(containsOpSequence(chunk, {OpCode::OP_INT, OpCode::OP_SET_GLOBAL}));
     EXPECT_TRUE(containsOp(chunk, OpCode::OP_SET_GLOBAL));
+}
+
+/// `y = (x = 7);` → 表达式语境仍用 DUP 保留内层赋值结果供外层消费
+TEST(CompilerVariableTest, VarAssignmentExpressionKeepsValue) {
+    auto result = compileSource("var x; var y; y = (x = 7);");
+    auto& chunk = result.mainChunk;
+    EXPECT_TRUE(containsOpSequence(chunk, {OpCode::OP_INT, OpCode::OP_DUP, OpCode::OP_SET_GLOBAL}));
 }
 
 /// 变量引用 `x` → 验证生成 OP_GET_GLOBAL

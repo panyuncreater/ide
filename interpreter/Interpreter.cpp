@@ -1046,7 +1046,8 @@ template <typename Cmp> Value Interpreter::compareNumericOrString(BinaryOp& node
 
     // 字符串字典序比较
     if (left.isString() && right.isString()) {
-        auto r = computeCompare(op, true, left.stringVal(), true, right.stringVal(), 0, 0);
+        auto r = computeCompare(op, true, std::as_const(left).stringVal(), true, std::as_const(right).stringVal(), 0,
+                                0);
         return Value(r.value);
     }
     // 数值比较
@@ -1088,7 +1089,7 @@ bool Interpreter::tryOperatorOverload(BinOpType opType, Value& left, Value& righ
     default:
         return false;
     }
-    auto clsIt = classRegistry_.find(left.className());
+    auto clsIt = classRegistry_.find(std::as_const(left).className());
     if (clsIt == classRegistry_.end()) {
         return false;
     }
@@ -1144,7 +1145,7 @@ bool Interpreter::tryOperatorOverload(BinOpType opType, Value& left, Value& righ
         methodEnv->bindInstance(thisInEnv);
     }
 
-    callStack_.emplace_back(left.className() + "." + dunderName, methodEnv, line, recursionDepth_);
+    callStack_.emplace_back(std::as_const(left).className() + "." + dunderName, methodEnv, line, recursionDepth_);
     envGuard.popCallStack = true;
     currentEnv_ = methodEnv;
 
@@ -1169,12 +1170,12 @@ Value Interpreter::numericBinaryOp(BinOpType opType, Value left, Value right, in
             // 如 `((s + "x") + "y")` 中内层 `s + "x"` 的结果），原地 append
             // 避免分配新 string + 拷贝。链式拼接 `a + b + c + d` 由 amortized O(n²) 降为 O(n)。
             if (std::string* lhs = left.tryGetMutableString()) {
-                const std::string& rhs = right.stringVal();
+                const std::string& rhs = std::as_const(right).stringVal();
                 lhs->reserve(lhs->size() + rhs.size());
                 *lhs += rhs;
                 return left; // C++20 对函数参数隐式移动，std::move 冗余（GCC -Werror=redundant-move）
             }
-            return Value(left.stringVal() + right.stringVal());
+            return Value(std::as_const(left).stringVal() + std::as_const(right).stringVal());
         }
         if (left.isString() || right.isString()) {
             // 一侧为字符串、一侧为其他类型 → 用 toString() 双向转换后拼接
@@ -1466,56 +1467,51 @@ const std::string* Interpreter::findTypeAnnotation(const std::string& varName) c
 Interpreter::ChainInfo Interpreter::collectAndEvaluateChain(ASTNode* objectNode, bool errorOnNonVarRef, int line,
                                                             int col) {
     ChainInfo info;
-    // PERF-09 fix: 预分配 chain 容量，避免链式访问深度 >5 时多次 realloc。
-    // 绝大多数链式访问深度 ≤ 8（如 a.b.c[i].d），预分配 8 足以覆盖常见场景。
-    info.chain.reserve(8);
-    info.vals.reserve(8);
-    info.idxs.reserve(8);
+    // PERF: 链深 ≤ 8 走内联存储（零堆分配），更深才回落 vector。
     ASTNode* cur = objectNode;
     while (cur->nodeType == NodeType::NODE_MEMBER_ACCESS || cur->nodeType == NodeType::NODE_INDEX_ACCESS) {
-        info.chain.push_back(cur);
+        info.appendNode(cur);
         if (cur->nodeType == NodeType::NODE_MEMBER_ACCESS) {
             cur = static_cast<MemberAccess*>(cur)->object.get();
         } else {
             cur = static_cast<IndexAccess*>(cur)->object.get();
         }
     }
-    info.chain.push_back(cur); // 最外层 VarRef
+    info.appendNode(cur); // 最外层 VarRef
 
-    int n = static_cast<int>(info.chain.size());
+    int n = static_cast<int>(info.depth);
 
     // 从外到内逐级求值，收集每级的值和索引
-    info.vals.resize(n);
-    info.idxs.resize(n);
+    info.resizeValues(static_cast<size_t>(n));
 
-    if (info.chain[n - 1]->nodeType != NodeType::NODE_VAR_REF) {
+    if (info.nodeAt(static_cast<size_t>(n - 1))->nodeType != NodeType::NODE_VAR_REF) {
         if (errorOnNonVarRef) {
             runtimeError("赋值目标必须是变量引用", line, col);
         }
         info.varRef = nullptr;
         return info;
     }
-    info.varRef = static_cast<VarRef*>(info.chain[n - 1]);
+    info.varRef = static_cast<VarRef*>(info.nodeAt(static_cast<size_t>(n - 1)));
     const Value* baseVal = currentEnv_->get(info.varRef->name);
     if (!baseVal) {
         runtimeError("未定义的变量: " + info.varRef->name, line, col, DiagCodes::kUndefinedVariable);
     }
-    info.vals[n - 1] = *baseVal; // #18 fix: 明确报错而非静默nullValue
+    info.valAt(static_cast<size_t>(n - 1)) = *baseVal; // #18 fix: 明确报错而非静默nullValue
 
     for (int i = n - 2; i >= 0; i--) {
-        ASTNode* nd = info.chain[i];
-        const Value& parent = info.vals[i + 1];
+        ASTNode* nd = info.nodeAt(static_cast<size_t>(i));
+        const Value& parent = info.valAt(static_cast<size_t>(i + 1));
         if (nd->nodeType == NodeType::NODE_MEMBER_ACCESS) {
             auto* ma = static_cast<MemberAccess*>(nd);
             if (parent.isInstance()) {
                 // Perf-Finding: 缓存 const 引用避免 fields() 二次调用与同键二次 hash 查找
                 const auto& flds = parent.fields();
                 auto it = flds.find(ma->fieldName);
-                info.vals[i] = (it != flds.end()) ? it->second : Value::nullValue();
+                info.valAt(static_cast<size_t>(i)) = (it != flds.end()) ? it->second : Value::nullValue();
             } else if (parent.isDict()) {
                 const auto& entries = parent.dictVal();
                 auto it = entries.find(ma->fieldName);
-                info.vals[i] = (it != entries.end()) ? it->second : Value::nullValue();
+                info.valAt(static_cast<size_t>(i)) = (it != entries.end()) ? it->second : Value::nullValue();
             } else if (parent.isNull()) {
                 // P2 fix (null-access): null 值成员访问给出明确的 null-access 诊断码
                 runtimeError("不能在 null 值上访问属性或调用方法", line, col, DiagCodes::kNullAccess);
@@ -1524,8 +1520,8 @@ Interpreter::ChainInfo Interpreter::collectAndEvaluateChain(ASTNode* objectNode,
             }
         } else if (nd->nodeType == NodeType::NODE_INDEX_ACCESS) {
             auto* ia = static_cast<IndexAccess*>(nd);
-            info.idxs[i] = evaluate(ia->index.get());
-            const Value& indexVal = info.idxs[i];
+            info.idxAt(static_cast<size_t>(i)) = evaluate(ia->index.get());
+            const Value& indexVal = info.idxAt(static_cast<size_t>(i));
             if (parent.isArray() && indexVal.isInt()) {
                 if (indexVal.intVal() < 0 ||
                     static_cast<size_t>(indexVal.intVal()) >= std::as_const(parent).arrayVal().size())
@@ -1535,14 +1531,14 @@ Interpreter::ChainInfo Interpreter::collectAndEvaluateChain(ASTNode* objectNode,
 
                                                         std::as_const(parent).arrayVal().size()),
                                  line, col, DiagCodes::kIndexOutOfBounds);
-                info.vals[i] = std::as_const(parent).arrayVal()[indexVal.intVal()];
+                info.valAt(static_cast<size_t>(i)) = std::as_const(parent).arrayVal()[indexVal.intVal()];
             } else if (parent.isDict()) {
                 // L4 fix: 字典键支持 string/int/bool/float
                 // PERF: 透明查找，string 键免 DictKey 构造的字符串深拷贝
                 if (!Value::dictKeyIsValid(indexVal))
                     runtimeError(ErrorMessages::kDictKeyInvalidType, line, col, DiagCodes::kTypeMismatch);
                 const Value* found = Value::dictFindValue(std::as_const(parent).dictVal(), indexVal);
-                info.vals[i] = found ? *found : Value::nullValue();
+                info.valAt(static_cast<size_t>(i)) = found ? *found : Value::nullValue();
             } else {
                 runtimeError(ErrorMessages::kTypeNotIndexable, line, col, DiagCodes::kTypeMismatch);
             }
@@ -1553,11 +1549,11 @@ Interpreter::ChainInfo Interpreter::collectAndEvaluateChain(ASTNode* objectNode,
 }
 
 void Interpreter::writeBackChain(ChainInfo& info, Value innermost, int line, int col) {
-    int n = static_cast<int>(info.chain.size());
+    int n = static_cast<int>(info.depth);
     Value currentVal = std::move(innermost);
     for (int i = 0; i < n - 1; i++) {
-        ASTNode* nd = info.chain[i];
-        Value parentVal = std::move(info.vals[i + 1]); // #19: move避免深拷贝
+        ASTNode* nd = info.nodeAt(static_cast<size_t>(i));
+        Value parentVal = std::move(info.valAt(static_cast<size_t>(i + 1))); // #19: move避免深拷贝
         if (nd->nodeType == NodeType::NODE_MEMBER_ACCESS) {
             auto* ma = static_cast<MemberAccess*>(nd);
             if (parentVal.isInstance()) {
@@ -1579,7 +1575,7 @@ void Interpreter::writeBackChain(ChainInfo& info, Value innermost, int line, int
                 runtimeError(ErrorMessages::kTypeNotMemberAssignable, line, col, DiagCodes::kTypeMismatch);
             }
         } else if (nd->nodeType == NodeType::NODE_INDEX_ACCESS) {
-            const Value& indexVal = info.idxs[i];
+            const Value& indexVal = info.idxAt(static_cast<size_t>(i));
             if (parentVal.isArray() && indexVal.isInt()) {
                 if (indexVal.intVal() < 0 || static_cast<size_t>(indexVal.intVal()) >= parentVal.arrayVal().size())
                     runtimeError(ErrorFormat::formatStd("数组索引越界: {}, 有效范围 [0, {})",
@@ -1634,13 +1630,13 @@ Value Interpreter::writeBack(ASTNode* objectNode, bool isIndexAssign, ASTNode* i
     }
 
     // OPT-01: 单节点 VarRef 快路径——求值完成后直接原位变异环境槽位。
-    // 链求值副本（info.vals[0]）使槽位 rc≥2，旧路径每次变异必然 COW 全量克隆；
+    // 链求值副本（info.valAt(0)）使槽位 rc≥2，旧路径每次变异必然 COW 全量克隆；
     // 释放该副本后无别名时 rc==1，变异零克隆。若 RHS 副作用已重绑定变量
     // （槽位不再持有求值时捕获的对象）则回退旧路径，语义逐字节保持。
-    if (info.varRef && info.chain.size() == 1) {
+    if (info.varRef && info.depth == 1) {
         Value* slot = currentEnv_->getMutableVariableSlot(info.varRef->name);
-        if (slot && slot->sharesStorageWith(info.vals[0])) {
-            info.vals.clear(); // 释放链求值副本：无别名时槽位成为唯一持有者
+        if (slot && slot->sharesStorageWith(info.valAt(0))) {
+            info.clearValues(); // 释放链求值副本：无别名时槽位成为唯一持有者
             if (isIndexAssign) {
                 if (slot->isArray() && idx.isInt()) {
                     if (idx.intVal() < 0 || static_cast<size_t>(idx.intVal()) >= std::as_const(*slot).arrayVal().size())
@@ -1670,7 +1666,7 @@ Value Interpreter::writeBack(ASTNode* objectNode, bool isIndexAssign, ASTNode* i
     }
 
     // 在最内层对象上执行赋值
-    Value modifiedObj = std::move(info.vals[0]); // A2: move 而非拷贝，保持 refcount=1 跳过 COW detach
+    Value modifiedObj = std::move(info.valAt(0)); // A2: move 而非拷贝，保持 refcount=1 跳过 COW detach
     if (isIndexAssign) {
         if (modifiedObj.isArray() && idx.isInt()) {
             if (idx.intVal() < 0 || static_cast<size_t>(idx.intVal()) >= std::as_const(modifiedObj).arrayVal().size())
@@ -3605,7 +3601,7 @@ void Interpreter::visitMethodCall(MethodCall& node) {
     ChainInfo info = collectAndEvaluateChain(node.object.get(), false, node.line, node.column);
     Value obj;
     if (info.varRef) {
-        obj = std::move(info.vals[0]);
+        obj = std::move(info.valAt(0));
     } else {
         obj = evaluate(node.object.get());
     }
@@ -3615,7 +3611,7 @@ void Interpreter::visitMethodCall(MethodCall& node) {
         auto argValues = evaluateArguments(node.arguments);
         // OPT-01: 单节点 VarRef 原位变异快路径。参数求值后重新取槽位，确认仍持有
         // 调用前的同一对象；释放 obj 副本后无别名时 rc==1，push/pop/insert 零克隆。
-        if (info.varRef && info.chain.size() == 1) {
+        if (info.varRef && info.depth == 1) {
             Value* slot = currentEnv_->getMutableVariableSlot(info.varRef->name);
             if (slot && slot->sharesStorageWith(obj)) {
                 obj = Value::nullValue();
@@ -3638,7 +3634,7 @@ void Interpreter::visitMethodCall(MethodCall& node) {
     if (obj.isDict()) {
         auto argValues = evaluateArguments(node.arguments);
         // OPT-01: 字典单节点 VarRef 原位变异快路径（同上，含 dict.set/remove 等）。
-        if (info.varRef && info.chain.size() == 1) {
+        if (info.varRef && info.depth == 1) {
             Value* slot = currentEnv_->getMutableVariableSlot(info.varRef->name);
             if (slot && slot->sharesStorageWith(obj)) {
                 obj = Value::nullValue();
@@ -3682,7 +3678,7 @@ void Interpreter::visitMethodCall(MethodCall& node) {
     if (obj.isCoroutine()) {
         auto argValues = evaluateArguments(node.arguments);
         // OPT-01: 生成器单节点 VarRef 原位推进快路径（.next() 无需写回链）。
-        if (info.varRef && info.chain.size() == 1) {
+        if (info.varRef && info.depth == 1) {
             Value* slot = currentEnv_->getMutableVariableSlot(info.varRef->name);
             if (slot && slot->sharesStorageWith(obj)) {
                 obj = Value::nullValue();
@@ -3729,7 +3725,7 @@ Value Interpreter::callInstanceMethod(MethodCall& node, Value& obj) {
     FunDecl* method = nullptr;
     std::shared_ptr<Environment> cachedParentEnv;
     if (!findMethodInClass(obj, node, searchClass, searchClassName, isSuperCall, method, cachedParentEnv)) {
-        runtimeError("类 " + obj.className() + " 没有方法 " + node.methodName, node.line, node.column);
+        runtimeError("类 " + std::as_const(obj).className() + " 没有方法 " + node.methodName, node.line, node.column);
     }
 
     // Phase 2: 求值参数列表（含 F10 默认参数填充、A3/ROUND49 重定义重查找）
@@ -3743,7 +3739,7 @@ Value Interpreter::callInstanceMethod(MethodCall& node, Value& obj) {
 bool Interpreter::findMethodInClass(Value& obj, MethodCall& node, const ClassInfo*& searchClass,
                                     std::string& searchClassName, bool& isSuperCall, FunDecl*& method,
                                     std::shared_ptr<Environment>& cachedParentEnv) {
-    auto classIt = classRegistry_.find(obj.className());
+    auto classIt = classRegistry_.find(std::as_const(obj).className());
     if (classIt == classRegistry_.end()) {
         return false;
     }
@@ -3758,7 +3754,7 @@ bool Interpreter::findMethodInClass(Value& obj, MethodCall& node, const ClassInf
         if (!classContextStack_.empty()) {
             currentClassName = classContextStack_.back();
         } else {
-            currentClassName = obj.className();
+            currentClassName = std::as_const(obj).className();
         }
         auto ctxIt = classRegistry_.find(currentClassName);
         if (ctxIt == classRegistry_.end() || ctxIt->second.superClassName.empty()) {
@@ -3974,7 +3970,8 @@ Value Interpreter::invokeMethod(MethodCall& node, Value& obj, const ClassInfo* s
                 methodEnv->bindInstance(thisInEnv);
 
             // 压入调用栈
-            callStack_.emplace_back(obj.className() + "." + node.methodName, methodEnv, node.line, recursionDepth_);
+            callStack_.emplace_back(std::as_const(obj).className() + "." + node.methodName, methodEnv, node.line,
+                                    recursionDepth_);
 
             // 切换环境
             currentEnv_ = methodEnv;

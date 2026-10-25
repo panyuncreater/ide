@@ -291,10 +291,11 @@ Value Interpreter::callClosureValue(FunCall& node) {
     } envGuard{*this, funEnv, prevEnv, &calleeVal, &envFromSnapshot};
 
     try {
-        funEnv = std::make_shared<Environment>(closureEnv ? closureEnv : currentEnv_);
-
-        // C1 fix: 若闭包环境已过期（weak_ptr 失效），从 capturedVars 快照重建
-        if (!closureEnv) {
+        // C1 fix: 若闭包环境已过期（weak_ptr 失效），直接从 capturedVars 快照重建，
+        // 避免先构造一个随即被替换的 Environment。
+        if (closureEnv) {
+            funEnv = std::make_shared<Environment>(closureEnv);
+        } else {
             rebuildEnvFromSnapshot(calleeVal, funEnv);
             envFromSnapshot = true;
         }
@@ -498,9 +499,11 @@ Result<Value> Interpreter::invokeClosureSync(const Value& closure, const Value* 
     } envGuard{*this, funEnv, prevEnv, &const_cast<Value&>(closure), &envFromSnapshot};
 
     try {
-        funEnv = std::make_shared<Environment>(closureEnv ? closureEnv : currentEnv_);
-
-        if (!closureEnv) {
+        // 若闭包环境已过期（weak_ptr 失效），直接从 capturedVars 快照重建，
+        // 避免先构造一个随即被替换的 Environment。
+        if (closureEnv) {
+            funEnv = std::make_shared<Environment>(closureEnv);
+        } else {
             rebuildEnvFromSnapshot(const_cast<Value&>(closure), funEnv);
             envFromSnapshot = true;
         }
@@ -1126,14 +1129,13 @@ Value Interpreter::callNamedFunction(FunCall& node) {
             // 后续轮次 currentEnv_ 已是上一轮 funEnv，直接作父会错误链式嵌套。
             if (closureEnv) {
                 funEnv = std::make_shared<Environment>(closureEnv);
-            } else {
-                funEnv = std::make_shared<Environment>(prevEnv);
-            }
-
-            // C1 fix: 若闭包环境已过期（weak_ptr 失效），从 capturedVars 快照重建
-            if (!closureEnv && closureValPtr) {
+            } else if (closureValPtr) {
+                // C1 fix: 闭包环境已过期（weak_ptr 失效），直接按 capturedVars 快照重建，
+                // 避免先构造一个随即被替换的 Environment。
                 rebuildEnvFromSnapshot(*closureValPtr, funEnv);
                 envFromSnapshot = true;
+            } else {
+                funEnv = std::make_shared<Environment>(prevEnv);
             }
 
             // 绑定参数（move 避免深拷贝）

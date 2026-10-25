@@ -129,6 +129,9 @@ void JITBackend::collectGcRoots(std::vector<const void*>& roots) const {
     };
     for (const auto& kv : globals_)
         addValue(kv.second);
+    // 延迟释放值仍被 member-get PIC 的字段指针引用，必须作为 GC 根
+    for (const auto& v : retiredValues_)
+        addValue(v);
     for (const auto& cls : classInfo_) {
         for (const auto& fld : cls.second.fieldDefaults)
             addValue(fld.second);
@@ -407,6 +410,8 @@ JitResult JITBackend::execute(const CompileResult& result) {
     for (auto& e : memberGetIC_) {
         e = MemberGetInlineCacheEntry{}; // 重置全部 PIC 槽位 + megamorphic 标志
     }
+    // 上一次执行的延迟释放值：PIC 已清空，可安全 release（避免跨 execute 泄漏）。
+    retiredValues_.clear();
 
     // R153: 重新应用特化方法入口
     // compileAllChunks 每次调用会 methodEntries_.clear() 并重新填充非特化版本入口，

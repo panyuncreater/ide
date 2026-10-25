@@ -3752,8 +3752,7 @@ TEST(TestJIT, R156NestedArrayIndexAssignInMethod) {
 TEST(TestJIT, R156NestedArrayMemberAssignGlobal) {
     // arr[i].field=val（visitMemberAssign outerIdx，全局变量路径）
     // R156 fix: 移除 compileNode(baseVar) 栈泄漏 + 用 INDEX_SET_VAR 替代 WRITEBACK_INDEX_VAR
-    // 注：JIT 不支持 OP_MEMBER_SET（栈式变体），预存限制，非 R156 引入。
-    //     本测试只验证 StackVM 非 IR 路径修复有效，JIT 应返回编译错误。
+    // B-013: JIT 已补齐 OP_MEMBER_SET，五路径均应正确执行。
     const std::string src = "var a = [{\"f\": 0}, {\"f\": 0}];"
                             "a[0].f = 11;"
                             "a[1].f = 22;"
@@ -3761,22 +3760,20 @@ TEST(TestJIT, R156NestedArrayMemberAssignGlobal) {
                             "print(a[1].f);";
     std::string jitOut = runJIT(src);
     std::string vmOut = minilang_test::runStackVM(src);
-    EXPECT_NE(jitOut.find("<jit-compile:"), std::string::npos);
-    EXPECT_NE(jitOut.find("OP_MEMBER_SET"), std::string::npos);
+    EXPECT_EQ(jitOut, "1122");
     EXPECT_EQ(vmOut, "1122");
 }
 
 TEST(TestJIT, R156NestedMemberMemberAssignGlobal) {
     // obj.field.field=val（visitMemberAssign outerMem，全局变量路径）
     // R156 fix: 移除 compileNode(baseVar) 栈泄漏 + 用 MEMBER_SET_VAR 替代 WRITEBACK_MEMBER_VAR
-    // 注：JIT 不支持 OP_MEMBER_SET（栈式变体），预存限制，非 R156 引入。
+    // B-013: JIT 已补齐 OP_MEMBER_SET。
     const std::string src = "var d = {\"b\": {\"c\": 0}};"
                             "d.b.c = 42;"
                             "print(d.b.c);";
     std::string jitOut = runJIT(src);
     std::string vmOut = minilang_test::runStackVM(src);
-    EXPECT_NE(jitOut.find("<jit-compile:"), std::string::npos);
-    EXPECT_NE(jitOut.find("OP_MEMBER_SET"), std::string::npos);
+    EXPECT_EQ(jitOut, "42");
     EXPECT_EQ(vmOut, "42");
 }
 
@@ -3800,7 +3797,7 @@ TEST(TestJIT, R156NestedArrayIndexAssignInLoop) {
 
 TEST(TestJIT, R156NestedMemberAssignInLoop) {
     // 循环内 obj.field.field=val（验证栈平衡——R156 fix 移除了 compileNode(baseVar) 栈泄漏）
-    // 注：JIT 不支持 OP_MEMBER_SET（栈式变体），预存限制，非 R156 引入。
+    // B-013: JIT 已补齐 OP_MEMBER_SET。
     const std::string src = "var d = {\"b\": {\"c\": 0}};"
                             "var i = 0;"
                             "while (i < 100) {"
@@ -3810,15 +3807,14 @@ TEST(TestJIT, R156NestedMemberAssignInLoop) {
                             "print(d.b.c);";
     std::string jitOut = runJIT(src);
     std::string vmOut = minilang_test::runStackVM(src);
-    EXPECT_NE(jitOut.find("<jit-compile:"), std::string::npos);
-    EXPECT_NE(jitOut.find("OP_MEMBER_SET"), std::string::npos);
     // 循环 100 次后 d.b.c=99
+    EXPECT_EQ(jitOut, "99");
     EXPECT_EQ(vmOut, "99");
 }
 
 TEST(TestJIT, R156NestedArrayMemberAssignInLoop) {
     // 循环内 arr[i].field=val（验证栈平衡——R156 fix 移除了 compileNode(baseVar) 栈泄漏）
-    // 注：JIT 不支持 OP_MEMBER_SET（栈式变体），预存限制，非 R156 引入。
+    // B-013: JIT 已补齐 OP_MEMBER_SET。
     const std::string src = "var a = [{\"f\": 0}, {\"f\": 0}];"
                             "var i = 0;"
                             "while (i < 100) {"
@@ -3830,9 +3826,8 @@ TEST(TestJIT, R156NestedArrayMemberAssignInLoop) {
                             "print(a[1].f);";
     std::string jitOut = runJIT(src);
     std::string vmOut = minilang_test::runStackVM(src);
-    EXPECT_NE(jitOut.find("<jit-compile:"), std::string::npos);
-    EXPECT_NE(jitOut.find("OP_MEMBER_SET"), std::string::npos);
     // 循环 100 次后 a[0].f=99, a[1].f=198
+    EXPECT_EQ(jitOut, "99198");
     EXPECT_EQ(vmOut, "99198");
 }
 
