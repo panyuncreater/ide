@@ -1213,7 +1213,15 @@ jobs:
           -DMINILANG_USE_CCACHE=OFF
 
       - name: "PGO Pass 1: 构建"
-        run: cmake --build out/build/release --parallel
+        run: |
+          # 四个测试目标均向 tests/ 部署 Qt 运行时；并行构建会竞态写 Qt6Core.dll
+          # （Destination file exists），故主目标并行、测试目标逐个构建。
+          cmake --build out/build/release --target minilang --parallel
+          cmake --build out/build/release --target minilang_ide --parallel
+          cmake --build out/build/release --target minilang_tests --parallel
+          cmake --build out/build/release --target minilang_app_tests --parallel
+          cmake --build out/build/release --target minilang_gui_smoke --parallel
+          cmake --build out/build/release --target minilang_perf_test --parallel
 
       # Pass 1 训练集取前 400 项（Lexer/Parser/Value/Interpreter 等基础族）
       # 且 -j 1 串行：全量 -j 4 实测 107/143 项耗满 300s 超时（2026-10-07 首跑），
@@ -1252,7 +1260,15 @@ jobs:
           -DMINILANG_WERROR=OFF
 
       - name: "PGO Pass 2: 构建"
-        run: cmake --build out/build/release --parallel
+        run: |
+          # 四个测试目标均向 tests/ 部署 Qt 运行时；并行构建会竞态写 Qt6Core.dll
+          # （Destination file exists），故主目标并行、测试目标逐个构建。
+          cmake --build out/build/release --target minilang --parallel
+          cmake --build out/build/release --target minilang_ide --parallel
+          cmake --build out/build/release --target minilang_tests --parallel
+          cmake --build out/build/release --target minilang_app_tests --parallel
+          cmake --build out/build/release --target minilang_gui_smoke --parallel
+          cmake --build out/build/release --target minilang_perf_test --parallel
 
       - name: "PGO Pass 2: 运行性能基准"
         working-directory: out/build/release
