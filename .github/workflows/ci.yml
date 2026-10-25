@@ -913,8 +913,11 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           ASAN_OPTIONS: detect_leaks=0:allocator_may_return_null=1:abort_on_error=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
-        # ASan 约 2x 减速，降低并行度避免内存峰值打爆 runner
-        run: ctest -j 2 --output-on-failure
+        # ASan 约 2x 减速，降低并行度避免内存峰值打爆 runner。
+        # ASan 对 makecontext/swapcontext 支持不完整：LongSequenceValues 会触发
+        # sigaltstack 已知误报（日志明确标注 false positive），常规 CI 已全量覆盖，
+        # 本内存门禁排除该用例以免误报阻断。
+        run: ctest -j 2 --output-on-failure -E "CoroutineSuspension.LongSequenceValues"
 
   # ============================================================
   # 作业 6b：MSVC ASan 内存错误门禁（Windows，阻断式）
@@ -1024,10 +1027,11 @@ jobs:
           # MSVC ASan 暂不支持 LeakSanitizer，显式关闭避免告警噪音（Linux job 已覆盖 leak 检测）
           ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
         # ASan 约 2x 减速，降低并行度避免内存峰值打爆 runner（与 Linux asan job 一致）；
-        # -E PerfBenchmark：防御性排除（守卫 OFF 下性能用例本就不注册，
-        # 保留以覆盖未来改回 ON 的场景——ASan 插桩使时间阈值失真）；
+        # -E "PerfBenchmark|test_harness"：性能用例在 ASan 插桩下时间阈值失真；
+        # test_harness.diff_test 的二进制不在本 job 构建列表，ctest 会报 Not Run；
+        # 二者均不属内存门禁范围。
         # --timeout 600 兜底单用例挂死（提案同值）
-        run: ctest -j 2 --output-on-failure --timeout 600 -E PerfBenchmark
+        run: ctest -j 2 --output-on-failure --timeout 600 -E "PerfBenchmark|test_harness"
 
   # ============================================================
   # 作业 7：性能基准回归检测（R116）
@@ -1205,6 +1209,7 @@ jobs:
         run: >
           cmake --preset windows-msvc-release
           -DMINILANG_PGO_GENERATE=ON
+          -DMINILANG_BUILD_PERF_TESTS=ON
           -DMINILANG_USE_CCACHE=OFF
 
       - name: "PGO Pass 1: 构建"
@@ -1242,6 +1247,7 @@ jobs:
           cmake --preset windows-msvc-release
           -DMINILANG_PGO_USE=ON
           -DMINILANG_PGO_GENERATE=OFF
+          -DMINILANG_BUILD_PERF_TESTS=ON
           -DMINILANG_USE_CCACHE=OFF
           -DMINILANG_WERROR=OFF
 
@@ -1250,4 +1256,4 @@ jobs:
 
       - name: "PGO Pass 2: 运行性能基准"
         working-directory: out/build/release
-        run: ctest -C Release -j 1 --output-on-failure -R perf
+        run: ctest -C Release -j 1 --output-on-failure -R PerfBenchmark
