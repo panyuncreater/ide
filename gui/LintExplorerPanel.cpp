@@ -157,8 +157,9 @@ LintExplorerPanel::LintExplorerPanel(QWidget* parent) : QWidget(parent) {
     }
 
     // 诊断详情占位提示
-    diagDetail_->setHtml((QStringLiteral("<div style='color:") + TeachingTheme::textMuted().name() + QStringLiteral("; padding:8px;'><i>（点击「运行 Lint」后，")
-                                           + QStringLiteral("选中上方表格的某行查看该诊断的规则说明与修复建议）</i></div>")));
+    diagDetail_->setHtml((QStringLiteral("<div style='color:") + TeachingTheme::textMuted().name() +
+                          QStringLiteral("; padding:8px;'><i>（点击「运行 Lint」后，") +
+                          QStringLiteral("选中上方表格的某行查看该诊断的规则说明与修复建议）</i></div>")));
 }
 
 /// 构建「Lint 规则说明」子页：水平 splitter（左侧规则列表 + 右侧规则详情），
@@ -179,7 +180,8 @@ void LintExplorerPanel::buildRulesPage(QWidget* host) {
     v->addWidget(splitter, 1);
 
     auto* hintLabel = new QLabel(mlTr("Lint 规则基于 DefaultVisitor 模式，仅分析 AST 不执行代码"));
-    hintLabel->setStyleSheet((QStringLiteral("color:") + TeachingTheme::textMuted().name() + QStringLiteral("; padding:2px;")));
+    hintLabel->setStyleSheet(
+        (QStringLiteral("color:") + TeachingTheme::textMuted().name() + QStringLiteral("; padding:2px;")));
     v->addWidget(hintLabel);
 
     connect(ruleList_, &QListWidget::currentRowChanged, this, &LintExplorerPanel::onRuleSelected);
@@ -345,10 +347,12 @@ void LintExplorerPanel::onRunLint() {
     if (raw.trimmed().isEmpty()) {
         // 空源码陷阱：空源码经 Parser 产生空 Block，会触发 EmptyBlock 警告。
         // 用户清空后给出提示而非运行分析。
-        diagDetail_->setHtml((QStringLiteral("<div style='color:") + TeachingTheme::dangerRed().name() + QStringLiteral("; padding:8px;'><b>源码为空</b>，")
-                                               + QStringLiteral("请输入 MiniLang 源码或点击预设样例按钮。<br>")
-                                               + QStringLiteral("<span style='color:") + TeachingTheme::textMuted().name() + QStringLiteral(";'>(注意：空源码经 Parser 会产生空 Block，")
-                                               + QStringLiteral("可能触发 EmptyBlock 警告)</span></div>")));
+        diagDetail_->setHtml((QStringLiteral("<div style='color:") + TeachingTheme::dangerRed().name() +
+                              QStringLiteral("; padding:8px;'><b>源码为空</b>，") +
+                              QStringLiteral("请输入 MiniLang 源码或点击预设样例按钮。<br>") +
+                              QStringLiteral("<span style='color:") + TeachingTheme::textMuted().name() +
+                              QStringLiteral(";'>(注意：空源码经 Parser 会产生空 Block，") +
+                              QStringLiteral("可能触发 EmptyBlock 警告)</span></div>")));
         return;
     }
     std::string source = raw.toStdString();
@@ -369,8 +373,9 @@ void LintExplorerPanel::onRunLint() {
         // 词法 / 语法错误阶段，分析中止
         QString phase = result.errorPhase == "lex" ? mlTr("词法错误") : mlTr("语法错误");
         QString errs = QString::fromUtf8(result.errorMessage.c_str()).toHtmlEscaped();
-        diagDetail_->setHtml(
-            (QStringLiteral("<div style='color:") + TeachingTheme::dangerRed().name() + QStringLiteral("; padding:8px;'><b>%1:</b> %2</div>")).arg(phase, errs));
+        diagDetail_->setHtml((QStringLiteral("<div style='color:") + TeachingTheme::dangerRed().name() +
+                              QStringLiteral("; padding:8px;'><b>%1:</b> %2</div>"))
+                                 .arg(phase, errs));
         statsLabel_->setText(mlTr("分析失败：%1").arg(phase));
         return;
     }
@@ -413,8 +418,9 @@ void LintExplorerPanel::onRunLint() {
     if (!diags.empty()) {
         diagTable_->selectRow(0);
     } else {
-        diagDetail_->setHtml((QStringLiteral("<div style='color:") + TeachingTheme::successGreen().name() + QStringLiteral("; padding:8px;'><b>未触发任何 Lint 诊断</b>，")
-                                               + QStringLiteral("当前源码符合所有启用的规则。</div>")));
+        diagDetail_->setHtml((QStringLiteral("<div style='color:") + TeachingTheme::successGreen().name() +
+                              QStringLiteral("; padding:8px;'><b>未触发任何 Lint 诊断</b>，") +
+                              QStringLiteral("当前源码符合所有启用的规则。</div>")));
     }
 }
 

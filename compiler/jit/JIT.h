@@ -329,7 +329,7 @@ struct JitContext {
     // 该标签绑定为退出桩：mov rax,[ctx+errorExit]; jmp rax —— rbp 自 main 块
     // prologue 后全程不变（函数块只用 r13/r15），跨块跳转等价原单体布局的
     // 同块 jmp epilogue。由 commit 阶段在全部块 add 成功后写入。
-    void* errorExit = nullptr; // offset 296
+    void* errorExit = nullptr;     // offset 296
     int64_t* stackBase = nullptr;  // offset 304: 操作数栈初始栈顶（最高地址）
     int64_t* stackLimit = nullptr; // offset 312: 操作数栈最低安全地址（含临时值余量）
 };
@@ -1318,7 +1318,7 @@ public:
     std::unordered_map<std::string, Value> globals_;
 
     /// R162: extern "C" helper（jitDefineVar 等）通过 backendPtr 访问，故声明在 public 区
-    std::vector<int64_t> globalSlots_; ///< R139: 全局变量 slot 存储（与 StackVM globalSlots_ 等价）
+    std::vector<int64_t> globalSlots_;        ///< R139: 全局变量 slot 存储（与 StackVM globalSlots_ 等价）
     JitGlobalNameToSlotMap globalNameToSlot_; ///< R147: 名称→slot 映射（OPT-15 透明查找）
 
     /// 闭包同步调用跳板入口（compileAllChunks 末尾发射，runtime_.add 后解析地址）。

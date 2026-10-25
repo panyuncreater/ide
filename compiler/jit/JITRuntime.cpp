@@ -132,8 +132,8 @@ extern "C" void jitTypeCheck(JitContext* ctx, const char* annotation) {
     }
     if (ctx->hasError && ctx->errorBuffer) {
         *ctx->hasError = true;
-        *ctx->errorBuffer = ErrorFormat::formatStd(ErrorMessages::kTypeAnnotationViolationFmtStd, annotation,
-                                                   val.typeName());
+        *ctx->errorBuffer =
+            ErrorFormat::formatStd(ErrorMessages::kTypeAnnotationViolationFmtStd, annotation, val.typeName());
     }
 }
 
@@ -1713,7 +1713,7 @@ extern "C" void jitMemberGet(JitContext* ctx, const char* fieldName) {
     }
     int64_t* sp = ctx->stackTop;
     // const 声明：instance fields() 与 dict dictVal() 只读访问走 const 重载
-    //（修复前共享实例/字典每次字段读取触发 ensureUnique 整对象/整字典深拷贝，
+    // （修复前共享实例/字典每次字段读取触发 ensureUnique 整对象/整字典深拷贝，
     // 注释声称"const 引用"与代码不符；IC 版 helper 已修，本函数为同族遗漏）
     const Value obj = bitsToValue(*sp);
     sp += 1; // pop obj

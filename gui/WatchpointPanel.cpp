@@ -488,34 +488,29 @@ GuidedTour* WatchpointPanel::createGuidedTour(QWidget* host) {
                   QString::fromUtf8("「实时 Watchpoint」页显示当前所有数据断点的类型 / 变量名 / "
                                     "字段名 / 条件 / 命中次数 / 状态。每行一个 watchpoint。"));
     tour->addStep(nullptr, QString::fromUtf8("示例代码：变量监视"),
-                  (QStringLiteral("<p>将以下代码粘贴到编辑器，添加 watchpoint 观察变量写入：</p>")
-                                    + QStringLiteral("<pre style='background:") + TeachingTheme::codeBlockBg().name() + QStringLiteral(";padding:8px;border-radius:4px;font-family:")
-                                    + QStringLiteral("\"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",")
-                                    + QStringLiteral("\"Source Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace;'>")
-                                    + QStringLiteral("var x = 0;\n")
-                                    + QStringLiteral("x = 1;\n")
-                                    + QStringLiteral("x = 2;\n")
-                                    + QStringLiteral("print(x);\n")
-                                    + QStringLiteral("</pre>")
-                                    + QStringLiteral("<p>在 Watchpoint 面板添加变量 x 的 watchpoint，按 F5 调试，")
-                                    + QStringLiteral("观察每次 x 被赋值时暂停。</p>")));
+                  (QStringLiteral("<p>将以下代码粘贴到编辑器，添加 watchpoint 观察变量写入：</p>") +
+                   QStringLiteral("<pre style='background:") + TeachingTheme::codeBlockBg().name() +
+                   QStringLiteral(";padding:8px;border-radius:4px;font-family:") +
+                   QStringLiteral("\"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",") +
+                   QStringLiteral("\"Source Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace;'>") +
+                   QStringLiteral("var x = 0;\n") + QStringLiteral("x = 1;\n") + QStringLiteral("x = 2;\n") +
+                   QStringLiteral("print(x);\n") + QStringLiteral("</pre>") +
+                   QStringLiteral("<p>在 Watchpoint 面板添加变量 x 的 watchpoint，按 F5 调试，") +
+                   QStringLiteral("观察每次 x 被赋值时暂停。</p>")));
     tour->addStep(pageLibraryBtn_, QString::fromUtf8("教学场景库"),
                   QString::fromUtf8("点击「教学场景库」切换到静态教学页，查看变量监视 / "
                                     "字段监视 / 条件 watchpoint 等典型场景。"));
     tour->addStep(nullptr, QString::fromUtf8("字段 Watchpoint"),
-                  (QStringLiteral("<p>字段 watchpoint 用于追踪对象状态变化：</p>")
-                                    + QStringLiteral("<pre style='background:") + TeachingTheme::codeBlockBg().name() + QStringLiteral(";padding:8px;border-radius:4px;font-family:")
-                                    + QStringLiteral("\"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",")
-                                    + QStringLiteral("\"Source Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace;'>")
-                                    + QStringLiteral("class C {\n")
-                                    + QStringLiteral("    var count = 0;\n")
-                                    + QStringLiteral("    fun inc() { count = count + 1; }\n")
-                                    + QStringLiteral("}\n")
-                                    + QStringLiteral("var obj = C();\n")
-                                    + QStringLiteral("obj.inc();\n")
-                                    + QStringLiteral("</pre>")
-                                    + QStringLiteral("<p>添加字段 watchpoint（类型=字段，变量名=obj，字段名=count），")
-                                    + QStringLiteral("每次 count 被写入时暂停。</p>")));
+                  (QStringLiteral("<p>字段 watchpoint 用于追踪对象状态变化：</p>") +
+                   QStringLiteral("<pre style='background:") + TeachingTheme::codeBlockBg().name() +
+                   QStringLiteral(";padding:8px;border-radius:4px;font-family:") +
+                   QStringLiteral("\"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",") +
+                   QStringLiteral("\"Source Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace;'>") +
+                   QStringLiteral("class C {\n") + QStringLiteral("    var count = 0;\n") +
+                   QStringLiteral("    fun inc() { count = count + 1; }\n") + QStringLiteral("}\n") +
+                   QStringLiteral("var obj = C();\n") + QStringLiteral("obj.inc();\n") + QStringLiteral("</pre>") +
+                   QStringLiteral("<p>添加字段 watchpoint（类型=字段，变量名=obj，字段名=count），") +
+                   QStringLiteral("每次 count 被写入时暂停。</p>")));
     tour->addStep(nullptr, QString::fromUtf8("开始实验"),
                   QString::fromUtf8("切换到教学场景库后，选中场景，点击「加载示例代码到编辑器」载入编辑器，"
                                     "在 Watchpoint 面板添加对应 watchpoint，按 F5 调试，"

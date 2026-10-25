@@ -75,14 +75,14 @@
 #include <array>
 #include <atomic> // L3 fix: ClosureData::functionId 全局生成器
 #include <cassert>
-#include <functional> // P0 fix 2026-10-21: CoroutineData::gcRootContributor
-#include <limits>     // SameValueZero fix 2026-10-22: 字典 NaN 键 hash 规范化用 quiet_NaN
 #include <charconv> // Perf-Finding2: VAL_INT toString 用 to_chars 替代 std::to_string（避免 locale 查询）
 #include <cmath>
 #include <condition_variable> // R136 ChannelData 同步原语
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib> // AUDIT-NANBOX fix: std::abort — Release 构建中 assert 被剥离，类型不匹配时静默返回垃圾值（如指针间类型混淆 reinterpret_cast 错误类型），改为运行时 abort 与 NaNBox::asXxx 风格一致
+#include <functional> // P0 fix 2026-10-21: CoroutineData::gcRootContributor
+#include <limits>     // SameValueZero fix 2026-10-22: 字典 NaN 键 hash 规范化用 quiet_NaN
 #include <memory>
 #include <mutex>        // R136 ChannelData/MutexData 同步原语
 #include <optional>     // perf1 fix: StringData 缓存 codepointCount; L4 fix: dictKeyFromValue 返回 optional
@@ -169,7 +169,8 @@ public:
             if (v == 0.0)
                 v = 0.0; // P0 fix: 规范化 -0.0 → +0.0，保证 hash 不变量
             if (std::isnan(v))
-                v = std::numeric_limits<double>::quiet_NaN(); // SameValueZero fix: 所有 NaN 同一 hash 桶（NaN 位模式随运算来源不同，否则同值键分桶致 equal 永不触发）
+                v = std::numeric_limits<double>::quiet_NaN(); // SameValueZero fix: 所有 NaN 同一 hash 桶（NaN
+                                                              // 位模式随运算来源不同，否则同值键分桶致 equal 永不触发）
             uint64_t bits;
             std::memcpy(&bits, &v, sizeof(double));
             return kDoubleTag ^ std::hash<uint64_t>{}(bits);
@@ -190,7 +191,8 @@ public:
                         if (dv == 0.0)
                             dv = 0.0; // P0 fix: 规范化 -0.0 → +0.0
                         if (std::isnan(dv))
-                            dv = std::numeric_limits<double>::quiet_NaN(); // SameValueZero fix: 同上（与透明路径产生相同 hash）
+                            dv = std::numeric_limits<double>::quiet_NaN(); // SameValueZero fix:
+                                                                           // 同上（与透明路径产生相同 hash）
                         uint64_t bits;
                         std::memcpy(&bits, &dv, sizeof(double));
                         return kDoubleTag ^ std::hash<uint64_t>{}(bits);

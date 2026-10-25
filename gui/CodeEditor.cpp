@@ -4,8 +4,8 @@
 #endif
 
 #include "gui/CodeEditor.h"
-#include "gui/GuiTextUtils.h" // Dedup-4A: monospaceFont()
-#include "gui/I18n.h"         // 功能 13：mlTr() 国际化
+#include "gui/GuiTextUtils.h"  // Dedup-4A: monospaceFont()
+#include "gui/I18n.h"          // 功能 13：mlTr() 国际化
 #include "gui/TeachingTheme.h" // OPT-11: 颜色语义化
 #include <QAbstractItemView>
 #include <QComboBox>
@@ -328,33 +328,30 @@ void LineNumberArea::contextMenuEvent(QContextMenuEvent* event) {
             "'Cascadia Code','Cascadia Mono','Consolas','JetBrains Mono','Source Code Pro','Menlo','DejaVu Sans "
             "Mono','Courier New',monospace";
 
-        dlg.setStyleSheet((QStringLiteral("QDialog { background: %1; border-radius: 8px; }")
-                                  + QStringLiteral("QLabel#condTitle { font-size: 14px; font-weight: 600; color: %2; }")
-                                  + QStringLiteral("QLabel#condHint  { font-size: 11px; color: %3; }")
-                                  + QStringLiteral("QLabel#condWarn  { font-size: 11px; color: %4; }")
-                                  + QStringLiteral("QLineEdit#condEdit, QLineEdit#logEdit { ")
-                                  + QStringLiteral("  background: ") + TeachingTheme::surface().name() + QStringLiteral("; color: %2; ")
-                                  + QStringLiteral("  border: 1px solid %5; border-radius: 4px; ")
-                                  + QStringLiteral("  padding: 6px 8px; font-family: %6; ")
-                                  + QStringLiteral("  font-size: 13px; ")
-                                  + QStringLiteral("} ")
-                                  + QStringLiteral("QLineEdit#condEdit:focus, QLineEdit#logEdit:focus { border: 1px solid %7; }")
-                                  + QStringLiteral("QComboBox#kindCombo { ")
-                                  + QStringLiteral("  background: ") + TeachingTheme::surface().name() + QStringLiteral("; color: %2; ")
-                                  + QStringLiteral("  border: 1px solid %5; border-radius: 4px; ")
-                                  + QStringLiteral("  padding: 4px 8px; font-size: 13px; ")
-                                  + QStringLiteral("} ")
-                                  + QStringLiteral("QPushButton#condOk { ")
-                                  + QStringLiteral("  background: %8; color: ") + TeachingTheme::onPrimary().name() + QStringLiteral("; border: none; border-radius: 4px; ")
-                                  + QStringLiteral("  padding: 6px 18px; font-size: 13px; font-weight: 500; ")
-                                  + QStringLiteral("} ")
-                                  + QStringLiteral("QPushButton#condOk:hover { background: %9; }")
-                                  + QStringLiteral("QPushButton#condCancel { ")
-                                  + QStringLiteral("  background: transparent; color: %3; border: 1px solid %5; border-radius: 4px; ")
-                                  + QStringLiteral("  padding: 6px 14px; font-size: 13px; ")
-                                  + QStringLiteral("} ")
-                                  + QStringLiteral("QPushButton#condCancel:hover { background: rgba(0,0,0,0.05); }"))
-                              .arg(bgSurf, fgPrim, fgSec, warnFg, border, monoFont, accent, btnBg, btnHov));
+        dlg.setStyleSheet(
+            (QStringLiteral("QDialog { background: %1; border-radius: 8px; }") +
+             QStringLiteral("QLabel#condTitle { font-size: 14px; font-weight: 600; color: %2; }") +
+             QStringLiteral("QLabel#condHint  { font-size: 11px; color: %3; }") +
+             QStringLiteral("QLabel#condWarn  { font-size: 11px; color: %4; }") +
+             QStringLiteral("QLineEdit#condEdit, QLineEdit#logEdit { ") + QStringLiteral("  background: ") +
+             TeachingTheme::surface().name() + QStringLiteral("; color: %2; ") +
+             QStringLiteral("  border: 1px solid %5; border-radius: 4px; ") +
+             QStringLiteral("  padding: 6px 8px; font-family: %6; ") + QStringLiteral("  font-size: 13px; ") +
+             QStringLiteral("} ") +
+             QStringLiteral("QLineEdit#condEdit:focus, QLineEdit#logEdit:focus { border: 1px solid %7; }") +
+             QStringLiteral("QComboBox#kindCombo { ") + QStringLiteral("  background: ") +
+             TeachingTheme::surface().name() + QStringLiteral("; color: %2; ") +
+             QStringLiteral("  border: 1px solid %5; border-radius: 4px; ") +
+             QStringLiteral("  padding: 4px 8px; font-size: 13px; ") + QStringLiteral("} ") +
+             QStringLiteral("QPushButton#condOk { ") + QStringLiteral("  background: %8; color: ") +
+             TeachingTheme::onPrimary().name() + QStringLiteral("; border: none; border-radius: 4px; ") +
+             QStringLiteral("  padding: 6px 18px; font-size: 13px; font-weight: 500; ") + QStringLiteral("} ") +
+             QStringLiteral("QPushButton#condOk:hover { background: %9; }") +
+             QStringLiteral("QPushButton#condCancel { ") +
+             QStringLiteral("  background: transparent; color: %3; border: 1px solid %5; border-radius: 4px; ") +
+             QStringLiteral("  padding: 6px 14px; font-size: 13px; ") + QStringLiteral("} ") +
+             QStringLiteral("QPushButton#condCancel:hover { background: rgba(0,0,0,0.05); }"))
+                .arg(bgSurf, fgPrim, fgSec, warnFg, border, monoFont, accent, btnBg, btnHov));
 
         auto* layout = new QVBoxLayout(&dlg);
         layout->setContentsMargins(20, 16, 20, 16);
@@ -467,28 +464,25 @@ void LineNumberArea::contextMenuEvent(QContextMenuEvent* event) {
         const QString btnHov = TeachingTheme::primaryDeep().name();
 
         dlg.setStyleSheet(
-            (QStringLiteral("QDialog { background: %1; border-radius: 8px; }")
-                    + QStringLiteral("QLabel#condTitle { font-size: 14px; font-weight: 600; color: %2; }")
-                    + QStringLiteral("QLabel#condHint  { font-size: 11px; color: %3; }")
-                    + QStringLiteral("QLabel#condWarn  { font-size: 11px; color: %4; }")
-                    + QStringLiteral("QLineEdit#condEdit { ")
-                    + QStringLiteral("  background: ") + TeachingTheme::surface().name() + QStringLiteral("; color: %2; ")
-                    + QStringLiteral("  border: 1px solid %5; border-radius: 4px; ")
-                    + QStringLiteral("  padding: 6px 8px; font-family: 'Cascadia Code','Cascadia Mono','Consolas','JetBrains ")
-                    + QStringLiteral("Mono','Source Code Pro','Menlo','DejaVu Sans Mono','Courier New',monospace; ")
-                    + QStringLiteral("  font-size: 13px; ")
-                    + QStringLiteral("} ")
-                    + QStringLiteral("QLineEdit#condEdit:focus { border: 1px solid %6; }")
-                    + QStringLiteral("QPushButton#condOk { ")
-                    + QStringLiteral("  background: %7; color: ") + TeachingTheme::onPrimary().name() + QStringLiteral("; border: none; border-radius: 4px; ")
-                    + QStringLiteral("  padding: 6px 18px; font-size: 13px; font-weight: 500; ")
-                    + QStringLiteral("} ")
-                    + QStringLiteral("QPushButton#condOk:hover { background: %8; }")
-                    + QStringLiteral("QPushButton#condCancel { ")
-                    + QStringLiteral("  background: transparent; color: %3; border: 1px solid %5; border-radius: 4px; ")
-                    + QStringLiteral("  padding: 6px 14px; font-size: 13px; ")
-                    + QStringLiteral("} ")
-                    + QStringLiteral("QPushButton#condCancel:hover { background: rgba(0,0,0,0.05); }"))
+            (QStringLiteral("QDialog { background: %1; border-radius: 8px; }") +
+             QStringLiteral("QLabel#condTitle { font-size: 14px; font-weight: 600; color: %2; }") +
+             QStringLiteral("QLabel#condHint  { font-size: 11px; color: %3; }") +
+             QStringLiteral("QLabel#condWarn  { font-size: 11px; color: %4; }") +
+             QStringLiteral("QLineEdit#condEdit { ") + QStringLiteral("  background: ") +
+             TeachingTheme::surface().name() + QStringLiteral("; color: %2; ") +
+             QStringLiteral("  border: 1px solid %5; border-radius: 4px; ") +
+             QStringLiteral("  padding: 6px 8px; font-family: 'Cascadia Code','Cascadia Mono','Consolas','JetBrains ") +
+             QStringLiteral("Mono','Source Code Pro','Menlo','DejaVu Sans Mono','Courier New',monospace; ") +
+             QStringLiteral("  font-size: 13px; ") + QStringLiteral("} ") +
+             QStringLiteral("QLineEdit#condEdit:focus { border: 1px solid %6; }") +
+             QStringLiteral("QPushButton#condOk { ") + QStringLiteral("  background: %7; color: ") +
+             TeachingTheme::onPrimary().name() + QStringLiteral("; border: none; border-radius: 4px; ") +
+             QStringLiteral("  padding: 6px 18px; font-size: 13px; font-weight: 500; ") + QStringLiteral("} ") +
+             QStringLiteral("QPushButton#condOk:hover { background: %8; }") +
+             QStringLiteral("QPushButton#condCancel { ") +
+             QStringLiteral("  background: transparent; color: %3; border: 1px solid %5; border-radius: 4px; ") +
+             QStringLiteral("  padding: 6px 14px; font-size: 13px; ") + QStringLiteral("} ") +
+             QStringLiteral("QPushButton#condCancel:hover { background: rgba(0,0,0,0.05); }"))
                 .arg(bgSurf, fgPrim, fgSec, warnFg, border, accent, btnBg, btnHov));
 
         auto* layout = new QVBoxLayout(&dlg);
@@ -633,38 +627,29 @@ CodeEditor::CodeEditor(QWidget* parent) : QPlainTextEdit(parent) {
     // 默认 QListView popup 在 Windows 原生主题下边框生硬、选中色为蓝色块状，
     // 与 IDE 的中性白 + Fluent 圆角风格不协调。（R74: 回退中性白）
     if (completer_->popup()) {
-        completer_->popup()->setStyleSheet(
-            (QStringLiteral("QListView { ")
-            + QStringLiteral("  background: ") + TeachingTheme::surface().name() + QStringLiteral("; ")
-            + QStringLiteral("  color: ") + TeachingTheme::textPrimary().name() + QStringLiteral("; ")
-            + QStringLiteral("  border: 1px solid ") + TeachingTheme::border().name() + QStringLiteral("; ")
-            + QStringLiteral("  border-radius: 6px; ")
-            + QStringLiteral("  padding: 4px; ")
-            + QStringLiteral("  font-family: 'Cascadia Code','Cascadia Mono','Consolas','JetBrains Mono','Source Code ")
-            + QStringLiteral("Pro','Menlo','DejaVu Sans Mono','Courier New',monospace; ")
-            + QStringLiteral("  font-size: 12px; ")
-            + QStringLiteral("  outline: none; ")
-            + QStringLiteral("} ")
-            + QStringLiteral("QListView::item { ")
-            + QStringLiteral("  padding: 4px 10px; ")
-            + QStringLiteral("  border-radius: 4px; ")
-            + QStringLiteral("} ")
-            + QStringLiteral("QListView::item:selected { ")
-            + QStringLiteral("  background: ") + TeachingTheme::info().name() + QStringLiteral("; ")
-            + QStringLiteral("  color: ") + TeachingTheme::onPrimary().name() + QStringLiteral("; ")
-            + QStringLiteral("} ")
-            + QStringLiteral("QListView::item:hover:!selected { ")
-            + QStringLiteral("  background: rgba(38, 139, 210, 0.12); ")
-            + QStringLiteral("  color: ") + TeachingTheme::textPrimary().name() + QStringLiteral("; ")
-            + QStringLiteral("} ")
-            + QStringLiteral("QScrollBar:vertical { ")
-            + QStringLiteral("  background: transparent; width: 8px; margin: 2px; ")
-            + QStringLiteral("} ")
-            + QStringLiteral("QScrollBar::handle:vertical { ")
-            + QStringLiteral("  background: ") + TeachingTheme::scrollbarHandle().name() + QStringLiteral("; border-radius: 4px; min-height: 20px; ")
-            + QStringLiteral("} ")
-            + QStringLiteral("QScrollBar::handle:vertical:hover { background: ") + TeachingTheme::textHint().name() + QStringLiteral("; } ")
-            + QStringLiteral("QScrollBar::add-line, QScrollBar::sub-line { height: 0; }")));
+        completer_->popup()->setStyleSheet((
+            QStringLiteral("QListView { ") + QStringLiteral("  background: ") + TeachingTheme::surface().name() +
+            QStringLiteral("; ") + QStringLiteral("  color: ") + TeachingTheme::textPrimary().name() +
+            QStringLiteral("; ") + QStringLiteral("  border: 1px solid ") + TeachingTheme::border().name() +
+            QStringLiteral("; ") + QStringLiteral("  border-radius: 6px; ") + QStringLiteral("  padding: 4px; ") +
+            QStringLiteral("  font-family: 'Cascadia Code','Cascadia Mono','Consolas','JetBrains Mono','Source Code ") +
+            QStringLiteral("Pro','Menlo','DejaVu Sans Mono','Courier New',monospace; ") +
+            QStringLiteral("  font-size: 12px; ") + QStringLiteral("  outline: none; ") + QStringLiteral("} ") +
+            QStringLiteral("QListView::item { ") + QStringLiteral("  padding: 4px 10px; ") +
+            QStringLiteral("  border-radius: 4px; ") + QStringLiteral("} ") +
+            QStringLiteral("QListView::item:selected { ") + QStringLiteral("  background: ") +
+            TeachingTheme::info().name() + QStringLiteral("; ") + QStringLiteral("  color: ") +
+            TeachingTheme::onPrimary().name() + QStringLiteral("; ") + QStringLiteral("} ") +
+            QStringLiteral("QListView::item:hover:!selected { ") +
+            QStringLiteral("  background: rgba(38, 139, 210, 0.12); ") + QStringLiteral("  color: ") +
+            TeachingTheme::textPrimary().name() + QStringLiteral("; ") + QStringLiteral("} ") +
+            QStringLiteral("QScrollBar:vertical { ") +
+            QStringLiteral("  background: transparent; width: 8px; margin: 2px; ") + QStringLiteral("} ") +
+            QStringLiteral("QScrollBar::handle:vertical { ") + QStringLiteral("  background: ") +
+            TeachingTheme::scrollbarHandle().name() + QStringLiteral("; border-radius: 4px; min-height: 20px; ") +
+            QStringLiteral("} ") + QStringLiteral("QScrollBar::handle:vertical:hover { background: ") +
+            TeachingTheme::textHint().name() + QStringLiteral("; } ") +
+            QStringLiteral("QScrollBar::add-line, QScrollBar::sub-line { height: 0; }")));
     }
 }
 

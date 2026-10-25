@@ -41,8 +41,7 @@ bool Compiler::isExprKnownInt(const ASTNode* expr) const {
     case NodeType::NODE_UNARY_OP: {
         const auto* unary = static_cast<const UnaryOp*>(expr);
         // OPT-18 B6: 一元 + 为恒等运算，不改变 int 类型
-        if (unary->opType == UnaryOp::UnaryOpType::UOP_NEGATE ||
-            unary->opType == UnaryOp::UnaryOpType::UOP_PLUS)
+        if (unary->opType == UnaryOp::UnaryOpType::UOP_NEGATE || unary->opType == UnaryOp::UnaryOpType::UOP_PLUS)
             return isExprKnownInt(unary->operand.get());
         return false;
     }
@@ -318,8 +317,7 @@ void Compiler::visitVarDecl(VarDecl& node) {
             // globals_ 残留——此前顶层分支从不登记，blockVars 恒空，变量块外仍可读
             // （与解释器环境链不一致，diff_test V11 实证）。祖先遮蔽名走 visitBlock
             // 保存/恢复协议，清理由协议负责；预分配槽位名（顶层 pre-scan）永不过期。
-            if (blockDepth_ > 0 && lookupGlobalSlot(node.name) < 0 &&
-                shadowedGlobalNames_.count(node.name) == 0) {
+            if (blockDepth_ > 0 && lookupGlobalSlot(node.name) < 0 && shadowedGlobalNames_.count(node.name) == 0) {
                 currentLocals_[node.name] = -1;
             }
         }
@@ -683,8 +681,7 @@ void Compiler::bindDestructureVar(const std::string& name, int line, int col) {
             // V11 同族收尾（2026-10-22）：块内解构绑定的 fresh 全局名与 visitVarDecl 同规格
             // 登记 currentLocals_，visitBlock 块退出经 blockVars 发射 OP_DELETE_VAR 清理——
             // 此前解构名字永不登记，块外仍可读（与解释器环境链不一致）。
-            if (blockDepth_ > 0 && lookupGlobalSlot(name) < 0 &&
-                shadowedGlobalNames_.count(name) == 0) {
+            if (blockDepth_ > 0 && lookupGlobalSlot(name) < 0 && shadowedGlobalNames_.count(name) == 0) {
                 currentLocals_[name] = -1;
             }
         }

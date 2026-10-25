@@ -321,8 +321,10 @@ void ExceptionFlowPanel::populateScenarioDetail(int index) {
 
     // 示例代码（HTML 转义）
     oss << "<h3>💻 示例代码</h3>";
-    oss << (QStringLiteral("<pre style='background:") + TeachingTheme::surfaceAlt().name() + QStringLiteral(";border-left:4px solid ") + TeachingTheme::infoBlue().name() + QStringLiteral(";padding:8px 12px;")
-           + QStringLiteral("font-size:12px;white-space:pre-wrap;'>")).toStdString();
+    oss << (QStringLiteral("<pre style='background:") + TeachingTheme::surfaceAlt().name() +
+            QStringLiteral(";border-left:4px solid ") + TeachingTheme::infoBlue().name() +
+            QStringLiteral(";padding:8px 12px;") + QStringLiteral("font-size:12px;white-space:pre-wrap;'>"))
+               .toStdString();
     {
         std::string code = s.sampleCode;
         for (size_t i = 0; (i = code.find('<', i)) != std::string::npos;)
@@ -369,12 +371,16 @@ void ExceptionFlowPanel::populateScenarioDetail(int index) {
             << ";border-right:none;padding:6px 8px;width:30px;text-align:center;color:" << border
             << ";font-weight:bold;font-size:14px;'>" << (i + 1) << "</td>";
         oss << "<td style='background:" << bg << ";border:1px solid " << border
-            << (QStringLiteral(";border-left:none;padding:6px 10px;color:") + TeachingTheme::midnight().name() + QStringLiteral(";font-family:monospace;font-size:12px;'>")).toStdString() << icon << " "
-            << step << "</td>";
+            << (QStringLiteral(";border-left:none;padding:6px 10px;color:") + TeachingTheme::midnight().name() +
+                QStringLiteral(";font-family:monospace;font-size:12px;'>"))
+                   .toStdString()
+            << icon << " " << step << "</td>";
         oss << "</tr>";
         if (i < s.propagationPath.size() - 1) {
-            oss << (QStringLiteral("<tr><td colspan='2' style='text-align:center;color:") + TeachingTheme::textMuted().name() + QStringLiteral(";padding:1px ")
-                   + QStringLiteral("0;font-size:12px;'>↓</td></tr>")).toStdString();
+            oss << (QStringLiteral("<tr><td colspan='2' style='text-align:center;color:") +
+                    TeachingTheme::textMuted().name() + QStringLiteral(";padding:1px ") +
+                    QStringLiteral("0;font-size:12px;'>↓</td></tr>"))
+                       .toStdString();
         }
     }
     oss << "</table>";
@@ -382,8 +388,10 @@ void ExceptionFlowPanel::populateScenarioDetail(int index) {
     oss << "<h3>📖 教学注释</h3>";
     oss << MarkdownRenderer::markdownToHtmlFragment(s.teachingNote).toStdString();
 
-    oss << (QStringLiteral("<hr><p><a href=\"#load\" style='background:") + TeachingTheme::successGreen().name() + QStringLiteral(";color:white;padding:6px 16px;border-radius:4px;")
-           + QStringLiteral("text-decoration:none;font-weight:bold;'>📥 载入到编辑器</a></p>")).toStdString();
+    oss << (QStringLiteral("<hr><p><a href=\"#load\" style='background:") + TeachingTheme::successGreen().name() +
+            QStringLiteral(";color:white;padding:6px 16px;border-radius:4px;") +
+            QStringLiteral("text-decoration:none;font-weight:bold;'>📥 载入到编辑器</a></p>"))
+               .toStdString();
 
     scenarioDetail_->setHtml(QString::fromStdString(oss.str()));
 
@@ -506,8 +514,8 @@ void ExceptionFlowPanel::populatePhaseDetail(int index) {
         bool isPast = (i < index);
         const char* opacity = isCurrent ? "1.0" : (isPast ? "0.5" : "0.3");
         const std::string border = isCurrent
-            ? std::string("3px solid ") + TeachingTheme::midnight().name().toStdString()
-            : std::string("1px solid ") + TeachingTheme::silver().name().toStdString();
+                                       ? std::string("3px solid ") + TeachingTheme::midnight().name().toStdString()
+                                       : std::string("1px solid ") + TeachingTheme::silver().name().toStdString();
         const char* fontWeight = isCurrent ? "bold" : "normal";
         const char* padding = isCurrent ? "10px 6px" : "6px 4px";
         const char* fontSize = isCurrent ? "13px" : "11px";
@@ -516,7 +524,9 @@ void ExceptionFlowPanel::populatePhaseDetail(int index) {
             << ";font-weight:" << fontWeight << ";font-size:" << fontSize << ";'>" << kPhaseIcons[i] << "<br>"
             << phases[i].phase << "</td>";
         if (i < 5) {
-            oss << (QStringLiteral("<td style='color:") + TeachingTheme::textMuted().name() + QStringLiteral(";padding:0 2px;text-align:center;font-size:14px;'>→</td>")).toStdString();
+            oss << (QStringLiteral("<td style='color:") + TeachingTheme::textMuted().name() +
+                    QStringLiteral(";padding:0 2px;text-align:center;font-size:14px;'>→</td>"))
+                       .toStdString();
         }
     }
     oss << "</tr></table>";
@@ -575,8 +585,10 @@ void ExceptionFlowPanel::populatePhaseDetail(int index) {
         oss << "</tr>";
     }
     oss << "</table>";
-    oss << (QStringLiteral("<p style='color:") + TeachingTheme::textMuted().name() + QStringLiteral(";font-size:11px;margin:2px 0 8px 0;'>")
-           + QStringLiteral("↑ 栈顶（高地址） | ↓ 栈底（低地址）</p>")).toStdString();
+    oss << (QStringLiteral("<p style='color:") + TeachingTheme::textMuted().name() +
+            QStringLiteral(";font-size:11px;margin:2px 0 8px 0;'>") +
+            QStringLiteral("↑ 栈顶（高地址） | ↓ 栈底（低地址）</p>"))
+               .toStdString();
 
     // ---- 关键操作列表 ----
     oss << "<h3 style='border-bottom:2px solid " << kPhaseColors[index] << ";padding-bottom:4px;'>"
@@ -590,8 +602,10 @@ void ExceptionFlowPanel::populatePhaseDetail(int index) {
     // ---- 示例代码 ----
     oss << "<h3 style='border-bottom:2px solid " << kPhaseColors[index] << ";padding-bottom:4px;'>"
         << "💻 示例代码（当前阶段: " << p.phase << "）</h3>";
-    oss << (QStringLiteral("<pre style='background:") + TeachingTheme::surfaceAlt().name() + QStringLiteral(";border-left:4px solid ")).toStdString() << kPhaseColors[index]
-        << ";padding:8px 12px;font-size:12px;overflow-x:auto;white-space:pre-wrap;'>";
+    oss << (QStringLiteral("<pre style='background:") + TeachingTheme::surfaceAlt().name() +
+            QStringLiteral(";border-left:4px solid "))
+               .toStdString()
+        << kPhaseColors[index] << ";padding:8px 12px;font-size:12px;overflow-x:auto;white-space:pre-wrap;'>";
     // 高亮当前阶段对应代码行
     {
         std::string code = kCommonCode;
@@ -642,7 +656,9 @@ void ExceptionFlowPanel::populatePhaseDetail(int index) {
     oss << "<h3 style='border-bottom:2px solid " << kPhaseColors[index] << ";padding-bottom:4px;'>"
         << "📖 详细说明</h3>";
     oss << MarkdownRenderer::markdownToHtmlFragment(p.description).toStdString();
-    oss << (QStringLiteral("<p style='background:") + TeachingTheme::surfaceAlt().name() + QStringLiteral(";padding:6px 10px;border-radius:4px;margin:8px 0;'><b>⚡ 栈效应:</b> ")).toStdString()
+    oss << (QStringLiteral("<p style='background:") + TeachingTheme::surfaceAlt().name() +
+            QStringLiteral(";padding:6px 10px;border-radius:4px;margin:8px 0;'><b>⚡ 栈效应:</b> "))
+               .toStdString()
         << p.stackEffect << "</p>";
 
     oss << "</div>";

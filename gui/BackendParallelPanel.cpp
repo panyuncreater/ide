@@ -199,13 +199,15 @@ void BackendParallelPanel::onRunAllBackends() {
     // F1 fix: 运行期拒绝面板执行——临时解释器与 Worker 并发会破坏 GC 根集/引擎状态。
     if (controller_ && (controller_->isRunning() || controller_->isVmRunning())) {
         consistencyLabel_->setText(QString::fromUtf8("❌ 程序正在运行，请先停止后再执行面板任务"));
-        consistencyLabel_->setStyleSheet((QStringLiteral("color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";")));
+        consistencyLabel_->setStyleSheet(
+            (QStringLiteral("color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";")));
         return;
     }
     std::string src = sourceEdit_->text().toStdString();
     if (src.empty()) {
         consistencyLabel_->setText(QString::fromUtf8("❌ 源码为空，请输入 MiniLang 源码"));
-        consistencyLabel_->setStyleSheet((QStringLiteral("color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";")));
+        consistencyLabel_->setStyleSheet(
+            (QStringLiteral("color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";")));
         return;
     }
 
@@ -264,10 +266,12 @@ void BackendParallelPanel::renderConsistency(const BackendExecResult& interp, co
     bool outputEqual = (interp.output == stackvm.output) && (stackvm.output == regvm.output);
     if (allSuccess && outputEqual) {
         consistencyLabel_->setText(QString::fromUtf8("✅ 三后端输出一致，语义等价性验证通过"));
-        consistencyLabel_->setStyleSheet((QStringLiteral("color:") + TeachingTheme::successGreen().name() + QStringLiteral("; font-weight:bold;")));
+        consistencyLabel_->setStyleSheet(
+            (QStringLiteral("color:") + TeachingTheme::successGreen().name() + QStringLiteral("; font-weight:bold;")));
     } else {
         consistencyLabel_->setText(QString::fromUtf8("❌ 三后端输出不一致，存在语义差异！"));
-        consistencyLabel_->setStyleSheet((QStringLiteral("color:") + TeachingTheme::dangerRed().name() + QStringLiteral("; font-weight:bold;")));
+        consistencyLabel_->setStyleSheet(
+            (QStringLiteral("color:") + TeachingTheme::dangerRed().name() + QStringLiteral("; font-weight:bold;")));
     }
 }
 

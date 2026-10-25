@@ -446,8 +446,8 @@ void LoopUnrollingPanel::renderSummary(int loopCount) {
     } else {
         int originalTotal = loopCount * (2 + LoopUnrollingLibrary::kDefaultBodyInstrCount);
         int savedInstrs = originalTotal - bestTotalInstrs;
-        html += (QStringLiteral("<p>推荐展开因子 <b style='color:") + TeachingTheme::deepGreen().name() + QStringLiteral(";'>K=%1</b>，")
-                               + QStringLiteral("加速比 <b>%2x</b>，可节省 <b>%3</b> 条指令。</p>"))
+        html += (QStringLiteral("<p>推荐展开因子 <b style='color:") + TeachingTheme::deepGreen().name() +
+                 QStringLiteral(";'>K=%1</b>，") + QStringLiteral("加速比 <b>%2x</b>，可节省 <b>%3</b> 条指令。</p>"))
                     .arg(bestFactor)
                     .arg(QString::number(bestSpeedup, 'f', 2))
                     .arg(savedInstrs);

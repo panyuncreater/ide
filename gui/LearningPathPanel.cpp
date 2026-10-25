@@ -392,9 +392,13 @@ QWidget* LearningPathPanel::buildActivityRow(const LearningActivity& activity, b
 
     QString title = QString::fromStdString(activity.title);
     if (!unlocked) {
-        title = (QStringLiteral("<span style='color:") + TeachingTheme::textMuted().name() + QStringLiteral(";'>%1</span>")).arg(title);
+        title =
+            (QStringLiteral("<span style='color:") + TeachingTheme::textMuted().name() + QStringLiteral(";'>%1</span>"))
+                .arg(title);
     } else if (completed) {
-        title = (QStringLiteral("<span style='color:") + TeachingTheme::answerCorrect().name() + QStringLiteral(";'><b>%1</b> ✓</span>")).arg(title);
+        title = (QStringLiteral("<span style='color:") + TeachingTheme::answerCorrect().name() +
+                 QStringLiteral(";'><b>%1</b> ✓</span>"))
+                    .arg(title);
     } else {
         title = QString::fromUtf8("<b>%1</b>").arg(title);
     }
@@ -471,8 +475,8 @@ QWidget* LearningPathPanel::buildActivityRow(const LearningActivity& activity, b
         row->setStyleSheet(QString::fromUtf8("QPushButton { background-color: rgba(0,0,0,0); border: none; }"
                                              "QPushButton:hover { background-color: rgba(0,0,0,0.06); }"));
     } else {
-        row->setStyleSheet(
-            (QStringLiteral("QPushButton { background-color: rgba(0,0,0,0); border: none; color: ") + TeachingTheme::textMuted().name() + QStringLiteral("; }")));
+        row->setStyleSheet((QStringLiteral("QPushButton { background-color: rgba(0,0,0,0); border: none; color: ") +
+                            TeachingTheme::textMuted().name() + QStringLiteral("; }")));
         // 未解锁：tooltip 提示需要先完成的前置活动
         QStringList prereqTitles;
         for (const auto& prereqId : activity.prerequisites) {
@@ -539,7 +543,8 @@ void LearningPathPanel::highlightActivityRow(int idx) {
         // 在原样式后追加蓝色边框高亮规则（属性选择器，仅当 navHighlight=true 时生效）
         cur->setProperty("navHighlight", true);
         cur->setStyleSheet(highlightedSavedStyle_ +
-                           (QStringLiteral(" QPushButton[navHighlight=\"true\"] { border: 2px solid ") + TeachingTheme::navHighlight().name() + QStringLiteral("; border-radius: 4px; }")));
+                           (QStringLiteral(" QPushButton[navHighlight=\"true\"] { border: 2px solid ") +
+                            TeachingTheme::navHighlight().name() + QStringLiteral("; border-radius: 4px; }")));
         // 滚动到可见
         scrollArea_->ensureWidgetVisible(cur);
     }

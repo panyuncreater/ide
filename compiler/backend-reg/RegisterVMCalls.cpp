@@ -1784,7 +1784,8 @@ Value RegisterVM::callCoroutineNext(Value& coroVal) {
             if (auto uv = entry.second.lock()) {
                 // F1 fix（2026-10-22）：窗口期闭包写回传播到恢复后的寄存器，再重挂 open
                 // （与 StackVM 同型）。
-                frames_[absKey / RegCallFrame::MAX_REGISTERS].registers[absKey % RegCallFrame::MAX_REGISTERS] = uv->value;
+                frames_[absKey / RegCallFrame::MAX_REGISTERS].registers[absKey % RegCallFrame::MAX_REGISTERS] =
+                    uv->value;
                 uv->isClosed = false;
                 uv->stackSlot += regBase;
                 uv->owningFrameIdx += savedFrameCount;

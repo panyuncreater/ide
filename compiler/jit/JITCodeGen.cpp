@@ -919,7 +919,8 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
             a.cmp(x86::edx, 0x7FFB);
             a.je(genericEq);
             a.cmp(x86::edx, 0x7FFC);
-            a.jae(genericEq); // NaN 浮点（0x7FFC）及负 NaN（>=0xFFF8）必须走 generic // POINTER → 可能是 STRING → 走 C++ 辅助
+            a.jae(genericEq); // NaN 浮点（0x7FFC）及负 NaN（>=0xFFF8）必须走 generic // POINTER → 可能是 STRING → 走
+                              // C++ 辅助
             a.mov(x86::rdx, x86::rcx);
             a.shr(x86::rdx, 48);
             a.cmp(x86::edx, 0x7FFB);
@@ -1443,8 +1444,8 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
                 compileError("OP_TYPE_CHECK 操作数越界");
                 return false;
             }
-            const uint16_t typeIdx = static_cast<uint16_t>(bytecodes[ip + 1]) |
-                                     (static_cast<uint16_t>(bytecodes[ip + 2]) << 8);
+            const uint16_t typeIdx =
+                static_cast<uint16_t>(bytecodes[ip + 1]) | (static_cast<uint16_t>(bytecodes[ip + 2]) << 8);
             if (typeIdx >= chunk.constants.size() || !chunk.constants[typeIdx].isString()) {
                 compileError("OP_TYPE_CHECK 类型注解常量索引越界");
                 return false;

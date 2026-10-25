@@ -1643,8 +1643,7 @@ Value Interpreter::writeBack(ASTNode* objectNode, bool isIndexAssign, ASTNode* i
             info.vals.clear(); // 释放链求值副本：无别名时槽位成为唯一持有者
             if (isIndexAssign) {
                 if (slot->isArray() && idx.isInt()) {
-                    if (idx.intVal() < 0 ||
-                        static_cast<size_t>(idx.intVal()) >= std::as_const(*slot).arrayVal().size())
+                    if (idx.intVal() < 0 || static_cast<size_t>(idx.intVal()) >= std::as_const(*slot).arrayVal().size())
                         runtimeError(ErrorFormat::formatStd("数组索引越界: {}, 有效范围 [0, {})",
                                                             static_cast<long long>(idx.intVal()),
                                                             std::as_const(*slot).arrayVal().size()),

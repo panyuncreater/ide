@@ -120,9 +120,9 @@ constexpr OpCodeInfo kOpCodeInfo[] = {
     /* 87 OP_TAIL_CALL                 */ {"OP_TAIL_CALL", 4, false},    // L18: nameIdx(2B)+argCount(1B)
     /* 88 OP_AWAIT                     */ {"OP_AWAIT", 1, false},        // 阶段4: opcode(1B) await 同步 drain
     /* 89 OP_DROP_PENDING_JUMPS        */ {"OP_DROP_PENDING_JUMPS", 2, false}, // B-008: opcode(1B)+count(1B)
-    /* 90 OP_GT_INT_SPEC               */ {"OP_GT_INT_SPEC", 1, false},  // OPT-18: int>int 特化
-    /* 91 OP_GTE_INT_SPEC              */ {"OP_GTE_INT_SPEC", 1, false}, // OPT-18: int>=int 特化
-    /* 92 OP_LTE_INT_SPEC              */ {"OP_LTE_INT_SPEC", 1, false}, // OPT-18: int<=int 特化
+    /* 90 OP_GT_INT_SPEC               */ {"OP_GT_INT_SPEC", 1, false},        // OPT-18: int>int 特化
+    /* 91 OP_GTE_INT_SPEC              */ {"OP_GTE_INT_SPEC", 1, false},       // OPT-18: int>=int 特化
+    /* 92 OP_LTE_INT_SPEC              */ {"OP_LTE_INT_SPEC", 1, false},       // OPT-18: int<=int 特化
 };
 } // anonymous namespace
 

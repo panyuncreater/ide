@@ -464,8 +464,7 @@ void ExerciseGraderPanel::onSubmitGrade() {
         return;
     // F1 fix: 运行期拒绝面板执行——临时解释器与 Worker 并发会破坏 GC 根集/引擎状态。
     if (controller_ && (controller_->isRunning() || controller_->isVmRunning())) {
-        feedbackBrowser_->setHtml(
-            QString::fromUtf8("<p style='color:red;'>程序正在运行，请先停止后再提交评分。</p>"));
+        feedbackBrowser_->setHtml(QString::fromUtf8("<p style='color:red;'>程序正在运行，请先停止后再提交评分。</p>"));
         return;
     }
     grading_ = true;
@@ -610,14 +609,16 @@ void ExerciseGraderPanel::onSubmitGrade() {
     feedback += QStringLiteral("<p style='font-size:16px;'><b>总分：%1 / 100</b></p>").arg(totalScore);
     feedback += QStringLiteral("<h3>测试用例详情</h3>");
     if (!passDetails.isEmpty()) {
-        feedback += (QStringLiteral("<p style='color:") + TeachingTheme::successGreen().name() + QStringLiteral(";'><b>通过：</b></p><ul>"));
+        feedback += (QStringLiteral("<p style='color:") + TeachingTheme::successGreen().name() +
+                     QStringLiteral(";'><b>通过：</b></p><ul>"));
         for (const auto& d : passDetails) {
             feedback += QStringLiteral("<li>") + d + QStringLiteral("</li>");
         }
         feedback += QStringLiteral("</ul>");
     }
     if (!failDetails.isEmpty()) {
-        feedback += (QStringLiteral("<p style='color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";'><b>失败：</b></p><ul>"));
+        feedback += (QStringLiteral("<p style='color:") + TeachingTheme::dangerRed().name() +
+                     QStringLiteral(";'><b>失败：</b></p><ul>"));
         for (const auto& d : failDetails) {
             feedback += QStringLiteral("<li>") + d + QStringLiteral("</li>");
         }

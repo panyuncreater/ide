@@ -824,8 +824,7 @@ std::unique_ptr<ASTNode> Parser::varDecl() {
     }
     consume(TokenType::TK_SEMICOLON, "期望 ';' 结束变量声明");
 
-    return std::make_unique<VarDecl>(name.lexeme, typeAnn, std::move(init), varTok.line,
-                                     varTok.column);
+    return std::make_unique<VarDecl>(name.lexeme, typeAnn, std::move(init), varTok.line, varTok.column);
 }
 
 std::unique_ptr<VarDecl> Parser::typedVarDecl(const std::string& typeAnn) {
@@ -837,8 +836,7 @@ std::unique_ptr<VarDecl> Parser::typedVarDecl(const std::string& typeAnn) {
     }
     consume(TokenType::TK_SEMICOLON, "期望 ';' 结束变量声明");
 
-    return std::make_unique<VarDecl>(name.lexeme, typeAnn, std::move(init), name.line,
-                                     name.column);
+    return std::make_unique<VarDecl>(name.lexeme, typeAnn, std::move(init), name.line, name.column);
 }
 
 std::unique_ptr<FunDecl> Parser::funDecl(bool isAsync) {
@@ -920,8 +918,8 @@ std::unique_ptr<FunDecl> Parser::funDecl(bool isAsync) {
     consume(TokenType::TK_LBRACE, "期望 '{'");
     auto body = block();
 
-    auto decl = std::make_unique<FunDecl>(name.lexeme, std::move(params), std::move(paramTypes),
-                                          returnType, std::move(body), funTok.line, funTok.column);
+    auto decl = std::make_unique<FunDecl>(name.lexeme, std::move(params), std::move(paramTypes), returnType,
+                                          std::move(body), funTok.line, funTok.column);
     decl->typeParams = std::move(typeParams);
     // R164 协程/生成器：标记生成器函数（fun*），供 Interpreter/VM 在调用时
     // 返回 Coroutine 值而非直接执行函数体。
@@ -971,8 +969,8 @@ std::unique_ptr<FunDecl> Parser::typedFunDecl(const std::string& returnType) {
     consume(TokenType::TK_LBRACE, "期望 '{'");
     auto body = block();
 
-    auto decl = std::make_unique<FunDecl>(name.lexeme, std::move(params), std::move(paramTypes),
-                                          returnType, std::move(body), name.line, name.column);
+    auto decl = std::make_unique<FunDecl>(name.lexeme, std::move(params), std::move(paramTypes), returnType,
+                                          std::move(body), name.line, name.column);
     // F10: 计算必需参数个数
     int reqCount = 0;
     for (size_t i = 0; i < defaultValues.size(); ++i) {
@@ -1214,8 +1212,8 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
         mergeTraitMethods(traits, members, classTok.line, classTok.column);
     }
 
-    auto decl = std::make_unique<ClassDecl>(name.lexeme, superClassName, std::move(members),
-                                            classTok.line, classTok.column);
+    auto decl =
+        std::make_unique<ClassDecl>(name.lexeme, superClassName, std::move(members), classTok.line, classTok.column);
     decl->closingBraceLine = closingBraceLine;
     decl->typeParams = std::move(typeParams);
     decl->traits = std::move(traits);
@@ -1393,9 +1391,8 @@ void Parser::parseClassMembers(std::vector<std::shared_ptr<ASTNode>>& members) {
                     consume(TokenType::TK_LBRACE, "期望 '{'");
                     auto body = block();
 
-                    auto decl = std::make_unique<FunDecl>(firstTok.lexeme, std::move(params),
-                                                          std::move(paramTypes), returnType, std::move(body),
-                                                          firstTok.line, firstTok.column);
+                    auto decl = std::make_unique<FunDecl>(firstTok.lexeme, std::move(params), std::move(paramTypes),
+                                                          returnType, std::move(body), firstTok.line, firstTok.column);
                     // F10: 计算必需参数个数
                     int reqCount = 0;
                     for (size_t i = 0; i < defaultValues.size(); ++i) {
@@ -2626,12 +2623,11 @@ std::unique_ptr<ASTNode> Parser::call() {
                 }
                 consume(TokenType::TK_RPAREN, "期望 ')' 结束方法参数列表");
 
-                expr = std::make_unique<MethodCall>(std::move(expr), fieldName.lexeme,
-                                                    std::move(args), dot.line, dot.column);
+                expr = std::make_unique<MethodCall>(std::move(expr), fieldName.lexeme, std::move(args), dot.line,
+                                                    dot.column);
             } else {
                 // 普通成员访问: obj.field
-                expr = std::make_unique<MemberAccess>(std::move(expr), fieldName.lexeme, dot.line,
-                                                      dot.column);
+                expr = std::make_unique<MemberAccess>(std::move(expr), fieldName.lexeme, dot.line, dot.column);
             }
             continue;
         }

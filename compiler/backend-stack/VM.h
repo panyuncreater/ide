@@ -170,11 +170,11 @@ struct VMCallFrame {
         ownedFunctionName = name;
         functionNamePtr = nullptr;
     }
-    bool isMethodCall = false;            // 是否为方法调用（需要 writeBack）
-    bool isInitCall = false;              // 是否为 init 构造函数调用（返回 this 而非 null）
-    std::string receiverVarName;          // 方法调用时，接收者的全局变量名（用于 writeBack 到 globals_）
-    int receiverLocalSlot = -1;           // 方法调用时，接收者在调用者帧中的局部变量槽号（-1=非局部变量）
-    bool fieldsModified = false;          // VM fix: 方法内是否修改了字段（用于跳过只读方法的字段同步）
+    bool isMethodCall = false;   // 是否为方法调用（需要 writeBack）
+    bool isInitCall = false;     // 是否为 init 构造函数调用（返回 this 而非 null）
+    std::string receiverVarName; // 方法调用时，接收者的全局变量名（用于 writeBack 到 globals_）
+    int receiverLocalSlot = -1;  // 方法调用时，接收者在调用者帧中的局部变量槽号（-1=非局部变量）
+    bool fieldsModified = false; // VM fix: 方法内是否修改了字段（用于跳过只读方法的字段同步）
     // VM-05/06: 闭包 upvalue 列表
     std::vector<std::shared_ptr<VMUpvalue>> upvalues;
 };
@@ -923,8 +923,7 @@ private:
     /// 被 executeCallFunction 和 executeCallExprValue 共享，统一两路径的帧构造逻辑
     VMResult setupFunctionCallFrame(const BytecodeChunk& targetChunk, const std::string& functionName,
                                     uint8_t& argCount, size_t returnIp, size_t savedIp, OpCode op,
-                                    bool functionNameStable,
-                                    const std::vector<std::shared_ptr<VMUpvalue>>& upvalues);
+                                    bool functionNameStable, const std::vector<std::shared_ptr<VMUpvalue>>& upvalues);
     /// OP_SUPER_CALL / OP_METHOD_CALL 执行：方法调用（thin dispatcher，按接收者类型分发到
     /// dispatchArrayBuiltin/dispatchDictBuiltin/dispatchStringBuiltin/executeInstanceMethodCall）
     VMResult executeMethodCall(size_t& ip, OpCode op);

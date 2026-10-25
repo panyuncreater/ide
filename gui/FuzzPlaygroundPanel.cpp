@@ -219,7 +219,8 @@ void FuzzPlaygroundPanel::onRun() {
         std::string src = sourceEdit_->toPlainText().toStdString();
         if (src.empty()) {
             consistencyLabel_->setText(QString::fromUtf8("❌ 源码为空，请输入 MiniLang 源码"));
-            consistencyLabel_->setStyleSheet((QStringLiteral("color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";")));
+            consistencyLabel_->setStyleSheet(
+                (QStringLiteral("color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";")));
             return;
         }
         // 单次差分：阻塞调用 fuzzThreeAgree
@@ -413,8 +414,10 @@ void FuzzPlaygroundPanel::renderBatchMode(const minilang_fuzz::FuzzSummary& s, c
     setCell(0, s.totalRuns, QColor(TeachingTheme::midnight().name()));
     setCell(1, s.agreements, QColor(TeachingTheme::backendStackVm().name()));
     setCell(2, s.disagreements,
-            s.disagreements > 0 ? QColor(TeachingTheme::dangerRed().name()) : QColor(TeachingTheme::backendStackVm().name()));
-    setCell(3, s.crashes, s.crashes > 0 ? QColor(TeachingTheme::dangerRed().name()) : QColor(TeachingTheme::backendStackVm().name()));
+            s.disagreements > 0 ? QColor(TeachingTheme::dangerRed().name())
+                                : QColor(TeachingTheme::backendStackVm().name()));
+    setCell(3, s.crashes,
+            s.crashes > 0 ? QColor(TeachingTheme::dangerRed().name()) : QColor(TeachingTheme::backendStackVm().name()));
     setCell(4, s.parseFailures, QColor(TeachingTheme::orangeDeep().name()));
     setCell(5, s.runtimeErrors, QColor(TeachingTheme::deepBlue().name()));
 }
@@ -462,33 +465,37 @@ void FuzzPlaygroundPanel::renderReportSingle(const minilang_fuzz::FuzzResult& r)
     QString html =
         QStringLiteral("<html><body style='font-family:%1;padding:4px;'>").arg(GuiTextUtils::uiFontFamilyQss());
 
-    html += (QStringLiteral("<h3 style='margin:0 0 8px 0;color:") + TeachingTheme::midnight().name() + QStringLiteral(";'>单次差分摘要</h3>"));
-    html += (QStringLiteral("<table cellspacing='0' cellpadding='4' style='width:100%;'>")
-                           + QStringLiteral("<tr style='background:") + TeachingTheme::clouds().name() + QStringLiteral(";font-weight:bold;'>")
-                           + QStringLiteral("<td width='30%'>项</td>")
-                           + QStringLiteral("<td width='70%'>值</td>")
-                           + QStringLiteral("</tr>"));
+    html += (QStringLiteral("<h3 style='margin:0 0 8px 0;color:") + TeachingTheme::midnight().name() +
+             QStringLiteral(";'>单次差分摘要</h3>"));
+    html += (QStringLiteral("<table cellspacing='0' cellpadding='4' style='width:100%;'>") +
+             QStringLiteral("<tr style='background:") + TeachingTheme::clouds().name() +
+             QStringLiteral(";font-weight:bold;'>") + QStringLiteral("<td width='30%'>项</td>") +
+             QStringLiteral("<td width='70%'>值</td>") + QStringLiteral("</tr>"));
     html += QStringLiteral("<tr><td>源码长度</td><td>%1 字节</td></tr>").arg(static_cast<int>(r.source.size()));
     html +=
         QStringLiteral("<tr><td>总耗时</td><td>%1 ms（三后端串行）</td></tr>").arg(static_cast<qint64>(r.durationMs));
     html += QStringLiteral("<tr><td>崩溃检测</td><td>%1</td></tr>")
-                .arg(r.crashDetected ? (QStringLiteral("<span style='color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";'>是</span>"))
-                                     : (QStringLiteral("<span style='color:") + TeachingTheme::backendStackVm().name() + QStringLiteral(";'>否</span>")));
+                .arg(r.crashDetected ? (QStringLiteral("<span style='color:") + TeachingTheme::dangerRed().name() +
+                                        QStringLiteral(";'>是</span>"))
+                                     : (QStringLiteral("<span style='color:") + TeachingTheme::backendStackVm().name() +
+                                        QStringLiteral(";'>否</span>")));
     html += QStringLiteral("<tr><td>三后端分歧</td><td>%1</td></tr>")
-                .arg(r.disagreement ? (QStringLiteral("<span style='color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";'>是：")) +
+                .arg(r.disagreement ? (QStringLiteral("<span style='color:") + TeachingTheme::dangerRed().name() +
+                                       QStringLiteral(";'>是：")) +
                                           escapeHtml(r.errorMessage) + QStringLiteral("</span>")
-                                    : (QStringLiteral("<span style='color:") + TeachingTheme::backendStackVm().name() + QStringLiteral(";'>否</span>")));
+                                    : (QStringLiteral("<span style='color:") + TeachingTheme::backendStackVm().name() +
+                                       QStringLiteral(";'>否</span>")));
     html += QStringLiteral("<tr><td>错误阶段</td><td>%1</td></tr>")
                 .arg(r.errorPhase.empty() ? QString::fromUtf8("（无错误）") : escapeHtml(r.errorPhase));
     html += QStringLiteral("</table>");
 
     // 三后端输出对比
-    html += (QStringLiteral("<h4 style='color:") + TeachingTheme::deepBlue().name() + QStringLiteral(";margin:12px 0 4px 0;'>三后端输出对比</h4>"));
-    html += (QStringLiteral("<table cellspacing='0' cellpadding='4' style='width:100%;'>")
-                           + QStringLiteral("<tr style='background:") + TeachingTheme::clouds().name() + QStringLiteral(";font-weight:bold;'>")
-                           + QStringLiteral("<td width='20%'>后端</td>")
-                           + QStringLiteral("<td width='80%'>输出（前 200 字符）</td>")
-                           + QStringLiteral("</tr>"));
+    html += (QStringLiteral("<h4 style='color:") + TeachingTheme::deepBlue().name() +
+             QStringLiteral(";margin:12px 0 4px 0;'>三后端输出对比</h4>"));
+    html += (QStringLiteral("<table cellspacing='0' cellpadding='4' style='width:100%;'>") +
+             QStringLiteral("<tr style='background:") + TeachingTheme::clouds().name() +
+             QStringLiteral(";font-weight:bold;'>") + QStringLiteral("<td width='20%'>后端</td>") +
+             QStringLiteral("<td width='80%'>输出（前 200 字符）</td>") + QStringLiteral("</tr>"));
     html += QStringLiteral("<tr><td style='color:%1;'>Interpreter</td>"
                            "<td><pre style='margin:0;white-space:pre-wrap;'>%2</pre></td></tr>")
                 .arg(backendColor(0))
@@ -504,25 +511,31 @@ void FuzzPlaygroundPanel::renderReportSingle(const minilang_fuzz::FuzzResult& r)
     html += QStringLiteral("</table>");
 
     // 错误归一化说明（教学）
-    html += (QStringLiteral("<h4 style='color:") + TeachingTheme::purple().name() + QStringLiteral(";margin:12px 0 4px 0;'>错误阶段归一化说明</h4>"));
-    html += (QStringLiteral("<p style='color:") + TeachingTheme::textMuted().name() + QStringLiteral(";'>某些语义错误（如变量重定义）在 Interpreter 中是<b>运行时错误</b>")
-                           + QStringLiteral("（runtimeError 抛异常），在 VM 中是<b>编译时错误</b>（Compiler::error 记录后阻止执行）。")
-                           + QStringLiteral("二者错误消息相同但阶段不同，<b>不应计为三后端分歧</b>。")
-                           + QStringLiteral("fuzz_core 内部用 <code>normalizeErrorPhase()</code> 将 <code>&lt;compile:msg&gt;</code> 与 ")
-                           + QStringLiteral("<code>&lt;runtime:msg&gt;</code> 统一为 <code>&lt;error:msg&gt;</code>，")
-                           + QStringLiteral("同时去掉编译器诊断前缀 <code>[编译器] 错误 (行 N):</code>，")
-                           + QStringLiteral("使同一语义错误在不同阶段不被计为分歧。</p>"));
-    html += (QStringLiteral("<p style='font-family:%1;background:") + TeachingTheme::surfaceAlt().name() + QStringLiteral(";padding:6px;border-left:3px solid ") + TeachingTheme::purple().name() + QStringLiteral(";'>")
-                + QStringLiteral("示例：<br>")
-                + QStringLiteral("• Interpreter 运行时错误：<code>&lt;runtime:变量 'b' 已在当前作用域中定义&gt;</code><br>")
-                + QStringLiteral("• VM 编译时错误：<code>&lt;compile:[编译器] 错误 (行 1): 变量 'b' 已在当前作用域中定义&gt;</code><br>")
-                + QStringLiteral("• 归一化后：<code>&lt;error:变量 'b' 已在当前作用域中定义&gt;</code><br>")
-                + QStringLiteral("二者阶段不同但语义相同，不计为分歧。")
-                + QStringLiteral("</p>"))
-                .arg(GuiTextUtils::monoFontFamilyQss());
+    html += (QStringLiteral("<h4 style='color:") + TeachingTheme::purple().name() +
+             QStringLiteral(";margin:12px 0 4px 0;'>错误阶段归一化说明</h4>"));
+    html +=
+        (QStringLiteral("<p style='color:") + TeachingTheme::textMuted().name() +
+         QStringLiteral(";'>某些语义错误（如变量重定义）在 Interpreter 中是<b>运行时错误</b>") +
+         QStringLiteral("（runtimeError 抛异常），在 VM 中是<b>编译时错误</b>（Compiler::error 记录后阻止执行）。") +
+         QStringLiteral("二者错误消息相同但阶段不同，<b>不应计为三后端分歧</b>。") +
+         QStringLiteral("fuzz_core 内部用 <code>normalizeErrorPhase()</code> 将 <code>&lt;compile:msg&gt;</code> 与 ") +
+         QStringLiteral("<code>&lt;runtime:msg&gt;</code> 统一为 <code>&lt;error:msg&gt;</code>，") +
+         QStringLiteral("同时去掉编译器诊断前缀 <code>[编译器] 错误 (行 N):</code>，") +
+         QStringLiteral("使同一语义错误在不同阶段不被计为分歧。</p>"));
+    html +=
+        (QStringLiteral("<p style='font-family:%1;background:") + TeachingTheme::surfaceAlt().name() +
+         QStringLiteral(";padding:6px;border-left:3px solid ") + TeachingTheme::purple().name() +
+         QStringLiteral(";'>") + QStringLiteral("示例：<br>") +
+         QStringLiteral("• Interpreter 运行时错误：<code>&lt;runtime:变量 'b' 已在当前作用域中定义&gt;</code><br>") +
+         QStringLiteral(
+             "• VM 编译时错误：<code>&lt;compile:[编译器] 错误 (行 1): 变量 'b' 已在当前作用域中定义&gt;</code><br>") +
+         QStringLiteral("• 归一化后：<code>&lt;error:变量 'b' 已在当前作用域中定义&gt;</code><br>") +
+         QStringLiteral("二者阶段不同但语义相同，不计为分歧。") + QStringLiteral("</p>"))
+            .arg(GuiTextUtils::monoFontFamilyQss());
 
     // 教学解释
-    html += (QStringLiteral("<h4 style='color:") + TeachingTheme::teal().name() + QStringLiteral(";margin:12px 0 4px 0;'>教学解释</h4>"));
+    html += (QStringLiteral("<h4 style='color:") + TeachingTheme::teal().name() +
+             QStringLiteral(";margin:12px 0 4px 0;'>教学解释</h4>"));
     html +=
         QStringLiteral("<ul style='margin:4px 0;'>"
                        "<li><b>三后端差分测试</b>：对同一份源码分别用 Interpreter / StackVM / RegisterVM "
@@ -543,16 +556,17 @@ void FuzzPlaygroundPanel::renderReportBatch(const minilang_fuzz::FuzzSummary& s,
     QString html =
         QStringLiteral("<html><body style='font-family:%1;padding:4px;'>").arg(GuiTextUtils::uiFontFamilyQss());
 
-    html += (QStringLiteral("<h3 style='margin:0 0 8px 0;color:") + TeachingTheme::midnight().name() + QStringLiteral(";'>批量%1统计报告</h3>")).arg(modeName);
-    html += (QStringLiteral("<table cellspacing='0' cellpadding='4' style='width:100%;'>")
-                           + QStringLiteral("<tr style='background:") + TeachingTheme::clouds().name() + QStringLiteral(";font-weight:bold;'>")
-                           + QStringLiteral("<td width='30%'>项</td>")
-                           + QStringLiteral("<td width='70%'>值</td>")
-                           + QStringLiteral("</tr>"));
+    html += (QStringLiteral("<h3 style='margin:0 0 8px 0;color:") + TeachingTheme::midnight().name() +
+             QStringLiteral(";'>批量%1统计报告</h3>"))
+                .arg(modeName);
+    html += (QStringLiteral("<table cellspacing='0' cellpadding='4' style='width:100%;'>") +
+             QStringLiteral("<tr style='background:") + TeachingTheme::clouds().name() +
+             QStringLiteral(";font-weight:bold;'>") + QStringLiteral("<td width='30%'>项</td>") +
+             QStringLiteral("<td width='70%'>值</td>") + QStringLiteral("</tr>"));
     html += QStringLiteral("<tr><td>种子</td><td>0x%1</td></tr>").arg(static_cast<qulonglong>(s.seed), 0, 16);
     html += QStringLiteral("<tr><td>总执行次数</td><td>%1</td></tr>").arg(s.totalRuns);
-    html += (QStringLiteral("<tr><td>三后端一致</td><td><span style='color:") + TeachingTheme::backendStackVm().name() + QStringLiteral(";font-weight:bold;'>%1</span> ")
-                           + QStringLiteral("(%2%)</td></tr>"))
+    html += (QStringLiteral("<tr><td>三后端一致</td><td><span style='color:") + TeachingTheme::backendStackVm().name() +
+             QStringLiteral(";font-weight:bold;'>%1</span> ") + QStringLiteral("(%2%)</td></tr>"))
                 .arg(s.agreements)
                 .arg(s.totalRuns > 0 ? (s.agreements * 100 / s.totalRuns) : 0);
     html += QStringLiteral("<tr><td>三后端分歧</td><td><span style='color:%1;font-weight:bold;'>%2</span> "
@@ -574,37 +588,41 @@ void FuzzPlaygroundPanel::renderReportBatch(const minilang_fuzz::FuzzSummary& s,
     html += QStringLiteral("</table>");
 
     // formatSummaryText 原文（教学：展示 CLI 工具的输出格式）
-    html += (QStringLiteral("<h4 style='color:") + TeachingTheme::deepBlue().name() + QStringLiteral(";margin:12px 0 4px 0;'>formatSummaryText 输出（CLI ")
-                           + QStringLiteral("兼容格式）</h4>"));
+    html += (QStringLiteral("<h4 style='color:") + TeachingTheme::deepBlue().name() +
+             QStringLiteral(";margin:12px 0 4px 0;'>formatSummaryText 输出（CLI ") + QStringLiteral("兼容格式）</h4>"));
     std::string summaryText = minilang_fuzz::formatSummaryText(s);
-    html += (QStringLiteral("<pre style='font-family:%1;background:") + TeachingTheme::surfaceAlt().name() + QStringLiteral(";padding:6px;")
-                           + QStringLiteral("white-space:pre-wrap;border-left:3px solid ") + TeachingTheme::deepBlue().name() + QStringLiteral(";'>%2</pre>"))
+    html += (QStringLiteral("<pre style='font-family:%1;background:") + TeachingTheme::surfaceAlt().name() +
+             QStringLiteral(";padding:6px;") + QStringLiteral("white-space:pre-wrap;border-left:3px solid ") +
+             TeachingTheme::deepBlue().name() + QStringLiteral(";'>%2</pre>"))
                 .arg(GuiTextUtils::monoFontFamilyQss())
                 .arg(escapeHtml(summaryText));
 
     // 错误归一化说明（教学）
-    html += (QStringLiteral("<h4 style='color:") + TeachingTheme::purple().name() + QStringLiteral(";margin:12px 0 4px 0;'>错误阶段归一化说明</h4>"));
-    html += (QStringLiteral("<p style='color:") + TeachingTheme::textMuted().name() + QStringLiteral(";'>某些语义错误（如变量重定义）在 Interpreter ")
-                           + QStringLiteral("中是<b>运行时错误</b>")
-                           + QStringLiteral("（runtimeError 抛异常），在 VM 中是<b>编译时错误</b>（Compiler::error 记录后阻止执行）。")
-                           + QStringLiteral("二者错误消息相同但阶段不同，<b>不应计为三后端分歧</b>。")
-                           + QStringLiteral("fuzz_core 内部用 <code>normalizeErrorPhase()</code> 将 <code>&lt;compile:msg&gt;</code> 与 ")
-                           + QStringLiteral("<code>&lt;runtime:msg&gt;</code> 统一为 <code>&lt;error:msg&gt;</code>，")
-                           + QStringLiteral("同时去掉编译器诊断前缀 <code>[编译器] 错误 (行 N):</code>，")
-                           + QStringLiteral("使同一语义错误在不同阶段不被计为分歧。</p>"));
-    html += (QStringLiteral("<p style='font-family:%1;background:") + TeachingTheme::surfaceAlt().name() + QStringLiteral(";padding:6px;border-left:3px solid ") + TeachingTheme::purple().name() + QStringLiteral(";'>")
-                           + QStringLiteral("示例：<br>")
-                           + QStringLiteral("• Interpreter 运行时错误：<code>&lt;runtime:变量 'b' ")
-                           + QStringLiteral("已在当前作用域中定义&gt;</code><br>")
-                           + QStringLiteral("• VM 编译时错误：<code>&lt;compile:[编译器] 错误 (行 1): 变量 'b' ")
-                           + QStringLiteral("已在当前作用域中定义&gt;</code><br>")
-                           + QStringLiteral("• 归一化后：<code>&lt;error:变量 'b' 已在当前作用域中定义&gt;</code><br>")
-                           + QStringLiteral("二者阶段不同但语义相同，不计为分歧。")
-                           + QStringLiteral("</p>"))
+    html += (QStringLiteral("<h4 style='color:") + TeachingTheme::purple().name() +
+             QStringLiteral(";margin:12px 0 4px 0;'>错误阶段归一化说明</h4>"));
+    html +=
+        (QStringLiteral("<p style='color:") + TeachingTheme::textMuted().name() +
+         QStringLiteral(";'>某些语义错误（如变量重定义）在 Interpreter ") + QStringLiteral("中是<b>运行时错误</b>") +
+         QStringLiteral("（runtimeError 抛异常），在 VM 中是<b>编译时错误</b>（Compiler::error 记录后阻止执行）。") +
+         QStringLiteral("二者错误消息相同但阶段不同，<b>不应计为三后端分歧</b>。") +
+         QStringLiteral("fuzz_core 内部用 <code>normalizeErrorPhase()</code> 将 <code>&lt;compile:msg&gt;</code> 与 ") +
+         QStringLiteral("<code>&lt;runtime:msg&gt;</code> 统一为 <code>&lt;error:msg&gt;</code>，") +
+         QStringLiteral("同时去掉编译器诊断前缀 <code>[编译器] 错误 (行 N):</code>，") +
+         QStringLiteral("使同一语义错误在不同阶段不被计为分歧。</p>"));
+    html += (QStringLiteral("<p style='font-family:%1;background:") + TeachingTheme::surfaceAlt().name() +
+             QStringLiteral(";padding:6px;border-left:3px solid ") + TeachingTheme::purple().name() +
+             QStringLiteral(";'>") + QStringLiteral("示例：<br>") +
+             QStringLiteral("• Interpreter 运行时错误：<code>&lt;runtime:变量 'b' ") +
+             QStringLiteral("已在当前作用域中定义&gt;</code><br>") +
+             QStringLiteral("• VM 编译时错误：<code>&lt;compile:[编译器] 错误 (行 1): 变量 'b' ") +
+             QStringLiteral("已在当前作用域中定义&gt;</code><br>") +
+             QStringLiteral("• 归一化后：<code>&lt;error:变量 'b' 已在当前作用域中定义&gt;</code><br>") +
+             QStringLiteral("二者阶段不同但语义相同，不计为分歧。") + QStringLiteral("</p>"))
                 .arg(GuiTextUtils::monoFontFamilyQss());
 
     // 教学解释
-    html += (QStringLiteral("<h4 style='color:") + TeachingTheme::teal().name() + QStringLiteral(";margin:12px 0 4px 0;'>教学解释</h4>"));
+    html += (QStringLiteral("<h4 style='color:") + TeachingTheme::teal().name() +
+             QStringLiteral(";margin:12px 0 4px 0;'>教学解释</h4>"));
     html += QStringLiteral("<ul style='margin:4px 0;'>"
                            "<li><b>批量生成模式</b>：基于种子的模板化随机程序生成，覆盖算术/控制流/函数/递归/"
                            "闭包/字符串/数组/类/错误路径/逻辑等类别，验证三后端在多种语法结构下的语义等价性。</li>"
@@ -626,13 +644,16 @@ void FuzzPlaygroundPanel::renderReportBatch(const minilang_fuzz::FuzzSummary& s,
 void FuzzPlaygroundPanel::renderConsistencySingle(const minilang_fuzz::FuzzResult& r) {
     if (r.crashDetected) {
         consistencyLabel_->setText(QString::fromUtf8("❌ 检测到崩溃（未捕获异常/abort）"));
-        consistencyLabel_->setStyleSheet((QStringLiteral("color:") + TeachingTheme::dangerRed().name() + QStringLiteral("; font-weight:bold;")));
+        consistencyLabel_->setStyleSheet(
+            (QStringLiteral("color:") + TeachingTheme::dangerRed().name() + QStringLiteral("; font-weight:bold;")));
     } else if (r.disagreement) {
         consistencyLabel_->setText(QString::fromUtf8("❌ 发现 1 个分歧：") + QString::fromUtf8(r.errorMessage.c_str()));
-        consistencyLabel_->setStyleSheet((QStringLiteral("color:") + TeachingTheme::dangerRed().name() + QStringLiteral("; font-weight:bold;")));
+        consistencyLabel_->setStyleSheet(
+            (QStringLiteral("color:") + TeachingTheme::dangerRed().name() + QStringLiteral("; font-weight:bold;")));
     } else {
         consistencyLabel_->setText(QString::fromUtf8("✅ 三后端一致 1 次"));
-        consistencyLabel_->setStyleSheet((QStringLiteral("color:") + TeachingTheme::backendStackVm().name() + QStringLiteral("; font-weight:bold;")));
+        consistencyLabel_->setStyleSheet((QStringLiteral("color:") + TeachingTheme::backendStackVm().name() +
+                                          QStringLiteral("; font-weight:bold;")));
     }
 }
 
@@ -643,17 +664,20 @@ void FuzzPlaygroundPanel::renderConsistencyBatch(const minilang_fuzz::FuzzSummar
                                        .arg(s.crashes)
                                        .arg(s.disagreements)
                                        .arg(s.totalRuns));
-        consistencyLabel_->setStyleSheet((QStringLiteral("color:") + TeachingTheme::dangerRed().name() + QStringLiteral("; font-weight:bold;")));
+        consistencyLabel_->setStyleSheet(
+            (QStringLiteral("color:") + TeachingTheme::dangerRed().name() + QStringLiteral("; font-weight:bold;")));
     } else if (s.disagreements > 0) {
         consistencyLabel_->setText(QString::fromUtf8("❌ 发现 %1 个分歧（共 %2 次执行，一致 %3 次）")
                                        .arg(s.disagreements)
                                        .arg(s.totalRuns)
                                        .arg(s.agreements));
-        consistencyLabel_->setStyleSheet((QStringLiteral("color:") + TeachingTheme::dangerRed().name() + QStringLiteral("; font-weight:bold;")));
+        consistencyLabel_->setStyleSheet(
+            (QStringLiteral("color:") + TeachingTheme::dangerRed().name() + QStringLiteral("; font-weight:bold;")));
     } else {
         consistencyLabel_->setText(
             QString::fromUtf8("✅ 三后端一致 %1 次（共 %2 次执行）").arg(s.agreements).arg(s.totalRuns));
-        consistencyLabel_->setStyleSheet((QStringLiteral("color:") + TeachingTheme::backendStackVm().name() + QStringLiteral("; font-weight:bold;")));
+        consistencyLabel_->setStyleSheet((QStringLiteral("color:") + TeachingTheme::backendStackVm().name() +
+                                          QStringLiteral("; font-weight:bold;")));
     }
 }
 
@@ -670,19 +694,21 @@ void FuzzPlaygroundPanel::showSingleDetail() {
 
     QString html =
         QStringLiteral("<html><body style='font-family:%1;padding:4px;'>").arg(GuiTextUtils::uiFontFamilyQss());
-    html += (QStringLiteral("<h3 style='margin:0 0 8px 0;color:") + TeachingTheme::midnight().name() + QStringLiteral(";'>源码</h3>"));
-    html += (QStringLiteral("<pre style='font-family:%1;background:") + TeachingTheme::surfaceAlt().name() + QStringLiteral(";padding:6px;")
-                           + QStringLiteral("white-space:pre-wrap;border-left:3px solid ") + TeachingTheme::midnight().name() + QStringLiteral(";'>%2</pre>"))
+    html += (QStringLiteral("<h3 style='margin:0 0 8px 0;color:") + TeachingTheme::midnight().name() +
+             QStringLiteral(";'>源码</h3>"));
+    html += (QStringLiteral("<pre style='font-family:%1;background:") + TeachingTheme::surfaceAlt().name() +
+             QStringLiteral(";padding:6px;") + QStringLiteral("white-space:pre-wrap;border-left:3px solid ") +
+             TeachingTheme::midnight().name() + QStringLiteral(";'>%2</pre>"))
                 .arg(GuiTextUtils::monoFontFamilyQss())
                 .arg(source);
 
-    html += (QStringLiteral("<h3 style='margin:12px 0 8px 0;color:") + TeachingTheme::midnight().name() + QStringLiteral(";'>三后端输出对比</h3>"));
-    html += (QStringLiteral("<table cellspacing='0' cellpadding='4' style='width:100%;'>")
-                           + QStringLiteral("<tr style='background:") + TeachingTheme::clouds().name() + QStringLiteral(";font-weight:bold;'>")
-                           + QStringLiteral("<td width='20%'>后端</td>")
-                           + QStringLiteral("<td width='60%'>输出</td>")
-                           + QStringLiteral("<td width='20%'>状态</td>")
-                           + QStringLiteral("</tr>"));
+    html += (QStringLiteral("<h3 style='margin:12px 0 8px 0;color:") + TeachingTheme::midnight().name() +
+             QStringLiteral(";'>三后端输出对比</h3>"));
+    html += (QStringLiteral("<table cellspacing='0' cellpadding='4' style='width:100%;'>") +
+             QStringLiteral("<tr style='background:") + TeachingTheme::clouds().name() +
+             QStringLiteral(";font-weight:bold;'>") + QStringLiteral("<td width='20%'>后端</td>") +
+             QStringLiteral("<td width='60%'>输出</td>") + QStringLiteral("<td width='20%'>状态</td>") +
+             QStringLiteral("</tr>"));
 
     struct RowInfo {
         QString name;
@@ -693,8 +719,8 @@ void FuzzPlaygroundPanel::showSingleDetail() {
                        {QString::fromUtf8("RegisterVM"), r.regvmOutput}};
     for (int i = 0; i < 3; ++i) {
         QString status = statusFromOutput(rows[i].output);
-        QString statusColor =
-            status.startsWith(QString::fromUtf8("✅")) ? TeachingTheme::backendStackVm().name() : TeachingTheme::dangerRed().name();
+        QString statusColor = status.startsWith(QString::fromUtf8("✅")) ? TeachingTheme::backendStackVm().name()
+                                                                         : TeachingTheme::dangerRed().name();
         html += QStringLiteral("<tr>"
                                "<td style='color:%1;font-weight:bold;'>%2</td>"
                                "<td><pre style='margin:0;white-space:pre-wrap;font-family:%3;'>%4</pre></td>"
@@ -710,20 +736,26 @@ void FuzzPlaygroundPanel::showSingleDetail() {
     html += QStringLiteral("</table>");
 
     if (r.disagreement || r.crashDetected) {
-        html += (QStringLiteral("<h4 style='color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";margin:12px 0 4px 0;'>诊断</h4>"));
+        html += (QStringLiteral("<h4 style='color:") + TeachingTheme::dangerRed().name() +
+                 QStringLiteral(";margin:12px 0 4px 0;'>诊断</h4>"));
         if (r.crashDetected) {
-            html += (QStringLiteral("<p style='color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";'>⚠ 检测到崩溃（未捕获异常/abort）。</p>"));
+            html += (QStringLiteral("<p style='color:") + TeachingTheme::dangerRed().name() +
+                     QStringLiteral(";'>⚠ 检测到崩溃（未捕获异常/abort）。</p>"));
         }
         if (r.disagreement) {
-            html +=
-                (QStringLiteral("<p style='color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";'>⚠ 三后端输出不一致：%1</p>")).arg(escapeHtml(r.errorMessage));
+            html += (QStringLiteral("<p style='color:") + TeachingTheme::dangerRed().name() +
+                     QStringLiteral(";'>⚠ 三后端输出不一致：%1</p>"))
+                        .arg(escapeHtml(r.errorMessage));
         }
         if (!r.errorPhase.empty()) {
-            html += (QStringLiteral("<p style='color:") + TeachingTheme::orangeDeep().name() + QStringLiteral(";'>错误阶段：%1</p>")).arg(escapeHtml(r.errorPhase));
+            html += (QStringLiteral("<p style='color:") + TeachingTheme::orangeDeep().name() +
+                     QStringLiteral(";'>错误阶段：%1</p>"))
+                        .arg(escapeHtml(r.errorPhase));
         }
     } else {
-        html += (QStringLiteral("<p style='color:") + TeachingTheme::backendStackVm().name() + QStringLiteral(";margin:12px 0 0 0;'>✅ 三后端输出完全一致，")
-                               + QStringLiteral("语义等价性验证通过。</p>"));
+        html += (QStringLiteral("<p style='color:") + TeachingTheme::backendStackVm().name() +
+                 QStringLiteral(";margin:12px 0 0 0;'>✅ 三后端输出完全一致，") +
+                 QStringLiteral("语义等价性验证通过。</p>"));
     }
 
     html += QStringLiteral("</body></html>");
@@ -742,22 +774,28 @@ void FuzzPlaygroundPanel::showBatchDisagreeDetail(int idx) {
     QString source = escapeHtml(d.source);
     QString html =
         QStringLiteral("<html><body style='font-family:%1;padding:4px;'>").arg(GuiTextUtils::uiFontFamilyQss());
-    html += (QStringLiteral("<h3 style='margin:0 0 8px 0;color:") + TeachingTheme::midnight().name() + QStringLiteral(";'>分歧用例 #%1</h3>")).arg(idx + 1);
-    html += (QStringLiteral("<p style='color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";'>分歧类型：%1</p>")).arg(escapeHtml(d.errorMessage));
+    html += (QStringLiteral("<h3 style='margin:0 0 8px 0;color:") + TeachingTheme::midnight().name() +
+             QStringLiteral(";'>分歧用例 #%1</h3>"))
+                .arg(idx + 1);
+    html +=
+        (QStringLiteral("<p style='color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";'>分歧类型：%1</p>"))
+            .arg(escapeHtml(d.errorMessage));
 
-    html += (QStringLiteral("<h4 style='margin:12px 0 4px 0;color:") + TeachingTheme::midnight().name() + QStringLiteral(";'>源码</h4>"));
-    html += (QStringLiteral("<pre style='font-family:%1;background:") + TeachingTheme::surfaceAlt().name() + QStringLiteral(";padding:6px;")
-                           + QStringLiteral("white-space:pre-wrap;border-left:3px solid ") + TeachingTheme::dangerRed().name() + QStringLiteral(";'>%2</pre>"))
+    html += (QStringLiteral("<h4 style='margin:12px 0 4px 0;color:") + TeachingTheme::midnight().name() +
+             QStringLiteral(";'>源码</h4>"));
+    html += (QStringLiteral("<pre style='font-family:%1;background:") + TeachingTheme::surfaceAlt().name() +
+             QStringLiteral(";padding:6px;") + QStringLiteral("white-space:pre-wrap;border-left:3px solid ") +
+             TeachingTheme::dangerRed().name() + QStringLiteral(";'>%2</pre>"))
                 .arg(GuiTextUtils::monoFontFamilyQss())
                 .arg(source);
 
-    html += (QStringLiteral("<h4 style='margin:12px 0 4px 0;color:") + TeachingTheme::midnight().name() + QStringLiteral(";'>三后端输出对比</h4>"));
-    html += (QStringLiteral("<table cellspacing='0' cellpadding='4' style='width:100%;'>")
-                           + QStringLiteral("<tr style='background:") + TeachingTheme::clouds().name() + QStringLiteral(";font-weight:bold;'>")
-                           + QStringLiteral("<td width='20%'>后端</td>")
-                           + QStringLiteral("<td width='60%'>输出</td>")
-                           + QStringLiteral("<td width='20%'>状态</td>")
-                           + QStringLiteral("</tr>"));
+    html += (QStringLiteral("<h4 style='margin:12px 0 4px 0;color:") + TeachingTheme::midnight().name() +
+             QStringLiteral(";'>三后端输出对比</h4>"));
+    html += (QStringLiteral("<table cellspacing='0' cellpadding='4' style='width:100%;'>") +
+             QStringLiteral("<tr style='background:") + TeachingTheme::clouds().name() +
+             QStringLiteral(";font-weight:bold;'>") + QStringLiteral("<td width='20%'>后端</td>") +
+             QStringLiteral("<td width='60%'>输出</td>") + QStringLiteral("<td width='20%'>状态</td>") +
+             QStringLiteral("</tr>"));
 
     struct RowInfo {
         QString name;
@@ -768,8 +806,8 @@ void FuzzPlaygroundPanel::showBatchDisagreeDetail(int idx) {
                        {QString::fromUtf8("RegisterVM"), d.regvmOutput}};
     for (int i = 0; i < 3; ++i) {
         QString status = statusFromOutput(rows[i].output);
-        QString statusColor =
-            status.startsWith(QString::fromUtf8("✅")) ? TeachingTheme::backendStackVm().name() : TeachingTheme::dangerRed().name();
+        QString statusColor = status.startsWith(QString::fromUtf8("✅")) ? TeachingTheme::backendStackVm().name()
+                                                                         : TeachingTheme::dangerRed().name();
         html += QStringLiteral("<tr>"
                                "<td style='color:%1;font-weight:bold;'>%2</td>"
                                "<td><pre style='margin:0;white-space:pre-wrap;font-family:%3;'>%4</pre></td>"
@@ -784,12 +822,12 @@ void FuzzPlaygroundPanel::showBatchDisagreeDetail(int idx) {
     }
     html += QStringLiteral("</table>");
 
-    html += (QStringLiteral("<p style='color:") + TeachingTheme::textMuted().name() + QStringLiteral(";font-size:11px;margin-top:12px;'>")
-                           + QStringLiteral("提示：fuzz_core 内部已用 normalizeErrorPhase() ")
-                           + QStringLiteral("归一化错误阶段后再比较，")
-                           + QStringLiteral("若仍被标记为分歧，说明三后端在归一化后的输出仍存在真实差异，")
-                           + QStringLiteral("可能指示某个后端的语义 bug，建议复制源码到主编辑器单步调试。")
-                           + QStringLiteral("</p>"));
+    html += (QStringLiteral("<p style='color:") + TeachingTheme::textMuted().name() +
+             QStringLiteral(";font-size:11px;margin-top:12px;'>") +
+             QStringLiteral("提示：fuzz_core 内部已用 normalizeErrorPhase() ") +
+             QStringLiteral("归一化错误阶段后再比较，") +
+             QStringLiteral("若仍被标记为分歧，说明三后端在归一化后的输出仍存在真实差异，") +
+             QStringLiteral("可能指示某个后端的语义 bug，建议复制源码到主编辑器单步调试。") + QStringLiteral("</p>"));
 
     html += QStringLiteral("</body></html>");
     detailView_->setHtml(html);

@@ -21,7 +21,7 @@
 #include "gui/MarkdownRenderer.h"     // 统一 Markdown 渲染
 #include "gui/ProgressSaveFeedback.h" // P2-UX fix: 共享 save 失败反馈 helper
 #include "gui/SyntaxHighlighter.h"    // MiniLang 语法高亮器
-#include "gui/TeachingTheme.h" // OPT-11: 颜色语义化
+#include "gui/TeachingTheme.h"        // OPT-11: 颜色语义化
 
 LabManualPanel::LabManualPanel(QWidget* parent) : QWidget(parent) {
     auto* mainLayout = new QVBoxLayout(this);
@@ -138,11 +138,15 @@ LabManualPanel::LabManualPanel(QWidget* parent) : QWidget(parent) {
     mainLayout->addWidget(splitter, 1);
 
     // issue 6: 中性浅色风格 QSS（章节芯片按钮，二态：默认/当前）
-    setStyleSheet((QStringLiteral("QPushButton#labChapterChip { background: ") + TeachingTheme::surfaceHover().name() + QStringLiteral("; border: 1px solid ") + TeachingTheme::border().name() + QStringLiteral("; ")
-                                    + QStringLiteral("border-radius: 4px; font-size: 11px; padding: 2px 10px; }")
-                                    + QStringLiteral("QPushButton#labChapterChip:hover { border-color: ") + TeachingTheme::info().name() + QStringLiteral("; background: ") + TeachingTheme::primaryHoverBg().name() + QStringLiteral("; }")
-                                    + QStringLiteral("QPushButton#labChapterChip[current='true'] { background: ") + TeachingTheme::info().name() + QStringLiteral("; color: white; ")
-                                    + QStringLiteral("border-color: ") + TeachingTheme::primaryDeep().name() + QStringLiteral("; font-weight: bold; }")));
+    setStyleSheet((QStringLiteral("QPushButton#labChapterChip { background: ") + TeachingTheme::surfaceHover().name() +
+                   QStringLiteral("; border: 1px solid ") + TeachingTheme::border().name() + QStringLiteral("; ") +
+                   QStringLiteral("border-radius: 4px; font-size: 11px; padding: 2px 10px; }") +
+                   QStringLiteral("QPushButton#labChapterChip:hover { border-color: ") + TeachingTheme::info().name() +
+                   QStringLiteral("; background: ") + TeachingTheme::primaryHoverBg().name() + QStringLiteral("; }") +
+                   QStringLiteral("QPushButton#labChapterChip[current='true'] { background: ") +
+                   TeachingTheme::info().name() + QStringLiteral("; color: white; ") +
+                   QStringLiteral("border-color: ") + TeachingTheme::primaryDeep().name() +
+                   QStringLiteral("; font-weight: bold; }")));
 
     populateChapterChips();
 
@@ -306,7 +310,8 @@ void LabManualPanel::rebuildExercises() {
     if (exercises.empty()) {
         // 无练习：显示提示
         auto* noExLabel = new QLabel(QString::fromUtf8("💡 ") + mlTr("本章暂无可机检练习"), exercisesContainer_);
-        noExLabel->setStyleSheet((QStringLiteral("color:") + TeachingTheme::textMuted().name() + QStringLiteral("; padding:8px;")));
+        noExLabel->setStyleSheet(
+            (QStringLiteral("color:") + TeachingTheme::textMuted().name() + QStringLiteral("; padding:8px;")));
         exercisesLayout_->insertWidget(exercisesLayout_->count() - 1, noExLabel);
         return;
     }

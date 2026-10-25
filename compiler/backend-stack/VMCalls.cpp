@@ -833,8 +833,8 @@ VMResult VM::executeCallExprValue(size_t& ip, OpCode op) {
     }
 
     // OP_CALL_EXPR 是 2 字节指令：opcode + argCount(1B)
-    return setupFunctionCallFrame(targetChunk, callee.closureName(), argCount, ip + 2, ip, op, /*functionNameStable=*/false,
-                                  upvalues);
+    return setupFunctionCallFrame(targetChunk, callee.closureName(), argCount, ip + 2, ip, op,
+                                  /*functionNameStable=*/false, upvalues);
 }
 
 // ============================================================
@@ -846,8 +846,7 @@ VMResult VM::executeCallExprValue(size_t& ip, OpCode op) {
 // ============================================================
 VMResult VM::setupFunctionCallFrame(const BytecodeChunk& targetChunk, const std::string& functionName,
                                     uint8_t& argCount, size_t returnIp, size_t savedIp, OpCode op,
-                                    bool functionNameStable,
-                                    const std::vector<std::shared_ptr<VMUpvalue>>& upvalues) {
+                                    bool functionNameStable, const std::vector<std::shared_ptr<VMUpvalue>>& upvalues) {
     // F10: 为缺失的尾部参数填充默认值
     if (argCount < static_cast<uint8_t>(targetChunk.arity)) {
         int missingCount = targetChunk.arity - argCount;
@@ -1749,7 +1748,7 @@ struct VM::VMCoroutineSuspension {
     std::vector<Value> stackSuffix;  // stack_[挂起调用入口栈深..]（含 args/局部槽/操作数栈）
     std::vector<VMCallFrame> frames; // frames_[挂起调用入口帧深..]（含生成器帧与体内嵌套调用帧）
     std::vector<TryHandler> tryStack;
-    size_t resumeIp = 0;  // 触发 yield 的帧（顶层）恢复 ip（越过 OP_YIELD 1 字节）
+    size_t resumeIp = 0; // 触发 yield 的帧（顶层）恢复 ip（越过 OP_YIELD 1 字节）
     std::vector<std::pair<size_t, std::weak_ptr<VMUpvalue>>> openUpvalues;
 };
 #endif // MINILANG_CORO_FIBER

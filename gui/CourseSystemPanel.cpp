@@ -40,10 +40,11 @@ QString esc(const std::string& s) {
 
 /// 将代码文本渲染为 <pre> 块（保留换行与缩进，HTML 转义）
 QString codeBlock(const std::string& code) {
-    QString html = (QStringLiteral("<pre style='background:") + TeachingTheme::codeBlockBg().name() + QStringLiteral(";padding:6px;")
-                                  + QStringLiteral("border-radius:4px;font-family:Consolas,monospace;")
-                                  + QStringLiteral("white-space:pre-wrap;'>%1</pre>"))
-                       .arg(esc(code));
+    QString html =
+        (QStringLiteral("<pre style='background:") + TeachingTheme::codeBlockBg().name() +
+         QStringLiteral(";padding:6px;") + QStringLiteral("border-radius:4px;font-family:Consolas,monospace;") +
+         QStringLiteral("white-space:pre-wrap;'>%1</pre>"))
+            .arg(esc(code));
     return html;
 }
 
@@ -610,16 +611,17 @@ void CourseSystemPanel::renderCourseDetail(const Course& course) {
         html += QStringLiteral("<h3>%1</h3>").arg(esc(ch.title));
         for (size_t li = 0; li < ch.lessons.size(); ++li) {
             const auto& ls = ch.lessons[li];
-            html += (QStringLiteral("<div style='margin:8px 0;padding:6px;")
-                                   + QStringLiteral("border-left:3px solid ") + TeachingTheme::courseAccent().name() + QStringLiteral(";'>"));
+            html +=
+                (QStringLiteral("<div style='margin:8px 0;padding:6px;") + QStringLiteral("border-left:3px solid ") +
+                 TeachingTheme::courseAccent().name() + QStringLiteral(";'>"));
             html += QStringLiteral("<p><b>%1</b></p>").arg(esc(ls.title));
             html += QStringLiteral("<p><b>代码：</b></p>");
             html += codeBlock(ls.code);
             html += QStringLiteral("<p><b>知识点：</b>%1</p>").arg(esc(ls.explanation));
-            html += (QStringLiteral("<p><b>预期输出：</b>")
-                                   + QStringLiteral("<span style='background:") + TeachingTheme::successSoftBg().name() + QStringLiteral(";padding:2px 6px;")
-                                   + QStringLiteral("border-radius:3px;font-family:Consolas,monospace;'>%1</span>")
-                                   + QStringLiteral("<span style='color:#999;font-size:small;'>（仅展示，不校验）</span></p>"))
+            html += (QStringLiteral("<p><b>预期输出：</b>") + QStringLiteral("<span style='background:") +
+                     TeachingTheme::successSoftBg().name() + QStringLiteral(";padding:2px 6px;") +
+                     QStringLiteral("border-radius:3px;font-family:Consolas,monospace;'>%1</span>") +
+                     QStringLiteral("<span style='color:#999;font-size:small;'>（仅展示，不校验）</span></p>"))
                         .arg(esc(ls.expectedOutput));
             html += QStringLiteral("</div>");
         }
@@ -729,8 +731,9 @@ void CourseSystemPanel::onLoadToLibrary() {
     std::string newTitle = lastParsedCourse_.title;
     for (const auto& c : customCourses_) {
         if (c.title == newTitle) {
-            previewBrowser_->append((QStringLiteral("<p style='color:") + TeachingTheme::amberDeep().name() + QStringLiteral(";'>课程库中已存在同名自定义课程「%1」，")
-                                                   + QStringLiteral("未重复添加。请修改 title 后重试。</p>"))
+            previewBrowser_->append((QStringLiteral("<p style='color:") + TeachingTheme::amberDeep().name() +
+                                     QStringLiteral(";'>课程库中已存在同名自定义课程「%1」，") +
+                                     QStringLiteral("未重复添加。请修改 title 后重试。</p>"))
                                         .arg(esc(newTitle)));
             return;
         }
@@ -748,7 +751,8 @@ void CourseSystemPanel::onLoadToLibrary() {
     // 切换到课程库子页，让用户看到结果
     pageLibraryBtn_->setChecked(true);
 
-    previewBrowser_->append((QStringLiteral("<p style='color:") + TeachingTheme::deepGreen().name() + QStringLiteral(";'><b>已加载到课程库：</b>%1（共 %2 章）</p>"))
+    previewBrowser_->append((QStringLiteral("<p style='color:") + TeachingTheme::deepGreen().name() +
+                             QStringLiteral(";'><b>已加载到课程库：</b>%1（共 %2 章）</p>"))
                                 .arg(esc(newTitle))
                                 .arg(static_cast<int>(lastParsedCourse_.chapters.size())));
 }
@@ -779,7 +783,8 @@ void CourseSystemPanel::onImportFromFile() {
     hasLastParsed_ = true;
     renderPreview(lastParsedCourse_);
     loadToLibraryBtn_->setEnabled(true);
-    previewBrowser_->append((QStringLiteral("<p style='color:") + TeachingTheme::deepGreen().name() + QStringLiteral(";'>已从文件导入：%1，点击「加载到课程库」入库。</p>"))
+    previewBrowser_->append((QStringLiteral("<p style='color:") + TeachingTheme::deepGreen().name() +
+                             QStringLiteral(";'>已从文件导入：%1，点击「加载到课程库」入库。</p>"))
                                 .arg(QFileInfo(path).fileName().toHtmlEscaped()));
 }
 
@@ -804,7 +809,9 @@ void CourseSystemPanel::onExportCourse() {
             QStringLiteral("<p style='color:red;'><b>导出失败：</b>%1</p>").arg(errMsg.toHtmlEscaped()));
         return;
     }
-    courseDetail_->append((QStringLiteral("<p style='color:") + TeachingTheme::deepGreen().name() + QStringLiteral(";'>已导出课程到：%1</p>")).arg(path.toHtmlEscaped()));
+    courseDetail_->append((QStringLiteral("<p style='color:") + TeachingTheme::deepGreen().name() +
+                           QStringLiteral(";'>已导出课程到：%1</p>"))
+                              .arg(path.toHtmlEscaped()));
 }
 
 void CourseSystemPanel::loadCustomCoursesFromSettings() {

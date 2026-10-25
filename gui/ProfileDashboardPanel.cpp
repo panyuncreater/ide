@@ -3,9 +3,9 @@
 // ============================================================
 
 #include "gui/ProfileDashboardPanel.h"
-#include "gui/TeachingTheme.h" // OPT-11: 颜色语义化
 #include "app/IdeController.h"
 #include "common/BackendExecutionService.h" // ARCH-10: 后端执行服务中间层
+#include "gui/TeachingTheme.h"              // OPT-11: 颜色语义化
 // ARCH-10: 仍保留 Bytecode.h/RegisterBytecode.h 仅用于 opcode 名称查询
 // （opCodeName / regOpName 是 inline 函数，无副作用，不构成对编译器内部实现的依赖）
 #include "compiler/backend-reg/RegisterBytecode.h"
@@ -533,8 +533,9 @@ void ProfileDashboardPanel::runProfile(int scenarioIndex) {
     runProfileBtn_->setEnabled(false);
     // 问题 6: 醒目的"运行中"状态 — 橙色背景 + 动画圆点 + 进度
     startStatusAnimation(QString::fromUtf8("运行中 [1/3] Interpreter"));
-    statusLabel_->setStyleSheet((QStringLiteral("QLabel { background: ") + TeachingTheme::solarizedOrange().name() + QStringLiteral("; color: white; border-radius: 4px;")
-                                + QStringLiteral("  padding: 4px 12px; font-weight: bold; }")));
+    statusLabel_->setStyleSheet((QStringLiteral("QLabel { background: ") + TeachingTheme::solarizedOrange().name() +
+                                 QStringLiteral("; color: white; border-radius: 4px;") +
+                                 QStringLiteral("  padding: 4px 12px; font-weight: bold; }")));
     // BUG-GUI-AUDIT-1 fix attempt: Qt 6 已移除通用 ExcludeTimers flag，保持 ExcludeUserInputEvents。
     QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
     // ROUND-76 fix: ExcludeUserInputEvents 不排除 QCloseEvent！
@@ -792,7 +793,9 @@ QString ProfileDashboardPanel::buildAnalysis(const std::vector<BackendTiming>& r
         }
     }
     if (!fastest) {
-        os << (QStringLiteral("<p style='color:") + TeachingTheme::errorStrong().name() + QStringLiteral(";'><b>所有后端均失败</b></p>")).toStdString();
+        os << (QStringLiteral("<p style='color:") + TeachingTheme::errorStrong().name() +
+               QStringLiteral(";'><b>所有后端均失败</b></p>"))
+                  .toStdString();
     } else {
         os << "<p><b>最快后端：</b>" << fastest->name << " (" << fastest->avgMicros << " μs)</p>";
         // 计算与最慢的比值
@@ -812,8 +815,10 @@ QString ProfileDashboardPanel::buildAnalysis(const std::vector<BackendTiming>& r
     for (const auto& r : results) {
         if (!r.success) {
             // R52-7 fix: errorMessage 来自 e.what()，可能含 < > & 字符（如 "expected <expression>"）需转义
-            os << (QStringLiteral("<p style='color:") + TeachingTheme::errorStrong().name() + QStringLiteral(";'><b>")).toStdString() << r.name << " 失败：</b>"
-               << QString::fromUtf8(r.errorMessage.c_str()).toHtmlEscaped().toStdString() << "</p>";
+            os << (QStringLiteral("<p style='color:") + TeachingTheme::errorStrong().name() + QStringLiteral(";'><b>"))
+                      .toStdString()
+               << r.name << " 失败：</b>" << QString::fromUtf8(r.errorMessage.c_str()).toHtmlEscaped().toStdString()
+               << "</p>";
         }
     }
     os << "<hr>";

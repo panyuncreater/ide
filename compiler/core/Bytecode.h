@@ -229,8 +229,8 @@ struct UpvalueDesc {
 
 /// 字节码块：一段连续的指令
 struct BytecodeChunk {
-    std::vector<uint8_t> code;                 // 指令字节流
-    std::vector<Value> constants;              // 常量池
+    std::vector<uint8_t> code;    // 指令字节流
+    std::vector<Value> constants; // 常量池
     // OPT-10: 行/列元数据紧凑存储（每字节 4B，原 lines+columns 为 8B）
     BytecodeLineColumnMap lineColumn;
     std::string name;                          // chunk 名称（函数名）

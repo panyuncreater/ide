@@ -23,9 +23,7 @@ struct BytecodeLineColumnMap {
     void resize(size_t n) { entries.resize(n); }
     size_t size() const { return entries.size(); }
     bool empty() const { return entries.empty(); }
-    int lineAt(size_t offset) const {
-        return offset < entries.size() ? static_cast<int>(entries[offset] >> 16) : 0;
-    }
+    int lineAt(size_t offset) const { return offset < entries.size() ? static_cast<int>(entries[offset] >> 16) : 0; }
     int columnAt(size_t offset) const {
         return offset < entries.size() ? static_cast<int>(entries[offset] & 0xFFFFu) : 0;
     }

@@ -483,15 +483,20 @@ ModuleSimResult ModuleSystemVisualizerPanel::runScenario(int idx) {
                          "后序执行 c→b→a。模块缓存确保 c 仅执行一次，"
                          "预扫描使函数支持前向引用。";
         // 依赖图：a → b → c（绿色节点表示成功）
-        result.dependencyGraphHtml = (QStringLiteral("<table cellpadding='0' cellspacing='0'><tr>") +
-                                      moduleNodeHtml("a.ml", TeachingTheme::moduleNodeGreenBg().name(), TeachingTheme::moduleOkFg().name()) + arrowCell("→") +
-                                      moduleNodeHtml("b.ml", TeachingTheme::moduleNodeBlueBg().name(), TeachingTheme::moduleNodeBlueBorder().name()) + arrowCell("→") +
-                                      moduleNodeHtml("c.ml", TeachingTheme::moduleNodeOrangeBg().name(), TeachingTheme::moduleNodeOrangeBorder().name()) +
-                                      (QStringLiteral("</tr></table>")
-                                                     + QStringLiteral("<p style='color:") + TeachingTheme::moduleOkFg().name() + QStringLiteral(";font-size:small;'>")
-                                                     + QStringLiteral("绿色边框=成功加载，箭头=import 依赖方向（加载顺序），")
-                                                     + QStringLiteral("执行顺序为 c→b→a（后序）</p>")))
-                                         .toStdString();
+        result.dependencyGraphHtml =
+            (QStringLiteral("<table cellpadding='0' cellspacing='0'><tr>") +
+             moduleNodeHtml("a.ml", TeachingTheme::moduleNodeGreenBg().name(), TeachingTheme::moduleOkFg().name()) +
+             arrowCell("→") +
+             moduleNodeHtml("b.ml", TeachingTheme::moduleNodeBlueBg().name(),
+                            TeachingTheme::moduleNodeBlueBorder().name()) +
+             arrowCell("→") +
+             moduleNodeHtml("c.ml", TeachingTheme::moduleNodeOrangeBg().name(),
+                            TeachingTheme::moduleNodeOrangeBorder().name()) +
+             (QStringLiteral("</tr></table>") + QStringLiteral("<p style='color:") +
+              TeachingTheme::moduleOkFg().name() + QStringLiteral(";font-size:small;'>") +
+              QStringLiteral("绿色边框=成功加载，箭头=import 依赖方向（加载顺序），") +
+              QStringLiteral("执行顺序为 c→b→a（后序）</p>")))
+                .toStdString();
         break;
     }
     case 1: {
@@ -511,14 +516,18 @@ ModuleSimResult ModuleSystemVisualizerPanel::runScenario(int idx) {
                          "访问未定义导出名时由 Environment::get 抛\"未定义变量\"错误。"
                          "语义参考 ES Modules + Python。";
         // 依赖图：a ⇄ b（橙色高亮表示循环延迟加载）
-        result.dependencyGraphHtml = (QStringLiteral("<table cellpadding='0' cellspacing='0'><tr>") +
-                                      moduleNodeHtml("a.ml", TeachingTheme::moduleNodeOrangeBg().name(), TeachingTheme::moduleNodeOrangeBorder().name()) + arrowCell("⇄") +
-                                      moduleNodeHtml("b.ml", TeachingTheme::moduleNodeOrangeBg().name(), TeachingTheme::moduleNodeOrangeBorder().name()) +
-                                      (QStringLiteral("</tr></table>")
-                                                     + QStringLiteral("<p style='color:") + TeachingTheme::moduleNodeOrangeBorder().name() + QStringLiteral(";font-size:small;'>")
-                                                     + QStringLiteral("橙色边框=循环导入延迟加载，⇄ 表示双向 import。")
-                                                     + QStringLiteral("加载栈 [a.ml, b.ml] 中再次遇到 a.ml 返回部分 env</p>")))
-                                         .toStdString();
+        result.dependencyGraphHtml =
+            (QStringLiteral("<table cellpadding='0' cellspacing='0'><tr>") +
+             moduleNodeHtml("a.ml", TeachingTheme::moduleNodeOrangeBg().name(),
+                            TeachingTheme::moduleNodeOrangeBorder().name()) +
+             arrowCell("⇄") +
+             moduleNodeHtml("b.ml", TeachingTheme::moduleNodeOrangeBg().name(),
+                            TeachingTheme::moduleNodeOrangeBorder().name()) +
+             (QStringLiteral("</tr></table>") + QStringLiteral("<p style='color:") +
+              TeachingTheme::moduleNodeOrangeBorder().name() + QStringLiteral(";font-size:small;'>") +
+              QStringLiteral("橙色边框=循环导入延迟加载，⇄ 表示双向 import。") +
+              QStringLiteral("加载栈 [a.ml, b.ml] 中再次遇到 a.ml 返回部分 env</p>")))
+                .toStdString();
         break;
     }
     case 2: {
@@ -534,14 +543,17 @@ ModuleSimResult ModuleSystemVisualizerPanel::runScenario(int idx) {
         // 依赖图：a → nonexist（红色虚线边框表示未找到）
         result.dependencyGraphHtml =
             (QStringLiteral("<table cellpadding='0' cellspacing='0'><tr>") +
-             moduleNodeHtml("a.ml", TeachingTheme::moduleNodeGreenBg().name(), TeachingTheme::moduleOkFg().name()) + arrowCell("→") +
-             (QStringLiteral("<td style='border:2px dashed ") + TeachingTheme::dangerRed().name() + QStringLiteral(";background:") + TeachingTheme::moduleNodeErrorBg().name() + QStringLiteral(";padding:8px 14px;")
-                            + QStringLiteral("font-family:%1;font-size:13px;font-weight:bold;color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";'>nonexist.ml ✗</td>"))
+             moduleNodeHtml("a.ml", TeachingTheme::moduleNodeGreenBg().name(), TeachingTheme::moduleOkFg().name()) +
+             arrowCell("→") +
+             (QStringLiteral("<td style='border:2px dashed ") + TeachingTheme::dangerRed().name() +
+              QStringLiteral(";background:") + TeachingTheme::moduleNodeErrorBg().name() +
+              QStringLiteral(";padding:8px 14px;") +
+              QStringLiteral("font-family:%1;font-size:13px;font-weight:bold;color:") +
+              TeachingTheme::dangerRed().name() + QStringLiteral(";'>nonexist.ml ✗</td>"))
                  .arg(GuiTextUtils::monoFontFamilyQss()) +
-             (QStringLiteral("</tr></table>")
-                            + QStringLiteral("<p style='color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";font-size:small;'>")
-                            + QStringLiteral("虚线红边框=文件未找到，→ import 依赖方向。")
-                            + QStringLiteral("路径解析失败立即抛错并沿 import 链传播</p>")))
+             (QStringLiteral("</tr></table>") + QStringLiteral("<p style='color:") + TeachingTheme::dangerRed().name() +
+              QStringLiteral(";font-size:small;'>") + QStringLiteral("虚线红边框=文件未找到，→ import 依赖方向。") +
+              QStringLiteral("路径解析失败立即抛错并沿 import 链传播</p>")))
                 .toStdString();
         break;
     }
@@ -560,15 +572,18 @@ ModuleSimResult ModuleSystemVisualizerPanel::runScenario(int idx) {
         // 依赖图：单节点 badprescan（橙色警告）
         result.dependencyGraphHtml =
             (QStringLiteral("<table cellpadding='0' cellspacing='0'><tr>") +
-             moduleNodeHtml("badprescan.ml", TeachingTheme::moduleNodeYellowBg().name(), TeachingTheme::moduleCycleFg().name()) +
-             (QStringLiteral("</tr></table>")
-                            + QStringLiteral("<table cellpadding='0' cellspacing='0' style='margin-top:8px;'><tr>")
-                            + QStringLiteral("<td style='border:1px solid #bbb;background:") + TeachingTheme::surfaceSunken().name() + QStringLiteral(";padding:6px 10px;")
-                            + QStringLiteral("font-family:%1;font-size:12px;'>export fun main() { helper(); }")
-                            + QStringLiteral("  →  <span style='color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";'>helper() 未预扫描收集</span>")
-                            + QStringLiteral("  → 运行时失败</td></tr></table>")
-                            + QStringLiteral("<p style='color:") + TeachingTheme::moduleCycleFg().name() + QStringLiteral(";font-size:small;'>")
-                            + QStringLiteral("橙色边框=预扫描异常。漏收集 FunDecl 导致前向引用失败</p>"))
+             moduleNodeHtml("badprescan.ml", TeachingTheme::moduleNodeYellowBg().name(),
+                            TeachingTheme::moduleCycleFg().name()) +
+             (QStringLiteral("</tr></table>") +
+              QStringLiteral("<table cellpadding='0' cellspacing='0' style='margin-top:8px;'><tr>") +
+              QStringLiteral("<td style='border:1px solid #bbb;background:") + TeachingTheme::surfaceSunken().name() +
+              QStringLiteral(";padding:6px 10px;") +
+              QStringLiteral("font-family:%1;font-size:12px;'>export fun main() { helper(); }") +
+              QStringLiteral("  →  <span style='color:") + TeachingTheme::dangerRed().name() +
+              QStringLiteral(";'>helper() 未预扫描收集</span>") + QStringLiteral("  → 运行时失败</td></tr></table>") +
+              QStringLiteral("<p style='color:") + TeachingTheme::moduleCycleFg().name() +
+              QStringLiteral(";font-size:small;'>") +
+              QStringLiteral("橙色边框=预扫描异常。漏收集 FunDecl 导致前向引用失败</p>"))
                  .arg(GuiTextUtils::monoFontFamilyQss()))
                 .toStdString();
         break;
@@ -623,8 +638,8 @@ void ModuleSystemVisualizerPanel::renderScenarioResult(const ModuleSimResult& re
         html += QStringLiteral("<table border='1' cellpadding='5' cellspacing='0' "
                                "style='font-family:%1;font-size:12px;border-collapse:collapse;'>")
                     .arg(monoFamily);
-        html += (QStringLiteral("<tr style='background:") + TeachingTheme::tableHeaderBg().name() + QStringLiteral(";'><th>步骤</th><th>模块</th>")
-                               + QStringLiteral("<th>操作</th><th>状态</th></tr>"));
+        html += (QStringLiteral("<tr style='background:") + TeachingTheme::tableHeaderBg().name() +
+                 QStringLiteral(";'><th>步骤</th><th>模块</th>") + QStringLiteral("<th>操作</th><th>状态</th></tr>"));
         for (const auto& s : result.steps) {
             html += QStringLiteral("<tr><td style='text-align:center;'>%1</td><td>%2</td><td>%3</td>"
                                    "<td style='text-align:center;color:%4;'>%5</td></tr>")
@@ -637,8 +652,9 @@ void ModuleSystemVisualizerPanel::renderScenarioResult(const ModuleSimResult& re
     // 模拟代码片段
     if (!result.scenarioCode.empty()) {
         html += QStringLiteral("<h3>场景代码</h3>");
-        html += (QStringLiteral("<pre style='background:") + TeachingTheme::surfaceSunken().name() + QStringLiteral(";padding:8px;border:1px solid #ddd;")
-                               + QStringLiteral("font-family:%1;font-size:12px;white-space:pre-wrap;'>"))
+        html += (QStringLiteral("<pre style='background:") + TeachingTheme::surfaceSunken().name() +
+                 QStringLiteral(";padding:8px;border:1px solid #ddd;") +
+                 QStringLiteral("font-family:%1;font-size:12px;white-space:pre-wrap;'>"))
                     .arg(monoFamily);
         html += htmlEscape(result.scenarioCode);
         html += QStringLiteral("</pre>");

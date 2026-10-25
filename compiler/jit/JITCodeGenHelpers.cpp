@@ -1410,8 +1410,7 @@ void JITBackend::emitModulo(x86::Assembler& a, Label epilogue, size_t chunkIdx) 
 // ------------------------------------------------------------------
 // OP_LOOP：循环回边（含 safepoint GC 轮询 + OSR 回边计数 + OSR 入口点生成）
 // ------------------------------------------------------------------
-void JITBackend::emitLoop(x86::Assembler& a, Label epilogue, Label jumpTarget, size_t chunkIdx,
-                          uint32_t loopSiteIdx) {
+void JITBackend::emitLoop(x86::Assembler& a, Label epilogue, Label jumpTarget, size_t chunkIdx, uint32_t loopSiteIdx) {
     // R157: OSR 回边计数器注入（仅当 osrLoopThresholds_[chunkIdx] > 0 时）
     // 每次循环回边递增计数器，超阈值时触发特化重编译。
     // 编译期过滤：阈值为 0 时完全跳过代码生成，运行时零开销（R151 教训）。

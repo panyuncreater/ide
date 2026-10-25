@@ -620,8 +620,9 @@ void GcVisualizerPanel::renderScenarioResult(const GcSimResult& result) {
         html += QStringLiteral("<table border='1' cellpadding='6' cellspacing='0' "
                                "style='font-family:%1;font-size:13px;border-collapse:collapse;'>")
                     .arg(monoFamily);
-        html += (QStringLiteral("<tr style='background:") + TeachingTheme::tableHeaderBg().name() + QStringLiteral(";'><th>步骤</th><th>trackedCount</th>")
-                               + QStringLiteral("<th>lastMarked</th><th>lastCollected</th><th>totalGc</th></tr>"));
+        html += (QStringLiteral("<tr style='background:") + TeachingTheme::tableHeaderBg().name() +
+                 QStringLiteral(";'><th>步骤</th><th>trackedCount</th>") +
+                 QStringLiteral("<th>lastMarked</th><th>lastCollected</th><th>totalGc</th></tr>"));
         for (const auto& step : result.steps) {
             html += QStringLiteral("<tr><td>%1</td><td>%2</td><td>%3</td><td>%4</td><td>%5</td></tr>")
                         .arg(htmlEscape(step.label), QString::number(static_cast<qulonglong>(step.trackedCount)),
@@ -635,8 +636,9 @@ void GcVisualizerPanel::renderScenarioResult(const GcSimResult& result) {
     // 模拟代码片段
     if (!result.scenarioCode.empty()) {
         html += QStringLiteral("<h3>模拟代码</h3>");
-        html += (QStringLiteral("<pre style='background:") + TeachingTheme::surfaceSunken().name() + QStringLiteral(";padding:8px;border:1px solid #ddd;")
-                               + QStringLiteral("font-family:%1;font-size:12px;white-space:pre-wrap;'>"))
+        html += (QStringLiteral("<pre style='background:") + TeachingTheme::surfaceSunken().name() +
+                 QStringLiteral(";padding:8px;border:1px solid #ddd;") +
+                 QStringLiteral("font-family:%1;font-size:12px;white-space:pre-wrap;'>"))
                     .arg(monoFamily);
         html += htmlEscape(result.scenarioCode);
         html += QStringLiteral("</pre>");

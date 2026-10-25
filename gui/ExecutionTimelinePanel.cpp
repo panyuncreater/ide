@@ -58,8 +58,9 @@ void ExecutionTimelinePanel::buildToolbar(QWidget* host) {
     recordBtn_ = new QPushButton(tr("录制"), host);
     recordBtn_->setCheckable(true);
     recordBtn_->setToolTip(tr("开始/停止录制执行轨迹"));
-    recordBtn_->setStyleSheet((QStringLiteral("QPushButton { padding: 4px 12px; }")
-                              + QStringLiteral("QPushButton:checked { background-color: ") + TeachingTheme::error().name() + QStringLiteral("; color: white; }")));
+    recordBtn_->setStyleSheet((QStringLiteral("QPushButton { padding: 4px 12px; }") +
+                               QStringLiteral("QPushButton:checked { background-color: ") +
+                               TeachingTheme::error().name() + QStringLiteral("; color: white; }")));
 
     clearBtn_ = new QPushButton(tr("清空"), host);
     clearBtn_->setToolTip(tr("清空所有已录制的快照"));
@@ -127,15 +128,19 @@ void ExecutionTimelinePanel::buildCentralArea(QWidget* host) {
 
     stepList_ = new QListWidget(splitter);
     stepList_->setSelectionMode(QAbstractItemView::SingleSelection);
-    stepList_->setStyleSheet((QStringLiteral("QListWidget { border: none; border-right: 1px solid ") + TeachingTheme::border().name() + QStringLiteral("; font-family: Consolas, ")
-                             + QStringLiteral("'Courier New', monospace; font-size: 11pt; }")
-                             + QStringLiteral("QListWidget::item { padding: 2px 6px; }")
-                             + QStringLiteral("QListWidget::item:selected { background-color: ") + TeachingTheme::ideSelectedBg().name() + QStringLiteral("; color: ") + TeachingTheme::textPrimary().name() + QStringLiteral("; }")));
+    stepList_->setStyleSheet(
+        (QStringLiteral("QListWidget { border: none; border-right: 1px solid ") + TeachingTheme::border().name() +
+         QStringLiteral("; font-family: Consolas, ") + QStringLiteral("'Courier New', monospace; font-size: 11pt; }") +
+         QStringLiteral("QListWidget::item { padding: 2px 6px; }") +
+         QStringLiteral("QListWidget::item:selected { background-color: ") + TeachingTheme::ideSelectedBg().name() +
+         QStringLiteral("; color: ") + TeachingTheme::textPrimary().name() + QStringLiteral("; }")));
 
     detailView_ = new QTextBrowser(splitter);
     detailView_->setOpenExternalLinks(false);
-    detailView_->setStyleSheet((QStringLiteral("QTextBrowser { border: none; font-family: Consolas, 'Courier New', monospace; ")
-                               + QStringLiteral("font-size: 10pt; background-color: ") + TeachingTheme::surface().name() + QStringLiteral("; }")));
+    detailView_->setStyleSheet(
+        (QStringLiteral("QTextBrowser { border: none; font-family: Consolas, 'Courier New', monospace; ") +
+         QStringLiteral("font-size: 10pt; background-color: ") + TeachingTheme::surface().name() +
+         QStringLiteral("; }")));
 
     splitter->addWidget(stepList_);
     splitter->addWidget(detailView_);
@@ -200,7 +205,8 @@ void ExecutionTimelinePanel::onRecordingToggled(bool checked) {
         detailView_->setHtml(tr("<div style='color:%1; padding:16px;'>"
                                 "<h3>\xE2\x8F\xBA 正在录制…</h3>"
                                 "<p>请在主编辑器运行代码，执行轨迹会实时出现在左侧列表。</p>"
-                                "<p>再次点击「录制」停止，即可开始回放。</p></div>").arg(TeachingTheme::success().name()));
+                                "<p>再次点击「录制」停止，即可开始回放。</p></div>")
+                                 .arg(TeachingTheme::success().name()));
         if (recordBtn_)
             recordBtn_->setText(tr("\xE2\x8F\xBA 录制中"));
     } else {
@@ -361,7 +367,8 @@ void ExecutionTimelinePanel::showEmptyHint() {
                             "<h3>可回放执行时间轴</h3>"
                             "<p>点击左上角「录制」按钮开始记录执行轨迹，然后在主编辑器运行代码。</p>"
                             "<p>录制结束后，可通过滑块 / 步进按钮 / 点击列表项，随机访问任意一步的栈、"
-                            "局部变量、全局变量与调用栈快照。</p></div>").arg(TeachingTheme::textHint().name()));
+                            "局部变量、全局变量与调用栈快照。</p></div>")
+                             .arg(TeachingTheme::textHint().name()));
 }
 
 void ExecutionTimelinePanel::navigateToStep(int idx) {
@@ -424,15 +431,17 @@ QString ExecutionTimelinePanel::formatStepItem(const TraceSnapshot& snap) {
 QString ExecutionTimelinePanel::formatDetailHtml(const TraceSnapshot& snap) {
     QString html;
     html += "<html><body style='font-family: Consolas, monospace; font-size: 10pt;'>";
-    html += (QStringLiteral("<h3 style='color:") + TeachingTheme::info().name() + QStringLiteral("; margin:0 0 8px 0;'>Step #%1 — %2</h3>"))
+    html += (QStringLiteral("<h3 style='color:") + TeachingTheme::info().name() +
+             QStringLiteral("; margin:0 0 8px 0;'>Step #%1 — %2</h3>"))
                 .arg(snap.step)
                 .arg(backendName(snap.backend));
-    html += (QStringLiteral("<table style='margin-bottom:8px;'>")
-                    + QStringLiteral("<tr><td style='color:") + TeachingTheme::textHint().name() + QStringLiteral(";'>行号:</td><td>%1</td>")
-                    + QStringLiteral("<td style='color:") + TeachingTheme::textHint().name() + QStringLiteral("; padding-left:16px;'>IP:</td><td>%2</td>")
-                    + QStringLiteral("<td style='color:") + TeachingTheme::textHint().name() + QStringLiteral("; padding-left:16px;'>帧深:</td><td>%3</td></tr>")
-                    + QStringLiteral("<tr><td style='color:") + TeachingTheme::textHint().name() + QStringLiteral(";'>操作:</td><td colspan='5'>%4</td></tr>")
-                    + QStringLiteral("</table>"))
+    html += (QStringLiteral("<table style='margin-bottom:8px;'>") + QStringLiteral("<tr><td style='color:") +
+             TeachingTheme::textHint().name() + QStringLiteral(";'>行号:</td><td>%1</td>") +
+             QStringLiteral("<td style='color:") + TeachingTheme::textHint().name() +
+             QStringLiteral("; padding-left:16px;'>IP:</td><td>%2</td>") + QStringLiteral("<td style='color:") +
+             TeachingTheme::textHint().name() + QStringLiteral("; padding-left:16px;'>帧深:</td><td>%3</td></tr>") +
+             QStringLiteral("<tr><td style='color:") + TeachingTheme::textHint().name() +
+             QStringLiteral(";'>操作:</td><td colspan='5'>%4</td></tr>") + QStringLiteral("</table>"))
                 .arg(snap.line)
                 .arg(snap.ip)
                 .arg(snap.frameCount)
@@ -443,10 +452,14 @@ QString ExecutionTimelinePanel::formatDetailHtml(const TraceSnapshot& snap) {
                             ? snap.registerStrings
                             : snap.stackStrings;
     if (!stack.empty()) {
-        html += (QStringLiteral("<h4 style='color:") + TeachingTheme::success().name() + QStringLiteral("; margin:8px 0 4px 0;'>栈 / 寄存器</h4><div style='background:") + TeachingTheme::surfaceHover().name() + QStringLiteral("; ")
-                + QStringLiteral("padding:4px; border:1px solid ") + TeachingTheme::border().name() + QStringLiteral(";'>"));
+        html +=
+            (QStringLiteral("<h4 style='color:") + TeachingTheme::success().name() +
+             QStringLiteral("; margin:8px 0 4px 0;'>栈 / 寄存器</h4><div style='background:") +
+             TeachingTheme::surfaceHover().name() + QStringLiteral("; ") +
+             QStringLiteral("padding:4px; border:1px solid ") + TeachingTheme::border().name() + QStringLiteral(";'>"));
         for (size_t i = 0; i < stack.size(); ++i) {
-            html += (QStringLiteral("<div><span style='color:") + TeachingTheme::textHint().name() + QStringLiteral(";'>[%1]</span> %2</div>"))
+            html += (QStringLiteral("<div><span style='color:") + TeachingTheme::textHint().name() +
+                     QStringLiteral(";'>[%1]</span> %2</div>"))
                         .arg(i)
                         .arg(QString::fromStdString(stack[i]).toHtmlEscaped());
         }
@@ -455,9 +468,11 @@ QString ExecutionTimelinePanel::formatDetailHtml(const TraceSnapshot& snap) {
 
     // 可见变量
     if (!snap.visibleVarsStrings.empty()) {
-        html += (QStringLiteral("<h4 style='color:") + TeachingTheme::warning().name() + QStringLiteral("; margin:8px 0 4px 0;'>可见变量</h4><table style='width:100%;'>"));
+        html += (QStringLiteral("<h4 style='color:") + TeachingTheme::warning().name() +
+                 QStringLiteral("; margin:8px 0 4px 0;'>可见变量</h4><table style='width:100%;'>"));
         for (const auto& kv : snap.visibleVarsStrings) {
-            html += (QStringLiteral("<tr><td style='color:") + TeachingTheme::info().name() + QStringLiteral("; width:35%;'>%1</td><td>%2</td></tr>"))
+            html += (QStringLiteral("<tr><td style='color:") + TeachingTheme::info().name() +
+                     QStringLiteral("; width:35%;'>%1</td><td>%2</td></tr>"))
                         .arg(QString::fromStdString(kv.first).toHtmlEscaped())
                         .arg(QString::fromStdString(kv.second).toHtmlEscaped());
         }
@@ -466,19 +481,22 @@ QString ExecutionTimelinePanel::formatDetailHtml(const TraceSnapshot& snap) {
 
     // 调用栈
     if (!snap.callStack.empty()) {
-        html += (QStringLiteral("<h4 style='color:") + TeachingTheme::error().name() + QStringLiteral("; margin:8px 0 4px 0;'>调用栈</h4>"));
+        html += (QStringLiteral("<h4 style='color:") + TeachingTheme::error().name() +
+                 QStringLiteral("; margin:8px 0 4px 0;'>调用栈</h4>"));
         for (size_t i = 0; i < snap.callStack.size(); ++i) {
             const auto& f = snap.callStack[i];
             html += QString("<div style='margin:2px 0; padding:2px 4px; background:%1;'>"
                             "<b>%2</b> @ L%3 (depth=%4)</div>")
-                        .arg(i == snap.callStack.size() - 1 ? TeachingTheme::ideSelectedBg().name() : TeachingTheme::surfaceHover().name())
+                        .arg(i == snap.callStack.size() - 1 ? TeachingTheme::ideSelectedBg().name()
+                                                            : TeachingTheme::surfaceHover().name())
                         .arg(QString::fromStdString(f.functionName).toHtmlEscaped())
                         .arg(f.line)
                         .arg(f.depth);
             if (!f.locals.empty()) {
                 html += "<table style='margin-left:16px;'>";
                 for (const auto& kv : f.locals) {
-                    html += (QStringLiteral("<tr><td style='color:") + TeachingTheme::textHint().name() + QStringLiteral(";'>%1</td><td>%2</td></tr>"))
+                    html += (QStringLiteral("<tr><td style='color:") + TeachingTheme::textHint().name() +
+                             QStringLiteral(";'>%1</td><td>%2</td></tr>"))
                                 .arg(QString::fromStdString(kv.first).toHtmlEscaped())
                                 .arg(QString::fromStdString(kv.second.toString()).toHtmlEscaped());
                 }
@@ -489,9 +507,11 @@ QString ExecutionTimelinePanel::formatDetailHtml(const TraceSnapshot& snap) {
 
     // 全局变量
     if (!snap.globalsStrings.empty()) {
-        html += (QStringLiteral("<h4 style='color:") + TeachingTheme::textHint().name() + QStringLiteral("; margin:8px 0 4px 0;'>全局变量</h4><table style='width:100%;'>"));
+        html += (QStringLiteral("<h4 style='color:") + TeachingTheme::textHint().name() +
+                 QStringLiteral("; margin:8px 0 4px 0;'>全局变量</h4><table style='width:100%;'>"));
         for (const auto& kv : snap.globalsStrings) {
-            html += (QStringLiteral("<tr><td style='color:") + TeachingTheme::info().name() + QStringLiteral("; width:35%;'>%1</td><td>%2</td></tr>"))
+            html += (QStringLiteral("<tr><td style='color:") + TeachingTheme::info().name() +
+                     QStringLiteral("; width:35%;'>%1</td><td>%2</td></tr>"))
                         .arg(QString::fromStdString(kv.first).toHtmlEscaped())
                         .arg(QString::fromStdString(kv.second).toHtmlEscaped());
         }

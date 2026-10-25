@@ -36,8 +36,10 @@ CodeJourneyInfoPanel::CodeJourneyInfoPanel(QWidget* parent) : TeachingPanelBase(
 
     // 进度提示标签
     progressLabel_ = new QLabel(this);
-    progressLabel_->setStyleSheet((QStringLiteral("QLabel { background: ") + TeachingTheme::surfaceHover().name() + QStringLiteral("; border: 1px solid ") + TeachingTheme::border().name() + QStringLiteral(";")
-                                  + QStringLiteral("  border-radius: 4px; padding: 6px 8px; font-size: 12px; }")));
+    progressLabel_->setStyleSheet((QStringLiteral("QLabel { background: ") + TeachingTheme::surfaceHover().name() +
+                                   QStringLiteral("; border: 1px solid ") + TeachingTheme::border().name() +
+                                   QStringLiteral(";") +
+                                   QStringLiteral("  border-radius: 4px; padding: 6px 8px; font-size: 12px; }")));
     progressLabel_->setWordWrap(true);
     mainLayout->addWidget(progressLabel_);
 
@@ -100,13 +102,17 @@ void CodeJourneyInfoPanel::refreshProgress() {
     if (journeyCompleted_) {
         html = QString::fromUtf8("<b>🎉 旅程完成！</b> 你已观看代码的生命旅程信息图。<br>"
                                  "可点击下方按钮深入探索每个阶段。");
-        progressLabel_->setStyleSheet((QStringLiteral("QLabel { background: ") + TeachingTheme::success().name() + QStringLiteral("; color: white; border: none;")
-                                      + QStringLiteral("  border-radius: 4px; padding: 6px 8px; font-size: 12px; font-weight: bold; }")));
+        progressLabel_->setStyleSheet(
+            (QStringLiteral("QLabel { background: ") + TeachingTheme::success().name() +
+             QStringLiteral("; color: white; border: none;") +
+             QStringLiteral("  border-radius: 4px; padding: 6px 8px; font-size: 12px; font-weight: bold; }")));
     } else {
         html = QString::fromUtf8("<b>📖 代码的生命旅程</b> — 一张静态信息图展示编译管线。<br>"
                                  "点进来看即算完成，也可点击下方按钮深入探索。");
-        progressLabel_->setStyleSheet((QStringLiteral("QLabel { background: ") + TeachingTheme::surfaceHover().name() + QStringLiteral("; border: 1px solid ") + TeachingTheme::border().name() + QStringLiteral(";")
-                                      + QStringLiteral("  border-radius: 4px; padding: 6px 8px; font-size: 12px; }")));
+        progressLabel_->setStyleSheet((QStringLiteral("QLabel { background: ") + TeachingTheme::surfaceHover().name() +
+                                       QStringLiteral("; border: 1px solid ") + TeachingTheme::border().name() +
+                                       QStringLiteral(";") +
+                                       QStringLiteral("  border-radius: 4px; padding: 6px 8px; font-size: 12px; }")));
     }
     progressLabel_->setText(html);
 }
@@ -124,104 +130,89 @@ QString CodeJourneyInfoPanel::buildJourneyHtml() const {
     const QString stage2Hex = TeachingTheme::learningStageColor(2).name(); // 蓝
     const QString stage3Hex = TeachingTheme::learningStageColor(3).name(); // 紫
     const QString stage4Hex = TeachingTheme::learningStageColor(4).name(); // 红
-    return (QStringLiteral("<html><body style='font-family: \"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains ")
-               + QStringLiteral("Mono\",\"Source Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace; font-size: 13px; ")
-               + QStringLiteral("line-height: 1.6;'>")
-               + QStringLiteral("<h2 style='color: %3;'>🚀 代码的生命旅程</h2>")
-               + QStringLiteral("<p style='color: #666;'>从你写下代码到看到结果，中间发生了什么？</p>")
-               + QStringLiteral("<hr>")
-               + QStringLiteral("<h3 style='color: %2;'>示例代码</h3>")
-               + QStringLiteral("<pre style='background: %1; padding: 8px; border-radius: 4px;'>print(1 + 2 * 3);</pre>")
-               + QStringLiteral("<p>👆 这行代码最终输出 <b>7</b>。它是怎么变成 7 的？</p>")
-               + QStringLiteral("<hr>")
+    return (QStringLiteral(
+                "<html><body style='font-family: \"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains ") +
+            QStringLiteral("Mono\",\"Source Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace; "
+                           "font-size: 13px; ") +
+            QStringLiteral("line-height: 1.6;'>") + QStringLiteral("<h2 style='color: %3;'>🚀 代码的生命旅程</h2>") +
+            QStringLiteral("<p style='color: #666;'>从你写下代码到看到结果，中间发生了什么？</p>") +
+            QStringLiteral("<hr>") + QStringLiteral("<h3 style='color: %2;'>示例代码</h3>") +
+            QStringLiteral("<pre style='background: %1; padding: 8px; border-radius: 4px;'>print(1 + 2 * 3);</pre>") +
+            QStringLiteral("<p>👆 这行代码最终输出 <b>7</b>。它是怎么变成 7 的？</p>") + QStringLiteral("<hr>")
 
-               + QStringLiteral("<h3 style='color: ") + TeachingTheme::solarizedOrange().name() + QStringLiteral(";'>① 你写的代码（源码）</h3>")
-               + QStringLiteral("<p>编辑器中的纯文本。计算机还不理解这些字符的含义。</p>")
-               + QStringLiteral("<pre style='background: %1; padding: 8px; border-radius: 4px;'>print(1 + 2 * 3);</pre>")
-               + QStringLiteral("<p style='color: ") + TeachingTheme::textHint().name() + QStringLiteral(";'>👇 词法分析</p>")
-               + QStringLiteral("<hr>")
+            + QStringLiteral("<h3 style='color: ") + TeachingTheme::solarizedOrange().name() +
+            QStringLiteral(";'>① 你写的代码（源码）</h3>") +
+            QStringLiteral("<p>编辑器中的纯文本。计算机还不理解这些字符的含义。</p>") +
+            QStringLiteral("<pre style='background: %1; padding: 8px; border-radius: 4px;'>print(1 + 2 * 3);</pre>") +
+            QStringLiteral("<p style='color: ") + TeachingTheme::textHint().name() +
+            QStringLiteral(";'>👇 词法分析</p>") + QStringLiteral("<hr>")
 
-               + QStringLiteral("<h3 style='color: %4;'>② Token 表（词法分析）</h3>")
-               + QStringLiteral("<p>词法分析器将源码切分为有类型的片段：</p>")
-               + QStringLiteral("<pre style='background: %1; padding: 8px; border-radius: 4px;'>")
-               + QStringLiteral("Token  | 类型       | lexeme<br>")
-               + QStringLiteral("------|-----------|--------<br>")
-               + QStringLiteral("  1   | IDENT     | print<br>")
-               + QStringLiteral("  2   | LPAREN    | (<br>")
-               + QStringLiteral("  3   | INT       | 1<br>")
-               + QStringLiteral("  4   | PLUS      | +<br>")
-               + QStringLiteral("  5   | INT       | 2<br>")
-               + QStringLiteral("  6   | STAR      | *<br>")
-               + QStringLiteral("  7   | INT       | 3<br>")
-               + QStringLiteral("  8   | RPAREN    | )<br>")
-               + QStringLiteral("  9   | SEMICOLON | ;")
-               + QStringLiteral("</pre>")
-               + QStringLiteral("<p>💡 注释被分离出主流（不计入 Token 表）</p>")
-               + QStringLiteral("<p style='color: ") + TeachingTheme::textHint().name() + QStringLiteral(";'>👇 语法分析</p>")
-               + QStringLiteral("<hr>")
+            + QStringLiteral("<h3 style='color: %4;'>② Token 表（词法分析）</h3>") +
+            QStringLiteral("<p>词法分析器将源码切分为有类型的片段：</p>") +
+            QStringLiteral("<pre style='background: %1; padding: 8px; border-radius: 4px;'>") +
+            QStringLiteral("Token  | 类型       | lexeme<br>") + QStringLiteral("------|-----------|--------<br>") +
+            QStringLiteral("  1   | IDENT     | print<br>") + QStringLiteral("  2   | LPAREN    | (<br>") +
+            QStringLiteral("  3   | INT       | 1<br>") + QStringLiteral("  4   | PLUS      | +<br>") +
+            QStringLiteral("  5   | INT       | 2<br>") + QStringLiteral("  6   | STAR      | *<br>") +
+            QStringLiteral("  7   | INT       | 3<br>") + QStringLiteral("  8   | RPAREN    | )<br>") +
+            QStringLiteral("  9   | SEMICOLON | ;") + QStringLiteral("</pre>") +
+            QStringLiteral("<p>💡 注释被分离出主流（不计入 Token 表）</p>") + QStringLiteral("<p style='color: ") +
+            TeachingTheme::textHint().name() + QStringLiteral(";'>👇 语法分析</p>") + QStringLiteral("<hr>")
 
-               + QStringLiteral("<h3 style='color: %5;'>③ AST（语法分析）</h3>")
-               + QStringLiteral("<p>解析器根据优先级规则构建树形结构：</p>")
-               + QStringLiteral("<pre style='background: %1; padding: 8px; border-radius: 4px;'>")
-               + QStringLiteral("Print<br>")
-               + QStringLiteral(" └── BinaryOp(+)<br>")
-               + QStringLiteral("      ├── Number(1)<br>")
-               + QStringLiteral("      └── BinaryOp(*)<br>")
-               + QStringLiteral("           ├── Number(2)<br>")
-               + QStringLiteral("           └── Number(3)")
-               + QStringLiteral("</pre>")
-               + QStringLiteral("<p>💡 注意 <b>*</b> 节点在 <b>+</b> 节点的下面——乘法优先级更高！</p>")
-               + QStringLiteral("<p>括号改变结构：<code>(1+2)*3</code> 会变成 * 在根、+ 在左子树</p>")
-               + QStringLiteral("<p style='color: ") + TeachingTheme::textHint().name() + QStringLiteral(";'>👇 编译</p>")
-               + QStringLiteral("<hr>")
+            + QStringLiteral("<h3 style='color: %5;'>③ AST（语法分析）</h3>") +
+            QStringLiteral("<p>解析器根据优先级规则构建树形结构：</p>") +
+            QStringLiteral("<pre style='background: %1; padding: 8px; border-radius: 4px;'>") +
+            QStringLiteral("Print<br>") + QStringLiteral(" └── BinaryOp(+)<br>") +
+            QStringLiteral("      ├── Number(1)<br>") + QStringLiteral("      └── BinaryOp(*)<br>") +
+            QStringLiteral("           ├── Number(2)<br>") + QStringLiteral("           └── Number(3)") +
+            QStringLiteral("</pre>") +
+            QStringLiteral("<p>💡 注意 <b>*</b> 节点在 <b>+</b> 节点的下面——乘法优先级更高！</p>") +
+            QStringLiteral("<p>括号改变结构：<code>(1+2)*3</code> 会变成 * 在根、+ 在左子树</p>") +
+            QStringLiteral("<p style='color: ") + TeachingTheme::textHint().name() + QStringLiteral(";'>👇 编译</p>") +
+            QStringLiteral("<hr>")
 
-               + QStringLiteral("<h3 style='color: ") + TeachingTheme::solarizedCyan().name() + QStringLiteral(";'>④ IR（中间表示）</h3>")
-               + QStringLiteral("<p>AST 被转换为 IR（三地址码），便于优化：</p>")
-               + QStringLiteral("<pre style='background: %1; padding: 8px; border-radius: 4px;'>")
-               + QStringLiteral("function main:<br>")
-               + QStringLiteral("  LOAD_CONST v1, 1      ; v1 = 1<br>")
-               + QStringLiteral("  LOAD_CONST v2, 2      ; v2 = 2<br>")
-               + QStringLiteral("  LOAD_CONST v3, 3      ; v3 = 3<br>")
-               + QStringLiteral("  MUL v4, v2, v3        ; v4 = v2 * v3 = 6<br>")
-               + QStringLiteral("  ADD v5, v1, v4        ; v5 = v1 + v4 = 7<br>")
-               + QStringLiteral("  PRINT v5              ; 输出 7<br>")
-               + QStringLiteral("  RETURN")
-               + QStringLiteral("</pre>")
-               + QStringLiteral("<p>💡 IR 优化 pass 可在此阶段进行：常量折叠、DCE、复制传播等</p>")
-               + QStringLiteral("<p style='color: ") + TeachingTheme::textHint().name() + QStringLiteral(";'>👇 后端 lowering</p>")
-               + QStringLiteral("<hr>")
+            + QStringLiteral("<h3 style='color: ") + TeachingTheme::solarizedCyan().name() +
+            QStringLiteral(";'>④ IR（中间表示）</h3>") +
+            QStringLiteral("<p>AST 被转换为 IR（三地址码），便于优化：</p>") +
+            QStringLiteral("<pre style='background: %1; padding: 8px; border-radius: 4px;'>") +
+            QStringLiteral("function main:<br>") + QStringLiteral("  LOAD_CONST v1, 1      ; v1 = 1<br>") +
+            QStringLiteral("  LOAD_CONST v2, 2      ; v2 = 2<br>") +
+            QStringLiteral("  LOAD_CONST v3, 3      ; v3 = 3<br>") +
+            QStringLiteral("  MUL v4, v2, v3        ; v4 = v2 * v3 = 6<br>") +
+            QStringLiteral("  ADD v5, v1, v4        ; v5 = v1 + v4 = 7<br>") +
+            QStringLiteral("  PRINT v5              ; 输出 7<br>") + QStringLiteral("  RETURN") +
+            QStringLiteral("</pre>") +
+            QStringLiteral("<p>💡 IR 优化 pass 可在此阶段进行：常量折叠、DCE、复制传播等</p>") +
+            QStringLiteral("<p style='color: ") + TeachingTheme::textHint().name() +
+            QStringLiteral(";'>👇 后端 lowering</p>") + QStringLiteral("<hr>")
 
-               + QStringLiteral("<h3 style='color: ") + TeachingTheme::textHint().name() + QStringLiteral(";'>⑤ 字节码（虚拟机指令）</h3>")
-               + QStringLiteral("<p>IR 被翻译为栈式 VM 字节码：</p>")
-               + QStringLiteral("<pre style='background: %1; padding: 8px; border-radius: 4px;'>")
-               + QStringLiteral("StackVM 字节码:<br>")
-               + QStringLiteral("  OP_INT 1        ; push 1<br>")
-               + QStringLiteral("  OP_INT 2        ; push 2<br>")
-               + QStringLiteral("  OP_INT 3        ; push 3<br>")
-               + QStringLiteral("  OP_MUL          ; pop 2,3 → push 6<br>")
-               + QStringLiteral("  OP_ADD          ; pop 1,6 → push 7<br>")
-               + QStringLiteral("  OP_PRINT        ; pop 7 → 输出")
-               + QStringLiteral("</pre>")
-               + QStringLiteral("<p>💡 三后端一致性：Interpreter / StackVM / RegisterVM 三条路径都输出 7</p>")
-               + QStringLiteral("<p style='color: ") + TeachingTheme::textHint().name() + QStringLiteral(";'>👇 执行</p>")
-               + QStringLiteral("<hr>")
+            + QStringLiteral("<h3 style='color: ") + TeachingTheme::textHint().name() +
+            QStringLiteral(";'>⑤ 字节码（虚拟机指令）</h3>") + QStringLiteral("<p>IR 被翻译为栈式 VM 字节码：</p>") +
+            QStringLiteral("<pre style='background: %1; padding: 8px; border-radius: 4px;'>") +
+            QStringLiteral("StackVM 字节码:<br>") + QStringLiteral("  OP_INT 1        ; push 1<br>") +
+            QStringLiteral("  OP_INT 2        ; push 2<br>") + QStringLiteral("  OP_INT 3        ; push 3<br>") +
+            QStringLiteral("  OP_MUL          ; pop 2,3 → push 6<br>") +
+            QStringLiteral("  OP_ADD          ; pop 1,6 → push 7<br>") +
+            QStringLiteral("  OP_PRINT        ; pop 7 → 输出") + QStringLiteral("</pre>") +
+            QStringLiteral("<p>💡 三后端一致性：Interpreter / StackVM / RegisterVM 三条路径都输出 7</p>") +
+            QStringLiteral("<p style='color: ") + TeachingTheme::textHint().name() + QStringLiteral(";'>👇 执行</p>") +
+            QStringLiteral("<hr>")
 
-               + QStringLiteral("<h3 style='color: %2;'>⑥ 输出结果</h3>")
-               + QStringLiteral("<p>VM 执行字节码，得到最终结果：</p>")
-               + QStringLiteral("<pre style='background: %1; padding: 8px; border-radius: 4px; font-size: 16px; font-weight: ")
-               + QStringLiteral("bold;'>7</pre>")
-               + QStringLiteral("<p>🎉 这就是代码的生命旅程！</p>")
-               + QStringLiteral("<hr>")
+            + QStringLiteral("<h3 style='color: %2;'>⑥ 输出结果</h3>") +
+            QStringLiteral("<p>VM 执行字节码，得到最终结果：</p>") +
+            QStringLiteral(
+                "<pre style='background: %1; padding: 8px; border-radius: 4px; font-size: 16px; font-weight: ") +
+            QStringLiteral("bold;'>7</pre>") + QStringLiteral("<p>🎉 这就是代码的生命旅程！</p>") +
+            QStringLiteral("<hr>")
 
-               + QStringLiteral("<h3 style='color: %3;'>📝 关键概念回顾</h3>")
-               + QStringLiteral("<ul>")
-               + QStringLiteral("<li><b>词法分析</b>：源码 → Token 序列（切分字符流）</li>")
-               + QStringLiteral("<li><b>语法分析</b>：Token → AST（按优先级构建树）</li>")
-               + QStringLiteral("<li><b>IR 生成</b>：AST → 三地址码（便于优化）</li>")
-               + QStringLiteral("<li><b>后端 lowering</b>：IR → 字节码（VM 可执行）</li>")
-               + QStringLiteral("<li><b>VM 执行</b>：字节码 → 结果（push/pop 或寄存器运算）</li>")
-               + QStringLiteral("</ul>")
-               + QStringLiteral("<p style='color: ") + TeachingTheme::textHint().name() + QStringLiteral("; font-size: 11px;'>提示：通过左侧教学树导航到对应面板，亲手探索每个阶段！</p>")
-               + QStringLiteral("</body></html>"))
+            + QStringLiteral("<h3 style='color: %3;'>📝 关键概念回顾</h3>") + QStringLiteral("<ul>") +
+            QStringLiteral("<li><b>词法分析</b>：源码 → Token 序列（切分字符流）</li>") +
+            QStringLiteral("<li><b>语法分析</b>：Token → AST（按优先级构建树）</li>") +
+            QStringLiteral("<li><b>IR 生成</b>：AST → 三地址码（便于优化）</li>") +
+            QStringLiteral("<li><b>后端 lowering</b>：IR → 字节码（VM 可执行）</li>") +
+            QStringLiteral("<li><b>VM 执行</b>：字节码 → 结果（push/pop 或寄存器运算）</li>") +
+            QStringLiteral("</ul>") + QStringLiteral("<p style='color: ") + TeachingTheme::textHint().name() +
+            QStringLiteral("; font-size: 11px;'>提示：通过左侧教学树导航到对应面板，亲手探索每个阶段！</p>") +
+            QStringLiteral("</body></html>"))
         .arg(surfaceHex, stage0Hex, stage2Hex, stage3Hex, stage4Hex);
 }

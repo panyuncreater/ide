@@ -437,8 +437,8 @@ void BytecodeTracePanel::onClearTrace() {
     traceTable_->setRowCount(0);
     stackDetail_->clear();
     // R54-14 fix: 空状态占位提示
-    stackDetail_->setHtml(
-        (QStringLiteral("<div style='color:") + TeachingTheme::textMuted().name() + QStringLiteral("; padding:8px;'><i>（轨迹已清空，捕获后将显示栈快照）</i></div>")));
+    stackDetail_->setHtml((QStringLiteral("<div style='color:") + TeachingTheme::textMuted().name() +
+                           QStringLiteral("; padding:8px;'><i>（轨迹已清空，捕获后将显示栈快照）</i></div>")));
     liveStatusLabel_->setText(tr("状态：未运行（轨迹已清空）"));
 }
 

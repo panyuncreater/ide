@@ -278,12 +278,11 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
 
     const QString bg = codeBlockBg.isEmpty() ? TeachingTheme::surfaceHover().name() : codeBlockBg;
     const QString codeBlockStyle =
-        (QStringLiteral("background:%1; padding:10px 12px; border-radius:6px; ")
-                       + QStringLiteral("border:1px solid ") + TeachingTheme::border().name() + QStringLiteral("; ")
-                       + QStringLiteral("font-family:'Cascadia Code','Cascadia Mono','Consolas','JetBrains Mono','Source Code ")
-                       + QStringLiteral("Pro','Menlo','DejaVu Sans Mono','Courier New',monospace; ")
-                       + QStringLiteral("font-size:13px; ")
-                       + QStringLiteral("white-space:pre-wrap;"))
+        (QStringLiteral("background:%1; padding:10px 12px; border-radius:6px; ") + QStringLiteral("border:1px solid ") +
+         TeachingTheme::border().name() + QStringLiteral("; ") +
+         QStringLiteral("font-family:'Cascadia Code','Cascadia Mono','Consolas','JetBrains Mono','Source Code ") +
+         QStringLiteral("Pro','Menlo','DejaVu Sans Mono','Courier New',monospace; ") +
+         QStringLiteral("font-size:13px; ") + QStringLiteral("white-space:pre-wrap;"))
             .arg(bg);
 
     // 按行扫描，识别块级结构
@@ -388,7 +387,8 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
                 }
                 // 代码块语言标签（仅作为注释显示在代码上方，不渲染为单独元素）
                 if (!codeBlockLang.isEmpty()) {
-                    html << (QStringLiteral("<div style=\"font-size:11px;color:") + TeachingTheme::textMuted().name() + QStringLiteral(";margin-bottom:2px;\">"))
+                    html << (QStringLiteral("<div style=\"font-size:11px;color:") + TeachingTheme::textMuted().name() +
+                             QStringLiteral(";margin-bottom:2px;\">"))
                          << escapeHtml(codeBlockLang) << QStringLiteral("</div>");
                 }
                 html << QStringLiteral("<pre style=\"%1\">").arg(codeBlockStyle) << escaped << QStringLiteral("</pre>");

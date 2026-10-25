@@ -572,31 +572,37 @@ void EscapeAnalysisPanel::renderAnalysis(const std::vector<EscapeSimObject>& obj
     for (const auto& o : objects) {
         if (o.state == "No Escape") {
             hasNoEscape = true;
-            suggestHtml += (QStringLiteral("<p style='color:") + TeachingTheme::deepGreen().name() + QStringLiteral(";'><b>%1</b> 可栈上分配（Stack Allocation）：<br>")
-                                          + QStringLiteral("该对象不逃逸，可分配在栈上，避免堆开销与引用计数。</p>"))
+            suggestHtml += (QStringLiteral("<p style='color:") + TeachingTheme::deepGreen().name() +
+                            QStringLiteral(";'><b>%1</b> 可栈上分配（Stack Allocation）：<br>") +
+                            QStringLiteral("该对象不逃逸，可分配在栈上，避免堆开销与引用计数。</p>"))
                                .arg(QString::fromUtf8(o.name.c_str()));
-            suggestHtml += (QStringLiteral("<p style='color:") + TeachingTheme::deepGreen().name() + QStringLiteral(";'><b>%1</b> 可标量替换（Scalar Replacement）：<br>")
-                                          + QStringLiteral("该对象不逃逸，可拆解为标量变量，完全消除对象分配。</p>"))
+            suggestHtml += (QStringLiteral("<p style='color:") + TeachingTheme::deepGreen().name() +
+                            QStringLiteral(";'><b>%1</b> 可标量替换（Scalar Replacement）：<br>") +
+                            QStringLiteral("该对象不逃逸，可拆解为标量变量，完全消除对象分配。</p>"))
                                .arg(QString::fromUtf8(o.name.c_str()));
         } else {
             hasEscape = true;
-            suggestHtml += (QStringLiteral("<p style='color:") + TeachingTheme::deepRed().name() + QStringLiteral(";'><b>%1</b> 必须堆分配：<br>")
-                                          + QStringLiteral("该对象%2，无法栈上分配。</p>"))
-                               .arg(QString::fromUtf8(o.name.c_str()))
-                               .arg(QString::fromUtf8(EscapeAnalysisLibrary::stateToChinese(o.state).c_str()));
+            suggestHtml +=
+                (QStringLiteral("<p style='color:") + TeachingTheme::deepRed().name() +
+                 QStringLiteral(";'><b>%1</b> 必须堆分配：<br>") + QStringLiteral("该对象%2，无法栈上分配。</p>"))
+                    .arg(QString::fromUtf8(o.name.c_str()))
+                    .arg(QString::fromUtf8(EscapeAnalysisLibrary::stateToChinese(o.state).c_str()));
         }
     }
     if (!hasNoEscape && !hasEscape) {
         suggestHtml += QStringLiteral("<p>无优化建议。</p>");
     } else if (hasNoEscape && !hasEscape) {
-        suggestHtml += (QStringLiteral("<p style='color:") + TeachingTheme::deepGreen().name() + QStringLiteral(";'><b>总结</b>：所有对象均不逃逸，")
-                                      + QStringLiteral("理论上可全部栈上分配，性能最优。</p>"));
+        suggestHtml += (QStringLiteral("<p style='color:") + TeachingTheme::deepGreen().name() +
+                        QStringLiteral(";'><b>总结</b>：所有对象均不逃逸，") +
+                        QStringLiteral("理论上可全部栈上分配，性能最优。</p>"));
     } else if (!hasNoEscape && hasEscape) {
-        suggestHtml += (QStringLiteral("<p style='color:") + TeachingTheme::deepRed().name() + QStringLiteral(";'><b>总结</b>：所有对象均逃逸，")
-                                      + QStringLiteral("必须堆分配，无栈上分配优化空间。</p>"));
+        suggestHtml += (QStringLiteral("<p style='color:") + TeachingTheme::deepRed().name() +
+                        QStringLiteral(";'><b>总结</b>：所有对象均逃逸，") +
+                        QStringLiteral("必须堆分配，无栈上分配优化空间。</p>"));
     } else {
-        suggestHtml += (QStringLiteral("<p style='color:") + TeachingTheme::amberDeep().name() + QStringLiteral(";'><b>总结</b>：部分对象逃逸，")
-                                      + QStringLiteral("部分不逃逸。不逃逸对象可栈上分配，逃逸对象必须堆分配。</p>"));
+        suggestHtml += (QStringLiteral("<p style='color:") + TeachingTheme::amberDeep().name() +
+                        QStringLiteral(";'><b>总结</b>：部分对象逃逸，") +
+                        QStringLiteral("部分不逃逸。不逃逸对象可栈上分配，逃逸对象必须堆分配。</p>"));
     }
     suggestHtml += QStringLiteral("<hr><p style='color:#666;font-size:small;'>"
                                   "注意：MiniLang 当前未实现逃逸分析与栈上分配，"

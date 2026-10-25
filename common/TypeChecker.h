@@ -78,7 +78,7 @@ namespace minilang {
 //   三个后端对相同输入产生一致结果，仅代码组织不同（共享 helper + 调用方 fallback
 //   vs 内联实现）。null 兼容性、T? 剥离、fun() 类型、数组/dict 元素递归均已对齐。
 /// （2026-10-22）dict[inner] 键/值分隔冒号定位：从左贪婪消费一个完整类型注解
-///（与 Parser::parseTypeAnnotation 的生成文法同构：dict[K:V] / fun(p):r 复合
+/// （与 Parser::parseTypeAnnotation 的生成文法同构：dict[K:V] / fun(p):r 复合
 /// 形态递归 + []/? 后缀堆叠），其后的 ':' 即键/值分隔符。
 /// 修复"取首个 ':'"在键类型自带冒号形态下的截断：
 ///   dict[dict[string:K]:int] —— 首冒号在嵌套 dict 方括号内；
@@ -97,8 +97,7 @@ inline size_t skipTypeAnnotationFrom(const std::string& inner, size_t start) {
     while (j < inner.size() && isIdentChar(inner[j]))
         ++j;
     const std::string base = inner.substr(start, j - start);
-    if (base == "dict" && j < inner.size() && inner[j] == '[' &&
-        !(j + 1 < inner.size() && inner[j + 1] == ']')) {
+    if (base == "dict" && j < inner.size() && inner[j] == '[' && !(j + 1 < inner.size() && inner[j + 1] == ']')) {
         // dict[K:V]：递归消费键类型、':'、值类型、']'（对齐 parseTypeAnnotation；
         // "dict[]" 不进入此分支，按数组后缀处理）
         ++j; // '['
@@ -275,8 +274,7 @@ inline bool isTypeParameter(const std::string& typeName, const std::vector<std::
 // 定义期上下文 ∪ 自身声明。同名参数不重复入列（同名遮蔽 = 同一擦除语义，
 // annotationReferencesTypeParam 按名判定）；延迟调用（make<T> 返回 inner 后再调）
 // 以闭包携带的定义期快照为词法事实源（见 Value.h ClosureData::definingTypeParams）。
-inline std::vector<std::string> mergeTypeParams(std::vector<std::string> base,
-                                                const std::vector<std::string>& extra) {
+inline std::vector<std::string> mergeTypeParams(std::vector<std::string> base, const std::vector<std::string>& extra) {
     for (const auto& tp : extra) {
         if (std::find(base.begin(), base.end(), tp) == base.end())
             base.push_back(tp);

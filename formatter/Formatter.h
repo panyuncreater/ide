@@ -204,8 +204,8 @@ private:
     int currentIndent_ = 0; // 当前缩进级别
     int formatDepth_ = 0;   // D5 fix: 格式化递归深度计数器
     static constexpr int MAX_FORMAT_DEPTH = RuntimeLimits::MAX_FORMAT_DEPTH;
-    std::vector<Token> comments_;  // F1 fix: 注释 token 列表
-    size_t commentIndex_ = 0;      // 当前注释游标
+    std::vector<Token> comments_; // F1 fix: 注释 token 列表
+    size_t commentIndex_ = 0;     // 当前注释游标
 
     // OPT-12: 单输出缓冲。所有 visit*/format* 方法把文本追加到 out_，
     // 不再为每个 AST 节点生成独立临时串（旧 lastFormatResult_ 架构在深层

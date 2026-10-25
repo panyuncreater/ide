@@ -738,8 +738,7 @@ static bool extractLiteralDefaultValue(const ASTNode* node, Value& out) {
         for (const auto& kv : dict->pairs) {
             Value k;
             Value v;
-            if (!extractLiteralDefaultValue(kv.first.get(), k) ||
-                !extractLiteralDefaultValue(kv.second.get(), v)) {
+            if (!extractLiteralDefaultValue(kv.first.get(), k) || !extractLiteralDefaultValue(kv.second.get(), v)) {
                 return false;
             }
             auto dk = Value::dictKeyFromValue(k);
@@ -2794,12 +2793,11 @@ void Compiler::visitBlock(Block& node) {
             // V11 fix（2026-10-22）：祖先顶层块 fresh 声明的名字（在 currentLocals_、无槽位映射）——
             // 嵌套块重声明同样必须保存当前有效值并在退出恢复（hash 存储同段覆写问题），
             // 对齐解释器环境链遮蔽语义；槽位遮蔽名（ancestorShadowed）由 V10 协议负责。
-            bool ancestorFresh = (gsSlot < 0) && !ancestorShadowed &&
-                                 (currentLocals_.count(varName) > 0);
+            bool ancestorFresh = (gsSlot < 0) && !ancestorShadowed && (currentLocals_.count(varName) > 0);
             if (gsSlot < 0 && !ancestorShadowed && !ancestorFresh)
                 return; // 从未定义：无需保存（既有行为）
-            std::string saveName = "__blk_save_" + std::to_string(blockDepth_) + "_" +
-                                   std::to_string(blockSaveCounter_++) + "_" + varName;
+            std::string saveName =
+                "__blk_save_" + std::to_string(blockDepth_) + "_" + std::to_string(blockSaveCounter_++) + "_" + varName;
             shadowedSaves.push_back({varName, saveName});
             // A2: 使用槽位操作码保存全局变量值
             uint16_t saveIdx = identifierIndex(saveName);
@@ -2857,7 +2855,7 @@ void Compiler::visitBlock(Block& node) {
         // H1 fix: 恢复被移除的全局槽位条目（必须在恢复字节码之前，使 lookupGlobalSlot 正确）
         for (auto& [name, slot] : removedSlots) {
             globalSlotAllocator_.restoreMapping(name, slot); // B4: 恢复遮蔽
-            shadowedGlobalNames_.erase(name); // V10 fix: 本块退出，祖先遮蔽登记随之解除
+            shadowedGlobalNames_.erase(name);                // V10 fix: 本块退出，祖先遮蔽登记随之解除
         }
 
         // 清理块作用域变量并恢复被遮蔽的全局变量

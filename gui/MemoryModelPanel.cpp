@@ -1025,9 +1025,13 @@ void MemoryModelPanel::renderHeapObjectDetail(const Value& v) {
                     os << "<tr>";
                     os << "<td>" << i << "</td>";
                     if (uv->isClosed) {
-                        os << (QStringLiteral("<td style='color:") + TeachingTheme::upvalueClosedFg().name() + QStringLiteral(";font-weight:bold;'>✅ closed</td>")).toStdString();
+                        os << (QStringLiteral("<td style='color:") + TeachingTheme::upvalueClosedFg().name() +
+                               QStringLiteral(";font-weight:bold;'>✅ closed</td>"))
+                                  .toStdString();
                     } else {
-                        os << (QStringLiteral("<td style='color:") + TeachingTheme::upvalueOpenFg().name() + QStringLiteral(";font-weight:bold;'>🟢 open</td>")).toStdString();
+                        os << (QStringLiteral("<td style='color:") + TeachingTheme::upvalueOpenFg().name() +
+                               QStringLiteral(";font-weight:bold;'>🟢 open</td>"))
+                                  .toStdString();
                     }
                     os << "<td>" << uv->stackSlot << "</td>";
                     os << "<td>" << uv->owningFrameIdx << "</td>";

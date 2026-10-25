@@ -18,7 +18,7 @@
 #include "gui/I18n.h"
 #include "gui/LearnerProgress.h"      // P0-2 fix (F7): 关卡完成状态持久化
 #include "gui/ProgressSaveFeedback.h" // P2-UX fix: save 失败 toast 通知
-#include "gui/TeachingTheme.h" // OPT-11: 颜色语义化
+#include "gui/TeachingTheme.h"        // OPT-11: 颜色语义化
 // P1-3 fix (F14): 引入真实 Lexer + Parser 用于对照验证
 #include "ast/ASTNode.h"
 #include "lexer/Lexer.h"
@@ -101,16 +101,22 @@ AstBuilderToyPanel::AstBuilderToyPanel(QWidget* parent) : QWidget(parent) {
     // ---- 中性浅色风格 QSS（QComboBox + 关卡芯片按钮）----
     // 所有题目均解锁（无解锁机制），芯片仅区分 current / unlocked
     // 动态属性 [current='true'] 在 refreshLevelChips() 中通过 setProperty + polish() 触发
-    setStyleSheet((QStringLiteral("QComboBox#levelCombo { background: ") + TeachingTheme::surface().name() + QStringLiteral("; border: 1px solid ") + TeachingTheme::border().name() + QStringLiteral("; ")
-                                    + QStringLiteral("border-radius: 4px; padding: 4px 8px; }")
-                                    + QStringLiteral("QComboBox#levelCombo:hover { border-color: ") + TeachingTheme::info().name() + QStringLiteral("; }")
-                                    + QStringLiteral("QPushButton#levelChip { background: ") + TeachingTheme::surfaceHover().name() + QStringLiteral("; border: 1px solid ") + TeachingTheme::border().name() + QStringLiteral("; ")
-                                    + QStringLiteral("border-radius: 4px; font-size: 11px; }")
-                                    + QStringLiteral("QPushButton#levelChip:hover { border-color: ") + TeachingTheme::info().name() + QStringLiteral("; background: ") + TeachingTheme::primaryHoverBg().name() + QStringLiteral("; }")
-                                    + QStringLiteral("QPushButton#levelChip[current='true'] { background: ") + TeachingTheme::info().name() + QStringLiteral("; color: white; ")
-                                    + QStringLiteral("border-color: ") + TeachingTheme::primaryDeep().name() + QStringLiteral("; font-weight: bold; }")
-                                    + QStringLiteral("QPushButton#levelChip[locked='true'] { background: ") + TeachingTheme::lockedBg().name() + QStringLiteral("; color: ") + TeachingTheme::textMuted().name() + QStringLiteral("; ")
-                                    + QStringLiteral("border-color: #CCC; }")));
+    setStyleSheet((
+        QStringLiteral("QComboBox#levelCombo { background: ") + TeachingTheme::surface().name() +
+        QStringLiteral("; border: 1px solid ") + TeachingTheme::border().name() + QStringLiteral("; ") +
+        QStringLiteral("border-radius: 4px; padding: 4px 8px; }") +
+        QStringLiteral("QComboBox#levelCombo:hover { border-color: ") + TeachingTheme::info().name() +
+        QStringLiteral("; }") + QStringLiteral("QPushButton#levelChip { background: ") +
+        TeachingTheme::surfaceHover().name() + QStringLiteral("; border: 1px solid ") + TeachingTheme::border().name() +
+        QStringLiteral("; ") + QStringLiteral("border-radius: 4px; font-size: 11px; }") +
+        QStringLiteral("QPushButton#levelChip:hover { border-color: ") + TeachingTheme::info().name() +
+        QStringLiteral("; background: ") + TeachingTheme::primaryHoverBg().name() + QStringLiteral("; }") +
+        QStringLiteral("QPushButton#levelChip[current='true'] { background: ") + TeachingTheme::info().name() +
+        QStringLiteral("; color: white; ") + QStringLiteral("border-color: ") + TeachingTheme::primaryDeep().name() +
+        QStringLiteral("; font-weight: bold; }") +
+        QStringLiteral("QPushButton#levelChip[locked='true'] { background: ") + TeachingTheme::lockedBg().name() +
+        QStringLiteral("; color: ") + TeachingTheme::textMuted().name() + QStringLiteral("; ") +
+        QStringLiteral("border-color: #CCC; }")));
 
     // ---- 主体：左工具箱 + 右画布 ----
     auto* splitter = new QSplitter(Qt::Horizontal, this);
@@ -155,7 +161,8 @@ AstBuilderToyPanel::AstBuilderToyPanel(QWidget* parent) : QWidget(parent) {
     // ---- 题目说明区 ----
     descLabel_ = new QLabel(this);
     descLabel_->setWordWrap(true);
-    descLabel_->setStyleSheet((QStringLiteral("QLabel { background: ") + TeachingTheme::surfaceHover().name() + QStringLiteral("; padding: 6px; border-radius: 4px; }")));
+    descLabel_->setStyleSheet((QStringLiteral("QLabel { background: ") + TeachingTheme::surfaceHover().name() +
+                               QStringLiteral("; padding: 6px; border-radius: 4px; }")));
     mainLayout->addWidget(descLabel_);
 
     // ---- 底部：操作按钮 + 反馈 ----

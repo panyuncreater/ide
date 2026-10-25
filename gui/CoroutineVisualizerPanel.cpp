@@ -229,13 +229,15 @@ void CoroutineVisualizerPanel::onRunAllBackends() {
     // F1 fix: 运行期拒绝面板执行——临时解释器与 Worker 并发会破坏 GC 根集/引擎状态。
     if (controller_ && (controller_->isRunning() || controller_->isVmRunning())) {
         consistencyLabel_->setText(mlTr("程序正在运行，请先停止后再执行协程面板任务"));
-        consistencyLabel_->setStyleSheet((QStringLiteral("color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";")));
+        consistencyLabel_->setStyleSheet(
+            (QStringLiteral("color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";")));
         return;
     }
     std::string src = sourceEdit_->text().toStdString();
     if (src.empty()) {
         consistencyLabel_->setText(mlTr("❌ 源码为空，请输入 MiniLang 协程源码"));
-        consistencyLabel_->setStyleSheet((QStringLiteral("color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";")));
+        consistencyLabel_->setStyleSheet(
+            (QStringLiteral("color:") + TeachingTheme::dangerRed().name() + QStringLiteral(";")));
         return;
     }
 
@@ -420,10 +422,12 @@ void CoroutineVisualizerPanel::renderConsistency(const BackendExecResult& interp
     bool outputEqual = (interp.output == stackvm.output) && (stackvm.output == regvm.output);
     if (allSuccess && outputEqual) {
         consistencyLabel_->setText(mlTr("✅ 三后端协程输出一致，yield 重放语义等价性验证通过"));
-        consistencyLabel_->setStyleSheet((QStringLiteral("color:") + TeachingTheme::successGreen().name() + QStringLiteral("; font-weight:bold;")));
+        consistencyLabel_->setStyleSheet(
+            (QStringLiteral("color:") + TeachingTheme::successGreen().name() + QStringLiteral("; font-weight:bold;")));
     } else {
         consistencyLabel_->setText(mlTr("❌ 三后端协程输出不一致，存在 yield 重放语义差异！"));
-        consistencyLabel_->setStyleSheet((QStringLiteral("color:") + TeachingTheme::dangerRed().name() + QStringLiteral("; font-weight:bold;")));
+        consistencyLabel_->setStyleSheet(
+            (QStringLiteral("color:") + TeachingTheme::dangerRed().name() + QStringLiteral("; font-weight:bold;")));
     }
 }
 

@@ -94,13 +94,13 @@ constexpr FixedStackEffectEntry kFixedStackEffect[] = {
                                 // OP_INIT_FIELD -1、OP_DEFINE_CLASS -1
     {IROp::INIT_FIELD, 1, 0},   // pop 值；栈顶实例被 peek 原地修改、保留
     // ---- 异常（VMContainers.cpp / VM.cpp throwException）----
-    {IROp::TRY_BEGIN, 0, 0},        // 记录 {catchIp, stackBase} 到 tryStack_；catch 深度锚定由
-                                    // checkStackBalance 的 TRY_BEGIN 分支处理（tryBase + 1）
-    {IROp::TRY_END, 0, 0},          // 弹 tryStack_ handler（控制栈）
-    {IROp::THROW, 1, 0},            // pop 异常值 -> throwException resize 到 handler.stackBase + push
-    {IROp::LOAD_EXCEPTION, 0, 0},   // 不发射字节码：throwException 已将异常值压在栈顶
-    {IROp::PUSH_JUMP_TARGET, 0, 0}, // pendingJumpStack_（控制栈）
-    {IROp::FINALLY_END, 0, 0},      // pendingJumpStack_（控制栈）
+    {IROp::TRY_BEGIN, 0, 0},          // 记录 {catchIp, stackBase} 到 tryStack_；catch 深度锚定由
+                                      // checkStackBalance 的 TRY_BEGIN 分支处理（tryBase + 1）
+    {IROp::TRY_END, 0, 0},            // 弹 tryStack_ handler（控制栈）
+    {IROp::THROW, 1, 0},              // pop 异常值 -> throwException resize 到 handler.stackBase + push
+    {IROp::LOAD_EXCEPTION, 0, 0},     // 不发射字节码：throwException 已将异常值压在栈顶
+    {IROp::PUSH_JUMP_TARGET, 0, 0},   // pendingJumpStack_（控制栈）
+    {IROp::FINALLY_END, 0, 0},        // pendingJumpStack_（控制栈）
     {IROp::DROP_PENDING_JUMPS, 0, 0}, // B-008: pendingJumpStack_（控制栈）
     // ---- 写回：全部不碰操作数栈（消费 VM 成员 lastMutatedReceiver_）----
     {IROp::WRITEBACK_MEMBER_VAR, 0, 0},

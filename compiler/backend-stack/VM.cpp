@@ -1955,9 +1955,9 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_PUSH_JUMP_TARGET:
     case OpCode::OP_FINALLY_END:
     case OpCode::OP_DROP_PENDING_JUMPS: // B-008: finally 内 abrupt 替换清理
-    case OpCode::OP_SWAP:      // R99 match 表达式：交换栈顶两个值
-    case OpCode::OP_LEN:       // R134 模式匹配扩展：获取容器长度
-    case OpCode::OP_TYPE_TEST: // R134 模式匹配扩展：软类型测试
+    case OpCode::OP_SWAP:               // R99 match 表达式：交换栈顶两个值
+    case OpCode::OP_LEN:                // R134 模式匹配扩展：获取容器长度
+    case OpCode::OP_TYPE_TEST:          // R134 模式匹配扩展：软类型测试
         return executeMiscOps(op, ip);
 
     // R164 协程/生成器

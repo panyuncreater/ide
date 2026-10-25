@@ -738,10 +738,14 @@ void RegisterAllocatorPanel::renderDetails() {
 
     html << "<h3>性能影响</h3>";
     if (currentSpillCount_ == 0) {
-        html << (QStringLiteral("<p style='color:") + TeachingTheme::deepGreen().name() + QStringLiteral(";'>所有变量访问均在寄存器中，")).toStdString()
+        html << (QStringLiteral("<p style='color:") + TeachingTheme::deepGreen().name() +
+                 QStringLiteral(";'>所有变量访问均在寄存器中，"))
+                    .toStdString()
              << "<b>性能最优</b>，无额外内存访问开销。</p>";
     } else {
-        html << (QStringLiteral("<p style='color:") + TeachingTheme::deepRed().name() + QStringLiteral(";'>溢出变量每次访问需要额外的 <b>load/store</b> 操作，")).toStdString()
+        html << (QStringLiteral("<p style='color:") + TeachingTheme::deepRed().name() +
+                 QStringLiteral(";'>溢出变量每次访问需要额外的 <b>load/store</b> 操作，"))
+                    .toStdString()
              << "预计增加约 <b>" << currentSpillCount_ * 2 << "</b> 次内存访问。"
              << "在热点循环中，溢出会显著降低性能。</p>";
     }

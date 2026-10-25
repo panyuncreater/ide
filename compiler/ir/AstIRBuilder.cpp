@@ -3761,7 +3761,7 @@ void AstIRBuilder::visitClassDecl(ClassDecl* node) {
             std::string origName = fd->name;
             fd->name = node->name + "." + origName;
             compilingMethod_ = true;
-            compilingClassName_ = node->name;             // P1 fix: 供 super 调用查找父类
+            compilingClassName_ = node->name; // P1 fix: 供 super 调用查找父类
             // R163 泛型扩展: 供 emitFunctionBody 合并。§8.2 类路径清偿（2026-10-22）：并入
             // currentTypeParams_（visitClassDecl 正在外层函数体内发射，currentTypeParams_ =
             // 外层词法上下文）——类在泛型函数 f<T> 内声明时方法词法继承外层 T（对齐

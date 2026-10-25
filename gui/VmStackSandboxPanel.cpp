@@ -476,10 +476,11 @@ void VmStackSandboxPanel::rebuildOpButtons() {
 
     for (const auto& op : ops) {
         auto* btn = new QPushButton(opButtonText(op), host);
-        btn->setStyleSheet((QStringLiteral("QPushButton { padding: 6px; text-align: left; font-family: \"Cascadia Code\",\"Cascadia ")
-                           + QStringLiteral("Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code Pro\",\"Menlo\",\"DejaVu Sans ")
-                           + QStringLiteral("Mono\",\"Courier New\",monospace; }")
-                           + QStringLiteral("QPushButton:hover { background: ") + TeachingTheme::buttonHoverBg().name() + QStringLiteral("; }")));
+        btn->setStyleSheet((
+            QStringLiteral("QPushButton { padding: 6px; text-align: left; font-family: \"Cascadia Code\",\"Cascadia ") +
+            QStringLiteral("Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code Pro\",\"Menlo\",\"DejaVu Sans ") +
+            QStringLiteral("Mono\",\"Courier New\",monospace; }") + QStringLiteral("QPushButton:hover { background: ") +
+            TeachingTheme::buttonHoverBg().name() + QStringLiteral("; }")));
         connect(btn, &QPushButton::clicked, this, [this, op]() { executeOp(op); });
         layout->addWidget(btn);
     }
@@ -940,9 +941,14 @@ void VmStackSandboxPanel::refreshOutputView() {
 void VmStackSandboxPanel::setFeedback(const QString& text, bool isError) {
     feedbackLabel_->setText(text);
     if (isError) {
-        feedbackLabel_->setStyleSheet((QStringLiteral("padding: 4px; background: ") + TeachingTheme::feedbackErrorBg().name() + QStringLiteral("; border-left: 3px solid ") + TeachingTheme::dangerDeep().name() + QStringLiteral(";")));
+        feedbackLabel_->setStyleSheet(
+            (QStringLiteral("padding: 4px; background: ") + TeachingTheme::feedbackErrorBg().name() +
+             QStringLiteral("; border-left: 3px solid ") + TeachingTheme::dangerDeep().name() + QStringLiteral(";")));
     } else {
-        feedbackLabel_->setStyleSheet((QStringLiteral("padding: 4px; background: ") + TeachingTheme::feedbackOkBg().name() + QStringLiteral("; border-left: 3px solid ") + TeachingTheme::feedbackOkBorder().name() + QStringLiteral(";")));
+        feedbackLabel_->setStyleSheet((QStringLiteral("padding: 4px; background: ") +
+                                       TeachingTheme::feedbackOkBg().name() +
+                                       QStringLiteral("; border-left: 3px solid ") +
+                                       TeachingTheme::feedbackOkBorder().name() + QStringLiteral(";")));
     }
 }
 

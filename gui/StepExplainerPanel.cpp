@@ -573,7 +573,8 @@ StepExplainerPanel::StepExplainerPanel(QWidget* parent) : QWidget(parent) {
     // 占位提示
     stepDetail_->setHtml(
         tr("<div style='color:%1; "
-           "padding:8px;'><i>（点击「编译并生成讲解」后，选中上方表格的某行查看该指令的详细讲解）</i></div>").arg(TeachingTheme::textMuted().name()));
+           "padding:8px;'><i>（点击「编译并生成讲解」后，选中上方表格的某行查看该指令的详细讲解）</i></div>")
+            .arg(TeachingTheme::textMuted().name()));
 }
 
 /// 构建「指令讲解生成器」子页：顶部源码输入 + 编译按钮，中间垂直 splitter
@@ -654,7 +655,8 @@ void StepExplainerPanel::onCompile() {
 
     std::string source = sourceEdit_->text().toStdString();
     if (source.empty()) {
-        stepDetail_->setHtml(tr("<div style='color:%2; padding:8px;'><b>请输入源码</b></div>").arg(TeachingTheme::dangerRed().name()));
+        stepDetail_->setHtml(
+            tr("<div style='color:%2; padding:8px;'><b>请输入源码</b></div>").arg(TeachingTheme::dangerRed().name()));
         return;
     }
 
@@ -665,12 +667,14 @@ void StepExplainerPanel::onCompile() {
         tokens = lex.scan(source);
     } catch (const std::exception& e) {
         stepDetail_->setHtml(tr("<div style='color:%2; padding:8px;'><b>词法错误:</b> %1</div>")
-                                 .arg(QString::fromUtf8(e.what()).toHtmlEscaped()).arg(TeachingTheme::dangerRed().name()));
+                                 .arg(QString::fromUtf8(e.what()).toHtmlEscaped())
+                                 .arg(TeachingTheme::dangerRed().name()));
         return;
     }
     if (lex.getDiagnostics().hasErrors()) {
         stepDetail_->setHtml(tr("<div style='color:%2; padding:8px;'><b>词法错误:</b> %1</div>")
-                                 .arg(formatDiagnosticErrors(lex.getDiagnostics())).arg(TeachingTheme::dangerRed().name()));
+                                 .arg(formatDiagnosticErrors(lex.getDiagnostics()))
+                                 .arg(TeachingTheme::dangerRed().name()));
         return;
     }
 
@@ -680,12 +684,14 @@ void StepExplainerPanel::onCompile() {
         ast = parser.parse(tokens);
     } catch (const std::exception& e) {
         stepDetail_->setHtml(tr("<div style='color:%2; padding:8px;'><b>语法错误:</b> %1</div>")
-                                 .arg(QString::fromUtf8(e.what()).toHtmlEscaped()).arg(TeachingTheme::dangerRed().name()));
+                                 .arg(QString::fromUtf8(e.what()).toHtmlEscaped())
+                                 .arg(TeachingTheme::dangerRed().name()));
         return;
     }
     if (parser.hasErrors()) {
         stepDetail_->setHtml(tr("<div style='color:%2; padding:8px;'><b>语法错误:</b> %1</div>")
-                                 .arg(formatDiagnosticErrors(parser.getDiagnostics())).arg(TeachingTheme::dangerRed().name()));
+                                 .arg(formatDiagnosticErrors(parser.getDiagnostics()))
+                                 .arg(TeachingTheme::dangerRed().name()));
         return;
     }
 
@@ -695,12 +701,14 @@ void StepExplainerPanel::onCompile() {
         result = compiler.compile(*ast);
     } catch (const std::exception& e) {
         stepDetail_->setHtml(tr("<div style='color:%2; padding:8px;'><b>编译错误:</b> %1</div>")
-                                 .arg(QString::fromUtf8(e.what()).toHtmlEscaped()).arg(TeachingTheme::dangerRed().name()));
+                                 .arg(QString::fromUtf8(e.what()).toHtmlEscaped())
+                                 .arg(TeachingTheme::dangerRed().name()));
         return;
     }
     if (compiler.getDiagnostics().hasErrors()) {
         stepDetail_->setHtml(tr("<div style='color:%2; padding:8px;'><b>编译错误:</b> %1</div>")
-                                 .arg(formatDiagnosticErrors(compiler.getDiagnostics())).arg(TeachingTheme::dangerRed().name()));
+                                 .arg(formatDiagnosticErrors(compiler.getDiagnostics()))
+                                 .arg(TeachingTheme::dangerRed().name()));
         return;
     }
 
@@ -739,7 +747,8 @@ void StepExplainerPanel::onCompile() {
     if (!steps_.empty()) {
         stepTable_->selectRow(0);
     } else {
-        stepDetail_->setHtml(tr("<div style='color:%1; padding:8px;'><i>（编译产物为空）</i></div>").arg(TeachingTheme::textMuted().name()));
+        stepDetail_->setHtml(tr("<div style='color:%1; padding:8px;'><i>（编译产物为空）</i></div>")
+                                 .arg(TeachingTheme::textMuted().name()));
     }
 }
 

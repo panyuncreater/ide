@@ -205,9 +205,9 @@ struct RegBytecodeChunk {
     std::vector<Value> constants; // 常量池
     // OPT-10: 行/列元数据紧凑存储（每字节 4B）
     BytecodeLineColumnMap lineColumn;
-    std::string name;             // chunk 名称
-    int arity = 0;                // 参数个数
-    int requiredArity = 0;        // 必需参数个数
+    std::string name;      // chunk 名称
+    int arity = 0;         // 参数个数
+    int requiredArity = 0; // 必需参数个数
     std::vector<uint16_t> defaultConstIndices;
     std::vector<int> ipToInstrIndex;
     std::vector<std::string> fieldOrder;

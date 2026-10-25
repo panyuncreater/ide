@@ -1749,7 +1749,8 @@ VMResult RegisterVM::executeCoroutineOps(RegOp op, size_t& ip) {
                 // F1 fix（2026-10-22）：快照式关闭（与 StackVM 同型）——窗口期闭包经关闭盒
                 // 读写，恢复时传播写回并重挂 open；原 open 态相对 stackSlot 跨快照访问
                 // 会静默读错值/写坏调用方寄存器。
-                uv->value = frames_[it->first / RegCallFrame::MAX_REGISTERS].registers[it->first % RegCallFrame::MAX_REGISTERS];
+                uv->value =
+                    frames_[it->first / RegCallFrame::MAX_REGISTERS].registers[it->first % RegCallFrame::MAX_REGISTERS];
                 uv->isClosed = true;
                 uv->stackSlot -= regBase;
                 uv->owningFrameIdx -= coroSuspendBaseFrames_;

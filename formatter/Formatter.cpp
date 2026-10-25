@@ -1538,9 +1538,8 @@ void Formatter::formatMatchPattern(const MatchPattern& p) {
 
 /// 格式化下标访问：obj[index]；当 obj 为低优先级的二元/一元表达式时加括号避免歧义。
 void Formatter::formatIndexAccess(IndexAccess& node) {
-    const bool paren = node.object &&
-                       (node.object->nodeType == NodeType::NODE_BINARY_OP ||
-                        node.object->nodeType == NodeType::NODE_UNARY_OP);
+    const bool paren = node.object && (node.object->nodeType == NodeType::NODE_BINARY_OP ||
+                                       node.object->nodeType == NodeType::NODE_UNARY_OP);
     if (paren)
         out_ += '('; // FMT-01 fix: 低优先级表达式需要括号
     formatNode(node.object.get());
@@ -1553,9 +1552,8 @@ void Formatter::formatIndexAccess(IndexAccess& node) {
 
 /// 格式化下标赋值：obj[index] = value；obj 为低优先级表达式时加括号。
 void Formatter::formatIndexAssign(IndexAssign& node) {
-    const bool paren = node.object &&
-                       (node.object->nodeType == NodeType::NODE_BINARY_OP ||
-                        node.object->nodeType == NodeType::NODE_UNARY_OP);
+    const bool paren = node.object && (node.object->nodeType == NodeType::NODE_BINARY_OP ||
+                                       node.object->nodeType == NodeType::NODE_UNARY_OP);
     if (paren)
         out_ += '('; // FMT-01 fix
     formatNode(node.object.get());
@@ -1656,9 +1654,8 @@ void Formatter::formatClassDecl(ClassDecl& node) {
 
 /// 格式化成员访问：obj.field；obj 为低优先级表达式时加括号，避免被错误解析为方法调用。
 void Formatter::formatMemberAccess(MemberAccess& node) {
-    const bool paren = node.object &&
-                       (node.object->nodeType == NodeType::NODE_BINARY_OP ||
-                        node.object->nodeType == NodeType::NODE_UNARY_OP);
+    const bool paren = node.object && (node.object->nodeType == NodeType::NODE_BINARY_OP ||
+                                       node.object->nodeType == NodeType::NODE_UNARY_OP);
     if (paren)
         out_ += '('; // FMT-01 fix
     formatNode(node.object.get());
@@ -1670,9 +1667,8 @@ void Formatter::formatMemberAccess(MemberAccess& node) {
 
 /// 格式化成员赋值：obj.field = value；obj 为低优先级表达式时加括号。
 void Formatter::formatMemberAssign(MemberAssign& node) {
-    const bool paren = node.object &&
-                       (node.object->nodeType == NodeType::NODE_BINARY_OP ||
-                        node.object->nodeType == NodeType::NODE_UNARY_OP);
+    const bool paren = node.object && (node.object->nodeType == NodeType::NODE_BINARY_OP ||
+                                       node.object->nodeType == NodeType::NODE_UNARY_OP);
     if (paren)
         out_ += '('; // FMT-01 fix
     formatNode(node.object.get());
@@ -1687,9 +1683,8 @@ void Formatter::formatMemberAssign(MemberAssign& node) {
 /// 格式化方法调用：obj.method(args...)；obj 为低优先级表达式时加括号，
 /// 否则形如 (a+b).foo() 会被错误重新解析为独立 FunCall。
 void Formatter::formatMethodCall(MethodCall& node) {
-    const bool paren = node.object &&
-                       (node.object->nodeType == NodeType::NODE_BINARY_OP ||
-                        node.object->nodeType == NodeType::NODE_UNARY_OP);
+    const bool paren = node.object && (node.object->nodeType == NodeType::NODE_BINARY_OP ||
+                                       node.object->nodeType == NodeType::NODE_UNARY_OP);
     if (paren)
         out_ += '('; // FMT-01 fix
     formatNode(node.object.get());

@@ -209,8 +209,8 @@ struct Interpreter::CoroutineFiberState {
     minilang_fiber::FiberHandle fiber = nullptr;
     minilang_fiber::FiberHandle resumer = nullptr;
     std::thread::id ownerThread; // 创建本 fiber 的线程（§3.8 跨线程恢复防御：fiber 只能由创建线程恢复）
-    bool completed = false; // 生成器体执行终结（自然结束/显式 return/错误逃逸）
-    bool failed = false;    // 错误逃逸（fiber 不可复用；保留至协程终结，后续 .next() 持续重抛同一错误对齐重放）
+    bool completed = false;      // 生成器体执行终结（自然结束/显式 return/错误逃逸）
+    bool failed = false;         // 错误逃逸（fiber 不可复用；保留至协程终结，后续 .next() 持续重抛同一错误对齐重放）
     std::exception_ptr pendingError;
     // 失败错误的脚本值副本：catch(e) 绑定可能 move 掉异常对象内的 Value，
     // 仅保存 exception_ptr 会让第二次 .next() 抛出空值（Linux ucontext 实测）。
@@ -453,8 +453,8 @@ Value Interpreter::callCoroutineNext(Value& coroVal) {
                 interp.callStack_.pop_back();
             }
         }
-    } guard{*this, prevEnv, prevTargetYieldId, prevYieldExecCount, prevReturnType, nullptr, callStack_.size(),
-            tcoDecl_, tcoName_, tcoIsMethod_, tcoEnabled_, tcoTryDepth_};
+    } guard{*this,    prevEnv,  prevTargetYieldId, prevYieldExecCount, prevReturnType, nullptr, callStack_.size(),
+            tcoDecl_, tcoName_, tcoIsMethod_,      tcoEnabled_,        tcoTryDepth_};
 
 #if MINILANG_CORO_FIBER
     // —— 真挂起路径（Windows fiber）：yield 保存执行位置切回，副作用只执行一次。
@@ -519,7 +519,7 @@ Value Interpreter::callCoroutineNext(Value& coroVal) {
         }
         if (fs->completed) {
             cd->gcRootContributor = nullptr; // P0 fix：丢弃快照同步置空根集贡献回调
-            cd->interpreterFiber.reset(); // fiber 生命周期终结（deleter 删平台资源）
+            cd->interpreterFiber.reset();    // fiber 生命周期终结（deleter 删平台资源）
         }
         // yield 值 / return 值 / 自然耗尽 null 均已写入 currentValueBox
         return cd->currentValueBox.empty() ? Value::nullValue() : cd->currentValueBox.front();

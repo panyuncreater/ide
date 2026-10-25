@@ -538,20 +538,17 @@ GuidedTour* BreakpointConditionPanel::createGuidedTour(QWidget* host) {
     tour->addStep(pageLiveBtn_, QString::fromUtf8("实时断点"),
                   QString::fromUtf8("「实时断点」页在调试时显示所有断点的条件 / 命中次数 / 状态。"
                                     "每行一个断点，可查看行号 / 条件表达式 / 启用状态。"));
-    tour->addStep(
-        nullptr, QString::fromUtf8("示例代码：条件断点"),
-        (QStringLiteral("<p>将以下代码粘贴到编辑器，在 print 行设条件断点观察命中：</p>")
-                          + QStringLiteral("<pre style='background:") + TeachingTheme::codeBlockBg().name() + QStringLiteral(";padding:8px;border-radius:4px;font-family:\"Cascadia ")
-                          + QStringLiteral("Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code ")
-                          + QStringLiteral("Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace;'>")
-                          + QStringLiteral("for (var i = 0; i < 100; i = i + 1) {\n")
-                          + QStringLiteral("    if (i % 10 == 0) {\n")
-                          + QStringLiteral("        print i;\n")
-                          + QStringLiteral("    }\n")
-                          + QStringLiteral("}\n")
-                          + QStringLiteral("</pre>")
-                          + QStringLiteral("<p>在编辑器行号区点击设置断点，右键可编辑条件（如 i==50 或 i%100==0），")
-                          + QStringLiteral("按 F5 调试观察条件命中行为。</p>")));
+    tour->addStep(nullptr, QString::fromUtf8("示例代码：条件断点"),
+                  (QStringLiteral("<p>将以下代码粘贴到编辑器，在 print 行设条件断点观察命中：</p>") +
+                   QStringLiteral("<pre style='background:") + TeachingTheme::codeBlockBg().name() +
+                   QStringLiteral(";padding:8px;border-radius:4px;font-family:\"Cascadia ") +
+                   QStringLiteral("Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code ") +
+                   QStringLiteral("Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace;'>") +
+                   QStringLiteral("for (var i = 0; i < 100; i = i + 1) {\n") +
+                   QStringLiteral("    if (i % 10 == 0) {\n") + QStringLiteral("        print i;\n") +
+                   QStringLiteral("    }\n") + QStringLiteral("}\n") + QStringLiteral("</pre>") +
+                   QStringLiteral("<p>在编辑器行号区点击设置断点，右键可编辑条件（如 i==50 或 i%100==0），") +
+                   QStringLiteral("按 F5 调试观察条件命中行为。</p>")));
     tour->addStep(pageLibraryBtn_, QString::fromUtf8("教学场景库"),
                   QString::fromUtf8("点击「教学场景库」切换到静态教学页，查看 i==50 / i%100==0 等条件断点示例。"));
     tour->addStep(nullptr, QString::fromUtf8("开始实验"),

@@ -1,6 +1,6 @@
 #include "gui/AstViewer.h"
 #include "ast/ASTNode.h"
-#include "gui/GuiTextUtils.h" // Dedup-4A: monospaceFont()
+#include "gui/GuiTextUtils.h"  // Dedup-4A: monospaceFont()
 #include "gui/TeachingTheme.h" // OPT-11: 颜色语义化
 #include <QGraphicsLineItem>
 #include <QGraphicsRectItem>

@@ -652,7 +652,7 @@ Compiler::CompileContext Compiler::saveCompileContext() {
     ctx.loopStack = std::move(loopStack_);
     ctx.tryDepth = tryDepth_;
     ctx.finallyBodyDepth = finallyBodyDepth_;
-    finallyBodyDepth_ = 0; // 嵌套函数/类方法从全新 finally 上下文开始
+    finallyBodyDepth_ = 0;                                      // 嵌套函数/类方法从全新 finally 上下文开始
     ctx.tryFinallyStack = std::move(tryFinallyStack_);          // AUDIT-P1.1 fix
     ctx.currentFunctionReturnType = currentFunctionReturnType_; // BUG-TYPE-1 fix
     ctx.currentTypeParams = currentTypeParams_;                 // R163 泛型扩展

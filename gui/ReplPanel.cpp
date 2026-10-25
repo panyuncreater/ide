@@ -11,7 +11,7 @@
 #include "gui/ErrorHintEngine.h"     // 功能 12：错误信息友好化增强
 #include "gui/GuiTextUtils.h"        // P1-12 fix: 共享文本追加逻辑
 #include "gui/MagicCommands.h"       // 功能 11：REPL %magic 命令
-#include "gui/TeachingTheme.h" // OPT-11: 颜色语义化
+#include "gui/TeachingTheme.h"       // OPT-11: 颜色语义化
 #include "interpreter/Interpreter.h" // Value/RuntimeError 类型
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"

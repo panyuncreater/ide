@@ -466,17 +466,15 @@ struct IRValueKey {
     uint8_t count = 0;
 
     bool operator==(const IRValueKey& o) const {
-        return op == o.op && count == o.count && kind0 == o.kind0 && kind1 == o.kind1 && kind2 == o.kind2 &&
-               a == o.a && b == o.b && c == o.c;
+        return op == o.op && count == o.count && kind0 == o.kind0 && kind1 == o.kind1 && kind2 == o.kind2 && a == o.a &&
+               b == o.b && c == o.c;
     }
 };
 
 struct IRValueKeyHash {
     size_t operator()(const IRValueKey& k) const noexcept {
         size_t h = static_cast<size_t>(k.op) * 0x9E3779B1u;
-        auto mix = [&h](size_t v) {
-            h ^= v + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2);
-        };
+        auto mix = [&h](size_t v) { h ^= v + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2); };
         mix(static_cast<size_t>(k.kind0));
         mix(k.a);
         if (k.count > 1) {
@@ -494,8 +492,7 @@ struct IRValueKeyHash {
 inline IRValueKey makeIRValueKey(const IRInstruction& instr) {
     IRValueKey key;
     key.op = instr.op;
-    const size_t start =
-        (!instr.operands.empty() && instr.operands[0].kind == IROperandKind::VIRTUAL) ? 1 : 0;
+    const size_t start = (!instr.operands.empty() && instr.operands[0].kind == IROperandKind::VIRTUAL) ? 1 : 0;
     for (size_t i = start; i < instr.operands.size() && key.count < 3; ++i) {
         const IROperand& op = instr.operands[i];
         switch (key.count) {

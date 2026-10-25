@@ -181,7 +181,9 @@ void WelcomeWizard::buildStep2() {
     QFont monoFont = codeEdit_->font();
     monoFont = GuiTextUtils::monospaceFont(13);
     codeEdit_->setFont(monoFont);
-    codeEdit_->setStyleSheet((QStringLiteral("QTextEdit { background: ") + TeachingTheme::darkCodeBg().name() + QStringLiteral("; color: ") + TeachingTheme::darkCodeFg().name() + QStringLiteral("; border: none; }")));
+    codeEdit_->setStyleSheet((QStringLiteral("QTextEdit { background: ") + TeachingTheme::darkCodeBg().name() +
+                              QStringLiteral("; color: ") + TeachingTheme::darkCodeFg().name() +
+                              QStringLiteral("; border: none; }")));
     codeLayout->addWidget(codeEdit_);
     splitter->addWidget(codeBox);
 
@@ -308,9 +310,11 @@ void WelcomeWizard::buildStep3() {
     runOutput_->setReadOnly(true);
     runOutput_->setMaximumHeight(70);
     runOutput_->setStyleSheet(
-        (QStringLiteral("QTextEdit { background: ") + TeachingTheme::consoleBg().name() + QStringLiteral("; color: ") + TeachingTheme::consoleFg().name() + QStringLiteral(";")
-        + QStringLiteral("  font-family: \"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code ")
-        + QStringLiteral("Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace; font-size: 13px; }")));
+        (QStringLiteral("QTextEdit { background: ") + TeachingTheme::consoleBg().name() + QStringLiteral("; color: ") +
+         TeachingTheme::consoleFg().name() + QStringLiteral(";") +
+         QStringLiteral(
+             "  font-family: \"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code ") +
+         QStringLiteral("Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace; font-size: 13px; }")));
     runRow->addWidget(runOutput_, 1);
     layout->addLayout(runRow);
 
