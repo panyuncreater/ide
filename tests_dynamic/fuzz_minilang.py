@@ -1042,7 +1042,7 @@ def test_ascii_cache_collision():
     result1 = cache.check_ascii(test_ptr, test_size)
     
     # 模拟释放 + 堆复用: 相同地址放了UTF-8内容
-    cache.allocations[test_ptr] = = "\u4f60\u597d\u4e16\u754c".encode('utf-8')
+    cache.allocations[test_ptr] = "\u4f60\u597d\u4e16\u754c".encode('utf-8')
     
     # 缓存已存在，直接返回旧结果！
     result2 = cache.check_ascii(test_ptr, test_size)

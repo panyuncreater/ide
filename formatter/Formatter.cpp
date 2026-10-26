@@ -99,7 +99,8 @@ static std::string escapeStringContent(const std::string& s) {
                 if (valid) {
                     if (codepoint > 0xFFFF) {
                         // AUDIT-P3.12 fix: 非 BMP 字符输出 \u{XXXXXX}
-                        char buf[12];
+                        // buf 需容纳最坏 8 位十六进制：3 + 8 + 1 + NUL = 13。
+                        char buf[16];
                         std::snprintf(buf, sizeof(buf), "\\u{%x}", codepoint);
                         escaped += buf;
                     } else {
