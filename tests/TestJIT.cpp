@@ -6076,8 +6076,7 @@ TEST(TestJIT, BlockCacheKeyDistinguishesEnumDeclarations) {
     EXPECT_EQ(b.output, "Color.Green");
     EXPECT_EQ(JITBackend::blockCacheStores(), storesBefore + 2)
         << "enum 声明不同（variants 集合不同）必须产生不同键，srcB 应独立入缓存";
-    EXPECT_EQ(JITBackend::blockCacheHits(), hitsBefore)
-        << "srcB 不应命中 srcA 的缓存条目（修复前仅名入键时会命中）";
+    EXPECT_EQ(JITBackend::blockCacheHits(), hitsBefore) << "srcB 不应命中 srcA 的缓存条目（修复前仅名入键时会命中）";
 }
 
 TEST(TestJIT, BlockCacheHitWithStatefulProgram) {

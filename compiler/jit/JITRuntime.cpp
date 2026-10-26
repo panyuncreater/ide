@@ -2026,8 +2026,8 @@ extern "C" void jitMemberSetVar(JitContext* ctx, int64_t* slotPtr, const char* f
     ctx->stackTop = sp;
     Value obj = bitsToValue(*slotPtr); // 借用（addRef）
     if (obj.isInstance()) {
-        obj.fields()[fieldName] = val; // 非 const 触发 COW detach
-        storeJitSlotBits(ctx, slotPtr, valueToBits(obj));   // 写回新 bits
+        obj.fields()[fieldName] = val;                    // 非 const 触发 COW detach
+        storeJitSlotBits(ctx, slotPtr, valueToBits(obj)); // 写回新 bits
         return;
     }
     if (obj.isDict()) {
@@ -2097,8 +2097,8 @@ extern "C" void jitMemberSetLocal(JitContext* ctx, uint8_t slot, int64_t* frameB
     int64_t* slotPtr = frameBase - slot; // int64_t* 指针算术（等价于 frameBase - slot*8 字节）
     Value obj = bitsToValue(*slotPtr);   // 借用
     if (obj.isInstance()) {
-        obj.fields()[fieldName] = val; // 非 const 触发 COW detach
-        storeJitSlotBits(ctx, slotPtr, valueToBits(obj));   // 写回新 bits
+        obj.fields()[fieldName] = val;                    // 非 const 触发 COW detach
+        storeJitSlotBits(ctx, slotPtr, valueToBits(obj)); // 写回新 bits
         // BUG-JIT-FIELDSLOT fix: 若接收者是当前方法帧的 this（slot 0），同步更新方法帧
         // 字段槽。否则 jitMethodReturn 返回时用未同步的陈旧字段槽（字段默认值拷贝）覆盖
         // 回写 this.fields()，导致 init/方法内的字段赋值丢失（字段默认值 + init 覆盖

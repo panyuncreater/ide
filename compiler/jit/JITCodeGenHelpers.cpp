@@ -662,8 +662,7 @@ void JITBackend::emitMemberSetVar(x86::Assembler& a, Label epilogue, int slot, c
 // OP_MEMBER_SET_VAR（名称版）：void jitMemberSetVarByName(JitContext* ctx, const char* varName,
 //                                                          const char* fieldName)
 // 用于块作用域 fresh 全局名（无预分配槽），运行时按名解析 globalSlots/globals_。
-void JITBackend::emitMemberSetVarByName(x86::Assembler& a, Label epilogue, const char* varName,
-                                        const char* fieldName) {
+void JITBackend::emitMemberSetVarByName(x86::Assembler& a, Label epilogue, const char* varName, const char* fieldName) {
     a.mov(x86::qword_ptr(x86::r12, jit_offset::stackTop), x86::r15);
     a.movabs(x86::r10, reinterpret_cast<uint64_t>(varName));
     a.movabs(x86::r11, reinterpret_cast<uint64_t>(fieldName));
@@ -732,8 +731,8 @@ void JITBackend::emitMemberSetLocal(x86::Assembler& a, Label epilogue, uint8_t s
 // 栈布局（调用前，向低地址增长）：[argN-1]...[arg0][receiver] ← r15 指向 argN-1
 // 栈布局（调用后）：[extraSlots...][defaults...][args...][fields...][this] ← r15 指向最后一个 extraSlot
 void JITBackend::emitMethodCall(x86::Assembler& a, Label epilogue, const char* methodName, uint8_t argCount,
-                                uint8_t receiverLocalSlotByte, int receiverGlobalSlot,
-                                const char* receiverGlobalName, bool isSuperCall, const char* superClassName) {
+                                uint8_t receiverLocalSlotByte, int receiverGlobalSlot, const char* receiverGlobalName,
+                                bool isSuperCall, const char* superClassName) {
     Label returnLabel = a.new_label();
 
     // 方法调用 IC：分配 callSiteId 并确保 methodCallIC_ 容量

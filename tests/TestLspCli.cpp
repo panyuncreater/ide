@@ -1053,9 +1053,9 @@ TEST(LspCliTest, ServerNameIsMinilangLsp) {
 
 namespace {
 /// LSP 二期共用源码：声明 + 3 处使用（print 读 / 赋值写 / 表达式读）
-const char* kRefSource = "var x = 1;\n"   // (0,4) 声明
-                         "print(x);\n"    // (1,6) 读
-                         "x = x + 1;\n";  // (2,0) 写 + (2,4) 读
+const char* kRefSource = "var x = 1;\n"  // (0,4) 声明
+                         "print(x);\n"   // (1,6) 读
+                         "x = x + 1;\n"; // (2,0) 写 + (2,4) 读
 } // namespace
 
 TEST(LspPhase2Test, InitializeAdvertisesPhase2Capabilities) {
@@ -1133,8 +1133,8 @@ TEST(LspPhase2Test, SignatureHelpInsideCall) {
                                                       "print(add(1, 2));\n"));
 
     // 光标在 "print(add(1, |2))" 的第二参数处（0-based line 3, char 13）
-    auto responses =
-        handler.handleMessage(makeRequest(1, "textDocument/signatureHelp", makeTextDocPositionParams("file:///s.ml", 3, 13)));
+    auto responses = handler.handleMessage(
+        makeRequest(1, "textDocument/signatureHelp", makeTextDocPositionParams("file:///s.ml", 3, 13)));
     ASSERT_EQ(responses.size(), 1u);
     auto result = responses[0].value("result").toObject();
     auto signatures = result.value("signatures").toArray();
@@ -1201,8 +1201,7 @@ TEST(Opt22SymbolIndexCacheTest, ParseErrorLeavesIndexEmpty) {
 
 TEST(Opt22SymbolIndexCacheTest, RequestsShareCachedIndex) {
     LspRequestHandler handler;
-    handler.handleMessage(
-        makeDidOpen("file:///t.ml", "fun foo(a: int) -> int {\n  return a;\n}\nvar r = foo(1);"));
+    handler.handleMessage(makeDidOpen("file:///t.ml", "fun foo(a: int) -> int {\n  return a;\n}\nvar r = foo(1);"));
 
     // definition：foo 引用处（0-based 3:8）→ 声明在第 1 行（0-based 0）
     auto responses = handler.handleMessage(

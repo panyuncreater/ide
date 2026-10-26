@@ -1046,8 +1046,8 @@ template <typename Cmp> Value Interpreter::compareNumericOrString(BinaryOp& node
 
     // 字符串字典序比较
     if (left.isString() && right.isString()) {
-        auto r = computeCompare(op, true, std::as_const(left).stringVal(), true, std::as_const(right).stringVal(), 0,
-                                0);
+        auto r =
+            computeCompare(op, true, std::as_const(left).stringVal(), true, std::as_const(right).stringVal(), 0, 0);
         return Value(r.value);
     }
     // 数值比较

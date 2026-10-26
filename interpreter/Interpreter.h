@@ -758,19 +758,13 @@ private:
             }
         }
 
-        ASTNode* nodeAt(size_t i) const {
-            return i < kInlineDepth ? chainInline[i] : chainOverflow[i - kInlineDepth];
-        }
+        ASTNode* nodeAt(size_t i) const { return i < kInlineDepth ? chainInline[i] : chainOverflow[i - kInlineDepth]; }
 
         Value& valAt(size_t i) { return i < kInlineDepth ? valsInline[i] : valsOverflow[i - kInlineDepth]; }
-        const Value& valAt(size_t i) const {
-            return i < kInlineDepth ? valsInline[i] : valsOverflow[i - kInlineDepth];
-        }
+        const Value& valAt(size_t i) const { return i < kInlineDepth ? valsInline[i] : valsOverflow[i - kInlineDepth]; }
 
         Value& idxAt(size_t i) { return i < kInlineDepth ? idxsInline[i] : idxsOverflow[i - kInlineDepth]; }
-        const Value& idxAt(size_t i) const {
-            return i < kInlineDepth ? idxsInline[i] : idxsOverflow[i - kInlineDepth];
-        }
+        const Value& idxAt(size_t i) const { return i < kInlineDepth ? idxsInline[i] : idxsOverflow[i - kInlineDepth]; }
 
         void clearValues() {
             for (auto& v : valsInline) {

@@ -5,11 +5,11 @@
 // B-006: JIT 方法调用 IC 多态调用点键稳定性
 // B-008: finally 同帧 abrupt 替换 + 递归同 try 站点异常暂存
 
-#include "common/ThreeBackends.h"
 #include "cli/ProtocolUtils.h"
 #include "cli/pkg_core.h"
-#include "compiler/backend-reg/RegisterBytecode.h"
 #include "common/RuntimeLimits.h"
+#include "common/ThreeBackends.h"
+#include "compiler/backend-reg/RegisterBytecode.h"
 #include "formatter/Formatter.h"
 #include "interpreter/GcManager.h"
 #include "lint/LintPass.h"
@@ -164,8 +164,7 @@ TEST(BacklogRegression, B006JitMethodCallICPolymorphic) {
 
 #ifdef MINILANG_USE_JIT
 TEST(BacklogRegression, B003ArrayDefaultJIT) {
-    EXPECT_EQ(minilang_test::runJIT("fun f(a: int[] = [1, 2]) { return a; } print(f()); print(f([9]));"),
-              "[1, 2][9]");
+    EXPECT_EQ(minilang_test::runJIT("fun f(a: int[] = [1, 2]) { return a; } print(f()); print(f([9]));"), "[1, 2][9]");
 }
 
 TEST(BacklogRegression, B008FinallyAbruptReplacesAbruptJIT) {
@@ -334,8 +333,7 @@ TEST(BacklogRegression, OPT19TruthyInlineNotOperator) {
                             "print(!0.0); print(\"|\"); print(!0.5); print(\"|\"); print(!-0.0); print(\"|\");"
                             "print(![]); print(\"|\"); print(!{\"k\": 1});";
     ASSERT_TRUE(parseClean(src));
-    EXPECT_FIVE_BACKENDS(src,
-                         "true|false|false|false|true|true|true|false|true|false|true|false|true|false|false");
+    EXPECT_FIVE_BACKENDS(src, "true|false|false|false|true|true|true|false|true|false|true|false|true|false|false");
 }
 
 TEST(BacklogRegression, OPT19TruthyInlineHelperFallbackConditions) {
@@ -391,15 +389,14 @@ TEST(BacklogRegression, IRConstPoolCopyKeepsNegativeZeroDistinct) {
 // O(F²)）。锁定：多函数（含闭包/upvalue/互递归）lazy 编译语义不变。
 // ============================================================
 TEST(BacklogRegression, OPT20LazyFuncTableReuseMultipleChunks) {
-    const std::string src =
-        "fun makeCounter() { var n = 0; return fun() { n = n + 1; return n; }; }"
-        "fun fib(n) { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); }"
-        "fun isEven(n) { if (n == 0) { return true; } return isOdd(n - 1); }"
-        "fun isOdd(n) { if (n == 0) { return false; } return isEven(n - 1); }"
-        "var c = makeCounter();"
-        "c(); c(); print(c()); print(\"|\");"
-        "print(fib(12)); print(\"|\");"
-        "print(isEven(10)); print(\"|\"); print(isOdd(10));";
+    const std::string src = "fun makeCounter() { var n = 0; return fun() { n = n + 1; return n; }; }"
+                            "fun fib(n) { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); }"
+                            "fun isEven(n) { if (n == 0) { return true; } return isOdd(n - 1); }"
+                            "fun isOdd(n) { if (n == 0) { return false; } return isEven(n - 1); }"
+                            "var c = makeCounter();"
+                            "c(); c(); print(c()); print(\"|\");"
+                            "print(fib(12)); print(\"|\");"
+                            "print(isEven(10)); print(\"|\"); print(isOdd(10));";
     Lexer lx;
     auto tk = lx.scan(src);
     Parser p;
@@ -426,33 +423,31 @@ TEST(BacklogRegression, OPT20LazyFuncTableReuseMultipleChunks) {
 // for update 热路径与 null 接收者报错行为五后端一致。
 // ============================================================
 TEST(BacklogRegression, OPT21StmtAssignmentValueSemantics) {
-    const std::string src =
-        "var g = 1;"
-        "g = g + 1;"
-        "print(g); print(\"|\");"
-        "class C { var f = 0; init(x) { this.f = x; } }"
-        "var o = C(5);"
-        "o.f = o.f * 2;"
-        "print(o.f); print(\"|\");"
-        "var y = (g = g + 10);"
-        "print(y); print(\"|\"); print(g); print(\"|\");"
-        "var z = 0; z = y = g;"
-        "print(z); print(y); print(\"|\");"
-        "var sum = 0;"
-        "for (var i = 0; i < 3; i = i + 1) { sum = sum + i; }"
-        "print(sum);";
+    const std::string src = "var g = 1;"
+                            "g = g + 1;"
+                            "print(g); print(\"|\");"
+                            "class C { var f = 0; init(x) { this.f = x; } }"
+                            "var o = C(5);"
+                            "o.f = o.f * 2;"
+                            "print(o.f); print(\"|\");"
+                            "var y = (g = g + 10);"
+                            "print(y); print(\"|\"); print(g); print(\"|\");"
+                            "var z = 0; z = y = g;"
+                            "print(z); print(y); print(\"|\");"
+                            "var sum = 0;"
+                            "for (var i = 0; i < 3; i = i + 1) { sum = sum + i; }"
+                            "print(sum);";
     ASSERT_TRUE(parseClean(src));
     EXPECT_FIVE_BACKENDS(src, "2|10|12|12|1212|3");
 }
 
 TEST(BacklogRegression, OPT21StmtAssignInBlocksAndLoops) {
-    const std::string src =
-        "var acc = 0;"
-        "{ var b = 1; b = b + 1; acc = acc + b; }"
-        "if (true) { acc = acc * 10; }"
-        "var k = 0;"
-        "while (k < 2) { k = k + 1; }"
-        "print(acc); print(\"|\"); print(k);";
+    const std::string src = "var acc = 0;"
+                            "{ var b = 1; b = b + 1; acc = acc + b; }"
+                            "if (true) { acc = acc * 10; }"
+                            "var k = 0;"
+                            "while (k < 2) { k = k + 1; }"
+                            "print(acc); print(\"|\"); print(k);";
     ASSERT_TRUE(parseClean(src));
     EXPECT_FIVE_BACKENDS(src, "20|2");
 }
@@ -742,7 +737,6 @@ TEST(BacklogRegression, PERFChainInlineStorageDeepAndShallow) {
     ASSERT_TRUE(parseClean(src));
     EXPECT_EQ(minilang_test::runInterpreter(src), "9|42");
 }
-
 
 // ============================================================
 // B-010/B-011: 顶层块 fresh 全局变量的成员/索引赋值

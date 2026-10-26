@@ -1175,8 +1175,7 @@ QJsonValue LspRequestHandler::handleSignatureHelp(const QJsonObject& params) {
         size_t start = 0;
         while (start <= inner.size()) {
             size_t comma = inner.find(',', start);
-            std::string piece =
-                (comma == std::string::npos) ? inner.substr(start) : inner.substr(start, comma - start);
+            std::string piece = (comma == std::string::npos) ? inner.substr(start) : inner.substr(start, comma - start);
             // trim
             size_t b = piece.find_first_not_of(' ');
             size_t e = piece.find_last_not_of(' ');
@@ -1513,8 +1512,7 @@ QJsonValue LspRequestHandler::handleInlayHint(const QJsonObject& params) {
             continue;
 
         // 跳过已有类型注解的（detail 中含 ":" 但无 "=" 的）
-        if (sym.detail.find(": ") != std::string::npos &&
-            sym.detail.find("= ") == std::string::npos) {
+        if (sym.detail.find(": ") != std::string::npos && sym.detail.find("= ") == std::string::npos) {
             continue;
         }
 
@@ -1525,14 +1523,21 @@ QJsonValue LspRequestHandler::handleInlayHint(const QJsonObject& params) {
             std::string initExpr = sym.detail.substr(assignPos + 2);
             if (!initExpr.empty()) {
                 char first = initExpr[0];
-                if (first == '"' || first == '\'') inferredType = "str";
-                else if (first == '[') inferredType = "array";
-                else if (first == '{') inferredType = "dict";
-                else if (initExpr == "true" || initExpr == "false") inferredType = "bool";
-                else if (initExpr == "null") inferredType = "null";
+                if (first == '"' || first == '\'')
+                    inferredType = "str";
+                else if (first == '[')
+                    inferredType = "array";
+                else if (first == '{')
+                    inferredType = "dict";
+                else if (initExpr == "true" || initExpr == "false")
+                    inferredType = "bool";
+                else if (initExpr == "null")
+                    inferredType = "null";
                 else if (std::isdigit(static_cast<unsigned char>(first)) || first == '-') {
-                    if (initExpr.find('.') != std::string::npos) inferredType = "float";
-                    else inferredType = "int";
+                    if (initExpr.find('.') != std::string::npos)
+                        inferredType = "float";
+                    else
+                        inferredType = "int";
                 }
             }
         }

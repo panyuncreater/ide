@@ -1400,8 +1400,7 @@ bool JITBackend::emitChunkBody(asmjit::x86::Assembler& a, const BytecodeChunk& c
             auto varIt = globalNameToSlot_.find(varName);
             if (varIt == globalNameToSlot_.end()) {
                 // 块作用域 fresh 全局名无预分配槽：运行时按名解析 globals_/globalSlots。
-                emitMemberSetVarByName(a, epilogue, varName.c_str(),
-                                       chunk.constants[fieldIdx].stringVal().c_str());
+                emitMemberSetVarByName(a, epilogue, varName.c_str(), chunk.constants[fieldIdx].stringVal().c_str());
             } else {
                 emitMemberSetVar(a, epilogue, varIt->second, chunk.constants[fieldIdx].stringVal().c_str());
             }
