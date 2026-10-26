@@ -2,7 +2,7 @@ var classFormatter =
 [
     [ "Formatter", "classFormatter.html#ae59f7a011325b2624d5660230b50c459", null ],
     [ "binOp", "classFormatter.html#a6082d8e7a5a0185743860d72de253c11", null ],
-    [ "comma", "classFormatter.html#a4c2f7e03cf26615f18796a9814c31734", null ],
+    [ "comma", "classFormatter.html#aa321c565f2faecd8aee6f36b1503312e", null ],
     [ "format", "classFormatter.html#a2f2249a49c3743bbf683bbbbdb05d8f2", null ],
     [ "formatArrayLiteral", "classFormatter.html#af2b476eaea838f2e1632ee875f89443f", null ],
     [ "formatAssignment", "classFormatter.html#a874a8f3140f3ba33d9af9f4b9f37376b", null ],
@@ -38,7 +38,7 @@ var classFormatter =
     [ "formatVarRef", "classFormatter.html#a98ce28652d0afb32cdfc9af062ff547d", null ],
     [ "formatWhileStmt", "classFormatter.html#a0f8bd708e1a6c90dd746d6c241b9ddc6", null ],
     [ "getOptions", "classFormatter.html#a73184f0eabe7bb9cdf0b55e81953d6f4", null ],
-    [ "indent", "classFormatter.html#a961db2e3789de3095eac4d3272ca3bdf", null ],
+    [ "indent", "classFormatter.html#a31475880cc4dcd722af6f1968c422a0d", null ],
     [ "isRightAssoc", "classFormatter.html#a2034327e360d1bf5ed4b38739e147579", null ],
     [ "openBrace", "classFormatter.html#abd1df44995b374b36d833ef32e495020", null ],
     [ "opPrecedence", "classFormatter.html#a06de41ffc8fc8a970beee0d8a8d3f4db", null ],

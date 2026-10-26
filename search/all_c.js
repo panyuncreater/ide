@@ -61,7 +61,7 @@ var searchData=
   ['match_58',['match',['../classLexer.html#a1ae163f94b38ab0e4c88951e9a810859',1,'Lexer::match()'],['../classParser.html#a85bb6aee59d61ebcc00910b9cd1dff63',1,'Parser::match()']]],
   ['matchcase_59',['MatchCase',['../structMatchCase.html',1,'']]],
   ['matchexpr_60',['matchexpr',['../classParser.html#a8c279474c9f307529c592eed17fea336',1,'Parser::matchExpr()'],['../classMatchExpr.html#a47c6d2302e0bdae03257be1e8a7738f6',1,'MatchExpr::MatchExpr()'],['../classMatchExpr.html',1,'MatchExpr']]],
-  ['matchpattern_61',['matchpattern',['../classMatchPattern.html#af2a7eeec2a6bb2794e94217c1438f78b',1,'MatchPattern::MatchPattern()'],['../classParser.html#a0dfb58e766bf779b9d46604daeaeea60',1,'Parser::matchPattern()'],['../classMatchPattern.html',1,'MatchPattern']]],
+  ['matchpattern_61',['matchpattern',['../classParser.html#a0dfb58e766bf779b9d46604daeaeea60',1,'Parser::matchPattern()'],['../classMatchPattern.html#af2a7eeec2a6bb2794e94217c1438f78b',1,'MatchPattern::MatchPattern()'],['../classMatchPattern.html',1,'MatchPattern']]],
   ['matchpatternkind_62',['MatchPatternKind',['../ASTNode_8h.html#a7e9d88022ddd1fbb138d6da988e9c453',1,'ASTNode.h']]],
   ['matchprimarypattern_63',['matchPrimaryPattern',['../classParser.html#a34a28ec6edf40a6edaa8803e3a28a84f',1,'Parser']]],
   ['matchtrigger_64',['matchTrigger',['../classCodeSnippetEngine.html#a832ae5116822755c5d9b315df3c531b5',1,'CodeSnippetEngine']]],

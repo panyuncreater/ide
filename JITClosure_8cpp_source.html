@@ -327,21 +327,25 @@ $(document).ready(function(){initNavTree('JITClosure_8cpp_source.html',''); init
 <div class="line"><a id="l00227" name="l00227"></a><span class="lineno">  227</span><span class="comment">// R156: closeUpvaluesFrom — 关闭 open upvalues（JIT 栈向下增长版本）</span></div>
 <div class="line"><a id="l00228" name="l00228"></a><span class="lineno">  228</span><span class="comment">// ============================================================</span></div>
 <div class="line"><a id="l00229" name="l00229"></a><span class="lineno">  229</span><span class="keywordtype">void</span> JITBackend::closeUpvaluesFrom(int64_t* fromAddr) {</div>
-<div class="line"><a id="l00230" name="l00230"></a><span class="lineno">  230</span>    <span class="keyword">auto</span> endIt = openUpvalues_.upper_bound(fromAddr);</div>
-<div class="line"><a id="l00231" name="l00231"></a><span class="lineno">  231</span>    <span class="keyword">auto</span> it = openUpvalues_.begin();</div>
-<div class="line"><a id="l00232" name="l00232"></a><span class="lineno">  232</span>    <span class="keywordflow">while</span> (it != endIt) {</div>
-<div class="line"><a id="l00233" name="l00233"></a><span class="lineno">  233</span>        <span class="keywordflow">if</span> (<span class="keyword">auto</span> uv = it-&gt;second.lock()) {</div>
-<div class="line"><a id="l00234" name="l00234"></a><span class="lineno">  234</span>            <span class="keywordflow">if</span> (!uv-&gt;isClosed) {</div>
-<div class="line"><a id="l00235" name="l00235"></a><span class="lineno">  235</span>                <span class="keyword">auto</span>* slotPtr = <span class="keyword">reinterpret_cast&lt;</span>int64_t*<span class="keyword">&gt;</span>(uv-&gt;stackSlot);</div>
-<div class="line"><a id="l00236" name="l00236"></a><span class="lineno">  236</span>                uv-&gt;value = bitsToValue(*slotPtr);</div>
-<div class="line"><a id="l00237" name="l00237"></a><span class="lineno">  237</span>                uv-&gt;isClosed = <span class="keyword">true</span>;</div>
-<div class="line"><a id="l00238" name="l00238"></a><span class="lineno">  238</span>            }</div>
-<div class="line"><a id="l00239" name="l00239"></a><span class="lineno">  239</span>        }</div>
-<div class="line"><a id="l00240" name="l00240"></a><span class="lineno">  240</span>        it = openUpvalues_.erase(it);</div>
-<div class="line"><a id="l00241" name="l00241"></a><span class="lineno">  241</span>    }</div>
-<div class="line"><a id="l00242" name="l00242"></a><span class="lineno">  242</span>}</div>
-<div class="line"><a id="l00243" name="l00243"></a><span class="lineno">  243</span> </div>
-<div class="line"><a id="l00244" name="l00244"></a><span class="lineno">  244</span><span class="preprocessor">#endif </span><span class="comment">// MINILANG_USE_JIT</span></div>
+<div class="line"><a id="l00230" name="l00230"></a><span class="lineno">  230</span>    <span class="comment">// PERF: 无 open upvalue 时（递归/普通函数返回的热路径）跳过 multimap 查找。</span></div>
+<div class="line"><a id="l00231" name="l00231"></a><span class="lineno">  231</span>    <span class="keywordflow">if</span> (openUpvalues_.empty()) {</div>
+<div class="line"><a id="l00232" name="l00232"></a><span class="lineno">  232</span>        <span class="keywordflow">return</span>;</div>
+<div class="line"><a id="l00233" name="l00233"></a><span class="lineno">  233</span>    }</div>
+<div class="line"><a id="l00234" name="l00234"></a><span class="lineno">  234</span>    <span class="keyword">auto</span> endIt = openUpvalues_.upper_bound(fromAddr);</div>
+<div class="line"><a id="l00235" name="l00235"></a><span class="lineno">  235</span>    <span class="keyword">auto</span> it = openUpvalues_.begin();</div>
+<div class="line"><a id="l00236" name="l00236"></a><span class="lineno">  236</span>    <span class="keywordflow">while</span> (it != endIt) {</div>
+<div class="line"><a id="l00237" name="l00237"></a><span class="lineno">  237</span>        <span class="keywordflow">if</span> (<span class="keyword">auto</span> uv = it-&gt;second.lock()) {</div>
+<div class="line"><a id="l00238" name="l00238"></a><span class="lineno">  238</span>            <span class="keywordflow">if</span> (!uv-&gt;isClosed) {</div>
+<div class="line"><a id="l00239" name="l00239"></a><span class="lineno">  239</span>                <span class="keyword">auto</span>* slotPtr = <span class="keyword">reinterpret_cast&lt;</span>int64_t*<span class="keyword">&gt;</span>(uv-&gt;stackSlot);</div>
+<div class="line"><a id="l00240" name="l00240"></a><span class="lineno">  240</span>                uv-&gt;value = bitsToValue(*slotPtr);</div>
+<div class="line"><a id="l00241" name="l00241"></a><span class="lineno">  241</span>                uv-&gt;isClosed = <span class="keyword">true</span>;</div>
+<div class="line"><a id="l00242" name="l00242"></a><span class="lineno">  242</span>            }</div>
+<div class="line"><a id="l00243" name="l00243"></a><span class="lineno">  243</span>        }</div>
+<div class="line"><a id="l00244" name="l00244"></a><span class="lineno">  244</span>        it = openUpvalues_.erase(it);</div>
+<div class="line"><a id="l00245" name="l00245"></a><span class="lineno">  245</span>    }</div>
+<div class="line"><a id="l00246" name="l00246"></a><span class="lineno">  246</span>}</div>
+<div class="line"><a id="l00247" name="l00247"></a><span class="lineno">  247</span> </div>
+<div class="line"><a id="l00248" name="l00248"></a><span class="lineno">  248</span><span class="preprocessor">#endif </span><span class="comment">// MINILANG_USE_JIT</span></div>
 <div class="ttc" id="aJITInternal_8h_html"><div class="ttname"><a href="JITInternal_8h.html">JITInternal.h</a></div><div class="ttdoc">JIT 后端内部共享工具 — NaN-boxing 常量与 Value 位转换。</div></div>
 <div class="ttc" id="aJIT_8h_html"><div class="ttname"><a href="JIT_8h.html">JIT.h</a></div><div class="ttdoc">JIT 后端：基于 asmjit 的第四套执行引擎（R138-R141 演进）。</div></div>
 <div class="ttc" id="aValue_8h_html"><div class="ttname"><a href="Value_8h.html">Value.h</a></div><div class="ttdoc">运行时值结构体 Value（NaN-boxing + 侵入式引用计数）。</div></div>

@@ -972,484 +972,518 @@ $(document).ready(function(){initNavTree('JIT_8h_source.html',''); initResizable
 <div class="line"><a id="l00872" name="l00872"></a><span class="lineno">  872</span>    <span class="keywordtype">void</span> emitBuildDict(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, uint8_t pairCount);</div>
 <div class="line"><a id="l00873" name="l00873"></a><span class="lineno">  873</span>    <span class="keywordtype">void</span> emitBuildTuple(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, uint8_t count);</div>
 <div class="line"><a id="l00874" name="l00874"></a><span class="lineno">  874</span>    <span class="keywordtype">void</span> emitIndexSetGlobal(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, <span class="keywordtype">int</span> slot);</div>
-<div class="line"><a id="l00875" name="l00875"></a><span class="lineno">  875</span>    <span class="keywordtype">void</span> emitClassNew(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, <span class="keyword">const</span> <span class="keywordtype">char</span>* className, uint8_t argCount);</div>
-<div class="line"><a id="l00876" name="l00876"></a><span class="lineno">  876</span>    <span class="keywordtype">void</span> emitInitField(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, <span class="keyword">const</span> <span class="keywordtype">char</span>* fieldName);</div>
-<div class="line"><a id="l00877" name="l00877"></a><span class="lineno">  877</span>    <span class="keywordtype">void</span> emitDefineClass(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, <span class="keyword">const</span> <span class="keywordtype">char</span>* className,</div>
-<div class="line"><a id="l00878" name="l00878"></a><span class="lineno">  878</span>                         <span class="keyword">const</span> <span class="keywordtype">char</span>* superClassName);</div>
-<div class="line"><a id="l00879" name="l00879"></a><span class="lineno">  879</span>    <span class="keywordtype">void</span> emitMemberGet(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, <span class="keyword">const</span> <span class="keywordtype">char</span>* fieldName);</div>
-<div class="line"><a id="l00880" name="l00880"></a><span class="lineno">  880</span>    <span class="keywordtype">void</span> emitMemberSetVar(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, <span class="keywordtype">int</span> slot, <span class="keyword">const</span> <span class="keywordtype">char</span>* fieldName);</div>
-<div class="line"><a id="l00881" name="l00881"></a><span class="lineno">  881</span>    <span class="keywordtype">void</span> emitMemberSetLocal(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, uint8_t slot, <span class="keyword">const</span> <span class="keywordtype">char</span>* fieldName);</div>
-<div class="line"><a id="l00882" name="l00882"></a><span class="lineno">  882</span>    <span class="keywordtype">void</span> emitMethodCall(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, <span class="keyword">const</span> <span class="keywordtype">char</span>* methodName, uint8_t argCount,</div>
-<div class="line"><a id="l00883" name="l00883"></a><span class="lineno">  883</span>                        uint8_t receiverLocalSlotByte, <span class="keywordtype">int</span> receiverGlobalSlot, <span class="keywordtype">bool</span> isSuperCall,</div>
-<div class="line"><a id="l00884" name="l00884"></a><span class="lineno">  884</span>                        <span class="keyword">const</span> <span class="keywordtype">char</span>* superClassName);</div>
-<div class="line"><a id="l00885" name="l00885"></a><span class="lineno">  885</span>    <span class="keywordtype">void</span> emitCheckInt(asmjit::x86::Assembler&amp; a, asmjit::x86::Gp val, asmjit::Label failLabel);</div>
-<div class="line"><a id="l00886" name="l00886"></a><span class="lineno">  886</span>    <span class="keywordtype">void</span> emitRecordTypeFeedback(asmjit::x86::Assembler&amp; a, asmjit::x86::Gp val, <span class="keywordtype">size_t</span> chunkIdx);</div>
-<div class="line"><a id="l00887" name="l00887"></a><span class="lineno">  887</span>    <span class="keywordtype">void</span> emitFloatBinaryArith(asmjit::x86::Assembler&amp; a, <span class="keywordtype">int</span> op, asmjit::Label failLabel, asmjit::Label endLabel,</div>
-<div class="line"><a id="l00888" name="l00888"></a><span class="lineno">  888</span>                              <span class="keywordtype">size_t</span> chunkIdx, asmjit::Label divByZeroLabel = {});</div>
-<div class="line"><a id="l00889" name="l00889"></a><span class="lineno">  889</span>    <span class="keywordtype">void</span> emitLen(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue);<span class="comment"></span></div>
-<div class="line"><a id="l00890" name="l00890"></a><span class="lineno">  890</span><span class="comment">    /// enum variant 支持：OP_BUILD_ENUM_VARIANT / OP_ENUM_VARIANT_NAME / OP_ENUM_VARIANT_FIELD</span></div>
-<div class="line"><a id="l00891" name="l00891"></a><span class="lineno">  891</span><span class="comment">    /// 统一 C++ 辅助路径（校验逻辑与 VM executeContainerBuildOps/executeEnumOps 对齐）</span></div>
-<div class="line"><a id="l00892" name="l00892"></a><span class="lineno">  892</span><span class="comment"></span>    <span class="keywordtype">void</span> emitBuildEnumVariant(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, <span class="keyword">const</span> <span class="keywordtype">char</span>* enumName,</div>
-<div class="line"><a id="l00893" name="l00893"></a><span class="lineno">  893</span>                              <span class="keyword">const</span> <span class="keywordtype">char</span>* variantName, uint8_t argCount);</div>
-<div class="line"><a id="l00894" name="l00894"></a><span class="lineno">  894</span>    <span class="keywordtype">void</span> emitEnumVariantName(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, <span class="keyword">const</span> <span class="keywordtype">char</span>* enumName,</div>
-<div class="line"><a id="l00895" name="l00895"></a><span class="lineno">  895</span>                             <span class="keyword">const</span> <span class="keywordtype">char</span>* variantName);</div>
-<div class="line"><a id="l00896" name="l00896"></a><span class="lineno">  896</span>    <span class="keywordtype">void</span> emitEnumVariantField(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue);<span class="comment"></span></div>
-<div class="line"><a id="l00897" name="l00897"></a><span class="lineno">  897</span><span class="comment">    /// 并发原语内建函数：spawn/channel/mutex/rwlock（OP_CALL 名称未命中 funcTable 时分流）</span></div>
-<div class="line"><a id="l00898" name="l00898"></a><span class="lineno">  898</span><span class="comment"></span>    <span class="keywordtype">void</span> emitCallConcurrencyBuiltin(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, <span class="keyword">const</span> <span class="keywordtype">char</span>* funName,</div>
-<div class="line"><a id="l00899" name="l00899"></a><span class="lineno">  899</span>                                    uint8_t argCount);<span class="comment"></span></div>
-<div class="line"><a id="l00900" name="l00900"></a><span class="lineno">  900</span><span class="comment">    /// 闭包同步调用跳板：C 可调用入口 int64_t(*)(JitContext*, uint64_t argCount)。</span></div>
-<div class="line"><a id="l00901" name="l00901"></a><span class="lineno">  901</span><span class="comment">    /// 在 compileAllChunks 末尾（主 epilogue 之后）发射，帧布局与主入口 prologue 一致，</span></div>
-<div class="line"><a id="l00902" name="l00902"></a><span class="lineno">  902</span><span class="comment">    /// 使闭包内错误路径 jmp 共享 epilogue 时能沿跳板 rbp 帧干净地 ret 回 C++ 调用方。</span></div>
-<div class="line"><a id="l00903" name="l00903"></a><span class="lineno">  903</span><span class="comment">    /// spawn 的延迟执行闭包在 thread.join() 时经此跳板同步执行（jitInvokeClosureSync）。</span></div>
-<div class="line"><a id="l00904" name="l00904"></a><span class="lineno">  904</span><span class="comment"></span>    <span class="keywordtype">void</span> emitClosureTrampoline(asmjit::x86::Assembler&amp; a, asmjit::Label trampLabel);</div>
-<div class="line"><a id="l00905" name="l00905"></a><span class="lineno">  905</span>    <span class="keywordtype">void</span> emitDupN(asmjit::x86::Assembler&amp; a, uint8_t depth);</div>
-<div class="line"><a id="l00906" name="l00906"></a><span class="lineno">  906</span>    <span class="keywordtype">void</span> emitLoadMutated(asmjit::x86::Assembler&amp; a);</div>
-<div class="line"><a id="l00907" name="l00907"></a><span class="lineno">  907</span>    <span class="keywordtype">void</span> emitIndexSet(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue);</div>
-<div class="line"><a id="l00908" name="l00908"></a><span class="lineno">  908</span>    <span class="keywordtype">void</span> emitWritebackVar(asmjit::x86::Assembler&amp; a, <span class="keywordtype">int</span> slot);</div>
-<div class="line"><a id="l00909" name="l00909"></a><span class="lineno">  909</span>    <span class="keywordtype">void</span> emitWritebackLocal(asmjit::x86::Assembler&amp; a, uint8_t slot);<span class="comment"></span></div>
-<div class="line"><a id="l00910" name="l00910"></a><span class="lineno">  910</span><span class="comment">    /// 扫描 chunk 统计 OP_MEMBER_GET 数量，累加到 nextCallSiteId_</span></div>
-<div class="line"><a id="l00911" name="l00911"></a><span class="lineno">  911</span><span class="comment"></span>    <span class="keywordtype">void</span> countMemberGetInChunk(<span class="keyword">const</span> <a class="code hl_struct" href="structBytecodeChunk.html">BytecodeChunk</a>&amp; chunk);<span class="comment"></span></div>
-<div class="line"><a id="l00912" name="l00912"></a><span class="lineno">  912</span><span class="comment">    /// 扫描 chunk 收集 OP_DEFINE_CLASS 类名到 classNameSet_</span></div>
-<div class="line"><a id="l00913" name="l00913"></a><span class="lineno">  913</span><span class="comment"></span>    <span class="keywordtype">void</span> collectClassNamesFromChunk(<span class="keyword">const</span> <a class="code hl_struct" href="structBytecodeChunk.html">BytecodeChunk</a>&amp; chunk);</div>
-<div class="line"><a id="l00914" name="l00914"></a><span class="lineno">  914</span> </div>
-<div class="line"><a id="l00915" name="l00915"></a><span class="lineno">  915</span>    <span class="comment">// ============================================================</span></div>
-<div class="line"><a id="l00916" name="l00916"></a><span class="lineno">  916</span>    <span class="comment">// P0 重构：大型 OpCode case 提取为 emit* 子方法</span></div>
-<div class="line"><a id="l00917" name="l00917"></a><span class="lineno">  917</span>    <span class="comment">// ------------------------------------------------------------</span></div>
-<div class="line"><a id="l00918" name="l00918"></a><span class="lineno">  918</span>    <span class="comment">// 原 compileAllChunks 单函数 ~3930 行，圈复杂度 &gt;200。按 OpCode 类别提取</span></div>
-<div class="line"><a id="l00919" name="l00919"></a><span class="lineno">  919</span>    <span class="comment">// 大型 case（&gt;70 行）为独立成员函数，实现移至 JITCodeGenHelpers.cpp。</span></div>
-<div class="line"><a id="l00920" name="l00920"></a><span class="lineno">  920</span>    <span class="comment">// 约定：验证（操作数越界/常量池越界）保留在 case body，helper 仅负责 codegen。</span></div>
-<div class="line"><a id="l00921" name="l00921"></a><span class="lineno">  921</span>    <span class="comment">// 需要编译期上下文（funcTable/jumpLabels/chunkIdx）的 helper 通过参数传入。</span></div>
-<div class="line"><a id="l00922" name="l00922"></a><span class="lineno">  922</span>    <span class="comment">// ============================================================</span><span class="comment"></span></div>
-<div class="line"><a id="l00923" name="l00923"></a><span class="lineno">  923</span><span class="comment">    ///@{</span></div>
-<div class="line"><a id="l00924" name="l00924"></a><span class="lineno">  924</span><span class="comment">    /// ADR-008（阶段 1a）: 单个 chunk 的机器码发射（自 compileAllChunks 的</span></div>
-<div class="line"><a id="l00925" name="l00925"></a><span class="lineno">  925</span><span class="comment">    /// per-chunk 发射循环体提取）。发射进调用方提供的 Assembler（每 chunk 一个</span></div>
-<div class="line"><a id="l00926" name="l00926"></a><span class="lineno">  926</span><span class="comment">    /// 独立 CodeHolder/代码块）。返回 false 表示 compileError 已记录（操作数</span></div>
-<div class="line"><a id="l00927" name="l00927"></a><span class="lineno">  927</span><span class="comment">    /// 越界/不支持 OpCode 等），调用方中止本次编译（发射期未 runtime_.add，</span></div>
-<div class="line"><a id="l00928" name="l00928"></a><span class="lineno">  928</span><span class="comment">    /// 无可执行内存泄漏）。</span></div>
-<div class="line"><a id="l00929" name="l00929"></a><span class="lineno">  929</span><span class="comment"></span>    <span class="keywordtype">bool</span> emitChunkBody(asmjit::x86::Assembler&amp; a, <span class="keyword">const</span> <a class="code hl_struct" href="structBytecodeChunk.html">BytecodeChunk</a>&amp; chunk, <span class="keywordtype">size_t</span> chunkIdx, asmjit::Label epilogue,</div>
-<div class="line"><a id="l00930" name="l00930"></a><span class="lineno">  930</span>                       <span class="keyword">const</span> std::unordered_map&lt;std::string, JitFuncInfo&gt;&amp; funcTable);<span class="comment"></span></div>
-<div class="line"><a id="l00931" name="l00931"></a><span class="lineno">  931</span><span class="comment">    /// OP_CALL 代码生成（含 fast path / mailbox path 双路径分派）</span></div>
-<div class="line"><a id="l00932" name="l00932"></a><span class="lineno">  932</span><span class="comment">    /// @param funcIt funcTable 中命中的条目（调用前已验证非 end）</span></div>
-<div class="line"><a id="l00933" name="l00933"></a><span class="lineno">  933</span><span class="comment">    /// @param argCount 实参个数</span></div>
-<div class="line"><a id="l00934" name="l00934"></a><span class="lineno">  934</span><span class="comment">    /// @return true 走快速路径（ip += 4 由调用方处理），false 走 mailbox 路径</span></div>
-<div class="line"><a id="l00935" name="l00935"></a><span class="lineno">  935</span><span class="comment"></span>    <span class="keywordtype">bool</span> emitCallDispatch(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, <span class="keyword">const</span> JitFuncInfo&amp; info,</div>
-<div class="line"><a id="l00936" name="l00936"></a><span class="lineno">  936</span>                          <span class="keyword">const</span> std::string&amp; calleeName, uint8_t argCount);<span class="comment"></span></div>
-<div class="line"><a id="l00937" name="l00937"></a><span class="lineno">  937</span><span class="comment">    /// OP_CALL mailbox 路径（lazy mode / 有默认参数 / 有 upvalues / 有内部闭包）</span></div>
-<div class="line"><a id="l00938" name="l00938"></a><span class="lineno">  938</span><span class="comment"></span>    <span class="keywordtype">void</span> emitCallMailbox(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, <span class="keyword">const</span> <span class="keywordtype">char</span>* funNamePtr, uint8_t argCount);<span class="comment"></span></div>
-<div class="line"><a id="l00939" name="l00939"></a><span class="lineno">  939</span><span class="comment">    /// OP_CALL_EXPR 代码生成（闭包值调用，邮箱模式）</span></div>
-<div class="line"><a id="l00940" name="l00940"></a><span class="lineno">  940</span><span class="comment"></span>    <span class="keywordtype">void</span> emitCallExpr(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, uint8_t argCount);<span class="comment"></span></div>
-<div class="line"><a id="l00941" name="l00941"></a><span class="lineno">  941</span><span class="comment">    /// OP_RETURN 代码生成（含 close upvalue + 方法调用 writeBack + 帧恢复）</span></div>
-<div class="line"><a id="l00942" name="l00942"></a><span class="lineno">  942</span><span class="comment"></span>    <span class="keywordtype">void</span> emitReturn(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue);<span class="comment"></span></div>
-<div class="line"><a id="l00943" name="l00943"></a><span class="lineno">  943</span><span class="comment">    /// OP_LOOP 代码生成（含 safepoint GC 轮询 + OSR 回边计数 + OSR 入口点生成）</span></div>
-<div class="line"><a id="l00944" name="l00944"></a><span class="lineno">  944</span><span class="comment">    /// @param jumpTarget 循环回边目标 Label（调用前已验证存在）</span></div>
-<div class="line"><a id="l00945" name="l00945"></a><span class="lineno">  945</span><span class="comment">    /// @param chunkIdx 当前 chunk 索引（OSR 计数器寻址用）</span></div>
-<div class="line"><a id="l00946" name="l00946"></a><span class="lineno">  946</span><span class="comment"></span>    <span class="keywordtype">void</span> emitLoop(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, asmjit::Label jumpTarget, <span class="keywordtype">size_t</span> chunkIdx,</div>
-<div class="line"><a id="l00947" name="l00947"></a><span class="lineno">  947</span>                  uint32_t loopSiteIdx);<span class="comment"></span></div>
-<div class="line"><a id="l00948" name="l00948"></a><span class="lineno">  948</span><span class="comment">    /// OP_DIVIDE 代码生成（INT 原生路径 + FLOAT SSE2 路径 + 除零错误 + C++ 辅助回退）</span></div>
-<div class="line"><a id="l00949" name="l00949"></a><span class="lineno">  949</span><span class="comment"></span>    <span class="keywordtype">void</span> emitDivide(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, <span class="keywordtype">size_t</span> chunkIdx);<span class="comment"></span></div>
-<div class="line"><a id="l00950" name="l00950"></a><span class="lineno">  950</span><span class="comment">    /// OP_MODULO 代码生成（INT 原生路径 + 除零错误 + C++ 辅助回退）</span></div>
-<div class="line"><a id="l00951" name="l00951"></a><span class="lineno">  951</span><span class="comment"></span>    <span class="keywordtype">void</span> emitModulo(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, <span class="keywordtype">size_t</span> chunkIdx);<span class="comment"></span></div>
-<div class="line"><a id="l00952" name="l00952"></a><span class="lineno">  952</span><span class="comment">    /// OP_CLOSURE 代码生成（调用 jitCreateClosure 创建闭包值并压栈）</span></div>
-<div class="line"><a id="l00953" name="l00953"></a><span class="lineno">  953</span><span class="comment">    /// @param funNamePtr 函数名 C 字符串（指向 chunk.name，生命期跨 execute）</span></div>
-<div class="line"><a id="l00954" name="l00954"></a><span class="lineno">  954</span><span class="comment">    /// @param chunkPtr BytecodeChunk 指针（注册到闭包值）</span></div>
-<div class="line"><a id="l00955" name="l00955"></a><span class="lineno">  955</span><span class="comment">    /// @param upvalueCount upvalue 个数</span></div>
-<div class="line"><a id="l00956" name="l00956"></a><span class="lineno">  956</span><span class="comment">    /// @param upvalueDescs upvalue 描述符指针（指向字节码 ip+4）</span></div>
-<div class="line"><a id="l00957" name="l00957"></a><span class="lineno">  957</span><span class="comment"></span>    <span class="keywordtype">void</span> emitClosure(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, <span class="keyword">const</span> <span class="keywordtype">char</span>* funNamePtr, <span class="keyword">const</span> <span class="keywordtype">void</span>* chunkPtr,</div>
-<div class="line"><a id="l00958" name="l00958"></a><span class="lineno">  958</span>                     uint8_t upvalueCount, <span class="keyword">const</span> uint8_t* upvalueDescs);<span class="comment"></span></div>
-<div class="line"><a id="l00959" name="l00959"></a><span class="lineno">  959</span><span class="comment">    ///@}</span></div>
-<div class="line"><a id="l00960" name="l00960"></a><span class="lineno">  960</span><span class="comment"></span><span class="comment"></span> </div>
-<div class="line"><a id="l00961" name="l00961"></a><span class="lineno">  961</span><span class="comment">    /// codegen 共享状态（原 compileAllChunks 局部变量，提取为成员供 helper 函数访问）</span></div>
-<div class="line"><a id="l00962" name="l00962"></a><span class="lineno">  962</span><span class="comment">    ///@{</span></div>
-<div class="line"><a id="l00963" name="l00963"></a><span class="lineno">  963</span><span class="comment"></span>    uint64_t nextCallSiteId_ = 0; <span class="comment">///&lt; OP_MEMBER_GET callSiteId 分配计数器（编译期，先统计后重置再分配）</span></div>
-<div class="line"><a id="l00964" name="l00964"></a><span class="lineno">  964</span>    <span class="keywordtype">size_t</span> currentChunkIdx_ = 0;  <span class="comment">///&lt; 当前编译的 chunk 索引（emitCheckInt/emitRecordTypeFeedback 反优化用）</span><span class="comment"></span></div>
-<div class="line"><a id="l00965" name="l00965"></a><span class="lineno">  965</span><span class="comment">    /// ADR-008 阶段 1b: 单 chunk 编译模式（compileSingleChunkBlock 发射期置位）。</span></div>
-<div class="line"><a id="l00966" name="l00966"></a><span class="lineno">  966</span><span class="comment">    /// 跨块 fast path 仅在被调 chunk 已有 entryPtr 时可走，否则回落 mailbox 由</span></div>
-<div class="line"><a id="l00967" name="l00967"></a><span class="lineno">  967</span><span class="comment">    /// jitCallByName 运行期 lazy 触发（eager 全量模式所有块必编译，无需检查）。</span></div>
-<div class="line"><a id="l00968" name="l00968"></a><span class="lineno">  968</span><span class="comment"></span>    <span class="keywordtype">bool</span> singleChunkCompileMode_ = <span class="keyword">false</span>;<span class="comment"></span></div>
+<div class="line"><a id="l00875" name="l00875"></a><span class="lineno">  875</span>    <span class="keywordtype">void</span> emitIndexSetGlobalByName(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, <span class="keyword">const</span> <span class="keywordtype">char</span>* varName);</div>
+<div class="line"><a id="l00876" name="l00876"></a><span class="lineno">  876</span>    <span class="keywordtype">void</span> emitStoreGlobalOwned(asmjit::x86::Assembler&amp; a, <span class="keywordtype">int</span> slot);</div>
+<div class="line"><a id="l00877" name="l00877"></a><span class="lineno">  877</span>    <span class="keywordtype">void</span> emitClassNew(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, <span class="keyword">const</span> <span class="keywordtype">char</span>* className, uint8_t argCount);</div>
+<div class="line"><a id="l00878" name="l00878"></a><span class="lineno">  878</span>    <span class="keywordtype">void</span> emitInitField(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, <span class="keyword">const</span> <span class="keywordtype">char</span>* fieldName);</div>
+<div class="line"><a id="l00879" name="l00879"></a><span class="lineno">  879</span>    <span class="keywordtype">void</span> emitDefineClass(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, <span class="keyword">const</span> <span class="keywordtype">char</span>* className,</div>
+<div class="line"><a id="l00880" name="l00880"></a><span class="lineno">  880</span>                         <span class="keyword">const</span> <span class="keywordtype">char</span>* superClassName);</div>
+<div class="line"><a id="l00881" name="l00881"></a><span class="lineno">  881</span>    <span class="keywordtype">void</span> emitMemberGet(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, <span class="keyword">const</span> <span class="keywordtype">char</span>* fieldName);</div>
+<div class="line"><a id="l00882" name="l00882"></a><span class="lineno">  882</span>    <span class="keywordtype">void</span> emitMemberSetVar(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, <span class="keywordtype">int</span> slot, <span class="keyword">const</span> <span class="keywordtype">char</span>* fieldName);</div>
+<div class="line"><a id="l00883" name="l00883"></a><span class="lineno">  883</span>    <span class="keywordtype">void</span> emitMemberSetVarByName(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, <span class="keyword">const</span> <span class="keywordtype">char</span>* varName,</div>
+<div class="line"><a id="l00884" name="l00884"></a><span class="lineno">  884</span>                                <span class="keyword">const</span> <span class="keywordtype">char</span>* fieldName);</div>
+<div class="line"><a id="l00885" name="l00885"></a><span class="lineno">  885</span>    <span class="keywordtype">void</span> emitMemberSetLocal(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, uint8_t slot, <span class="keyword">const</span> <span class="keywordtype">char</span>* fieldName);</div>
+<div class="line"><a id="l00886" name="l00886"></a><span class="lineno">  886</span>    <span class="keywordtype">void</span> emitMethodCall(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, <span class="keyword">const</span> <span class="keywordtype">char</span>* methodName, uint8_t argCount,</div>
+<div class="line"><a id="l00887" name="l00887"></a><span class="lineno">  887</span>                        uint8_t receiverLocalSlotByte, <span class="keywordtype">int</span> receiverGlobalSlot, <span class="keyword">const</span> <span class="keywordtype">char</span>* receiverGlobalName,</div>
+<div class="line"><a id="l00888" name="l00888"></a><span class="lineno">  888</span>                        <span class="keywordtype">bool</span> isSuperCall, <span class="keyword">const</span> <span class="keywordtype">char</span>* superClassName);</div>
+<div class="line"><a id="l00889" name="l00889"></a><span class="lineno">  889</span>    <span class="keywordtype">void</span> emitCheckInt(asmjit::x86::Assembler&amp; a, asmjit::x86::Gp val, asmjit::Label failLabel);<span class="comment"></span></div>
+<div class="line"><a id="l00890" name="l00890"></a><span class="lineno">  890</span><span class="comment">    /// OPT-19: 栈顶值真值判定内联发射。peek [r15]（不弹出不修改），INT/BOOL</span></div>
+<div class="line"><a id="l00891" name="l00891"></a><span class="lineno">  891</span><span class="comment">    /// （payload≠0）与 NULL（恒假）走原生路径，FLOAT/PTR（空串判定等）回退</span></div>
+<div class="line"><a id="l00892" name="l00892"></a><span class="lineno">  892</span><span class="comment">    /// jitTruthy helper，语义与 Value::isTruthy 严格一致。</span></div>
+<div class="line"><a id="l00893" name="l00893"></a><span class="lineno">  893</span><span class="comment">    /// 返回约定：rax = 1 (truthy) / 0 (falsy)；仅 clobber rax/rcx/rdx。</span></div>
+<div class="line"><a id="l00894" name="l00894"></a><span class="lineno">  894</span><span class="comment"></span>    <span class="keywordtype">void</span> emitTruthyToRax(asmjit::x86::Assembler&amp; a);</div>
+<div class="line"><a id="l00895" name="l00895"></a><span class="lineno">  895</span>    <span class="keywordtype">void</span> emitRecordTypeFeedback(asmjit::x86::Assembler&amp; a, asmjit::x86::Gp val, <span class="keywordtype">size_t</span> chunkIdx);</div>
+<div class="line"><a id="l00896" name="l00896"></a><span class="lineno">  896</span>    <span class="keywordtype">void</span> emitFloatBinaryArith(asmjit::x86::Assembler&amp; a, <span class="keywordtype">int</span> op, asmjit::Label failLabel, asmjit::Label endLabel,</div>
+<div class="line"><a id="l00897" name="l00897"></a><span class="lineno">  897</span>                              <span class="keywordtype">size_t</span> chunkIdx, asmjit::Label divByZeroLabel = {});</div>
+<div class="line"><a id="l00898" name="l00898"></a><span class="lineno">  898</span>    <span class="keywordtype">void</span> emitLen(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue);<span class="comment"></span></div>
+<div class="line"><a id="l00899" name="l00899"></a><span class="lineno">  899</span><span class="comment">    /// enum variant 支持：OP_BUILD_ENUM_VARIANT / OP_ENUM_VARIANT_NAME / OP_ENUM_VARIANT_FIELD</span></div>
+<div class="line"><a id="l00900" name="l00900"></a><span class="lineno">  900</span><span class="comment">    /// 统一 C++ 辅助路径（校验逻辑与 VM executeContainerBuildOps/executeEnumOps 对齐）</span></div>
+<div class="line"><a id="l00901" name="l00901"></a><span class="lineno">  901</span><span class="comment"></span>    <span class="keywordtype">void</span> emitBuildEnumVariant(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, <span class="keyword">const</span> <span class="keywordtype">char</span>* enumName,</div>
+<div class="line"><a id="l00902" name="l00902"></a><span class="lineno">  902</span>                              <span class="keyword">const</span> <span class="keywordtype">char</span>* variantName, uint8_t argCount);</div>
+<div class="line"><a id="l00903" name="l00903"></a><span class="lineno">  903</span>    <span class="keywordtype">void</span> emitEnumVariantName(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, <span class="keyword">const</span> <span class="keywordtype">char</span>* enumName,</div>
+<div class="line"><a id="l00904" name="l00904"></a><span class="lineno">  904</span>                             <span class="keyword">const</span> <span class="keywordtype">char</span>* variantName);</div>
+<div class="line"><a id="l00905" name="l00905"></a><span class="lineno">  905</span>    <span class="keywordtype">void</span> emitEnumVariantField(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue);<span class="comment"></span></div>
+<div class="line"><a id="l00906" name="l00906"></a><span class="lineno">  906</span><span class="comment">    /// 并发原语内建函数：spawn/channel/mutex/rwlock（OP_CALL 名称未命中 funcTable 时分流）</span></div>
+<div class="line"><a id="l00907" name="l00907"></a><span class="lineno">  907</span><span class="comment"></span>    <span class="keywordtype">void</span> emitCallConcurrencyBuiltin(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, <span class="keyword">const</span> <span class="keywordtype">char</span>* funName,</div>
+<div class="line"><a id="l00908" name="l00908"></a><span class="lineno">  908</span>                                    uint8_t argCount);<span class="comment"></span></div>
+<div class="line"><a id="l00909" name="l00909"></a><span class="lineno">  909</span><span class="comment">    /// 闭包同步调用跳板：C 可调用入口 int64_t(*)(JitContext*, uint64_t argCount)。</span></div>
+<div class="line"><a id="l00910" name="l00910"></a><span class="lineno">  910</span><span class="comment">    /// 在 compileAllChunks 末尾（主 epilogue 之后）发射，帧布局与主入口 prologue 一致，</span></div>
+<div class="line"><a id="l00911" name="l00911"></a><span class="lineno">  911</span><span class="comment">    /// 使闭包内错误路径 jmp 共享 epilogue 时能沿跳板 rbp 帧干净地 ret 回 C++ 调用方。</span></div>
+<div class="line"><a id="l00912" name="l00912"></a><span class="lineno">  912</span><span class="comment">    /// spawn 的延迟执行闭包在 thread.join() 时经此跳板同步执行（jitInvokeClosureSync）。</span></div>
+<div class="line"><a id="l00913" name="l00913"></a><span class="lineno">  913</span><span class="comment"></span>    <span class="keywordtype">void</span> emitClosureTrampoline(asmjit::x86::Assembler&amp; a, asmjit::Label trampLabel);</div>
+<div class="line"><a id="l00914" name="l00914"></a><span class="lineno">  914</span>    <span class="keywordtype">void</span> emitDupN(asmjit::x86::Assembler&amp; a, uint8_t depth);</div>
+<div class="line"><a id="l00915" name="l00915"></a><span class="lineno">  915</span>    <span class="keywordtype">void</span> emitLoadMutated(asmjit::x86::Assembler&amp; a);</div>
+<div class="line"><a id="l00916" name="l00916"></a><span class="lineno">  916</span>    <span class="keywordtype">void</span> emitIndexSet(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue);</div>
+<div class="line"><a id="l00917" name="l00917"></a><span class="lineno">  917</span>    <span class="keywordtype">void</span> emitMemberSet(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, <span class="keyword">const</span> <span class="keywordtype">char</span>* fieldName);</div>
+<div class="line"><a id="l00918" name="l00918"></a><span class="lineno">  918</span>    <span class="keywordtype">void</span> emitWritebackVar(asmjit::x86::Assembler&amp; a, <span class="keywordtype">int</span> slot);</div>
+<div class="line"><a id="l00919" name="l00919"></a><span class="lineno">  919</span>    <span class="keywordtype">void</span> emitWritebackLocal(asmjit::x86::Assembler&amp; a, uint8_t slot);<span class="comment"></span></div>
+<div class="line"><a id="l00920" name="l00920"></a><span class="lineno">  920</span><span class="comment">    /// 扫描 chunk 统计 OP_MEMBER_GET 数量，累加到 nextCallSiteId_</span></div>
+<div class="line"><a id="l00921" name="l00921"></a><span class="lineno">  921</span><span class="comment"></span>    <span class="keywordtype">void</span> countMemberGetInChunk(<span class="keyword">const</span> <a class="code hl_struct" href="structBytecodeChunk.html">BytecodeChunk</a>&amp; chunk);<span class="comment"></span></div>
+<div class="line"><a id="l00922" name="l00922"></a><span class="lineno">  922</span><span class="comment">    /// 扫描 chunk 收集 OP_DEFINE_CLASS 类名到 classNameSet_</span></div>
+<div class="line"><a id="l00923" name="l00923"></a><span class="lineno">  923</span><span class="comment"></span>    <span class="keywordtype">void</span> collectClassNamesFromChunk(<span class="keyword">const</span> <a class="code hl_struct" href="structBytecodeChunk.html">BytecodeChunk</a>&amp; chunk);</div>
+<div class="line"><a id="l00924" name="l00924"></a><span class="lineno">  924</span> </div>
+<div class="line"><a id="l00925" name="l00925"></a><span class="lineno">  925</span>    <span class="comment">// ============================================================</span></div>
+<div class="line"><a id="l00926" name="l00926"></a><span class="lineno">  926</span>    <span class="comment">// P0 重构：大型 OpCode case 提取为 emit* 子方法</span></div>
+<div class="line"><a id="l00927" name="l00927"></a><span class="lineno">  927</span>    <span class="comment">// ------------------------------------------------------------</span></div>
+<div class="line"><a id="l00928" name="l00928"></a><span class="lineno">  928</span>    <span class="comment">// 原 compileAllChunks 单函数 ~3930 行，圈复杂度 &gt;200。按 OpCode 类别提取</span></div>
+<div class="line"><a id="l00929" name="l00929"></a><span class="lineno">  929</span>    <span class="comment">// 大型 case（&gt;70 行）为独立成员函数，实现移至 JITCodeGenHelpers.cpp。</span></div>
+<div class="line"><a id="l00930" name="l00930"></a><span class="lineno">  930</span>    <span class="comment">// 约定：验证（操作数越界/常量池越界）保留在 case body，helper 仅负责 codegen。</span></div>
+<div class="line"><a id="l00931" name="l00931"></a><span class="lineno">  931</span>    <span class="comment">// 需要编译期上下文（funcTable/jumpLabels/chunkIdx）的 helper 通过参数传入。</span></div>
+<div class="line"><a id="l00932" name="l00932"></a><span class="lineno">  932</span>    <span class="comment">// ============================================================</span><span class="comment"></span></div>
+<div class="line"><a id="l00933" name="l00933"></a><span class="lineno">  933</span><span class="comment">    ///@{</span></div>
+<div class="line"><a id="l00934" name="l00934"></a><span class="lineno">  934</span><span class="comment">    /// ADR-008（阶段 1a）: 单个 chunk 的机器码发射（自 compileAllChunks 的</span></div>
+<div class="line"><a id="l00935" name="l00935"></a><span class="lineno">  935</span><span class="comment">    /// per-chunk 发射循环体提取）。发射进调用方提供的 Assembler（每 chunk 一个</span></div>
+<div class="line"><a id="l00936" name="l00936"></a><span class="lineno">  936</span><span class="comment">    /// 独立 CodeHolder/代码块）。返回 false 表示 compileError 已记录（操作数</span></div>
+<div class="line"><a id="l00937" name="l00937"></a><span class="lineno">  937</span><span class="comment">    /// 越界/不支持 OpCode 等），调用方中止本次编译（发射期未 runtime_.add，</span></div>
+<div class="line"><a id="l00938" name="l00938"></a><span class="lineno">  938</span><span class="comment">    /// 无可执行内存泄漏）。</span></div>
+<div class="line"><a id="l00939" name="l00939"></a><span class="lineno">  939</span><span class="comment"></span>    <span class="keywordtype">bool</span> emitChunkBody(asmjit::x86::Assembler&amp; a, <span class="keyword">const</span> <a class="code hl_struct" href="structBytecodeChunk.html">BytecodeChunk</a>&amp; chunk, <span class="keywordtype">size_t</span> chunkIdx, asmjit::Label epilogue,</div>
+<div class="line"><a id="l00940" name="l00940"></a><span class="lineno">  940</span>                       <span class="keyword">const</span> std::unordered_map&lt;std::string, JitFuncInfo&gt;&amp; funcTable);<span class="comment"></span></div>
+<div class="line"><a id="l00941" name="l00941"></a><span class="lineno">  941</span><span class="comment">    /// OP_CALL 代码生成（含 fast path / mailbox path 双路径分派）</span></div>
+<div class="line"><a id="l00942" name="l00942"></a><span class="lineno">  942</span><span class="comment">    /// @param funcIt funcTable 中命中的条目（调用前已验证非 end）</span></div>
+<div class="line"><a id="l00943" name="l00943"></a><span class="lineno">  943</span><span class="comment">    /// @param argCount 实参个数</span></div>
+<div class="line"><a id="l00944" name="l00944"></a><span class="lineno">  944</span><span class="comment">    /// @return true 走快速路径（ip += 4 由调用方处理），false 走 mailbox 路径</span></div>
+<div class="line"><a id="l00945" name="l00945"></a><span class="lineno">  945</span><span class="comment"></span>    <span class="keywordtype">bool</span> emitCallDispatch(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, <span class="keyword">const</span> JitFuncInfo&amp; info,</div>
+<div class="line"><a id="l00946" name="l00946"></a><span class="lineno">  946</span>                          <span class="keyword">const</span> std::string&amp; calleeName, uint8_t argCount);<span class="comment"></span></div>
+<div class="line"><a id="l00947" name="l00947"></a><span class="lineno">  947</span><span class="comment">    /// OP_CALL mailbox 路径（lazy mode / 有默认参数 / 有 upvalues / 有内部闭包）</span></div>
+<div class="line"><a id="l00948" name="l00948"></a><span class="lineno">  948</span><span class="comment"></span>    <span class="keywordtype">void</span> emitCallMailbox(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, <span class="keyword">const</span> <span class="keywordtype">char</span>* funNamePtr, uint8_t argCount);<span class="comment"></span></div>
+<div class="line"><a id="l00949" name="l00949"></a><span class="lineno">  949</span><span class="comment">    /// OP_CALL_EXPR 代码生成（闭包值调用，邮箱模式）</span></div>
+<div class="line"><a id="l00950" name="l00950"></a><span class="lineno">  950</span><span class="comment"></span>    <span class="keywordtype">void</span> emitCallExpr(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, uint8_t argCount);<span class="comment"></span></div>
+<div class="line"><a id="l00951" name="l00951"></a><span class="lineno">  951</span><span class="comment">    /// OP_RETURN 代码生成（含 close upvalue + 方法调用 writeBack + 帧恢复）</span></div>
+<div class="line"><a id="l00952" name="l00952"></a><span class="lineno">  952</span><span class="comment"></span>    <span class="keywordtype">void</span> emitReturn(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue);<span class="comment"></span></div>
+<div class="line"><a id="l00953" name="l00953"></a><span class="lineno">  953</span><span class="comment">    /// OP_LOOP 代码生成（含 safepoint GC 轮询 + OSR 回边计数 + OSR 入口点生成）</span></div>
+<div class="line"><a id="l00954" name="l00954"></a><span class="lineno">  954</span><span class="comment">    /// @param jumpTarget 循环回边目标 Label（调用前已验证存在）</span></div>
+<div class="line"><a id="l00955" name="l00955"></a><span class="lineno">  955</span><span class="comment">    /// @param chunkIdx 当前 chunk 索引（OSR 计数器寻址用）</span></div>
+<div class="line"><a id="l00956" name="l00956"></a><span class="lineno">  956</span><span class="comment"></span>    <span class="keywordtype">void</span> emitLoop(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, asmjit::Label jumpTarget, <span class="keywordtype">size_t</span> chunkIdx,</div>
+<div class="line"><a id="l00957" name="l00957"></a><span class="lineno">  957</span>                  uint32_t loopSiteIdx);<span class="comment"></span></div>
+<div class="line"><a id="l00958" name="l00958"></a><span class="lineno">  958</span><span class="comment">    /// OP_DIVIDE 代码生成（INT 原生路径 + FLOAT SSE2 路径 + 除零错误 + C++ 辅助回退）</span></div>
+<div class="line"><a id="l00959" name="l00959"></a><span class="lineno">  959</span><span class="comment"></span>    <span class="keywordtype">void</span> emitDivide(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, <span class="keywordtype">size_t</span> chunkIdx);<span class="comment"></span></div>
+<div class="line"><a id="l00960" name="l00960"></a><span class="lineno">  960</span><span class="comment">    /// OP_MODULO 代码生成（INT 原生路径 + 除零错误 + C++ 辅助回退）</span></div>
+<div class="line"><a id="l00961" name="l00961"></a><span class="lineno">  961</span><span class="comment"></span>    <span class="keywordtype">void</span> emitModulo(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, <span class="keywordtype">size_t</span> chunkIdx);<span class="comment"></span></div>
+<div class="line"><a id="l00962" name="l00962"></a><span class="lineno">  962</span><span class="comment">    /// OP_CLOSURE 代码生成（调用 jitCreateClosure 创建闭包值并压栈）</span></div>
+<div class="line"><a id="l00963" name="l00963"></a><span class="lineno">  963</span><span class="comment">    /// @param funNamePtr 函数名 C 字符串（指向 chunk.name，生命期跨 execute）</span></div>
+<div class="line"><a id="l00964" name="l00964"></a><span class="lineno">  964</span><span class="comment">    /// @param chunkPtr BytecodeChunk 指针（注册到闭包值）</span></div>
+<div class="line"><a id="l00965" name="l00965"></a><span class="lineno">  965</span><span class="comment">    /// @param upvalueCount upvalue 个数</span></div>
+<div class="line"><a id="l00966" name="l00966"></a><span class="lineno">  966</span><span class="comment">    /// @param upvalueDescs upvalue 描述符指针（指向字节码 ip+4）</span></div>
+<div class="line"><a id="l00967" name="l00967"></a><span class="lineno">  967</span><span class="comment"></span>    <span class="keywordtype">void</span> emitClosure(asmjit::x86::Assembler&amp; a, asmjit::Label epilogue, <span class="keyword">const</span> <span class="keywordtype">char</span>* funNamePtr, <span class="keyword">const</span> <span class="keywordtype">void</span>* chunkPtr,</div>
+<div class="line"><a id="l00968" name="l00968"></a><span class="lineno">  968</span>                     uint8_t upvalueCount, <span class="keyword">const</span> uint8_t* upvalueDescs);<span class="comment"></span></div>
 <div class="line"><a id="l00969" name="l00969"></a><span class="lineno">  969</span><span class="comment">    ///@}</span></div>
-<div class="line"><a id="l00970" name="l00970"></a><span class="lineno">  970</span><span class="comment"></span> </div>
-<div class="line"><a id="l00971" name="l00971"></a><span class="lineno">  971</span>    asmjit::JitRuntime runtime_;        <span class="comment">///&lt; JIT 内存分配器</span></div>
-<div class="line"><a id="l00972" name="l00972"></a><span class="lineno">  972</span>    JitEntryFn currentEntry_ = <span class="keyword">nullptr</span>; <span class="comment">///&lt; R151: main 块入口镜像（代码块所有权权威为 codeBlocks_）</span></div>
-<div class="line"><a id="l00973" name="l00973"></a><span class="lineno">  973</span> </div>
-<div class="line"><a id="l00974" name="l00974"></a><span class="lineno">  974</span>    <span class="comment">// ============================================================</span></div>
-<div class="line"><a id="l00975" name="l00975"></a><span class="lineno">  975</span>    <span class="comment">// ADR-008 per-chunk 代码块架构（阶段 1a）</span></div>
-<div class="line"><a id="l00976" name="l00976"></a><span class="lineno">  976</span>    <span class="comment">// ------------------------------------------------------------</span></div>
-<div class="line"><a id="l00977" name="l00977"></a><span class="lineno">  977</span>    <span class="comment">// 每个 chunk 编译为独立 CodeHolder/代码块。跨块引用两条通道：</span></div>
-<div class="line"><a id="l00978" name="l00978"></a><span class="lineno">  978</span>    <span class="comment">// 跨块 OP_CALL fast path 经 callImportSlots_ 导入槽间接跳转（发射期分配</span></div>
-<div class="line"><a id="l00979" name="l00979"></a><span class="lineno">  979</span>    <span class="comment">// 槽位、全部块 add 后回填）；非 main 块错误退出经 ctx-&gt;errorExit 指向</span></div>
-<div class="line"><a id="l00980" name="l00980"></a><span class="lineno">  980</span>    <span class="comment">// main 块 epilogue。JitContext/JitFrame/helper ABI 三个跨块协议不变。</span></div>
-<div class="line"><a id="l00981" name="l00981"></a><span class="lineno">  981</span>    <span class="comment">// ============================================================</span><span class="comment"></span></div>
-<div class="line"><a id="l00982" name="l00982"></a><span class="lineno">  982</span><span class="comment">    /// 单个已提交代码块的所有权记录</span></div>
-<div class="line"><a id="l00983" name="l00983"></a><span class="lineno">  983</span><span class="comment"></span>    <span class="keyword">struct </span>JitCodeBlock {</div>
-<div class="line"><a id="l00984" name="l00984"></a><span class="lineno">  984</span>        JitEntryFn entry = <span class="keyword">nullptr</span>; <span class="comment">///&lt; 块基址（runtime_.add 返回，asmjit 释放句柄）</span></div>
-<div class="line"><a id="l00985" name="l00985"></a><span class="lineno">  985</span>        <span class="keywordtype">size_t</span> chunkIdx = 0;        <span class="comment">///&lt; 对应 allChunks 索引（main=0）</span></div>
-<div class="line"><a id="l00986" name="l00986"></a><span class="lineno">  986</span>        std::string chunkName;</div>
-<div class="line"><a id="l00987" name="l00987"></a><span class="lineno">  987</span>        uint64_t entryOffset = 0;      <span class="comment">///&lt; chunk 入口相对块基址偏移（main 块恒 0，入口即块基址）</span></div>
-<div class="line"><a id="l00988" name="l00988"></a><span class="lineno">  988</span>        <span class="keywordtype">bool</span> isMain = <span class="keyword">false</span>;           <span class="comment">///&lt; main 块含 prologue/epilogue/闭包跳板，其余块为函数块</span></div>
-<div class="line"><a id="l00989" name="l00989"></a><span class="lineno">  989</span>        <span class="keywordtype">bool</span> owned = <span class="keyword">true</span>;             <span class="comment">///&lt; false = 缓存共享块（生命周期归进程级块缓存，实例不释放）</span></div>
-<div class="line"><a id="l00990" name="l00990"></a><span class="lineno">  990</span>        uint64_t epilogueOffset = 0;   <span class="comment">///&lt; 仅 main 块（errorExit 桩目标 = 基址 + 此偏移）</span></div>
-<div class="line"><a id="l00991" name="l00991"></a><span class="lineno">  991</span>        uint64_t trampolineOffset = 0; <span class="comment">///&lt; 仅 main 块（闭包同步跳板偏移）</span></div>
-<div class="line"><a id="l00992" name="l00992"></a><span class="lineno">  992</span>    };<span class="comment"></span></div>
-<div class="line"><a id="l00993" name="l00993"></a><span class="lineno">  993</span><span class="comment">    /// 导入槽回填记录（slotIdx → 被调 chunk 名；commit 阶段解析入口地址）</span></div>
-<div class="line"><a id="l00994" name="l00994"></a><span class="lineno">  994</span><span class="comment"></span>    <span class="keyword">struct </span>CallImportPatch {</div>
-<div class="line"><a id="l00995" name="l00995"></a><span class="lineno">  995</span>        <span class="keywordtype">size_t</span> slotIdx = 0;</div>
-<div class="line"><a id="l00996" name="l00996"></a><span class="lineno">  996</span>        std::string calleeName;</div>
-<div class="line"><a id="l00997" name="l00997"></a><span class="lineno">  997</span>        <span class="keywordtype">bool</span> isMethod = <span class="keyword">false</span>; <span class="comment">///&lt; 含 &#39;.&#39; 的方法名经 methodEntries_ 解析，否则 funcEntries_</span></div>
-<div class="line"><a id="l00998" name="l00998"></a><span class="lineno">  998</span>    };</div>
-<div class="line"><a id="l00999" name="l00999"></a><span class="lineno">  999</span> </div>
-<div class="line"><a id="l01000" name="l01000"></a><span class="lineno"> 1000</span>    <span class="comment">// ============================================================</span></div>
-<div class="line"><a id="l01001" name="l01001"></a><span class="lineno"> 1001</span>    <span class="comment">// ADR-008 阶段 2: 进程内编译块缓存（共享存活设计）</span></div>
-<div class="line"><a id="l01002" name="l01002"></a><span class="lineno"> 1002</span>    <span class="comment">// ------------------------------------------------------------</span></div>
-<div class="line"><a id="l01003" name="l01003"></a><span class="lineno"> 1003</span>    <span class="comment">// 键 = fnv1a64(字节码内容) ^ kJitCodegenVersion。首次 eager 编译：深拷贝</span></div>
-<div class="line"><a id="l01004" name="l01004"></a><span class="lineno"> 1004</span>    <span class="comment">// CompileResult 作为编译宿主（块内嵌指针指向副本），代码块从进程级共享</span></div>
-<div class="line"><a id="l01005" name="l01005"></a><span class="lineno"> 1005</span>    <span class="comment">// JitRuntime 分配，副本+块+映射元数据一并入缓存。命中实例直接引用共享块</span></div>
-<div class="line"><a id="l01006" name="l01006"></a><span class="lineno"> 1006</span>    <span class="comment">// 与元数据，跳过重编译（零重绑定——块内嵌指针由缓存副本保持有效；</span></div>
-<div class="line"><a id="l01007" name="l01007"></a><span class="lineno"> 1007</span>    <span class="comment">// 重定位/重绑层留给阶段 3 的磁盘持久化）。</span></div>
-<div class="line"><a id="l01008" name="l01008"></a><span class="lineno"> 1008</span>    <span class="comment">// 门控：仅纯 eager 路径（!lazyMode_ &amp;&amp; !tieredMode_ &amp;&amp; 无自定义阈值），</span></div>
-<div class="line"><a id="l01009" name="l01009"></a><span class="lineno"> 1009</span>    <span class="comment">// tiering/lazy 教学路径按需重编译、绕过缓存。</span></div>
-<div class="line"><a id="l01010" name="l01010"></a><span class="lineno"> 1010</span>    <span class="comment">// 单执行线程假设：GUI 一次运行一个 JITBackend；淘汰与执行不做跨线程互斥</span></div>
-<div class="line"><a id="l01011" name="l01011"></a><span class="lineno"> 1011</span>    <span class="comment">// （注册表互斥仅保护 map 结构）。</span></div>
-<div class="line"><a id="l01012" name="l01012"></a><span class="lineno"> 1012</span>    <span class="comment">// ============================================================</span><span class="comment"></span></div>
-<div class="line"><a id="l01013" name="l01013"></a><span class="lineno"> 1013</span><span class="comment">    /// JIT 代码生成/键结构版本——任何 codegen 逻辑变更或缓存键公式/输入集变更必须</span></div>
-<div class="line"><a id="l01014" name="l01014"></a><span class="lineno"> 1014</span><span class="comment">    /// 递增，使旧缓存键确定性失效。2026-10-22：enumInfos 全量入键的键结构补全递增至</span></div>
-<div class="line"><a id="l01015" name="l01015"></a><span class="lineno"> 1015</span><span class="comment">    /// 2（非正确性必需，保守选择；评估见 JIT.cpp computeBlockCacheKey 尾部注释）</span></div>
-<div class="line"><a id="l01016" name="l01016"></a><span class="lineno"> 1016</span><span class="comment"></span>    <span class="keyword">static</span> <span class="keyword">constexpr</span> uint32_t kJitCodegenVersion = 4;</div>
-<div class="line"><a id="l01017" name="l01017"></a><span class="lineno"> 1017</span> </div>
-<div class="line"><a id="l01018" name="l01018"></a><span class="lineno"> 1018</span>    <span class="keyword">struct </span>JitBlockCacheEntry {</div>
-<div class="line"><a id="l01019" name="l01019"></a><span class="lineno"> 1019</span>        <span class="keyword">struct </span>SharedBlock {</div>
-<div class="line"><a id="l01020" name="l01020"></a><span class="lineno"> 1020</span>            JitEntryFn entry = <span class="keyword">nullptr</span>; <span class="comment">///&lt; 可执行基址（共享 JitRuntime 分配，缓存持有）</span></div>
-<div class="line"><a id="l01021" name="l01021"></a><span class="lineno"> 1021</span>            std::string chunkName;</div>
-<div class="line"><a id="l01022" name="l01022"></a><span class="lineno"> 1022</span>            uint64_t entryOffset = 0; <span class="comment">///&lt; 非 main 块恒 0（块首即入口）</span></div>
-<div class="line"><a id="l01023" name="l01023"></a><span class="lineno"> 1023</span>            <span class="keywordtype">bool</span> isMain = <span class="keyword">false</span>;</div>
-<div class="line"><a id="l01024" name="l01024"></a><span class="lineno"> 1024</span>            uint64_t epilogueOffset = 0;   <span class="comment">///&lt; 仅 main 块</span></div>
-<div class="line"><a id="l01025" name="l01025"></a><span class="lineno"> 1025</span>            uint64_t trampolineOffset = 0; <span class="comment">///&lt; 仅 main 块</span></div>
-<div class="line"><a id="l01026" name="l01026"></a><span class="lineno"> 1026</span>        };</div>
-<div class="line"><a id="l01027" name="l01027"></a><span class="lineno"> 1027</span>        std::vector&lt;SharedBlock&gt; blocks;                                  <span class="comment">///&lt; 顺序 = allChunks 顺序（main 在前）</span></div>
-<div class="line"><a id="l01028" name="l01028"></a><span class="lineno"> 1028</span>        std::vector&lt;std::pair&lt;std::string, JitMethodInfo&gt;&gt; methodEntries; <span class="comment">///&lt; &quot;Class.method&quot; → 元数据</span></div>
-<div class="line"><a id="l01029" name="l01029"></a><span class="lineno"> 1029</span>        std::vector&lt;std::pair&lt;std::string, JitMethodInfo&gt;&gt; funcEntries;   <span class="comment">///&lt; 函数名 → 元数据</span></div>
-<div class="line"><a id="l01030" name="l01030"></a><span class="lineno"> 1030</span>        std::vector&lt;CallImportPatch&gt; importPatches;                       <span class="comment">///&lt; 导入槽回填清单（命中时同索引重填）</span></div>
-<div class="line"><a id="l01031" name="l01031"></a><span class="lineno"> 1031</span>        std::vector&lt;std::string&gt; chunkNames;                              <span class="comment">///&lt; 全局 chunk 索引 → 名称</span></div>
-<div class="line"><a id="l01032" name="l01032"></a><span class="lineno"> 1032</span>        std::vector&lt;minilang::JitTier&gt; chunkTiers;                        <span class="comment">///&lt; 缓存命中时恢复 tier 视图</span></div>
-<div class="line"><a id="l01033" name="l01033"></a><span class="lineno"> 1033</span>        <span class="keywordtype">size_t</span> memberIcCount = 0;                                         <span class="comment">///&lt; memberGetIC_ 尺寸（IC id [0,N) 对齐）</span></div>
-<div class="line"><a id="l01034" name="l01034"></a><span class="lineno"> 1034</span>        <span class="keywordtype">size_t</span> methodIcCount = 0;                                         <span class="comment">///&lt; methodCallIC_ 尺寸</span></div>
-<div class="line"><a id="l01035" name="l01035"></a><span class="lineno"> 1035</span>        std::string capturedAsm;                                          <span class="comment">///&lt; 教学汇编捕获（命中时复用）</span></div>
-<div class="line"><a id="l01036" name="l01036"></a><span class="lineno"> 1036</span>        std::shared_ptr&lt;const CompileResult&gt; result;                      <span class="comment">///&lt; 块内嵌指针宿主（深拷贝快照）</span></div>
-<div class="line"><a id="l01037" name="l01037"></a><span class="lineno"> 1037</span>    };<span class="comment"></span></div>
-<div class="line"><a id="l01038" name="l01038"></a><span class="lineno"> 1038</span><span class="comment">    /// 本次编译的全部代码块（main 块在前）。所有权权威：execute() 入口与析构</span></div>
-<div class="line"><a id="l01039" name="l01039"></a><span class="lineno"> 1039</span><span class="comment">    /// 按块释放；currentEntry_ 仅镜像 main 块入口（tiering save/restore 沿用）。</span></div>
-<div class="line"><a id="l01040" name="l01040"></a><span class="lineno"> 1040</span><span class="comment">    /// lazy/特化重编译的内部编译会把全部内层块移交 ownedLazyEntries_ 等</span></div>
-<div class="line"><a id="l01041" name="l01041"></a><span class="lineno"> 1041</span><span class="comment">    /// 既有所有权机制，随外层 codeBlocks_ 恢复。</span></div>
-<div class="line"><a id="l01042" name="l01042"></a><span class="lineno"> 1042</span><span class="comment"></span>    std::vector&lt;JitCodeBlock&gt; codeBlocks_;<span class="comment"></span></div>
-<div class="line"><a id="l01043" name="l01043"></a><span class="lineno"> 1043</span><span class="comment">    /// 跨块调用导入槽表（JitContext.callImportSlots 指向其 data()；发射期</span></div>
-<div class="line"><a id="l01044" name="l01044"></a><span class="lineno"> 1044</span><span class="comment">    /// push 分配槽位，commit 阶段回填被调入口地址）</span></div>
-<div class="line"><a id="l01045" name="l01045"></a><span class="lineno"> 1045</span><span class="comment"></span>    std::vector&lt;void*&gt; callImportSlots_;</div>
-<div class="line"><a id="l01046" name="l01046"></a><span class="lineno"> 1046</span>    std::vector&lt;CallImportPatch&gt; callImportPatches_;<span class="comment"></span></div>
-<div class="line"><a id="l01047" name="l01047"></a><span class="lineno"> 1047</span><span class="comment">    /// 当前发射块的 chunk 入口 Label（仅该块发射期有效；同块递归 fast path 直连用）</span></div>
-<div class="line"><a id="l01048" name="l01048"></a><span class="lineno"> 1048</span><span class="comment"></span>    asmjit::Label currentBlockEntryLabel_{};<span class="comment"></span></div>
-<div class="line"><a id="l01049" name="l01049"></a><span class="lineno"> 1049</span><span class="comment">    /// ADR-008 阶段 2: 当前发射/提交使用的 runtime（缓存路径指向进程级共享</span></div>
-<div class="line"><a id="l01050" name="l01050"></a><span class="lineno"> 1050</span><span class="comment">    /// runtime，块生命周期归缓存；默认指向实例 runtime_）</span></div>
-<div class="line"><a id="l01051" name="l01051"></a><span class="lineno"> 1051</span><span class="comment"></span>    asmjit::JitRuntime* activeRuntime_ = <span class="keyword">nullptr</span>;<span class="comment"></span></div>
-<div class="line"><a id="l01052" name="l01052"></a><span class="lineno"> 1052</span><span class="comment">    /// ADR-008 阶段 2: 缓存命中的 CompileResult 快照持有（currentResult_ 指向它，</span></div>
-<div class="line"><a id="l01053" name="l01053"></a><span class="lineno"> 1053</span><span class="comment">    /// tiering 单 chunk 重编译从同一快照读取 chunk 数据）</span></div>
-<div class="line"><a id="l01054" name="l01054"></a><span class="lineno"> 1054</span><span class="comment"></span>    std::shared_ptr&lt;const CompileResult&gt; cachedResult_;</div>
-<div class="line"><a id="l01055" name="l01055"></a><span class="lineno"> 1055</span>    <a class="code hl_class" href="classDiagnosticBag.html">DiagnosticBag</a> diagnostics_;                                    <span class="comment">///&lt; 诊断包</span></div>
-<div class="line"><a id="l01056" name="l01056"></a><span class="lineno"> 1056</span>    std::function&lt;void(<span class="keyword">const</span> std::string&amp;)&gt; outputCallback_;       <span class="comment">///&lt; print 输出回调</span></div>
-<div class="line"><a id="l01057" name="l01057"></a><span class="lineno"> 1057</span>    std::function&lt;std::string(<span class="keyword">const</span> std::string&amp;)&gt; inputCallback_; <span class="comment">///&lt; input 输入回调</span></div>
-<div class="line"><a id="l01058" name="l01058"></a><span class="lineno"> 1058</span> </div>
-<div class="line"><a id="l01059" name="l01059"></a><span class="lineno"> 1059</span>    std::vector&lt;JitFrame&gt; frameStack_; <span class="comment">///&lt; R141: 帧栈存储（预分配，JitContext.frames 指向此）</span></div>
-<div class="line"><a id="l01060" name="l01060"></a><span class="lineno"> 1060</span>    <span class="keywordtype">size_t</span> frameCount_ = 0;            <span class="comment">///&lt; R141: 当前帧深度（JitContext.frameCount 指向此）</span></div>
-<div class="line"><a id="l01061" name="l01061"></a><span class="lineno"> 1061</span><span class="comment"></span> </div>
-<div class="line"><a id="l01062" name="l01062"></a><span class="lineno"> 1062</span><span class="comment">    /// R148: 运行时类注册表（与 StackVM classInfo_ 等价，简化版无 methodCache）</span></div>
-<div class="line"><a id="l01063" name="l01063"></a><span class="lineno"> 1063</span><span class="comment">    /// OP_DEFINE_CLASS 执行时填充，OP_CLASS_NEW/OP_MEMBER_GET/SET 查询</span></div>
-<div class="line"><a id="l01064" name="l01064"></a><span class="lineno"> 1064</span><span class="comment"></span>    std::unordered_map&lt;std::string, JitClassInfo&gt; classInfo_;</div>
-<div class="line"><a id="l01065" name="l01065"></a><span class="lineno"> 1065</span><span class="comment"></span> </div>
-<div class="line"><a id="l01066" name="l01066"></a><span class="lineno"> 1066</span><span class="comment">    /// enum 元信息注册表（与 VM enumRegistry_ 对齐）：execute() 从</span></div>
-<div class="line"><a id="l01067" name="l01067"></a><span class="lineno"> 1067</span><span class="comment">    /// CompileResult.enumInfos 加载，jitBuildEnumVariant 经 ctx-&gt;enumRegistryPtr 校验</span></div>
-<div class="line"><a id="l01068" name="l01068"></a><span class="lineno"> 1068</span><span class="comment">    /// variant 名存在性 + arity + 字段类型注解（含泛型类型参数擦除与继承链 fallback）。</span></div>
-<div class="line"><a id="l01069" name="l01069"></a><span class="lineno"> 1069</span><span class="comment"></span>    std::unordered_map&lt;std::string, VMEnumInfo&gt; enumRegistry_;</div>
-<div class="line"><a id="l01070" name="l01070"></a><span class="lineno"> 1070</span><span class="comment"></span> </div>
-<div class="line"><a id="l01071" name="l01071"></a><span class="lineno"> 1071</span><span class="comment">    /// R148: OP_INIT_FIELD 执行期间收集字段声明顺序，供 OP_DEFINE_CLASS 提取</span></div>
-<div class="line"><a id="l01072" name="l01072"></a><span class="lineno"> 1072</span><span class="comment"></span>    std::vector&lt;std::string&gt; pendingFieldOrder_;</div>
-<div class="line"><a id="l01073" name="l01073"></a><span class="lineno"> 1073</span><span class="comment"></span> </div>
-<div class="line"><a id="l01074" name="l01074"></a><span class="lineno"> 1074</span><span class="comment">    /// R149: 方法名→元信息映射（&quot;Class.method&quot; 键），compileAllChunks 编译完成后填充</span></div>
-<div class="line"><a id="l01075" name="l01075"></a><span class="lineno"> 1075</span><span class="comment">    /// jitMethodCall 沿继承链查找时使用，与 StackVM methodsByClass_ + findMethodChunk 对齐</span></div>
-<div class="line"><a id="l01076" name="l01076"></a><span class="lineno"> 1076</span><span class="comment"></span>    std::unordered_map&lt;std::string, JitMethodInfo&gt; methodEntries_;</div>
-<div class="line"><a id="l01077" name="l01077"></a><span class="lineno"> 1077</span><span class="comment"></span> </div>
-<div class="line"><a id="l01078" name="l01078"></a><span class="lineno"> 1078</span><span class="comment">    /// R149: 编译期收集的所有类名集合（扫描 OP_DEFINE_CLASS 指令提取）</span></div>
-<div class="line"><a id="l01079" name="l01079"></a><span class="lineno"> 1079</span><span class="comment">    /// OP_CALL handler 中 funcTable 找不到时检查此集合，命中则走 emitClassNew 路径</span></div>
-<div class="line"><a id="l01080" name="l01080"></a><span class="lineno"> 1080</span><span class="comment">    /// （与 StackVM executeCallByName 中 classInfo_.find(funName) fallback 对齐）</span></div>
-<div class="line"><a id="l01081" name="l01081"></a><span class="lineno"> 1081</span><span class="comment"></span>    std::unordered_set&lt;std::string&gt; classNameSet_;</div>
-<div class="line"><a id="l01082" name="l01082"></a><span class="lineno"> 1082</span><span class="comment"></span> </div>
-<div class="line"><a id="l01083" name="l01083"></a><span class="lineno"> 1083</span><span class="comment">    /// R150: per-chunk 调用计数数组（热点检测用）</span></div>
-<div class="line"><a id="l01084" name="l01084"></a><span class="lineno"> 1084</span><span class="comment">    /// 索引 0 = mainChunk（不计数，恒为 0），索引 1..N = functionChunks</span></div>
-<div class="line"><a id="l01085" name="l01085"></a><span class="lineno"> 1085</span><span class="comment">    /// compileAllChunks 中按 allChunks 顺序分配索引并构建 chunkNames_</span></div>
-<div class="line"><a id="l01086" name="l01086"></a><span class="lineno"> 1086</span><span class="comment"></span>    std::vector&lt;uint64_t&gt; chunkCallCounts_;</div>
-<div class="line"><a id="l01087" name="l01087"></a><span class="lineno"> 1087</span>    std::vector&lt;std::string&gt; chunkNames_; <span class="comment">///&lt; R150: chunk 索引→名称映射（getHotChunkStats 用）</span></div>
+<div class="line"><a id="l00970" name="l00970"></a><span class="lineno">  970</span><span class="comment"></span><span class="comment"></span> </div>
+<div class="line"><a id="l00971" name="l00971"></a><span class="lineno">  971</span><span class="comment">    /// codegen 共享状态（原 compileAllChunks 局部变量，提取为成员供 helper 函数访问）</span></div>
+<div class="line"><a id="l00972" name="l00972"></a><span class="lineno">  972</span><span class="comment">    ///@{</span></div>
+<div class="line"><a id="l00973" name="l00973"></a><span class="lineno">  973</span><span class="comment"></span>    uint64_t nextCallSiteId_ = 0; <span class="comment">///&lt; OP_MEMBER_GET callSiteId 分配计数器（编译期，先统计后重置再分配）</span></div>
+<div class="line"><a id="l00974" name="l00974"></a><span class="lineno">  974</span>    <span class="keywordtype">size_t</span> currentChunkIdx_ = 0;  <span class="comment">///&lt; 当前编译的 chunk 索引（emitCheckInt/emitRecordTypeFeedback 反优化用）</span><span class="comment"></span></div>
+<div class="line"><a id="l00975" name="l00975"></a><span class="lineno">  975</span><span class="comment">    /// ADR-008 阶段 1b: 单 chunk 编译模式（compileSingleChunkBlock 发射期置位）。</span></div>
+<div class="line"><a id="l00976" name="l00976"></a><span class="lineno">  976</span><span class="comment">    /// 跨块 fast path 仅在被调 chunk 已有 entryPtr 时可走，否则回落 mailbox 由</span></div>
+<div class="line"><a id="l00977" name="l00977"></a><span class="lineno">  977</span><span class="comment">    /// jitCallByName 运行期 lazy 触发（eager 全量模式所有块必编译，无需检查）。</span></div>
+<div class="line"><a id="l00978" name="l00978"></a><span class="lineno">  978</span><span class="comment"></span>    <span class="keywordtype">bool</span> singleChunkCompileMode_ = <span class="keyword">false</span>;<span class="comment"></span></div>
+<div class="line"><a id="l00979" name="l00979"></a><span class="lineno">  979</span><span class="comment">    ///@}</span></div>
+<div class="line"><a id="l00980" name="l00980"></a><span class="lineno">  980</span><span class="comment"></span><span class="comment"></span> </div>
+<div class="line"><a id="l00981" name="l00981"></a><span class="lineno">  981</span><span class="comment">    /// OPT-20: lazy/特化/OSR 编译共享的 funcTable 代缓存。</span></div>
+<div class="line"><a id="l00982" name="l00982"></a><span class="lineno">  982</span><span class="comment">    /// compileSingleChunkBlock 每次调用全量扫描 functionChunks 并逐 chunk 扫</span></div>
+<div class="line"><a id="l00983" name="l00983"></a><span class="lineno">  983</span><span class="comment">    /// 字节码探测 OP_CLOSURE（F 次 lazy 编译 → O(F²)）；同一 execute() 代内</span></div>
+<div class="line"><a id="l00984" name="l00984"></a><span class="lineno">  984</span><span class="comment">    /// CompileResult 内容与 chunkNames_ 均不变，首次构建后整代复用。</span></div>
+<div class="line"><a id="l00985" name="l00985"></a><span class="lineno">  985</span><span class="comment">    /// 条目 chunk 指针指向构建时的 CompileResult：换源重建（cacheable 路径</span></div>
+<div class="line"><a id="l00986" name="l00986"></a><span class="lineno">  986</span><span class="comment">    /// execute 尾特化传原始 result，而非 currentResult_ 深拷贝副本）；</span></div>
+<div class="line"><a id="l00987" name="l00987"></a><span class="lineno">  987</span><span class="comment">    /// execute() 入口随代码块一并失效（指针不跨 execute 有效）。仅编译期</span></div>
+<div class="line"><a id="l00988" name="l00988"></a><span class="lineno">  988</span><span class="comment">    /// 复用，不改变任何生成机器码（kJitCodegenVersion 不递增）。</span></div>
+<div class="line"><a id="l00989" name="l00989"></a><span class="lineno">  989</span><span class="comment"></span>    std::unordered_map&lt;std::string, JitFuncInfo&gt; tieringFuncTable_;</div>
+<div class="line"><a id="l00990" name="l00990"></a><span class="lineno">  990</span>    <span class="keyword">const</span> <span class="keywordtype">void</span>* tieringFuncTableSource_ = <span class="keyword">nullptr</span>; <span class="comment">///&lt; 构建来源（nullptr = 无缓存）</span></div>
+<div class="line"><a id="l00991" name="l00991"></a><span class="lineno">  991</span> </div>
+<div class="line"><a id="l00992" name="l00992"></a><span class="lineno">  992</span>    asmjit::JitRuntime runtime_;        <span class="comment">///&lt; JIT 内存分配器</span></div>
+<div class="line"><a id="l00993" name="l00993"></a><span class="lineno">  993</span>    JitEntryFn currentEntry_ = <span class="keyword">nullptr</span>; <span class="comment">///&lt; R151: main 块入口镜像（代码块所有权权威为 codeBlocks_）</span></div>
+<div class="line"><a id="l00994" name="l00994"></a><span class="lineno">  994</span> </div>
+<div class="line"><a id="l00995" name="l00995"></a><span class="lineno">  995</span>    <span class="comment">// ============================================================</span></div>
+<div class="line"><a id="l00996" name="l00996"></a><span class="lineno">  996</span>    <span class="comment">// ADR-008 per-chunk 代码块架构（阶段 1a）</span></div>
+<div class="line"><a id="l00997" name="l00997"></a><span class="lineno">  997</span>    <span class="comment">// ------------------------------------------------------------</span></div>
+<div class="line"><a id="l00998" name="l00998"></a><span class="lineno">  998</span>    <span class="comment">// 每个 chunk 编译为独立 CodeHolder/代码块。跨块引用两条通道：</span></div>
+<div class="line"><a id="l00999" name="l00999"></a><span class="lineno">  999</span>    <span class="comment">// 跨块 OP_CALL fast path 经 callImportSlots_ 导入槽间接跳转（发射期分配</span></div>
+<div class="line"><a id="l01000" name="l01000"></a><span class="lineno"> 1000</span>    <span class="comment">// 槽位、全部块 add 后回填）；非 main 块错误退出经 ctx-&gt;errorExit 指向</span></div>
+<div class="line"><a id="l01001" name="l01001"></a><span class="lineno"> 1001</span>    <span class="comment">// main 块 epilogue。JitContext/JitFrame/helper ABI 三个跨块协议不变。</span></div>
+<div class="line"><a id="l01002" name="l01002"></a><span class="lineno"> 1002</span>    <span class="comment">// ============================================================</span><span class="comment"></span></div>
+<div class="line"><a id="l01003" name="l01003"></a><span class="lineno"> 1003</span><span class="comment">    /// 单个已提交代码块的所有权记录</span></div>
+<div class="line"><a id="l01004" name="l01004"></a><span class="lineno"> 1004</span><span class="comment"></span>    <span class="keyword">struct </span>JitCodeBlock {</div>
+<div class="line"><a id="l01005" name="l01005"></a><span class="lineno"> 1005</span>        JitEntryFn entry = <span class="keyword">nullptr</span>; <span class="comment">///&lt; 块基址（runtime_.add 返回，asmjit 释放句柄）</span></div>
+<div class="line"><a id="l01006" name="l01006"></a><span class="lineno"> 1006</span>        <span class="keywordtype">size_t</span> chunkIdx = 0;        <span class="comment">///&lt; 对应 allChunks 索引（main=0）</span></div>
+<div class="line"><a id="l01007" name="l01007"></a><span class="lineno"> 1007</span>        std::string chunkName;</div>
+<div class="line"><a id="l01008" name="l01008"></a><span class="lineno"> 1008</span>        uint64_t entryOffset = 0;      <span class="comment">///&lt; chunk 入口相对块基址偏移（main 块恒 0，入口即块基址）</span></div>
+<div class="line"><a id="l01009" name="l01009"></a><span class="lineno"> 1009</span>        <span class="keywordtype">bool</span> isMain = <span class="keyword">false</span>;           <span class="comment">///&lt; main 块含 prologue/epilogue/闭包跳板，其余块为函数块</span></div>
+<div class="line"><a id="l01010" name="l01010"></a><span class="lineno"> 1010</span>        <span class="keywordtype">bool</span> owned = <span class="keyword">true</span>;             <span class="comment">///&lt; false = 缓存共享块（生命周期归进程级块缓存，实例不释放）</span></div>
+<div class="line"><a id="l01011" name="l01011"></a><span class="lineno"> 1011</span>        uint64_t epilogueOffset = 0;   <span class="comment">///&lt; 仅 main 块（errorExit 桩目标 = 基址 + 此偏移）</span></div>
+<div class="line"><a id="l01012" name="l01012"></a><span class="lineno"> 1012</span>        uint64_t trampolineOffset = 0; <span class="comment">///&lt; 仅 main 块（闭包同步跳板偏移）</span></div>
+<div class="line"><a id="l01013" name="l01013"></a><span class="lineno"> 1013</span>    };<span class="comment"></span></div>
+<div class="line"><a id="l01014" name="l01014"></a><span class="lineno"> 1014</span><span class="comment">    /// 导入槽回填记录（slotIdx → 被调 chunk 名；commit 阶段解析入口地址）</span></div>
+<div class="line"><a id="l01015" name="l01015"></a><span class="lineno"> 1015</span><span class="comment"></span>    <span class="keyword">struct </span>CallImportPatch {</div>
+<div class="line"><a id="l01016" name="l01016"></a><span class="lineno"> 1016</span>        <span class="keywordtype">size_t</span> slotIdx = 0;</div>
+<div class="line"><a id="l01017" name="l01017"></a><span class="lineno"> 1017</span>        std::string calleeName;</div>
+<div class="line"><a id="l01018" name="l01018"></a><span class="lineno"> 1018</span>        <span class="keywordtype">bool</span> isMethod = <span class="keyword">false</span>; <span class="comment">///&lt; 含 &#39;.&#39; 的方法名经 methodEntries_ 解析，否则 funcEntries_</span></div>
+<div class="line"><a id="l01019" name="l01019"></a><span class="lineno"> 1019</span>    };</div>
+<div class="line"><a id="l01020" name="l01020"></a><span class="lineno"> 1020</span> </div>
+<div class="line"><a id="l01021" name="l01021"></a><span class="lineno"> 1021</span>    <span class="comment">// ============================================================</span></div>
+<div class="line"><a id="l01022" name="l01022"></a><span class="lineno"> 1022</span>    <span class="comment">// ADR-008 阶段 2: 进程内编译块缓存（共享存活设计）</span></div>
+<div class="line"><a id="l01023" name="l01023"></a><span class="lineno"> 1023</span>    <span class="comment">// ------------------------------------------------------------</span></div>
+<div class="line"><a id="l01024" name="l01024"></a><span class="lineno"> 1024</span>    <span class="comment">// 键 = fnv1a64(字节码内容) ^ kJitCodegenVersion。首次 eager 编译：深拷贝</span></div>
+<div class="line"><a id="l01025" name="l01025"></a><span class="lineno"> 1025</span>    <span class="comment">// CompileResult 作为编译宿主（块内嵌指针指向副本），代码块从进程级共享</span></div>
+<div class="line"><a id="l01026" name="l01026"></a><span class="lineno"> 1026</span>    <span class="comment">// JitRuntime 分配，副本+块+映射元数据一并入缓存。命中实例直接引用共享块</span></div>
+<div class="line"><a id="l01027" name="l01027"></a><span class="lineno"> 1027</span>    <span class="comment">// 与元数据，跳过重编译（零重绑定——块内嵌指针由缓存副本保持有效；</span></div>
+<div class="line"><a id="l01028" name="l01028"></a><span class="lineno"> 1028</span>    <span class="comment">// 重定位/重绑层留给阶段 3 的磁盘持久化）。</span></div>
+<div class="line"><a id="l01029" name="l01029"></a><span class="lineno"> 1029</span>    <span class="comment">// 门控：仅纯 eager 路径（!lazyMode_ &amp;&amp; !tieredMode_ &amp;&amp; 无自定义阈值），</span></div>
+<div class="line"><a id="l01030" name="l01030"></a><span class="lineno"> 1030</span>    <span class="comment">// tiering/lazy 教学路径按需重编译、绕过缓存。</span></div>
+<div class="line"><a id="l01031" name="l01031"></a><span class="lineno"> 1031</span>    <span class="comment">// 单执行线程假设：GUI 一次运行一个 JITBackend；淘汰与执行不做跨线程互斥</span></div>
+<div class="line"><a id="l01032" name="l01032"></a><span class="lineno"> 1032</span>    <span class="comment">// （注册表互斥仅保护 map 结构）。</span></div>
+<div class="line"><a id="l01033" name="l01033"></a><span class="lineno"> 1033</span>    <span class="comment">// ============================================================</span><span class="comment"></span></div>
+<div class="line"><a id="l01034" name="l01034"></a><span class="lineno"> 1034</span><span class="comment">    /// JIT 代码生成/键结构版本——任何 codegen 逻辑变更或缓存键公式/输入集变更必须</span></div>
+<div class="line"><a id="l01035" name="l01035"></a><span class="lineno"> 1035</span><span class="comment">    /// 递增，使旧缓存键确定性失效。2026-10-22：enumInfos 全量入键的键结构补全递增至</span></div>
+<div class="line"><a id="l01036" name="l01036"></a><span class="lineno"> 1036</span><span class="comment">    /// 2（非正确性必需，保守选择；评估见 JIT.cpp computeBlockCacheKey 尾部注释）。</span></div>
+<div class="line"><a id="l01037" name="l01037"></a><span class="lineno"> 1037</span><span class="comment">    /// 2026-10-25：OP_MEMBER_SET_VAR/OP_INDEX_SET_VAR 增加无预分配槽（块作用域 fresh</span></div>
+<div class="line"><a id="l01038" name="l01038"></a><span class="lineno"> 1038</span><span class="comment">    /// 全局名）的按名解析分支、OP_METHOD_CALL/OP_SUPER_CALL 接收者按名解析、</span></div>
+<div class="line"><a id="l01039" name="l01039"></a><span class="lineno"> 1039</span><span class="comment">    /// OP_SET_GLOBAL/OP_DEFINE_GLOBAL 堆类型 addRef 存储、补齐 OP_MEMBER_SET、</span></div>
+<div class="line"><a id="l01040" name="l01040"></a><span class="lineno"> 1040</span><span class="comment">    /// 槽位覆盖/删除/写回旧堆值延迟释放（storeJitSlotBits），生成码变更递增至 5。</span></div>
+<div class="line"><a id="l01041" name="l01041"></a><span class="lineno"> 1041</span><span class="comment">    /// 2026-10-25 OPT-19：OP_JUMP_IF_FALSE/OP_NOT 真值判定改 emitTruthyToRax 内联</span></div>
+<div class="line"><a id="l01042" name="l01042"></a><span class="lineno"> 1042</span><span class="comment">    /// （INT/BOOL/NULL 原生路径 + jitTruthy 回退），生成码变更递增至 6。</span></div>
+<div class="line"><a id="l01043" name="l01043"></a><span class="lineno"> 1043</span><span class="comment"></span>    <span class="keyword">static</span> <span class="keyword">constexpr</span> uint32_t kJitCodegenVersion = 6;</div>
+<div class="line"><a id="l01044" name="l01044"></a><span class="lineno"> 1044</span> </div>
+<div class="line"><a id="l01045" name="l01045"></a><span class="lineno"> 1045</span>    <span class="keyword">struct </span>JitBlockCacheEntry {</div>
+<div class="line"><a id="l01046" name="l01046"></a><span class="lineno"> 1046</span>        <span class="keyword">struct </span>SharedBlock {</div>
+<div class="line"><a id="l01047" name="l01047"></a><span class="lineno"> 1047</span>            JitEntryFn entry = <span class="keyword">nullptr</span>; <span class="comment">///&lt; 可执行基址（共享 JitRuntime 分配，缓存持有）</span></div>
+<div class="line"><a id="l01048" name="l01048"></a><span class="lineno"> 1048</span>            std::string chunkName;</div>
+<div class="line"><a id="l01049" name="l01049"></a><span class="lineno"> 1049</span>            uint64_t entryOffset = 0; <span class="comment">///&lt; 非 main 块恒 0（块首即入口）</span></div>
+<div class="line"><a id="l01050" name="l01050"></a><span class="lineno"> 1050</span>            <span class="keywordtype">bool</span> isMain = <span class="keyword">false</span>;</div>
+<div class="line"><a id="l01051" name="l01051"></a><span class="lineno"> 1051</span>            uint64_t epilogueOffset = 0;   <span class="comment">///&lt; 仅 main 块</span></div>
+<div class="line"><a id="l01052" name="l01052"></a><span class="lineno"> 1052</span>            uint64_t trampolineOffset = 0; <span class="comment">///&lt; 仅 main 块</span></div>
+<div class="line"><a id="l01053" name="l01053"></a><span class="lineno"> 1053</span>        };</div>
+<div class="line"><a id="l01054" name="l01054"></a><span class="lineno"> 1054</span>        std::vector&lt;SharedBlock&gt; blocks;                                  <span class="comment">///&lt; 顺序 = allChunks 顺序（main 在前）</span></div>
+<div class="line"><a id="l01055" name="l01055"></a><span class="lineno"> 1055</span>        std::vector&lt;std::pair&lt;std::string, JitMethodInfo&gt;&gt; methodEntries; <span class="comment">///&lt; &quot;Class.method&quot; → 元数据</span></div>
+<div class="line"><a id="l01056" name="l01056"></a><span class="lineno"> 1056</span>        std::vector&lt;std::pair&lt;std::string, JitMethodInfo&gt;&gt; funcEntries;   <span class="comment">///&lt; 函数名 → 元数据</span></div>
+<div class="line"><a id="l01057" name="l01057"></a><span class="lineno"> 1057</span>        std::vector&lt;CallImportPatch&gt; importPatches;                       <span class="comment">///&lt; 导入槽回填清单（命中时同索引重填）</span></div>
+<div class="line"><a id="l01058" name="l01058"></a><span class="lineno"> 1058</span>        std::vector&lt;std::string&gt; chunkNames;                              <span class="comment">///&lt; 全局 chunk 索引 → 名称</span></div>
+<div class="line"><a id="l01059" name="l01059"></a><span class="lineno"> 1059</span>        std::vector&lt;minilang::JitTier&gt; chunkTiers;                        <span class="comment">///&lt; 缓存命中时恢复 tier 视图</span></div>
+<div class="line"><a id="l01060" name="l01060"></a><span class="lineno"> 1060</span>        <span class="keywordtype">size_t</span> memberIcCount = 0;                                         <span class="comment">///&lt; memberGetIC_ 尺寸（IC id [0,N) 对齐）</span></div>
+<div class="line"><a id="l01061" name="l01061"></a><span class="lineno"> 1061</span>        <span class="keywordtype">size_t</span> methodIcCount = 0;                                         <span class="comment">///&lt; methodCallIC_ 尺寸</span></div>
+<div class="line"><a id="l01062" name="l01062"></a><span class="lineno"> 1062</span>        std::string capturedAsm;                                          <span class="comment">///&lt; 教学汇编捕获（命中时复用）</span></div>
+<div class="line"><a id="l01063" name="l01063"></a><span class="lineno"> 1063</span>        std::shared_ptr&lt;const CompileResult&gt; result;                      <span class="comment">///&lt; 块内嵌指针宿主（深拷贝快照）</span></div>
+<div class="line"><a id="l01064" name="l01064"></a><span class="lineno"> 1064</span>    };<span class="comment"></span></div>
+<div class="line"><a id="l01065" name="l01065"></a><span class="lineno"> 1065</span><span class="comment">    /// 本次编译的全部代码块（main 块在前）。所有权权威：execute() 入口与析构</span></div>
+<div class="line"><a id="l01066" name="l01066"></a><span class="lineno"> 1066</span><span class="comment">    /// 按块释放；currentEntry_ 仅镜像 main 块入口（tiering save/restore 沿用）。</span></div>
+<div class="line"><a id="l01067" name="l01067"></a><span class="lineno"> 1067</span><span class="comment">    /// lazy/特化重编译的内部编译会把全部内层块移交 ownedLazyEntries_ 等</span></div>
+<div class="line"><a id="l01068" name="l01068"></a><span class="lineno"> 1068</span><span class="comment">    /// 既有所有权机制，随外层 codeBlocks_ 恢复。</span></div>
+<div class="line"><a id="l01069" name="l01069"></a><span class="lineno"> 1069</span><span class="comment"></span>    std::vector&lt;JitCodeBlock&gt; codeBlocks_;<span class="comment"></span></div>
+<div class="line"><a id="l01070" name="l01070"></a><span class="lineno"> 1070</span><span class="comment">    /// 跨块调用导入槽表（JitContext.callImportSlots 指向其 data()；发射期</span></div>
+<div class="line"><a id="l01071" name="l01071"></a><span class="lineno"> 1071</span><span class="comment">    /// push 分配槽位，commit 阶段回填被调入口地址）</span></div>
+<div class="line"><a id="l01072" name="l01072"></a><span class="lineno"> 1072</span><span class="comment"></span>    std::vector&lt;void*&gt; callImportSlots_;</div>
+<div class="line"><a id="l01073" name="l01073"></a><span class="lineno"> 1073</span>    std::vector&lt;CallImportPatch&gt; callImportPatches_;<span class="comment"></span></div>
+<div class="line"><a id="l01074" name="l01074"></a><span class="lineno"> 1074</span><span class="comment">    /// 当前发射块的 chunk 入口 Label（仅该块发射期有效；同块递归 fast path 直连用）</span></div>
+<div class="line"><a id="l01075" name="l01075"></a><span class="lineno"> 1075</span><span class="comment"></span>    asmjit::Label currentBlockEntryLabel_{};<span class="comment"></span></div>
+<div class="line"><a id="l01076" name="l01076"></a><span class="lineno"> 1076</span><span class="comment">    /// ADR-008 阶段 2: 当前发射/提交使用的 runtime（缓存路径指向进程级共享</span></div>
+<div class="line"><a id="l01077" name="l01077"></a><span class="lineno"> 1077</span><span class="comment">    /// runtime，块生命周期归缓存；默认指向实例 runtime_）</span></div>
+<div class="line"><a id="l01078" name="l01078"></a><span class="lineno"> 1078</span><span class="comment"></span>    asmjit::JitRuntime* activeRuntime_ = <span class="keyword">nullptr</span>;<span class="comment"></span></div>
+<div class="line"><a id="l01079" name="l01079"></a><span class="lineno"> 1079</span><span class="comment">    /// ADR-008 阶段 2: 缓存命中的 CompileResult 快照持有（currentResult_ 指向它，</span></div>
+<div class="line"><a id="l01080" name="l01080"></a><span class="lineno"> 1080</span><span class="comment">    /// tiering 单 chunk 重编译从同一快照读取 chunk 数据）</span></div>
+<div class="line"><a id="l01081" name="l01081"></a><span class="lineno"> 1081</span><span class="comment"></span>    std::shared_ptr&lt;const CompileResult&gt; cachedResult_;</div>
+<div class="line"><a id="l01082" name="l01082"></a><span class="lineno"> 1082</span>    <a class="code hl_class" href="classDiagnosticBag.html">DiagnosticBag</a> diagnostics_;                                    <span class="comment">///&lt; 诊断包</span></div>
+<div class="line"><a id="l01083" name="l01083"></a><span class="lineno"> 1083</span>    std::function&lt;void(<span class="keyword">const</span> std::string&amp;)&gt; outputCallback_;       <span class="comment">///&lt; print 输出回调</span></div>
+<div class="line"><a id="l01084" name="l01084"></a><span class="lineno"> 1084</span>    std::function&lt;std::string(<span class="keyword">const</span> std::string&amp;)&gt; inputCallback_; <span class="comment">///&lt; input 输入回调</span></div>
+<div class="line"><a id="l01085" name="l01085"></a><span class="lineno"> 1085</span> </div>
+<div class="line"><a id="l01086" name="l01086"></a><span class="lineno"> 1086</span>    std::vector&lt;JitFrame&gt; frameStack_; <span class="comment">///&lt; R141: 帧栈存储（预分配，JitContext.frames 指向此）</span></div>
+<div class="line"><a id="l01087" name="l01087"></a><span class="lineno"> 1087</span>    <span class="keywordtype">size_t</span> frameCount_ = 0;            <span class="comment">///&lt; R141: 当前帧深度（JitContext.frameCount 指向此）</span></div>
 <div class="line"><a id="l01088" name="l01088"></a><span class="lineno"> 1088</span><span class="comment"></span> </div>
-<div class="line"><a id="l01089" name="l01089"></a><span class="lineno"> 1089</span><span class="comment">    /// R151: per-chunk 热点阈值数组（达到阈值触发重编译回调）</span></div>
-<div class="line"><a id="l01090" name="l01090"></a><span class="lineno"> 1090</span><span class="comment">    /// 默认阈值 kDefaultHotThreshold（如 1000），mainChunk 索引 0 设为 0（不触发）</span></div>
-<div class="line"><a id="l01091" name="l01091"></a><span class="lineno"> 1091</span><span class="comment"></span>    std::vector&lt;uint64_t&gt; hotThresholds_;<span class="comment"></span></div>
-<div class="line"><a id="l01092" name="l01092"></a><span class="lineno"> 1092</span><span class="comment">    /// R151: per-chunk 重编译标志数组（0=未触发，1=已触发，避免重复触发）</span></div>
-<div class="line"><a id="l01093" name="l01093"></a><span class="lineno"> 1093</span><span class="comment"></span>    std::vector&lt;uint64_t&gt; recompiledFlags_;<span class="comment"></span></div>
-<div class="line"><a id="l01094" name="l01094"></a><span class="lineno"> 1094</span><span class="comment">    /// R151: 测试用自定义阈值覆盖（name→threshold），compileAllChunks 初始化时应用</span></div>
-<div class="line"><a id="l01095" name="l01095"></a><span class="lineno"> 1095</span><span class="comment"></span>    std::unordered_map&lt;std::string, uint64_t&gt; customThresholds_;</div>
-<div class="line"><a id="l01096" name="l01096"></a><span class="lineno"> 1096</span><span class="comment"></span> </div>
-<div class="line"><a id="l01097" name="l01097"></a><span class="lineno"> 1097</span><span class="comment">    /// R152: per-chunk 类型反馈计数器数组（特化重编译决策依据）</span></div>
-<div class="line"><a id="l01098" name="l01098"></a><span class="lineno"> 1098</span><span class="comment">    /// 索引与 chunkCallCounts_ 对齐，在算术指令 genericXXX 路径递增</span></div>
-<div class="line"><a id="l01099" name="l01099"></a><span class="lineno"> 1099</span><span class="comment"></span>    std::vector&lt;minilang::TypeFeedback&gt; typeFeedback_;</div>
+<div class="line"><a id="l01089" name="l01089"></a><span class="lineno"> 1089</span><span class="comment">    /// R148: 运行时类注册表（与 StackVM classInfo_ 等价，简化版无 methodCache）</span></div>
+<div class="line"><a id="l01090" name="l01090"></a><span class="lineno"> 1090</span><span class="comment">    /// OP_DEFINE_CLASS 执行时填充，OP_CLASS_NEW/OP_MEMBER_GET/SET 查询</span></div>
+<div class="line"><a id="l01091" name="l01091"></a><span class="lineno"> 1091</span><span class="comment"></span>    std::unordered_map&lt;std::string, JitClassInfo&gt; classInfo_;</div>
+<div class="line"><a id="l01092" name="l01092"></a><span class="lineno"> 1092</span><span class="comment"></span> </div>
+<div class="line"><a id="l01093" name="l01093"></a><span class="lineno"> 1093</span><span class="comment">    /// enum 元信息注册表（与 VM enumRegistry_ 对齐）：execute() 从</span></div>
+<div class="line"><a id="l01094" name="l01094"></a><span class="lineno"> 1094</span><span class="comment">    /// CompileResult.enumInfos 加载，jitBuildEnumVariant 经 ctx-&gt;enumRegistryPtr 校验</span></div>
+<div class="line"><a id="l01095" name="l01095"></a><span class="lineno"> 1095</span><span class="comment">    /// variant 名存在性 + arity + 字段类型注解（含泛型类型参数擦除与继承链 fallback）。</span></div>
+<div class="line"><a id="l01096" name="l01096"></a><span class="lineno"> 1096</span><span class="comment"></span>    std::unordered_map&lt;std::string, VMEnumInfo&gt; enumRegistry_;</div>
+<div class="line"><a id="l01097" name="l01097"></a><span class="lineno"> 1097</span><span class="comment"></span> </div>
+<div class="line"><a id="l01098" name="l01098"></a><span class="lineno"> 1098</span><span class="comment">    /// R148: OP_INIT_FIELD 执行期间收集字段声明顺序，供 OP_DEFINE_CLASS 提取</span></div>
+<div class="line"><a id="l01099" name="l01099"></a><span class="lineno"> 1099</span><span class="comment"></span>    std::vector&lt;std::string&gt; pendingFieldOrder_;</div>
 <div class="line"><a id="l01100" name="l01100"></a><span class="lineno"> 1100</span><span class="comment"></span> </div>
-<div class="line"><a id="l01101" name="l01101"></a><span class="lineno"> 1101</span><span class="comment">    /// R152: 已特化重编译的 chunk 名称列表（按特化顺序，测试验证用）</span></div>
-<div class="line"><a id="l01102" name="l01102"></a><span class="lineno"> 1102</span><span class="comment"></span>    std::vector&lt;std::string&gt; specializedChunks_;</div>
-<div class="line"><a id="l01103" name="l01103"></a><span class="lineno"> 1103</span><span class="comment"></span> </div>
-<div class="line"><a id="l01104" name="l01104"></a><span class="lineno"> 1104</span><span class="comment">    /// R152: 特化版本入口指针（按 chunkIdx 索引，nullptr 表示未特化）</span></div>
-<div class="line"><a id="l01105" name="l01105"></a><span class="lineno"> 1105</span><span class="comment">    /// execute() 返回后对 recompiledFlags 标记的 chunk 进行特化重编译，</span></div>
-<div class="line"><a id="l01106" name="l01106"></a><span class="lineno"> 1106</span><span class="comment">    /// 生成的入口存入此数组；下次 execute() 时通过 methodEntries_ 切换入口</span></div>
-<div class="line"><a id="l01107" name="l01107"></a><span class="lineno"> 1107</span><span class="comment"></span>    std::vector&lt;JitEntryFn&gt; specializedEntries_;</div>
-<div class="line"><a id="l01108" name="l01108"></a><span class="lineno"> 1108</span><span class="comment"></span> </div>
-<div class="line"><a id="l01109" name="l01109"></a><span class="lineno"> 1109</span><span class="comment">    /// R152: 特化版本 CodeHolder 持有的 JitEntryFn 内存所有权列表</span></div>
-<div class="line"><a id="l01110" name="l01110"></a><span class="lineno"> 1110</span><span class="comment">    /// 析构时通过 runtime_.release 释放，避免内存泄漏</span></div>
-<div class="line"><a id="l01111" name="l01111"></a><span class="lineno"> 1111</span><span class="comment"></span>    std::vector&lt;JitEntryFn&gt; ownedSpecializedEntries_;</div>
-<div class="line"><a id="l01112" name="l01112"></a><span class="lineno"> 1112</span><span class="comment"></span> </div>
-<div class="line"><a id="l01113" name="l01113"></a><span class="lineno"> 1113</span><span class="comment">    /// AUDIT-R4 BUG-12 fix: chunkName → 当前持有的特化代码块入口。</span></div>
-<div class="line"><a id="l01114" name="l01114"></a><span class="lineno"> 1114</span><span class="comment">    /// 同一 chunk 被重复特化时，旧块从 ownedSpecializedEntries_ 移入</span></div>
-<div class="line"><a id="l01115" name="l01115"></a><span class="lineno"> 1115</span><span class="comment">    /// retiredSpecializedEntries_，在下次 execute() 入口（无 JIT 代码运行的</span></div>
-<div class="line"><a id="l01116" name="l01116"></a><span class="lineno"> 1116</span><span class="comment">    /// 安全点）统一释放——原实现旧块滞留至析构，长会话反复去优化/再特化</span></div>
-<div class="line"><a id="l01117" name="l01117"></a><span class="lineno"> 1117</span><span class="comment">    /// 导致可执行内存单调增长。不在替换点立即释放：OSR 路径的特化发生</span></div>
-<div class="line"><a id="l01118" name="l01118"></a><span class="lineno"> 1118</span><span class="comment">    /// 在 JIT 执行期间，旧代码可能仍在本机调用栈上。</span></div>
-<div class="line"><a id="l01119" name="l01119"></a><span class="lineno"> 1119</span><span class="comment"></span>    std::unordered_map&lt;std::string, JitEntryFn&gt; ownedSpecializedByChunk_;</div>
-<div class="line"><a id="l01120" name="l01120"></a><span class="lineno"> 1120</span>    std::vector&lt;JitEntryFn&gt; retiredSpecializedEntries_;</div>
-<div class="line"><a id="l01121" name="l01121"></a><span class="lineno"> 1121</span><span class="comment"></span> </div>
-<div class="line"><a id="l01122" name="l01122"></a><span class="lineno"> 1122</span><span class="comment">    /// AUDIT-R4 BUG-12 fix: 登记新特化块所有权；若同名 chunk 已有旧块，</span></div>
-<div class="line"><a id="l01123" name="l01123"></a><span class="lineno"> 1123</span><span class="comment">    /// 将旧块退休（移入 retiredSpecializedEntries_ 待安全点释放）。</span></div>
-<div class="line"><a id="l01124" name="l01124"></a><span class="lineno"> 1124</span><span class="comment"></span>    <span class="keywordtype">void</span> registerSpecializedOwnership(<span class="keyword">const</span> std::string&amp; chunkName, JitEntryFn specializedEntry);</div>
-<div class="line"><a id="l01125" name="l01125"></a><span class="lineno"> 1125</span><span class="comment"></span> </div>
-<div class="line"><a id="l01126" name="l01126"></a><span class="lineno"> 1126</span><span class="comment">    /// AUDIT-R4 BUG-12 fix: 在安全点（execute() 入口/析构）释放退休特化块。</span></div>
-<div class="line"><a id="l01127" name="l01127"></a><span class="lineno"> 1127</span><span class="comment"></span>    <span class="keywordtype">void</span> releaseRetiredSpecializedEntries();</div>
-<div class="line"><a id="l01128" name="l01128"></a><span class="lineno"> 1128</span><span class="comment"></span> </div>
-<div class="line"><a id="l01129" name="l01129"></a><span class="lineno"> 1129</span><span class="comment">    /// R152: 当前 CompileResult 引用（特化重编译时访问 chunk 数据用）</span></div>
-<div class="line"><a id="l01130" name="l01130"></a><span class="lineno"> 1130</span><span class="comment">    /// execute() 入口赋值，compileChunkSpecialized 读取</span></div>
-<div class="line"><a id="l01131" name="l01131"></a><span class="lineno"> 1131</span><span class="comment"></span>    <span class="keyword">const</span> <a class="code hl_struct" href="structCompileResult.html">CompileResult</a>* currentResult_ = <span class="keyword">nullptr</span>;</div>
-<div class="line"><a id="l01132" name="l01132"></a><span class="lineno"> 1132</span><span class="comment"></span> </div>
-<div class="line"><a id="l01133" name="l01133"></a><span class="lineno"> 1133</span><span class="comment">    /// R152: INT 特化编译模式标志（compileChunkSpecialized 设置）</span></div>
-<div class="line"><a id="l01134" name="l01134"></a><span class="lineno"> 1134</span><span class="comment">    /// 为 true 时，emitCheckInt 不生成类型检查代码，算术指令直接走 INT 原生路径。</span></div>
-<div class="line"><a id="l01135" name="l01135"></a><span class="lineno"> 1135</span><span class="comment">    /// compileAllChunks 在此模式下编译所有 chunk 为特化版本，compileChunkSpecialized</span></div>
-<div class="line"><a id="l01136" name="l01136"></a><span class="lineno"> 1136</span><span class="comment">    /// 从中提取目标 chunk 入口并丢弃其他 chunk 的特化版本。</span></div>
-<div class="line"><a id="l01137" name="l01137"></a><span class="lineno"> 1137</span><span class="comment"></span>    <span class="keywordtype">bool</span> specializeIntMode_ = <span class="keyword">false</span>;</div>
-<div class="line"><a id="l01138" name="l01138"></a><span class="lineno"> 1138</span><span class="comment"></span> </div>
-<div class="line"><a id="l01139" name="l01139"></a><span class="lineno"> 1139</span><span class="comment">    /// R153: FLOAT 特化编译模式标志（compileChunkSpecializedFloat 设置）</span></div>
-<div class="line"><a id="l01140" name="l01140"></a><span class="lineno"> 1140</span><span class="comment">    /// 为 true 时：</span></div>
-<div class="line"><a id="l01141" name="l01141"></a><span class="lineno"> 1141</span><span class="comment">    /// - emitCheckInt 生成无条件 jmp 到 failLabel（跳过 INT 原生路径）</span></div>
-<div class="line"><a id="l01142" name="l01142"></a><span class="lineno"> 1142</span><span class="comment">    /// - emitRecordTypeFeedback 不生成代码（类型反馈已收集完毕）</span></div>
-<div class="line"><a id="l01143" name="l01143"></a><span class="lineno"> 1143</span><span class="comment">    /// 性能提升来自跳过 INT 类型检查 + 跳过类型反馈收集 + 跳过 INT 原生路径溢出检查。</span></div>
-<div class="line"><a id="l01144" name="l01144"></a><span class="lineno"> 1144</span><span class="comment">    /// 类型反馈 floatCount&gt;0 &amp;&amp; otherCount==0 保证操作数均为 FLOAT，走 genericXXX 路径</span></div>
-<div class="line"><a id="l01145" name="l01145"></a><span class="lineno"> 1145</span><span class="comment">    /// 调用 C++ 辅助函数（jitAddGeneric 等内部 isFloat 分支）。</span></div>
-<div class="line"><a id="l01146" name="l01146"></a><span class="lineno"> 1146</span><span class="comment"></span>    <span class="keywordtype">bool</span> specializeFloatMode_ = <span class="keyword">false</span>;</div>
-<div class="line"><a id="l01147" name="l01147"></a><span class="lineno"> 1147</span><span class="comment"></span> </div>
-<div class="line"><a id="l01148" name="l01148"></a><span class="lineno"> 1148</span><span class="comment">    /// R153: 特化方法入口持久化映射（chunkName → 特化方法入口地址）</span></div>
-<div class="line"><a id="l01149" name="l01149"></a><span class="lineno"> 1149</span><span class="comment">    /// compileAllChunks 每次会 clear methodEntries_，导致特化入口丢失。</span></div>
-<div class="line"><a id="l01150" name="l01150"></a><span class="lineno"> 1150</span><span class="comment">    /// 此映射在 compileChunkSpecialized/compileChunkSpecializedFloat 中填充，</span></div>
-<div class="line"><a id="l01151" name="l01151"></a><span class="lineno"> 1151</span><span class="comment">    /// execute() 中 compileAllChunks 后重新应用到 methodEntries_，确保第二次及后续</span></div>
-<div class="line"><a id="l01152" name="l01152"></a><span class="lineno"> 1152</span><span class="comment">    /// execute() 仍使用特化版本入口（R153 修复 R152 的入口丢失问题）。</span></div>
-<div class="line"><a id="l01153" name="l01153"></a><span class="lineno"> 1153</span><span class="comment"></span>    std::unordered_map&lt;std::string, void*&gt; specializedMethodEntries_;</div>
-<div class="line"><a id="l01154" name="l01154"></a><span class="lineno"> 1154</span><span class="comment"></span> </div>
-<div class="line"><a id="l01155" name="l01155"></a><span class="lineno"> 1155</span><span class="comment">    /// R154: lastMutatedReceiver_ 存储嵌套左值赋值链中变异后的容器（NaN-boxing Value）</span></div>
-<div class="line"><a id="l01156" name="l01156"></a><span class="lineno"> 1156</span><span class="comment">    /// OP_INDEX_SET pop obj+idx+val → 修改 obj[idx] → 存入此；OP_LOAD_MUTATED push 此到栈顶；</span></div>
-<div class="line"><a id="l01157" name="l01157"></a><span class="lineno"> 1157</span><span class="comment">    /// OP_WRITEBACK_*_LOCAL/VAR 整体替换栈槽/全局变量为此值。</span></div>
-<div class="line"><a id="l01158" name="l01158"></a><span class="lineno"> 1158</span><span class="comment">    /// 与 StackVM VM::lastMutatedReceiver_ 对齐，JitContext.lastMutatedReceiverPtr 指向此。</span></div>
-<div class="line"><a id="l01159" name="l01159"></a><span class="lineno"> 1159</span><span class="comment">    /// 初始化为 NaN-boxing NULL 完整 64 位表示（0x7FFA000000000000，与 JIT.cpp JIT_NULL_BITS 一致）</span></div>
-<div class="line"><a id="l01160" name="l01160"></a><span class="lineno"> 1160</span><span class="comment"></span>    int64_t lastMutatedReceiver_ = <span class="keyword">static_cast&lt;</span>int64_t<span class="keyword">&gt;</span>(0x7FFA000000000000ULL);</div>
-<div class="line"><a id="l01161" name="l01161"></a><span class="lineno"> 1161</span><span class="comment"></span> </div>
-<div class="line"><a id="l01162" name="l01162"></a><span class="lineno"> 1162</span><span class="comment">    /// R155: 函数名→JIT入口映射（OP_CALL_EXPR 闭包值调用用）</span></div>
-<div class="line"><a id="l01163" name="l01163"></a><span class="lineno"> 1163</span><span class="comment">    /// 键是普通函数名（不含 &#39;.&#39;），值含 entryPtr/localCount/arity/requiredArity</span></div>
-<div class="line"><a id="l01164" name="l01164"></a><span class="lineno"> 1164</span><span class="comment">    /// 在 compileAllChunks 末尾从 funcTable 构建，jitCallExpr 运行时查询</span></div>
-<div class="line"><a id="l01165" name="l01165"></a><span class="lineno"> 1165</span><span class="comment"></span>    std::unordered_map&lt;std::string, JitMethodInfo&gt; funcEntries_;</div>
-<div class="line"><a id="l01166" name="l01166"></a><span class="lineno"> 1166</span><span class="comment"></span> </div>
-<div class="line"><a id="l01167" name="l01167"></a><span class="lineno"> 1167</span><span class="comment">    /// R156: open upvalues multimap（与 StackVM openUpvalues_ 对齐）</span></div>
-<div class="line"><a id="l01168" name="l01168"></a><span class="lineno"> 1168</span><span class="comment">    /// 键是 JIT 栈槽地址（int64_t*），值为 weak_ptr&lt;VMUpvalue&gt;。</span></div>
-<div class="line"><a id="l01169" name="l01169"></a><span class="lineno"> 1169</span><span class="comment">    /// 升序排列（std::less&lt;int64_t*&gt;，地址从小到大）。</span></div>
-<div class="line"><a id="l01170" name="l01170"></a><span class="lineno"> 1170</span><span class="comment">    /// JIT 栈向下增长：高地址 = 旧 slot（slot 编号小），低地址 = 新 slot（slot 编号大）。</span></div>
-<div class="line"><a id="l01171" name="l01171"></a><span class="lineno"> 1171</span><span class="comment">    /// OP_CLOSURE(isLocal=true) 时 emplace(slotAddr, uv)；OP_RETURN/OP_CLOSE_UPVALUE 时 close。</span></div>
-<div class="line"><a id="l01172" name="l01172"></a><span class="lineno"> 1172</span><span class="comment">    /// closeUpvaluesFrom(fromAddr) 用 upper_bound(fromAddr) 关闭所有 addr &lt;= fromAddr 的 upvalue</span></div>
-<div class="line"><a id="l01173" name="l01173"></a><span class="lineno"> 1173</span><span class="comment">    /// （等价于 StackVM 的 [fromSlot, ∞)，因为 JIT slot 编号越大地址越小）。</span></div>
-<div class="line"><a id="l01174" name="l01174"></a><span class="lineno"> 1174</span><span class="comment"></span><span class="keyword">public</span>:</div>
-<div class="line"><a id="l01175" name="l01175"></a><span class="lineno"> 1175</span>    std::multimap&lt;int64_t*, std::weak_ptr&lt;VMUpvalue&gt;&gt; openUpvalues_;</div>
-<div class="line"><a id="l01176" name="l01176"></a><span class="lineno"> 1176</span><span class="comment"></span> </div>
-<div class="line"><a id="l01177" name="l01177"></a><span class="lineno"> 1177</span><span class="comment">    /// R156: 每帧 upvalues 向量（与 StackVM VMCallFrame.upvalues 对齐）</span></div>
-<div class="line"><a id="l01178" name="l01178"></a><span class="lineno"> 1178</span><span class="comment">    /// 与 frameStack_ 并行索引：frameUpvaluesStack_[idx] 对应 frameStack_[idx] 的 upvalues。</span></div>
-<div class="line"><a id="l01179" name="l01179"></a><span class="lineno"> 1179</span><span class="comment">    /// OP_CALL: push 闭包值的 upvalues（从 functionClosures_ 查找，与 StackVM executeCallFunction 对齐）</span></div>
-<div class="line"><a id="l01180" name="l01180"></a><span class="lineno"> 1180</span><span class="comment">    /// OP_CALL_EXPR: push 闭包值的 upvalues（jitCallExpr 内部填充）</span></div>
-<div class="line"><a id="l01181" name="l01181"></a><span class="lineno"> 1181</span><span class="comment">    /// OP_METHOD_CALL: push 空 vector（方法不捕获 upvalue）</span></div>
-<div class="line"><a id="l01182" name="l01182"></a><span class="lineno"> 1182</span><span class="comment">    /// OP_RETURN: pop</span></div>
-<div class="line"><a id="l01183" name="l01183"></a><span class="lineno"> 1183</span><span class="comment">    /// OP_CLOSURE(isLocal=false): 从 frameUpvaluesStack_[当前帧] 读取透传 upvalue</span></div>
-<div class="line"><a id="l01184" name="l01184"></a><span class="lineno"> 1184</span><span class="comment"></span>    std::vector&lt;std::vector&lt;std::shared_ptr&lt;VMUpvalue&gt;&gt;&gt; frameUpvaluesStack_;</div>
-<div class="line"><a id="l01185" name="l01185"></a><span class="lineno"> 1185</span><span class="comment"></span> </div>
-<div class="line"><a id="l01186" name="l01186"></a><span class="lineno"> 1186</span><span class="comment">    /// R156: 闭包注册表（与 StackVM VM::functionClosures_ 对齐）</span></div>
-<div class="line"><a id="l01187" name="l01187"></a><span class="lineno"> 1187</span><span class="comment">    /// OP_CLOSURE 时注册（jitCreateClosure 内部），OP_CALL 时查找提取 upvalues。</span></div>
-<div class="line"><a id="l01188" name="l01188"></a><span class="lineno"> 1188</span><span class="comment">    /// 键是函数名，值是闭包值（含 VMClosureData.upvalues）。</span></div>
-<div class="line"><a id="l01189" name="l01189"></a><span class="lineno"> 1189</span><span class="comment">    /// StackVM executeCallFunction（VMCalls.cpp executeCallFunction）通过此表传递 upvalues。</span></div>
-<div class="line"><a id="l01190" name="l01190"></a><span class="lineno"> 1190</span><span class="comment"></span>    std::unordered_map&lt;std::string, Value&gt; functionClosures_;</div>
-<div class="line"><a id="l01191" name="l01191"></a><span class="lineno"> 1191</span><span class="comment"></span> </div>
-<div class="line"><a id="l01192" name="l01192"></a><span class="lineno"> 1192</span><span class="comment">    /// R157: lazy compilation 模式标志（setLazyCompilation 设置）</span></div>
-<div class="line"><a id="l01193" name="l01193"></a><span class="lineno"> 1193</span><span class="comment">    /// 为 true 时，compileAllChunks 只编译 mainChunk，函数/方法 chunk 在首次 OP_CALL 时</span></div>
-<div class="line"><a id="l01194" name="l01194"></a><span class="lineno"> 1194</span><span class="comment">    /// 通过 jitCallByName 触发 compileSingleChunkLazy 按需编译。</span></div>
-<div class="line"><a id="l01195" name="l01195"></a><span class="lineno"> 1195</span><span class="comment"></span>    <span class="keywordtype">bool</span> lazyMode_ = <span class="keyword">false</span>;</div>
-<div class="line"><a id="l01196" name="l01196"></a><span class="lineno"> 1196</span><span class="comment"></span> </div>
-<div class="line"><a id="l01197" name="l01197"></a><span class="lineno"> 1197</span><span class="comment">    /// R159: 分层编译模式标志（setTieredCompilation 设置）</span></div>
-<div class="line"><a id="l01198" name="l01198"></a><span class="lineno"> 1198</span><span class="comment">    /// 为 true 时，非 main chunk 初始为 Tier 0 (Interpreter)，首次调用时通过 lazy</span></div>
-<div class="line"><a id="l01199" name="l01199"></a><span class="lineno"> 1199</span><span class="comment">    /// compilation 自动升级到 Tier 1 (Baseline)。chunkTiers_ 追踪 Tier 0→1→2 转换。</span></div>
-<div class="line"><a id="l01200" name="l01200"></a><span class="lineno"> 1200</span><span class="comment"></span>    <span class="keywordtype">bool</span> tieredMode_ = <span class="keyword">false</span>;</div>
-<div class="line"><a id="l01201" name="l01201"></a><span class="lineno"> 1201</span><span class="comment"></span> </div>
-<div class="line"><a id="l01202" name="l01202"></a><span class="lineno"> 1202</span><span class="comment">    /// R157: 已 lazy 编译的 chunk 名称列表（按编译顺序，测试验证用）</span></div>
-<div class="line"><a id="l01203" name="l01203"></a><span class="lineno"> 1203</span><span class="comment"></span>    std::vector&lt;std::string&gt; lazyCompiledChunksList_;</div>
-<div class="line"><a id="l01204" name="l01204"></a><span class="lineno"> 1204</span><span class="comment"></span> </div>
-<div class="line"><a id="l01205" name="l01205"></a><span class="lineno"> 1205</span><span class="comment">    /// R157: lazy 编译的 CodeHolder 内存所有权列表</span></div>
-<div class="line"><a id="l01206" name="l01206"></a><span class="lineno"> 1206</span><span class="comment">    /// 析构时通过 runtime_.release 释放，避免内存泄漏</span></div>
-<div class="line"><a id="l01207" name="l01207"></a><span class="lineno"> 1207</span><span class="comment"></span>    std::vector&lt;JitEntryFn&gt; ownedLazyEntries_;</div>
-<div class="line"><a id="l01208" name="l01208"></a><span class="lineno"> 1208</span><span class="comment"></span> </div>
-<div class="line"><a id="l01209" name="l01209"></a><span class="lineno"> 1209</span><span class="comment">    /// R157: per-chunk 循环回边计数数组（OSR 用）</span></div>
-<div class="line"><a id="l01210" name="l01210"></a><span class="lineno"> 1210</span><span class="comment">    /// 索引与 chunkCallCounts_ 对齐，OP_LOOP 回边时递增</span></div>
-<div class="line"><a id="l01211" name="l01211"></a><span class="lineno"> 1211</span><span class="comment"></span>    std::vector&lt;uint64_t&gt; osrLoopCounts_;</div>
+<div class="line"><a id="l01101" name="l01101"></a><span class="lineno"> 1101</span><span class="comment">    /// R149: 方法名→元信息映射（&quot;Class.method&quot; 键），compileAllChunks 编译完成后填充</span></div>
+<div class="line"><a id="l01102" name="l01102"></a><span class="lineno"> 1102</span><span class="comment">    /// jitMethodCall 沿继承链查找时使用，与 StackVM methodsByClass_ + findMethodChunk 对齐</span></div>
+<div class="line"><a id="l01103" name="l01103"></a><span class="lineno"> 1103</span><span class="comment"></span>    std::unordered_map&lt;std::string, JitMethodInfo&gt; methodEntries_;</div>
+<div class="line"><a id="l01104" name="l01104"></a><span class="lineno"> 1104</span><span class="comment"></span> </div>
+<div class="line"><a id="l01105" name="l01105"></a><span class="lineno"> 1105</span><span class="comment">    /// R149: 编译期收集的所有类名集合（扫描 OP_DEFINE_CLASS 指令提取）</span></div>
+<div class="line"><a id="l01106" name="l01106"></a><span class="lineno"> 1106</span><span class="comment">    /// OP_CALL handler 中 funcTable 找不到时检查此集合，命中则走 emitClassNew 路径</span></div>
+<div class="line"><a id="l01107" name="l01107"></a><span class="lineno"> 1107</span><span class="comment">    /// （与 StackVM executeCallByName 中 classInfo_.find(funName) fallback 对齐）</span></div>
+<div class="line"><a id="l01108" name="l01108"></a><span class="lineno"> 1108</span><span class="comment"></span>    std::unordered_set&lt;std::string&gt; classNameSet_;</div>
+<div class="line"><a id="l01109" name="l01109"></a><span class="lineno"> 1109</span><span class="comment"></span> </div>
+<div class="line"><a id="l01110" name="l01110"></a><span class="lineno"> 1110</span><span class="comment">    /// R150: per-chunk 调用计数数组（热点检测用）</span></div>
+<div class="line"><a id="l01111" name="l01111"></a><span class="lineno"> 1111</span><span class="comment">    /// 索引 0 = mainChunk（不计数，恒为 0），索引 1..N = functionChunks</span></div>
+<div class="line"><a id="l01112" name="l01112"></a><span class="lineno"> 1112</span><span class="comment">    /// compileAllChunks 中按 allChunks 顺序分配索引并构建 chunkNames_</span></div>
+<div class="line"><a id="l01113" name="l01113"></a><span class="lineno"> 1113</span><span class="comment"></span>    std::vector&lt;uint64_t&gt; chunkCallCounts_;</div>
+<div class="line"><a id="l01114" name="l01114"></a><span class="lineno"> 1114</span>    std::vector&lt;std::string&gt; chunkNames_; <span class="comment">///&lt; R150: chunk 索引→名称映射（getHotChunkStats 用）</span></div>
+<div class="line"><a id="l01115" name="l01115"></a><span class="lineno"> 1115</span><span class="comment"></span> </div>
+<div class="line"><a id="l01116" name="l01116"></a><span class="lineno"> 1116</span><span class="comment">    /// R151: per-chunk 热点阈值数组（达到阈值触发重编译回调）</span></div>
+<div class="line"><a id="l01117" name="l01117"></a><span class="lineno"> 1117</span><span class="comment">    /// 默认阈值 kDefaultHotThreshold（如 1000），mainChunk 索引 0 设为 0（不触发）</span></div>
+<div class="line"><a id="l01118" name="l01118"></a><span class="lineno"> 1118</span><span class="comment"></span>    std::vector&lt;uint64_t&gt; hotThresholds_;<span class="comment"></span></div>
+<div class="line"><a id="l01119" name="l01119"></a><span class="lineno"> 1119</span><span class="comment">    /// R151: per-chunk 重编译标志数组（0=未触发，1=已触发，避免重复触发）</span></div>
+<div class="line"><a id="l01120" name="l01120"></a><span class="lineno"> 1120</span><span class="comment"></span>    std::vector&lt;uint64_t&gt; recompiledFlags_;<span class="comment"></span></div>
+<div class="line"><a id="l01121" name="l01121"></a><span class="lineno"> 1121</span><span class="comment">    /// R151: 测试用自定义阈值覆盖（name→threshold），compileAllChunks 初始化时应用</span></div>
+<div class="line"><a id="l01122" name="l01122"></a><span class="lineno"> 1122</span><span class="comment"></span>    std::unordered_map&lt;std::string, uint64_t&gt; customThresholds_;</div>
+<div class="line"><a id="l01123" name="l01123"></a><span class="lineno"> 1123</span><span class="comment"></span> </div>
+<div class="line"><a id="l01124" name="l01124"></a><span class="lineno"> 1124</span><span class="comment">    /// R152: per-chunk 类型反馈计数器数组（特化重编译决策依据）</span></div>
+<div class="line"><a id="l01125" name="l01125"></a><span class="lineno"> 1125</span><span class="comment">    /// 索引与 chunkCallCounts_ 对齐，在算术指令 genericXXX 路径递增</span></div>
+<div class="line"><a id="l01126" name="l01126"></a><span class="lineno"> 1126</span><span class="comment"></span>    std::vector&lt;minilang::TypeFeedback&gt; typeFeedback_;</div>
+<div class="line"><a id="l01127" name="l01127"></a><span class="lineno"> 1127</span><span class="comment"></span> </div>
+<div class="line"><a id="l01128" name="l01128"></a><span class="lineno"> 1128</span><span class="comment">    /// R152: 已特化重编译的 chunk 名称列表（按特化顺序，测试验证用）</span></div>
+<div class="line"><a id="l01129" name="l01129"></a><span class="lineno"> 1129</span><span class="comment"></span>    std::vector&lt;std::string&gt; specializedChunks_;</div>
+<div class="line"><a id="l01130" name="l01130"></a><span class="lineno"> 1130</span><span class="comment"></span> </div>
+<div class="line"><a id="l01131" name="l01131"></a><span class="lineno"> 1131</span><span class="comment">    /// R152: 特化版本入口指针（按 chunkIdx 索引，nullptr 表示未特化）</span></div>
+<div class="line"><a id="l01132" name="l01132"></a><span class="lineno"> 1132</span><span class="comment">    /// execute() 返回后对 recompiledFlags 标记的 chunk 进行特化重编译，</span></div>
+<div class="line"><a id="l01133" name="l01133"></a><span class="lineno"> 1133</span><span class="comment">    /// 生成的入口存入此数组；下次 execute() 时通过 methodEntries_ 切换入口</span></div>
+<div class="line"><a id="l01134" name="l01134"></a><span class="lineno"> 1134</span><span class="comment"></span>    std::vector&lt;JitEntryFn&gt; specializedEntries_;</div>
+<div class="line"><a id="l01135" name="l01135"></a><span class="lineno"> 1135</span><span class="comment"></span> </div>
+<div class="line"><a id="l01136" name="l01136"></a><span class="lineno"> 1136</span><span class="comment">    /// R152: 特化版本 CodeHolder 持有的 JitEntryFn 内存所有权列表</span></div>
+<div class="line"><a id="l01137" name="l01137"></a><span class="lineno"> 1137</span><span class="comment">    /// 析构时通过 runtime_.release 释放，避免内存泄漏</span></div>
+<div class="line"><a id="l01138" name="l01138"></a><span class="lineno"> 1138</span><span class="comment"></span>    std::vector&lt;JitEntryFn&gt; ownedSpecializedEntries_;</div>
+<div class="line"><a id="l01139" name="l01139"></a><span class="lineno"> 1139</span><span class="comment"></span> </div>
+<div class="line"><a id="l01140" name="l01140"></a><span class="lineno"> 1140</span><span class="comment">    /// AUDIT-R4 BUG-12 fix: chunkName → 当前持有的特化代码块入口。</span></div>
+<div class="line"><a id="l01141" name="l01141"></a><span class="lineno"> 1141</span><span class="comment">    /// 同一 chunk 被重复特化时，旧块从 ownedSpecializedEntries_ 移入</span></div>
+<div class="line"><a id="l01142" name="l01142"></a><span class="lineno"> 1142</span><span class="comment">    /// retiredSpecializedEntries_，在下次 execute() 入口（无 JIT 代码运行的</span></div>
+<div class="line"><a id="l01143" name="l01143"></a><span class="lineno"> 1143</span><span class="comment">    /// 安全点）统一释放——原实现旧块滞留至析构，长会话反复去优化/再特化</span></div>
+<div class="line"><a id="l01144" name="l01144"></a><span class="lineno"> 1144</span><span class="comment">    /// 导致可执行内存单调增长。不在替换点立即释放：OSR 路径的特化发生</span></div>
+<div class="line"><a id="l01145" name="l01145"></a><span class="lineno"> 1145</span><span class="comment">    /// 在 JIT 执行期间，旧代码可能仍在本机调用栈上。</span></div>
+<div class="line"><a id="l01146" name="l01146"></a><span class="lineno"> 1146</span><span class="comment"></span>    std::unordered_map&lt;std::string, JitEntryFn&gt; ownedSpecializedByChunk_;</div>
+<div class="line"><a id="l01147" name="l01147"></a><span class="lineno"> 1147</span>    std::vector&lt;JitEntryFn&gt; retiredSpecializedEntries_;</div>
+<div class="line"><a id="l01148" name="l01148"></a><span class="lineno"> 1148</span><span class="comment"></span> </div>
+<div class="line"><a id="l01149" name="l01149"></a><span class="lineno"> 1149</span><span class="comment">    /// AUDIT-R4 BUG-12 fix: 登记新特化块所有权；若同名 chunk 已有旧块，</span></div>
+<div class="line"><a id="l01150" name="l01150"></a><span class="lineno"> 1150</span><span class="comment">    /// 将旧块退休（移入 retiredSpecializedEntries_ 待安全点释放）。</span></div>
+<div class="line"><a id="l01151" name="l01151"></a><span class="lineno"> 1151</span><span class="comment"></span>    <span class="keywordtype">void</span> registerSpecializedOwnership(<span class="keyword">const</span> std::string&amp; chunkName, JitEntryFn specializedEntry);</div>
+<div class="line"><a id="l01152" name="l01152"></a><span class="lineno"> 1152</span><span class="comment"></span> </div>
+<div class="line"><a id="l01153" name="l01153"></a><span class="lineno"> 1153</span><span class="comment">    /// AUDIT-R4 BUG-12 fix: 在安全点（execute() 入口/析构）释放退休特化块。</span></div>
+<div class="line"><a id="l01154" name="l01154"></a><span class="lineno"> 1154</span><span class="comment"></span>    <span class="keywordtype">void</span> releaseRetiredSpecializedEntries();</div>
+<div class="line"><a id="l01155" name="l01155"></a><span class="lineno"> 1155</span><span class="comment"></span> </div>
+<div class="line"><a id="l01156" name="l01156"></a><span class="lineno"> 1156</span><span class="comment">    /// R152: 当前 CompileResult 引用（特化重编译时访问 chunk 数据用）</span></div>
+<div class="line"><a id="l01157" name="l01157"></a><span class="lineno"> 1157</span><span class="comment">    /// execute() 入口赋值，compileChunkSpecialized 读取</span></div>
+<div class="line"><a id="l01158" name="l01158"></a><span class="lineno"> 1158</span><span class="comment"></span>    <span class="keyword">const</span> <a class="code hl_struct" href="structCompileResult.html">CompileResult</a>* currentResult_ = <span class="keyword">nullptr</span>;</div>
+<div class="line"><a id="l01159" name="l01159"></a><span class="lineno"> 1159</span><span class="comment"></span> </div>
+<div class="line"><a id="l01160" name="l01160"></a><span class="lineno"> 1160</span><span class="comment">    /// R152: INT 特化编译模式标志（compileChunkSpecialized 设置）</span></div>
+<div class="line"><a id="l01161" name="l01161"></a><span class="lineno"> 1161</span><span class="comment">    /// 为 true 时，emitCheckInt 不生成类型检查代码，算术指令直接走 INT 原生路径。</span></div>
+<div class="line"><a id="l01162" name="l01162"></a><span class="lineno"> 1162</span><span class="comment">    /// compileAllChunks 在此模式下编译所有 chunk 为特化版本，compileChunkSpecialized</span></div>
+<div class="line"><a id="l01163" name="l01163"></a><span class="lineno"> 1163</span><span class="comment">    /// 从中提取目标 chunk 入口并丢弃其他 chunk 的特化版本。</span></div>
+<div class="line"><a id="l01164" name="l01164"></a><span class="lineno"> 1164</span><span class="comment"></span>    <span class="keywordtype">bool</span> specializeIntMode_ = <span class="keyword">false</span>;</div>
+<div class="line"><a id="l01165" name="l01165"></a><span class="lineno"> 1165</span><span class="comment"></span> </div>
+<div class="line"><a id="l01166" name="l01166"></a><span class="lineno"> 1166</span><span class="comment">    /// R153: FLOAT 特化编译模式标志（compileChunkSpecializedFloat 设置）</span></div>
+<div class="line"><a id="l01167" name="l01167"></a><span class="lineno"> 1167</span><span class="comment">    /// 为 true 时：</span></div>
+<div class="line"><a id="l01168" name="l01168"></a><span class="lineno"> 1168</span><span class="comment">    /// - emitCheckInt 生成无条件 jmp 到 failLabel（跳过 INT 原生路径）</span></div>
+<div class="line"><a id="l01169" name="l01169"></a><span class="lineno"> 1169</span><span class="comment">    /// - emitRecordTypeFeedback 不生成代码（类型反馈已收集完毕）</span></div>
+<div class="line"><a id="l01170" name="l01170"></a><span class="lineno"> 1170</span><span class="comment">    /// 性能提升来自跳过 INT 类型检查 + 跳过类型反馈收集 + 跳过 INT 原生路径溢出检查。</span></div>
+<div class="line"><a id="l01171" name="l01171"></a><span class="lineno"> 1171</span><span class="comment">    /// 类型反馈 floatCount&gt;0 &amp;&amp; otherCount==0 保证操作数均为 FLOAT，走 genericXXX 路径</span></div>
+<div class="line"><a id="l01172" name="l01172"></a><span class="lineno"> 1172</span><span class="comment">    /// 调用 C++ 辅助函数（jitAddGeneric 等内部 isFloat 分支）。</span></div>
+<div class="line"><a id="l01173" name="l01173"></a><span class="lineno"> 1173</span><span class="comment"></span>    <span class="keywordtype">bool</span> specializeFloatMode_ = <span class="keyword">false</span>;</div>
+<div class="line"><a id="l01174" name="l01174"></a><span class="lineno"> 1174</span><span class="comment"></span> </div>
+<div class="line"><a id="l01175" name="l01175"></a><span class="lineno"> 1175</span><span class="comment">    /// R153: 特化方法入口持久化映射（chunkName → 特化方法入口地址）</span></div>
+<div class="line"><a id="l01176" name="l01176"></a><span class="lineno"> 1176</span><span class="comment">    /// compileAllChunks 每次会 clear methodEntries_，导致特化入口丢失。</span></div>
+<div class="line"><a id="l01177" name="l01177"></a><span class="lineno"> 1177</span><span class="comment">    /// 此映射在 compileChunkSpecialized/compileChunkSpecializedFloat 中填充，</span></div>
+<div class="line"><a id="l01178" name="l01178"></a><span class="lineno"> 1178</span><span class="comment">    /// execute() 中 compileAllChunks 后重新应用到 methodEntries_，确保第二次及后续</span></div>
+<div class="line"><a id="l01179" name="l01179"></a><span class="lineno"> 1179</span><span class="comment">    /// execute() 仍使用特化版本入口（R153 修复 R152 的入口丢失问题）。</span></div>
+<div class="line"><a id="l01180" name="l01180"></a><span class="lineno"> 1180</span><span class="comment"></span>    std::unordered_map&lt;std::string, void*&gt; specializedMethodEntries_;</div>
+<div class="line"><a id="l01181" name="l01181"></a><span class="lineno"> 1181</span><span class="comment"></span> </div>
+<div class="line"><a id="l01182" name="l01182"></a><span class="lineno"> 1182</span><span class="comment">    /// R154: lastMutatedReceiver_ 存储嵌套左值赋值链中变异后的容器（NaN-boxing Value）</span></div>
+<div class="line"><a id="l01183" name="l01183"></a><span class="lineno"> 1183</span><span class="comment">    /// OP_INDEX_SET pop obj+idx+val → 修改 obj[idx] → 存入此；OP_LOAD_MUTATED push 此到栈顶；</span></div>
+<div class="line"><a id="l01184" name="l01184"></a><span class="lineno"> 1184</span><span class="comment">    /// OP_WRITEBACK_*_LOCAL/VAR 整体替换栈槽/全局变量为此值。</span></div>
+<div class="line"><a id="l01185" name="l01185"></a><span class="lineno"> 1185</span><span class="comment">    /// 与 StackVM VM::lastMutatedReceiver_ 对齐，JitContext.lastMutatedReceiverPtr 指向此。</span></div>
+<div class="line"><a id="l01186" name="l01186"></a><span class="lineno"> 1186</span><span class="comment">    /// 初始化为 NaN-boxing NULL 完整 64 位表示（0x7FFA000000000000，与 JIT.cpp JIT_NULL_BITS 一致）</span></div>
+<div class="line"><a id="l01187" name="l01187"></a><span class="lineno"> 1187</span><span class="comment"></span>    int64_t lastMutatedReceiver_ = <span class="keyword">static_cast&lt;</span>int64_t<span class="keyword">&gt;</span>(0x7FFA000000000000ULL);</div>
+<div class="line"><a id="l01188" name="l01188"></a><span class="lineno"> 1188</span><span class="comment"></span> </div>
+<div class="line"><a id="l01189" name="l01189"></a><span class="lineno"> 1189</span><span class="comment">    /// R155: 函数名→JIT入口映射（OP_CALL_EXPR 闭包值调用用）</span></div>
+<div class="line"><a id="l01190" name="l01190"></a><span class="lineno"> 1190</span><span class="comment">    /// 键是普通函数名（不含 &#39;.&#39;），值含 entryPtr/localCount/arity/requiredArity</span></div>
+<div class="line"><a id="l01191" name="l01191"></a><span class="lineno"> 1191</span><span class="comment">    /// 在 compileAllChunks 末尾从 funcTable 构建，jitCallExpr 运行时查询</span></div>
+<div class="line"><a id="l01192" name="l01192"></a><span class="lineno"> 1192</span><span class="comment"></span>    std::unordered_map&lt;std::string, JitMethodInfo&gt; funcEntries_;</div>
+<div class="line"><a id="l01193" name="l01193"></a><span class="lineno"> 1193</span><span class="comment"></span> </div>
+<div class="line"><a id="l01194" name="l01194"></a><span class="lineno"> 1194</span><span class="comment">    /// R156: open upvalues multimap（与 StackVM openUpvalues_ 对齐）</span></div>
+<div class="line"><a id="l01195" name="l01195"></a><span class="lineno"> 1195</span><span class="comment">    /// 键是 JIT 栈槽地址（int64_t*），值为 weak_ptr&lt;VMUpvalue&gt;。</span></div>
+<div class="line"><a id="l01196" name="l01196"></a><span class="lineno"> 1196</span><span class="comment">    /// 升序排列（std::less&lt;int64_t*&gt;，地址从小到大）。</span></div>
+<div class="line"><a id="l01197" name="l01197"></a><span class="lineno"> 1197</span><span class="comment">    /// JIT 栈向下增长：高地址 = 旧 slot（slot 编号小），低地址 = 新 slot（slot 编号大）。</span></div>
+<div class="line"><a id="l01198" name="l01198"></a><span class="lineno"> 1198</span><span class="comment">    /// OP_CLOSURE(isLocal=true) 时 emplace(slotAddr, uv)；OP_RETURN/OP_CLOSE_UPVALUE 时 close。</span></div>
+<div class="line"><a id="l01199" name="l01199"></a><span class="lineno"> 1199</span><span class="comment">    /// closeUpvaluesFrom(fromAddr) 用 upper_bound(fromAddr) 关闭所有 addr &lt;= fromAddr 的 upvalue</span></div>
+<div class="line"><a id="l01200" name="l01200"></a><span class="lineno"> 1200</span><span class="comment">    /// （等价于 StackVM 的 [fromSlot, ∞)，因为 JIT slot 编号越大地址越小）。</span></div>
+<div class="line"><a id="l01201" name="l01201"></a><span class="lineno"> 1201</span><span class="comment"></span><span class="keyword">public</span>:</div>
+<div class="line"><a id="l01202" name="l01202"></a><span class="lineno"> 1202</span>    std::multimap&lt;int64_t*, std::weak_ptr&lt;VMUpvalue&gt;&gt; openUpvalues_;</div>
+<div class="line"><a id="l01203" name="l01203"></a><span class="lineno"> 1203</span><span class="comment"></span> </div>
+<div class="line"><a id="l01204" name="l01204"></a><span class="lineno"> 1204</span><span class="comment">    /// R156: 每帧 upvalues 向量（与 StackVM VMCallFrame.upvalues 对齐）</span></div>
+<div class="line"><a id="l01205" name="l01205"></a><span class="lineno"> 1205</span><span class="comment">    /// 与 frameStack_ 并行索引：frameUpvaluesStack_[idx] 对应 frameStack_[idx] 的 upvalues。</span></div>
+<div class="line"><a id="l01206" name="l01206"></a><span class="lineno"> 1206</span><span class="comment">    /// OP_CALL: push 闭包值的 upvalues（从 functionClosures_ 查找，与 StackVM executeCallFunction 对齐）</span></div>
+<div class="line"><a id="l01207" name="l01207"></a><span class="lineno"> 1207</span><span class="comment">    /// OP_CALL_EXPR: push 闭包值的 upvalues（jitCallExpr 内部填充）</span></div>
+<div class="line"><a id="l01208" name="l01208"></a><span class="lineno"> 1208</span><span class="comment">    /// OP_METHOD_CALL: push 空 vector（方法不捕获 upvalue）</span></div>
+<div class="line"><a id="l01209" name="l01209"></a><span class="lineno"> 1209</span><span class="comment">    /// OP_RETURN: pop</span></div>
+<div class="line"><a id="l01210" name="l01210"></a><span class="lineno"> 1210</span><span class="comment">    /// OP_CLOSURE(isLocal=false): 从 frameUpvaluesStack_[当前帧] 读取透传 upvalue</span></div>
+<div class="line"><a id="l01211" name="l01211"></a><span class="lineno"> 1211</span><span class="comment"></span>    std::vector&lt;std::vector&lt;std::shared_ptr&lt;VMUpvalue&gt;&gt;&gt; frameUpvaluesStack_;</div>
 <div class="line"><a id="l01212" name="l01212"></a><span class="lineno"> 1212</span><span class="comment"></span> </div>
-<div class="line"><a id="l01213" name="l01213"></a><span class="lineno"> 1213</span><span class="comment">    /// R157: per-chunk OSR 阈值数组（达到阈值触发特化重编译）</span></div>
-<div class="line"><a id="l01214" name="l01214"></a><span class="lineno"> 1214</span><span class="comment">    /// 默认阈值 0（不触发），测试用 setOsrThreshold 设置</span></div>
-<div class="line"><a id="l01215" name="l01215"></a><span class="lineno"> 1215</span><span class="comment"></span>    std::vector&lt;uint64_t&gt; osrLoopThresholds_;</div>
-<div class="line"><a id="l01216" name="l01216"></a><span class="lineno"> 1216</span><span class="comment"></span> </div>
-<div class="line"><a id="l01217" name="l01217"></a><span class="lineno"> 1217</span><span class="comment">    /// R157: per-chunk OSR 已触发标志数组（0=未触发，1=已触发，避免重复触发）</span></div>
-<div class="line"><a id="l01218" name="l01218"></a><span class="lineno"> 1218</span><span class="comment"></span>    std::vector&lt;uint64_t&gt; osrRecompiledFlags_;</div>
-<div class="line"><a id="l01219" name="l01219"></a><span class="lineno"> 1219</span><span class="comment"></span> </div>
-<div class="line"><a id="l01220" name="l01220"></a><span class="lineno"> 1220</span><span class="comment">    /// R166 fix: per-chunk 循环迭代计数数组（无限循环防护）</span></div>
-<div class="line"><a id="l01221" name="l01221"></a><span class="lineno"> 1221</span><span class="comment">    /// 索引与 chunkCallCounts_ 对齐，OP_LOOP 回边时递增，超限报错对齐 Interpreter。</span></div>
-<div class="line"><a id="l01222" name="l01222"></a><span class="lineno"> 1222</span><span class="comment"></span>    std::vector&lt;uint64_t&gt; loopIterations_;</div>
+<div class="line"><a id="l01213" name="l01213"></a><span class="lineno"> 1213</span><span class="comment">    /// R156: 闭包注册表（与 StackVM VM::functionClosures_ 对齐）</span></div>
+<div class="line"><a id="l01214" name="l01214"></a><span class="lineno"> 1214</span><span class="comment">    /// OP_CLOSURE 时注册（jitCreateClosure 内部），OP_CALL 时查找提取 upvalues。</span></div>
+<div class="line"><a id="l01215" name="l01215"></a><span class="lineno"> 1215</span><span class="comment">    /// 键是函数名，值是闭包值（含 VMClosureData.upvalues）。</span></div>
+<div class="line"><a id="l01216" name="l01216"></a><span class="lineno"> 1216</span><span class="comment">    /// StackVM executeCallFunction（VMCalls.cpp executeCallFunction）通过此表传递 upvalues。</span></div>
+<div class="line"><a id="l01217" name="l01217"></a><span class="lineno"> 1217</span><span class="comment"></span>    std::unordered_map&lt;std::string, Value&gt; functionClosures_;</div>
+<div class="line"><a id="l01218" name="l01218"></a><span class="lineno"> 1218</span><span class="comment"></span> </div>
+<div class="line"><a id="l01219" name="l01219"></a><span class="lineno"> 1219</span><span class="comment">    /// R157: lazy compilation 模式标志（setLazyCompilation 设置）</span></div>
+<div class="line"><a id="l01220" name="l01220"></a><span class="lineno"> 1220</span><span class="comment">    /// 为 true 时，compileAllChunks 只编译 mainChunk，函数/方法 chunk 在首次 OP_CALL 时</span></div>
+<div class="line"><a id="l01221" name="l01221"></a><span class="lineno"> 1221</span><span class="comment">    /// 通过 jitCallByName 触发 compileSingleChunkLazy 按需编译。</span></div>
+<div class="line"><a id="l01222" name="l01222"></a><span class="lineno"> 1222</span><span class="comment"></span>    <span class="keywordtype">bool</span> lazyMode_ = <span class="keyword">false</span>;</div>
 <div class="line"><a id="l01223" name="l01223"></a><span class="lineno"> 1223</span><span class="comment"></span> </div>
-<div class="line"><a id="l01224" name="l01224"></a><span class="lineno"> 1224</span><span class="comment">    /// R157: 测试用自定义 OSR 阈值覆盖（name→threshold）</span></div>
-<div class="line"><a id="l01225" name="l01225"></a><span class="lineno"> 1225</span><span class="comment"></span>    std::unordered_map&lt;std::string, uint64_t&gt; customOsrThresholds_;</div>
-<div class="line"><a id="l01226" name="l01226"></a><span class="lineno"> 1226</span><span class="comment"></span> </div>
-<div class="line"><a id="l01227" name="l01227"></a><span class="lineno"> 1227</span><span class="comment">    /// R158: per-chunk 当前 Tier（分层编译状态跟踪）</span></div>
-<div class="line"><a id="l01228" name="l01228"></a><span class="lineno"> 1228</span><span class="comment">    /// 索引与 chunkCallCounts_ 对齐，记录每个 chunk 的当前编译层级。</span></div>
-<div class="line"><a id="l01229" name="l01229"></a><span class="lineno"> 1229</span><span class="comment">    /// 初始为 Tier 1 (Baseline)，热点触发特化重编译后升级为 Tier 2 (Specialized)。</span></div>
-<div class="line"><a id="l01230" name="l01230"></a><span class="lineno"> 1230</span><span class="comment">    /// 反优化时回退为 Tier 1。</span></div>
-<div class="line"><a id="l01231" name="l01231"></a><span class="lineno"> 1231</span><span class="comment"></span>    std::vector&lt;minilang::JitTier&gt; chunkTiers_;</div>
-<div class="line"><a id="l01232" name="l01232"></a><span class="lineno"> 1232</span><span class="comment"></span> </div>
-<div class="line"><a id="l01233" name="l01233"></a><span class="lineno"> 1233</span><span class="comment">    /// R158: Tier 1 baseline 入口备份（反优化用）</span></div>
-<div class="line"><a id="l01234" name="l01234"></a><span class="lineno"> 1234</span><span class="comment">    /// 键是 chunk 名称（函数名或 &quot;Class.method&quot;），值是 baseline 版本入口地址。</span></div>
-<div class="line"><a id="l01235" name="l01235"></a><span class="lineno"> 1235</span><span class="comment">    /// 特化重编译前备份 baseline 入口，反优化时恢复。</span></div>
-<div class="line"><a id="l01236" name="l01236"></a><span class="lineno"> 1236</span><span class="comment"></span>    std::unordered_map&lt;std::string, void*&gt; baselineMethodEntries_;</div>
-<div class="line"><a id="l01237" name="l01237"></a><span class="lineno"> 1237</span><span class="comment"></span> </div>
-<div class="line"><a id="l01238" name="l01238"></a><span class="lineno"> 1238</span><span class="comment">    /// R158: Tier 1 baseline 函数入口备份（反优化用，普通函数）</span></div>
-<div class="line"><a id="l01239" name="l01239"></a><span class="lineno"> 1239</span><span class="comment"></span>    std::unordered_map&lt;std::string, void*&gt; baselineFuncEntries_;</div>
-<div class="line"><a id="l01240" name="l01240"></a><span class="lineno"> 1240</span><span class="comment"></span> </div>
-<div class="line"><a id="l01241" name="l01241"></a><span class="lineno"> 1241</span><span class="comment">    /// R158: 真正 OSR 栈帧迁移模式标志</span></div>
-<div class="line"><a id="l01242" name="l01242"></a><span class="lineno"> 1242</span><span class="comment">    /// 为 true 时，OP_LOOP OSR 触发执行真正栈帧迁移（保存/恢复 r13/r15 + jmp OSR 入口点）。</span></div>
-<div class="line"><a id="l01243" name="l01243"></a><span class="lineno"> 1243</span><span class="comment">    /// 为 false 时，保持 R157 简化版行为（仅触发特化重编译供下次 execute 生效）。</span></div>
-<div class="line"><a id="l01244" name="l01244"></a><span class="lineno"> 1244</span><span class="comment"></span>    <span class="keywordtype">bool</span> osrMigrationMode_ = <span class="keyword">false</span>;</div>
-<div class="line"><a id="l01245" name="l01245"></a><span class="lineno"> 1245</span><span class="comment"></span> </div>
-<div class="line"><a id="l01246" name="l01246"></a><span class="lineno"> 1246</span><span class="comment">    /// R158: OSR 栈帧快照（JIT 代码通过邮箱写入，triggerOsrMigration 读取）</span></div>
-<div class="line"><a id="l01247" name="l01247"></a><span class="lineno"> 1247</span><span class="comment"></span>    minilang::OsrFrameSnapshot osrFrameSnapshot_;</div>
-<div class="line"><a id="l01248" name="l01248"></a><span class="lineno"> 1248</span><span class="comment"></span> </div>
-<div class="line"><a id="l01249" name="l01249"></a><span class="lineno"> 1249</span><span class="comment">    /// R158: 已 OSR 迁移的 chunk 名称列表（测试验证用）</span></div>
-<div class="line"><a id="l01250" name="l01250"></a><span class="lineno"> 1250</span><span class="comment"></span>    std::vector&lt;std::string&gt; osrMigratedChunks_;</div>
-<div class="line"><a id="l01251" name="l01251"></a><span class="lineno"> 1251</span><span class="comment"></span> </div>
-<div class="line"><a id="l01252" name="l01252"></a><span class="lineno"> 1252</span><span class="comment">    /// R158: 反优化触发计数（测试验证用）</span></div>
-<div class="line"><a id="l01253" name="l01253"></a><span class="lineno"> 1253</span><span class="comment"></span>    uint64_t deoptCount_ = 0;</div>
-<div class="line"><a id="l01254" name="l01254"></a><span class="lineno"> 1254</span><span class="comment"></span> </div>
-<div class="line"><a id="l01255" name="l01255"></a><span class="lineno"> 1255</span><span class="comment">    /// R158: 已反优化的 chunk 名称列表（测试验证用）</span></div>
-<div class="line"><a id="l01256" name="l01256"></a><span class="lineno"> 1256</span><span class="comment"></span>    std::vector&lt;std::string&gt; deoptimizedChunks_;</div>
-<div class="line"><a id="l01257" name="l01257"></a><span class="lineno"> 1257</span><span class="comment"></span> </div>
-<div class="line"><a id="l01258" name="l01258"></a><span class="lineno"> 1258</span><span class="comment">    /// R158: OSR 入口点生成模式标志（compileChunkSpecializedWithOsr 设置）</span></div>
-<div class="line"><a id="l01259" name="l01259"></a><span class="lineno"> 1259</span><span class="comment">    /// 为 true 时，compileAllChunks 在 OP_LOOP 位置生成 OSR 入口 Label，</span></div>
-<div class="line"><a id="l01260" name="l01260"></a><span class="lineno"> 1260</span><span class="comment">    /// 该 Label 恢复 r13/r15 后跳转到循环回边目标（特化版本中的循环起点）。</span></div>
-<div class="line"><a id="l01261" name="l01261"></a><span class="lineno"> 1261</span><span class="comment"></span>    <span class="keywordtype">bool</span> osrEntryGenMode_ = <span class="keyword">false</span>;</div>
-<div class="line"><a id="l01262" name="l01262"></a><span class="lineno"> 1262</span><span class="comment"></span> </div>
-<div class="line"><a id="l01263" name="l01263"></a><span class="lineno"> 1263</span><span class="comment">    /// R158: OSR 入口点生成的目标 chunk 索引</span></div>
-<div class="line"><a id="l01264" name="l01264"></a><span class="lineno"> 1264</span><span class="comment"></span>    <span class="keywordtype">size_t</span> osrTargetChunkIdx_ = 0;</div>
-<div class="line"><a id="l01265" name="l01265"></a><span class="lineno"> 1265</span><span class="comment"></span> </div>
-<div class="line"><a id="l01266" name="l01266"></a><span class="lineno"> 1266</span><span class="comment">    /// R158: OSR 入口 Label（compileAllChunks 中创建，OP_LOOP 后绑定）</span></div>
-<div class="line"><a id="l01267" name="l01267"></a><span class="lineno"> 1267</span><span class="comment">    /// JIT 代码 jmp 此 Label 地址实现真正 OSR 栈帧迁移。</span></div>
-<div class="line"><a id="l01268" name="l01268"></a><span class="lineno"> 1268</span><span class="comment"></span>    asmjit::Label osrEntryLabel_;</div>
-<div class="line"><a id="l01269" name="l01269"></a><span class="lineno"> 1269</span><span class="comment"></span> </div>
-<div class="line"><a id="l01270" name="l01270"></a><span class="lineno"> 1270</span><span class="comment">    /// R158: OSR 入口 Label 是否已生成（compileAllChunks 中设置）</span></div>
-<div class="line"><a id="l01271" name="l01271"></a><span class="lineno"> 1271</span><span class="comment"></span>    <span class="keywordtype">bool</span> osrEntryLabelGenerated_ = <span class="keyword">false</span>;</div>
+<div class="line"><a id="l01224" name="l01224"></a><span class="lineno"> 1224</span><span class="comment">    /// R159: 分层编译模式标志（setTieredCompilation 设置）</span></div>
+<div class="line"><a id="l01225" name="l01225"></a><span class="lineno"> 1225</span><span class="comment">    /// 为 true 时，非 main chunk 初始为 Tier 0 (Interpreter)，首次调用时通过 lazy</span></div>
+<div class="line"><a id="l01226" name="l01226"></a><span class="lineno"> 1226</span><span class="comment">    /// compilation 自动升级到 Tier 1 (Baseline)。chunkTiers_ 追踪 Tier 0→1→2 转换。</span></div>
+<div class="line"><a id="l01227" name="l01227"></a><span class="lineno"> 1227</span><span class="comment"></span>    <span class="keywordtype">bool</span> tieredMode_ = <span class="keyword">false</span>;</div>
+<div class="line"><a id="l01228" name="l01228"></a><span class="lineno"> 1228</span><span class="comment"></span> </div>
+<div class="line"><a id="l01229" name="l01229"></a><span class="lineno"> 1229</span><span class="comment">    /// R157: 已 lazy 编译的 chunk 名称列表（按编译顺序，测试验证用）</span></div>
+<div class="line"><a id="l01230" name="l01230"></a><span class="lineno"> 1230</span><span class="comment"></span>    std::vector&lt;std::string&gt; lazyCompiledChunksList_;</div>
+<div class="line"><a id="l01231" name="l01231"></a><span class="lineno"> 1231</span><span class="comment"></span> </div>
+<div class="line"><a id="l01232" name="l01232"></a><span class="lineno"> 1232</span><span class="comment">    /// R157: lazy 编译的 CodeHolder 内存所有权列表</span></div>
+<div class="line"><a id="l01233" name="l01233"></a><span class="lineno"> 1233</span><span class="comment">    /// 析构时通过 runtime_.release 释放，避免内存泄漏</span></div>
+<div class="line"><a id="l01234" name="l01234"></a><span class="lineno"> 1234</span><span class="comment"></span>    std::vector&lt;JitEntryFn&gt; ownedLazyEntries_;</div>
+<div class="line"><a id="l01235" name="l01235"></a><span class="lineno"> 1235</span><span class="comment"></span> </div>
+<div class="line"><a id="l01236" name="l01236"></a><span class="lineno"> 1236</span><span class="comment">    /// R157: per-chunk 循环回边计数数组（OSR 用）</span></div>
+<div class="line"><a id="l01237" name="l01237"></a><span class="lineno"> 1237</span><span class="comment">    /// 索引与 chunkCallCounts_ 对齐，OP_LOOP 回边时递增</span></div>
+<div class="line"><a id="l01238" name="l01238"></a><span class="lineno"> 1238</span><span class="comment"></span>    std::vector&lt;uint64_t&gt; osrLoopCounts_;</div>
+<div class="line"><a id="l01239" name="l01239"></a><span class="lineno"> 1239</span><span class="comment"></span> </div>
+<div class="line"><a id="l01240" name="l01240"></a><span class="lineno"> 1240</span><span class="comment">    /// R157: per-chunk OSR 阈值数组（达到阈值触发特化重编译）</span></div>
+<div class="line"><a id="l01241" name="l01241"></a><span class="lineno"> 1241</span><span class="comment">    /// 默认阈值 0（不触发），测试用 setOsrThreshold 设置</span></div>
+<div class="line"><a id="l01242" name="l01242"></a><span class="lineno"> 1242</span><span class="comment"></span>    std::vector&lt;uint64_t&gt; osrLoopThresholds_;</div>
+<div class="line"><a id="l01243" name="l01243"></a><span class="lineno"> 1243</span><span class="comment"></span> </div>
+<div class="line"><a id="l01244" name="l01244"></a><span class="lineno"> 1244</span><span class="comment">    /// R157: per-chunk OSR 已触发标志数组（0=未触发，1=已触发，避免重复触发）</span></div>
+<div class="line"><a id="l01245" name="l01245"></a><span class="lineno"> 1245</span><span class="comment"></span>    std::vector&lt;uint64_t&gt; osrRecompiledFlags_;</div>
+<div class="line"><a id="l01246" name="l01246"></a><span class="lineno"> 1246</span><span class="comment"></span> </div>
+<div class="line"><a id="l01247" name="l01247"></a><span class="lineno"> 1247</span><span class="comment">    /// R166 fix: per-chunk 循环迭代计数数组（无限循环防护）</span></div>
+<div class="line"><a id="l01248" name="l01248"></a><span class="lineno"> 1248</span><span class="comment">    /// 索引与 chunkCallCounts_ 对齐，OP_LOOP 回边时递增，超限报错对齐 Interpreter。</span></div>
+<div class="line"><a id="l01249" name="l01249"></a><span class="lineno"> 1249</span><span class="comment"></span>    std::vector&lt;uint64_t&gt; loopIterations_;</div>
+<div class="line"><a id="l01250" name="l01250"></a><span class="lineno"> 1250</span><span class="comment"></span> </div>
+<div class="line"><a id="l01251" name="l01251"></a><span class="lineno"> 1251</span><span class="comment">    /// R157: 测试用自定义 OSR 阈值覆盖（name→threshold）</span></div>
+<div class="line"><a id="l01252" name="l01252"></a><span class="lineno"> 1252</span><span class="comment"></span>    std::unordered_map&lt;std::string, uint64_t&gt; customOsrThresholds_;</div>
+<div class="line"><a id="l01253" name="l01253"></a><span class="lineno"> 1253</span><span class="comment"></span> </div>
+<div class="line"><a id="l01254" name="l01254"></a><span class="lineno"> 1254</span><span class="comment">    /// R158: per-chunk 当前 Tier（分层编译状态跟踪）</span></div>
+<div class="line"><a id="l01255" name="l01255"></a><span class="lineno"> 1255</span><span class="comment">    /// 索引与 chunkCallCounts_ 对齐，记录每个 chunk 的当前编译层级。</span></div>
+<div class="line"><a id="l01256" name="l01256"></a><span class="lineno"> 1256</span><span class="comment">    /// 初始为 Tier 1 (Baseline)，热点触发特化重编译后升级为 Tier 2 (Specialized)。</span></div>
+<div class="line"><a id="l01257" name="l01257"></a><span class="lineno"> 1257</span><span class="comment">    /// 反优化时回退为 Tier 1。</span></div>
+<div class="line"><a id="l01258" name="l01258"></a><span class="lineno"> 1258</span><span class="comment"></span>    std::vector&lt;minilang::JitTier&gt; chunkTiers_;</div>
+<div class="line"><a id="l01259" name="l01259"></a><span class="lineno"> 1259</span><span class="comment"></span> </div>
+<div class="line"><a id="l01260" name="l01260"></a><span class="lineno"> 1260</span><span class="comment">    /// R158: Tier 1 baseline 入口备份（反优化用）</span></div>
+<div class="line"><a id="l01261" name="l01261"></a><span class="lineno"> 1261</span><span class="comment">    /// 键是 chunk 名称（函数名或 &quot;Class.method&quot;），值是 baseline 版本入口地址。</span></div>
+<div class="line"><a id="l01262" name="l01262"></a><span class="lineno"> 1262</span><span class="comment">    /// 特化重编译前备份 baseline 入口，反优化时恢复。</span></div>
+<div class="line"><a id="l01263" name="l01263"></a><span class="lineno"> 1263</span><span class="comment"></span>    std::unordered_map&lt;std::string, void*&gt; baselineMethodEntries_;</div>
+<div class="line"><a id="l01264" name="l01264"></a><span class="lineno"> 1264</span><span class="comment"></span> </div>
+<div class="line"><a id="l01265" name="l01265"></a><span class="lineno"> 1265</span><span class="comment">    /// R158: Tier 1 baseline 函数入口备份（反优化用，普通函数）</span></div>
+<div class="line"><a id="l01266" name="l01266"></a><span class="lineno"> 1266</span><span class="comment"></span>    std::unordered_map&lt;std::string, void*&gt; baselineFuncEntries_;</div>
+<div class="line"><a id="l01267" name="l01267"></a><span class="lineno"> 1267</span><span class="comment"></span> </div>
+<div class="line"><a id="l01268" name="l01268"></a><span class="lineno"> 1268</span><span class="comment">    /// R158: 真正 OSR 栈帧迁移模式标志</span></div>
+<div class="line"><a id="l01269" name="l01269"></a><span class="lineno"> 1269</span><span class="comment">    /// 为 true 时，OP_LOOP OSR 触发执行真正栈帧迁移（保存/恢复 r13/r15 + jmp OSR 入口点）。</span></div>
+<div class="line"><a id="l01270" name="l01270"></a><span class="lineno"> 1270</span><span class="comment">    /// 为 false 时，保持 R157 简化版行为（仅触发特化重编译供下次 execute 生效）。</span></div>
+<div class="line"><a id="l01271" name="l01271"></a><span class="lineno"> 1271</span><span class="comment"></span>    <span class="keywordtype">bool</span> osrMigrationMode_ = <span class="keyword">false</span>;</div>
 <div class="line"><a id="l01272" name="l01272"></a><span class="lineno"> 1272</span><span class="comment"></span> </div>
-<div class="line"><a id="l01273" name="l01273"></a><span class="lineno"> 1273</span><span class="comment">    /// R158: OSR 入口点地址输出参数（compileChunkSpecializedWithOsr 设置）</span></div>
-<div class="line"><a id="l01274" name="l01274"></a><span class="lineno"> 1274</span><span class="comment">    /// compileAllChunks 编译完成后将 OSR 入口点地址写入此指针。</span></div>
-<div class="line"><a id="l01275" name="l01275"></a><span class="lineno"> 1275</span><span class="comment"></span>    <span class="keywordtype">void</span>** osrEntryPointOut_ = <span class="keyword">nullptr</span>;</div>
-<div class="line"><a id="l01276" name="l01276"></a><span class="lineno"> 1276</span><span class="comment"></span> </div>
-<div class="line"><a id="l01277" name="l01277"></a><span class="lineno"> 1277</span><span class="comment">    /// R160: inline cache 数据（per-call-site，跨所有 chunk 统一编号）</span></div>
-<div class="line"><a id="l01278" name="l01278"></a><span class="lineno"> 1278</span><span class="comment">    /// 编译期为每个 OP_MEMBER_GET 分配唯一 callSiteId，</span></div>
-<div class="line"><a id="l01279" name="l01279"></a><span class="lineno"> 1279</span><span class="comment">    /// 运行时 jitMemberGetWithIC 通过 callSiteId 索引此数组。</span></div>
-<div class="line"><a id="l01280" name="l01280"></a><span class="lineno"> 1280</span><span class="comment"></span>    std::vector&lt;MemberGetInlineCacheEntry&gt; memberGetIC_;</div>
+<div class="line"><a id="l01273" name="l01273"></a><span class="lineno"> 1273</span><span class="comment">    /// R158: OSR 栈帧快照（JIT 代码通过邮箱写入，triggerOsrMigration 读取）</span></div>
+<div class="line"><a id="l01274" name="l01274"></a><span class="lineno"> 1274</span><span class="comment"></span>    minilang::OsrFrameSnapshot osrFrameSnapshot_;</div>
+<div class="line"><a id="l01275" name="l01275"></a><span class="lineno"> 1275</span><span class="comment"></span> </div>
+<div class="line"><a id="l01276" name="l01276"></a><span class="lineno"> 1276</span><span class="comment">    /// R158: 已 OSR 迁移的 chunk 名称列表（测试验证用）</span></div>
+<div class="line"><a id="l01277" name="l01277"></a><span class="lineno"> 1277</span><span class="comment"></span>    std::vector&lt;std::string&gt; osrMigratedChunks_;</div>
+<div class="line"><a id="l01278" name="l01278"></a><span class="lineno"> 1278</span><span class="comment"></span> </div>
+<div class="line"><a id="l01279" name="l01279"></a><span class="lineno"> 1279</span><span class="comment">    /// R158: 反优化触发计数（测试验证用）</span></div>
+<div class="line"><a id="l01280" name="l01280"></a><span class="lineno"> 1280</span><span class="comment"></span>    uint64_t deoptCount_ = 0;</div>
 <div class="line"><a id="l01281" name="l01281"></a><span class="lineno"> 1281</span><span class="comment"></span> </div>
-<div class="line"><a id="l01282" name="l01282"></a><span class="lineno"> 1282</span><span class="comment">    /// R160: inline cache 命中/未命中/megamorphic 计数（教学统计用）</span></div>
-<div class="line"><a id="l01283" name="l01283"></a><span class="lineno"> 1283</span><span class="comment"></span>    uint64_t icHitCount_ = 0;</div>
-<div class="line"><a id="l01284" name="l01284"></a><span class="lineno"> 1284</span>    uint64_t icMissCount_ = 0;</div>
-<div class="line"><a id="l01285" name="l01285"></a><span class="lineno"> 1285</span>    uint64_t icMegamorphicCount_ = 0;</div>
-<div class="line"><a id="l01286" name="l01286"></a><span class="lineno"> 1286</span><span class="comment"></span> </div>
-<div class="line"><a id="l01287" name="l01287"></a><span class="lineno"> 1287</span><span class="comment">    /// 方法调用 IC 数据（per-call-site，跨所有 chunk 统一编号）</span></div>
-<div class="line"><a id="l01288" name="l01288"></a><span class="lineno"> 1288</span><span class="comment">    /// 编译期为每个 OP_METHOD_CALL 分配唯一 methodCallSiteId，</span></div>
-<div class="line"><a id="l01289" name="l01289"></a><span class="lineno"> 1289</span><span class="comment">    /// 运行时 jitMethodCall 通过 callSiteId 索引此数组。</span></div>
-<div class="line"><a id="l01290" name="l01290"></a><span class="lineno"> 1290</span><span class="comment"></span>    std::vector&lt;MethodCallICEntry&gt; methodCallIC_;</div>
-<div class="line"><a id="l01291" name="l01291"></a><span class="lineno"> 1291</span>    uint64_t nextMethodCallSiteId_ = 0;</div>
+<div class="line"><a id="l01282" name="l01282"></a><span class="lineno"> 1282</span><span class="comment">    /// R158: 已反优化的 chunk 名称列表（测试验证用）</span></div>
+<div class="line"><a id="l01283" name="l01283"></a><span class="lineno"> 1283</span><span class="comment"></span>    std::vector&lt;std::string&gt; deoptimizedChunks_;</div>
+<div class="line"><a id="l01284" name="l01284"></a><span class="lineno"> 1284</span><span class="comment"></span> </div>
+<div class="line"><a id="l01285" name="l01285"></a><span class="lineno"> 1285</span><span class="comment">    /// R158: OSR 入口点生成模式标志（compileChunkSpecializedWithOsr 设置）</span></div>
+<div class="line"><a id="l01286" name="l01286"></a><span class="lineno"> 1286</span><span class="comment">    /// 为 true 时，compileAllChunks 在 OP_LOOP 位置生成 OSR 入口 Label，</span></div>
+<div class="line"><a id="l01287" name="l01287"></a><span class="lineno"> 1287</span><span class="comment">    /// 该 Label 恢复 r13/r15 后跳转到循环回边目标（特化版本中的循环起点）。</span></div>
+<div class="line"><a id="l01288" name="l01288"></a><span class="lineno"> 1288</span><span class="comment"></span>    <span class="keywordtype">bool</span> osrEntryGenMode_ = <span class="keyword">false</span>;</div>
+<div class="line"><a id="l01289" name="l01289"></a><span class="lineno"> 1289</span><span class="comment"></span> </div>
+<div class="line"><a id="l01290" name="l01290"></a><span class="lineno"> 1290</span><span class="comment">    /// R158: OSR 入口点生成的目标 chunk 索引</span></div>
+<div class="line"><a id="l01291" name="l01291"></a><span class="lineno"> 1291</span><span class="comment"></span>    <span class="keywordtype">size_t</span> osrTargetChunkIdx_ = 0;</div>
 <div class="line"><a id="l01292" name="l01292"></a><span class="lineno"> 1292</span><span class="comment"></span> </div>
-<div class="line"><a id="l01293" name="l01293"></a><span class="lineno"> 1293</span><span class="comment">    /// 方法调用 IC 统计</span></div>
-<div class="line"><a id="l01294" name="l01294"></a><span class="lineno"> 1294</span><span class="comment"></span>    uint64_t methodIcHitCount_ = 0;</div>
-<div class="line"><a id="l01295" name="l01295"></a><span class="lineno"> 1295</span>    uint64_t methodIcMissCount_ = 0;</div>
+<div class="line"><a id="l01293" name="l01293"></a><span class="lineno"> 1293</span><span class="comment">    /// R158: OSR 入口 Label（compileAllChunks 中创建，OP_LOOP 后绑定）</span></div>
+<div class="line"><a id="l01294" name="l01294"></a><span class="lineno"> 1294</span><span class="comment">    /// JIT 代码 jmp 此 Label 地址实现真正 OSR 栈帧迁移。</span></div>
+<div class="line"><a id="l01295" name="l01295"></a><span class="lineno"> 1295</span><span class="comment"></span>    asmjit::Label osrEntryLabel_;</div>
 <div class="line"><a id="l01296" name="l01296"></a><span class="lineno"> 1296</span><span class="comment"></span> </div>
-<div class="line"><a id="l01297" name="l01297"></a><span class="lineno"> 1297</span><span class="comment">    /// R162: try/catch 异常处理器栈（与 StackVM tryStack_ 对齐）</span></div>
-<div class="line"><a id="l01298" name="l01298"></a><span class="lineno"> 1298</span><span class="comment">    /// OP_TRY_BEGIN push，OP_TRY_END pop，OP_THROW 搜索。</span></div>
-<div class="line"><a id="l01299" name="l01299"></a><span class="lineno"> 1299</span><span class="comment">    /// jitThrow 通过 backendPtr 访问此栈，支持跨帧异常传播。</span></div>
-<div class="line"><a id="l01300" name="l01300"></a><span class="lineno"> 1300</span><span class="comment"></span>    std::vector&lt;JitTryHandler&gt; tryStack_;</div>
-<div class="line"><a id="l01301" name="l01301"></a><span class="lineno"> 1301</span><span class="comment"></span> </div>
-<div class="line"><a id="l01302" name="l01302"></a><span class="lineno"> 1302</span><span class="comment">    /// R162: finally 续跳地址栈（与 StackVM pendingJumpStack_ 对齐）</span></div>
-<div class="line"><a id="l01303" name="l01303"></a><span class="lineno"> 1303</span><span class="comment">    /// OP_PUSH_JUMP_TARGET push（JIT 代码地址），OP_FINALLY_END pop 并跳转。</span></div>
-<div class="line"><a id="l01304" name="l01304"></a><span class="lineno"> 1304</span><span class="comment">    /// 异常传播时清空（异常中断 break/continue 续跳链）。</span></div>
-<div class="line"><a id="l01305" name="l01305"></a><span class="lineno"> 1305</span><span class="comment">    /// AUDIT-R7 F1 fix: 条目附带 frameIndex，jitPopJumpTarget 只消费本帧条目并</span></div>
-<div class="line"><a id="l01306" name="l01306"></a><span class="lineno"> 1306</span><span class="comment">    /// 惰性丢弃已返回深帧残留（与三 VM 同构，防跨帧误跳——JIT 条目是机器地址，</span></div>
-<div class="line"><a id="l01307" name="l01307"></a><span class="lineno"> 1307</span><span class="comment">    /// 跨帧误跳后果更严重）。</span></div>
-<div class="line"><a id="l01308" name="l01308"></a><span class="lineno"> 1308</span><span class="comment"></span>    <span class="keyword">struct </span>JitPendingJump {</div>
-<div class="line"><a id="l01309" name="l01309"></a><span class="lineno"> 1309</span>        <span class="keywordtype">void</span>* addr;</div>
-<div class="line"><a id="l01310" name="l01310"></a><span class="lineno"> 1310</span>        <span class="keywordtype">size_t</span> frameIndex;</div>
-<div class="line"><a id="l01311" name="l01311"></a><span class="lineno"> 1311</span>    };</div>
-<div class="line"><a id="l01312" name="l01312"></a><span class="lineno"> 1312</span>    std::vector&lt;JitPendingJump&gt; pendingJumpStack_;</div>
+<div class="line"><a id="l01297" name="l01297"></a><span class="lineno"> 1297</span><span class="comment">    /// R158: OSR 入口 Label 是否已生成（compileAllChunks 中设置）</span></div>
+<div class="line"><a id="l01298" name="l01298"></a><span class="lineno"> 1298</span><span class="comment"></span>    <span class="keywordtype">bool</span> osrEntryLabelGenerated_ = <span class="keyword">false</span>;</div>
+<div class="line"><a id="l01299" name="l01299"></a><span class="lineno"> 1299</span><span class="comment"></span> </div>
+<div class="line"><a id="l01300" name="l01300"></a><span class="lineno"> 1300</span><span class="comment">    /// R158: OSR 入口点地址输出参数（compileChunkSpecializedWithOsr 设置）</span></div>
+<div class="line"><a id="l01301" name="l01301"></a><span class="lineno"> 1301</span><span class="comment">    /// compileAllChunks 编译完成后将 OSR 入口点地址写入此指针。</span></div>
+<div class="line"><a id="l01302" name="l01302"></a><span class="lineno"> 1302</span><span class="comment"></span>    <span class="keywordtype">void</span>** osrEntryPointOut_ = <span class="keyword">nullptr</span>;</div>
+<div class="line"><a id="l01303" name="l01303"></a><span class="lineno"> 1303</span><span class="comment"></span> </div>
+<div class="line"><a id="l01304" name="l01304"></a><span class="lineno"> 1304</span><span class="comment">    /// R160: inline cache 数据（per-call-site，跨所有 chunk 统一编号）</span></div>
+<div class="line"><a id="l01305" name="l01305"></a><span class="lineno"> 1305</span><span class="comment">    /// 编译期为每个 OP_MEMBER_GET 分配唯一 callSiteId，</span></div>
+<div class="line"><a id="l01306" name="l01306"></a><span class="lineno"> 1306</span><span class="comment">    /// 运行时 jitMemberGetWithIC 通过 callSiteId 索引此数组。</span></div>
+<div class="line"><a id="l01307" name="l01307"></a><span class="lineno"> 1307</span><span class="comment"></span>    std::vector&lt;MemberGetInlineCacheEntry&gt; memberGetIC_;</div>
+<div class="line"><a id="l01308" name="l01308"></a><span class="lineno"> 1308</span><span class="comment"></span> </div>
+<div class="line"><a id="l01309" name="l01309"></a><span class="lineno"> 1309</span><span class="comment">    /// R160: inline cache 命中/未命中/megamorphic 计数（教学统计用）</span></div>
+<div class="line"><a id="l01310" name="l01310"></a><span class="lineno"> 1310</span><span class="comment"></span>    uint64_t icHitCount_ = 0;</div>
+<div class="line"><a id="l01311" name="l01311"></a><span class="lineno"> 1311</span>    uint64_t icMissCount_ = 0;</div>
+<div class="line"><a id="l01312" name="l01312"></a><span class="lineno"> 1312</span>    uint64_t icMegamorphicCount_ = 0;</div>
 <div class="line"><a id="l01313" name="l01313"></a><span class="lineno"> 1313</span><span class="comment"></span> </div>
-<div class="line"><a id="l01314" name="l01314"></a><span class="lineno"> 1314</span><span class="comment">    /// R162: 名称变量表（与 StackVM globals_ 对齐）</span></div>
-<div class="line"><a id="l01315" name="l01315"></a><span class="lineno"> 1315</span><span class="comment">    /// OP_DEFINE_VAR/OP_GET_VAR/OP_SET_VAR/OP_DELETE_VAR 操作此表</span></div>
-<div class="line"><a id="l01316" name="l01316"></a><span class="lineno"> 1316</span><span class="comment">    /// （catch 变量、顶层 if 块内 var 等无 slot 分配的名称变量）</span></div>
-<div class="line"><a id="l01317" name="l01317"></a><span class="lineno"> 1317</span><span class="comment">    /// extern &quot;C&quot; helper 通过 backendPtr 直接访问，故声明在 public 区</span></div>
-<div class="line"><a id="l01318" name="l01318"></a><span class="lineno"> 1318</span><span class="comment"></span>    std::unordered_map&lt;std::string, Value&gt; globals_;</div>
+<div class="line"><a id="l01314" name="l01314"></a><span class="lineno"> 1314</span><span class="comment">    /// 方法调用 IC 数据（per-call-site，跨所有 chunk 统一编号）</span></div>
+<div class="line"><a id="l01315" name="l01315"></a><span class="lineno"> 1315</span><span class="comment">    /// 编译期为每个 OP_METHOD_CALL 分配唯一 methodCallSiteId，</span></div>
+<div class="line"><a id="l01316" name="l01316"></a><span class="lineno"> 1316</span><span class="comment">    /// 运行时 jitMethodCall 通过 callSiteId 索引此数组。</span></div>
+<div class="line"><a id="l01317" name="l01317"></a><span class="lineno"> 1317</span><span class="comment"></span>    std::vector&lt;MethodCallICEntry&gt; methodCallIC_;</div>
+<div class="line"><a id="l01318" name="l01318"></a><span class="lineno"> 1318</span>    uint64_t nextMethodCallSiteId_ = 0;</div>
 <div class="line"><a id="l01319" name="l01319"></a><span class="lineno"> 1319</span><span class="comment"></span> </div>
-<div class="line"><a id="l01320" name="l01320"></a><span class="lineno"> 1320</span><span class="comment">    /// R162: extern &quot;C&quot; helper（jitDefineVar 等）通过 backendPtr 访问，故声明在 public 区</span></div>
-<div class="line"><a id="l01321" name="l01321"></a><span class="lineno"> 1321</span><span class="comment"></span>    std::vector&lt;int64_t&gt; globalSlots_;        <span class="comment">///&lt; R139: 全局变量 slot 存储（与 StackVM globalSlots_ 等价）</span></div>
-<div class="line"><a id="l01322" name="l01322"></a><span class="lineno"> 1322</span>    JitGlobalNameToSlotMap globalNameToSlot_; <span class="comment">///&lt; R147: 名称→slot 映射（OPT-15 透明查找）</span></div>
+<div class="line"><a id="l01320" name="l01320"></a><span class="lineno"> 1320</span><span class="comment">    /// 方法调用 IC 统计</span></div>
+<div class="line"><a id="l01321" name="l01321"></a><span class="lineno"> 1321</span><span class="comment"></span>    uint64_t methodIcHitCount_ = 0;</div>
+<div class="line"><a id="l01322" name="l01322"></a><span class="lineno"> 1322</span>    uint64_t methodIcMissCount_ = 0;</div>
 <div class="line"><a id="l01323" name="l01323"></a><span class="lineno"> 1323</span><span class="comment"></span> </div>
-<div class="line"><a id="l01324" name="l01324"></a><span class="lineno"> 1324</span><span class="comment">    /// 闭包同步调用跳板入口（compileAllChunks 末尾发射，runtime_.add 后解析地址）。</span></div>
-<div class="line"><a id="l01325" name="l01325"></a><span class="lineno"> 1325</span><span class="comment">    /// jitInvokeClosureSync（JITRuntime.cpp）用它从 C++ 同步调用 JIT 编译的闭包：</span></div>
-<div class="line"><a id="l01326" name="l01326"></a><span class="lineno"> 1326</span><span class="comment">    /// spawn 延迟执行模式下 thread.join() 的 pending 闭包经此桥执行。</span></div>
-<div class="line"><a id="l01327" name="l01327"></a><span class="lineno"> 1327</span><span class="comment"></span>    <span class="keyword">using </span>JitTrampolineFn = int64_t (*)(JitContext*, uint64_t);</div>
-<div class="line"><a id="l01328" name="l01328"></a><span class="lineno"> 1328</span>    JitTrampolineFn closureTrampoline_ = <span class="keyword">nullptr</span>;</div>
-<div class="line"><a id="l01329" name="l01329"></a><span class="lineno"> 1329</span><span class="comment"></span> </div>
-<div class="line"><a id="l01330" name="l01330"></a><span class="lineno"> 1330</span><span class="comment">    /// 跳板帧地板栈：jitInvokeClosureSync 进入时 push 当前 *frameCount，退出时 pop。</span></div>
-<div class="line"><a id="l01331" name="l01331"></a><span class="lineno"> 1331</span><span class="comment">    /// jitThrow 据此阻止异常跨跳板边界向外层 JIT 帧传播（否则 catch 地址位于外层</span></div>
-<div class="line"><a id="l01332" name="l01332"></a><span class="lineno"> 1332</span><span class="comment">    /// 代码，jmp 过去会在跳板的本机栈上继续执行外层逻辑，造成控制流双重执行）。</span></div>
-<div class="line"><a id="l01333" name="l01333"></a><span class="lineno"> 1333</span><span class="comment">    /// 未在跳板范围内捕获的异常降级为 hasError（&quot;未捕获的异常: X&quot;）。</span></div>
-<div class="line"><a id="l01334" name="l01334"></a><span class="lineno"> 1334</span><span class="comment"></span>    std::vector&lt;size_t&gt; trampolineFrameFloors_;</div>
-<div class="line"><a id="l01335" name="l01335"></a><span class="lineno"> 1335</span><span class="comment"></span> </div>
-<div class="line"><a id="l01336" name="l01336"></a><span class="lineno"> 1336</span><span class="comment">    /// R156: 关闭所有指向 address &lt;= fromAddr 的 open upvalues</span></div>
-<div class="line"><a id="l01337" name="l01337"></a><span class="lineno"> 1337</span><span class="comment">    /// 与 StackVM closeUpvaluesFrom(fromSlot) 语义对齐但方向反转：</span></div>
-<div class="line"><a id="l01338" name="l01338"></a><span class="lineno"> 1338</span><span class="comment">    /// StackVM 栈向上增长，关闭 stackSlot &gt;= fromSlot（升序 multimap 的 lower_bound 到 end）；</span></div>
-<div class="line"><a id="l01339" name="l01339"></a><span class="lineno"> 1339</span><span class="comment">    /// JIT 栈向下增长，关闭 address &lt;= fromAddr（升序 multimap 的 begin 到 upper_bound）。</span></div>
-<div class="line"><a id="l01340" name="l01340"></a><span class="lineno"> 1340</span><span class="comment">    /// @param fromAddr 帧基址 r13（高地址端），关闭当前帧所有 slot 的 upvalues（addr &lt;= r13）</span></div>
-<div class="line"><a id="l01341" name="l01341"></a><span class="lineno"> 1341</span><span class="comment"></span>    <span class="keywordtype">void</span> closeUpvaluesFrom(int64_t* fromAddr);</div>
-<div class="line"><a id="l01342" name="l01342"></a><span class="lineno"> 1342</span> </div>
-<div class="line"><a id="l01343" name="l01343"></a><span class="lineno"> 1343</span>    JitContext jitContext_;            <span class="comment">///&lt; 运行时上下文（传给 JIT 代码）</span></div>
-<div class="line"><a id="l01344" name="l01344"></a><span class="lineno"> 1344</span>    std::string lastError_;            <span class="comment">///&lt; 最后的错误消息</span></div>
-<div class="line"><a id="l01345" name="l01345"></a><span class="lineno"> 1345</span>    <span class="keywordtype">bool</span> hasError_ = <span class="keyword">false</span>;            <span class="comment">///&lt; 错误标志</span></div>
-<div class="line"><a id="l01346" name="l01346"></a><span class="lineno"> 1346</span>    std::atomic&lt;int&gt; gcNeededFlag_{0}; <span class="comment">///&lt; Safepoint GC 请求标志（OP_LOOP 回边轮询）</span></div>
-<div class="line"><a id="l01347" name="l01347"></a><span class="lineno"> 1347</span>    <span class="comment">// 拓展二期·教学：汇编文本捕获（setAsmCapture 启用，compileAllChunks 填充）</span></div>
-<div class="line"><a id="l01348" name="l01348"></a><span class="lineno"> 1348</span>    <span class="keywordtype">bool</span> asmCaptureEnabled_ = <span class="keyword">false</span>; <span class="comment">///&lt; 是否在 CodeHolder 上挂 StringLogger</span></div>
-<div class="line"><a id="l01349" name="l01349"></a><span class="lineno"> 1349</span>    std::string capturedAsm_;        <span class="comment">///&lt; 捕获的 x86-64 汇编文本</span></div>
-<div class="line"><a id="l01350" name="l01350"></a><span class="lineno"> 1350</span>};</div>
-<div class="line"><a id="l01351" name="l01351"></a><span class="lineno"> 1351</span> </div>
-<div class="line"><a id="l01352" name="l01352"></a><span class="lineno"> 1352</span><span class="preprocessor">#endif </span><span class="comment">// MINILANG_USE_JIT</span></div>
+<div class="line"><a id="l01324" name="l01324"></a><span class="lineno"> 1324</span><span class="comment">    /// R162: try/catch 异常处理器栈（与 StackVM tryStack_ 对齐）</span></div>
+<div class="line"><a id="l01325" name="l01325"></a><span class="lineno"> 1325</span><span class="comment">    /// OP_TRY_BEGIN push，OP_TRY_END pop，OP_THROW 搜索。</span></div>
+<div class="line"><a id="l01326" name="l01326"></a><span class="lineno"> 1326</span><span class="comment">    /// jitThrow 通过 backendPtr 访问此栈，支持跨帧异常传播。</span></div>
+<div class="line"><a id="l01327" name="l01327"></a><span class="lineno"> 1327</span><span class="comment"></span>    std::vector&lt;JitTryHandler&gt; tryStack_;</div>
+<div class="line"><a id="l01328" name="l01328"></a><span class="lineno"> 1328</span><span class="comment"></span> </div>
+<div class="line"><a id="l01329" name="l01329"></a><span class="lineno"> 1329</span><span class="comment">    /// R162: finally 续跳地址栈（与 StackVM pendingJumpStack_ 对齐）</span></div>
+<div class="line"><a id="l01330" name="l01330"></a><span class="lineno"> 1330</span><span class="comment">    /// OP_PUSH_JUMP_TARGET push（JIT 代码地址），OP_FINALLY_END pop 并跳转。</span></div>
+<div class="line"><a id="l01331" name="l01331"></a><span class="lineno"> 1331</span><span class="comment">    /// 异常传播时清空（异常中断 break/continue 续跳链）。</span></div>
+<div class="line"><a id="l01332" name="l01332"></a><span class="lineno"> 1332</span><span class="comment">    /// AUDIT-R7 F1 fix: 条目附带 frameIndex，jitPopJumpTarget 只消费本帧条目并</span></div>
+<div class="line"><a id="l01333" name="l01333"></a><span class="lineno"> 1333</span><span class="comment">    /// 惰性丢弃已返回深帧残留（与三 VM 同构，防跨帧误跳——JIT 条目是机器地址，</span></div>
+<div class="line"><a id="l01334" name="l01334"></a><span class="lineno"> 1334</span><span class="comment">    /// 跨帧误跳后果更严重）。</span></div>
+<div class="line"><a id="l01335" name="l01335"></a><span class="lineno"> 1335</span><span class="comment"></span>    <span class="keyword">struct </span>JitPendingJump {</div>
+<div class="line"><a id="l01336" name="l01336"></a><span class="lineno"> 1336</span>        <span class="keywordtype">void</span>* addr;</div>
+<div class="line"><a id="l01337" name="l01337"></a><span class="lineno"> 1337</span>        <span class="keywordtype">size_t</span> frameIndex;</div>
+<div class="line"><a id="l01338" name="l01338"></a><span class="lineno"> 1338</span>    };</div>
+<div class="line"><a id="l01339" name="l01339"></a><span class="lineno"> 1339</span>    std::vector&lt;JitPendingJump&gt; pendingJumpStack_;</div>
+<div class="line"><a id="l01340" name="l01340"></a><span class="lineno"> 1340</span><span class="comment"></span> </div>
+<div class="line"><a id="l01341" name="l01341"></a><span class="lineno"> 1341</span><span class="comment">    /// R162: 名称变量表（与 StackVM globals_ 对齐）</span></div>
+<div class="line"><a id="l01342" name="l01342"></a><span class="lineno"> 1342</span><span class="comment">    /// OP_DEFINE_VAR/OP_GET_VAR/OP_SET_VAR/OP_DELETE_VAR 操作此表</span></div>
+<div class="line"><a id="l01343" name="l01343"></a><span class="lineno"> 1343</span><span class="comment">    /// （catch 变量、顶层 if 块内 var 等无 slot 分配的名称变量）</span></div>
+<div class="line"><a id="l01344" name="l01344"></a><span class="lineno"> 1344</span><span class="comment">    /// extern &quot;C&quot; helper 通过 backendPtr 直接访问，故声明在 public 区</span></div>
+<div class="line"><a id="l01345" name="l01345"></a><span class="lineno"> 1345</span><span class="comment"></span>    std::unordered_map&lt;std::string, Value&gt; globals_;</div>
+<div class="line"><a id="l01346" name="l01346"></a><span class="lineno"> 1346</span><span class="comment"></span> </div>
+<div class="line"><a id="l01347" name="l01347"></a><span class="lineno"> 1347</span><span class="comment">    /// R162: extern &quot;C&quot; helper（jitDefineVar 等）通过 backendPtr 访问，故声明在 public 区</span></div>
+<div class="line"><a id="l01348" name="l01348"></a><span class="lineno"> 1348</span><span class="comment"></span>    std::vector&lt;int64_t&gt; globalSlots_;        <span class="comment">///&lt; R139: 全局变量 slot 存储（与 StackVM globalSlots_ 等价）</span></div>
+<div class="line"><a id="l01349" name="l01349"></a><span class="lineno"> 1349</span>    JitGlobalNameToSlotMap globalNameToSlot_; <span class="comment">///&lt; R147: 名称→slot 映射（OPT-15 透明查找）</span></div>
+<div class="line"><a id="l01350" name="l01350"></a><span class="lineno"> 1350</span><span class="comment"></span> </div>
+<div class="line"><a id="l01351" name="l01351"></a><span class="lineno"> 1351</span><span class="comment">    /// 延迟释放的堆值：名称全局覆盖/删除、按名写回替换出的旧值。</span></div>
+<div class="line"><a id="l01352" name="l01352"></a><span class="lineno"> 1352</span><span class="comment">    /// member-get PIC 缓存 InstanceData 地址与字段 Value 指针；若立即 release，</span></div>
+<div class="line"><a id="l01353" name="l01353"></a><span class="lineno"> 1353</span><span class="comment">    /// 实例地址会在后续分配中复用，PIC 假命中会读到已释放字段（B-013 实证）。</span></div>
+<div class="line"><a id="l01354" name="l01354"></a><span class="lineno"> 1354</span><span class="comment">    /// 统一推迟到下一次 execute（PIC 已清空）后释放，见 JIT.cpp 执行初始化。</span></div>
+<div class="line"><a id="l01355" name="l01355"></a><span class="lineno"> 1355</span><span class="comment"></span>    std::vector&lt;Value&gt; retiredValues_;</div>
+<div class="line"><a id="l01356" name="l01356"></a><span class="lineno"> 1356</span>    std::vector&lt;Value&gt;&amp; retiredValuesMut() { <span class="keywordflow">return</span> retiredValues_; }</div>
+<div class="line"><a id="l01357" name="l01357"></a><span class="lineno"> 1357</span><span class="comment"></span> </div>
+<div class="line"><a id="l01358" name="l01358"></a><span class="lineno"> 1358</span><span class="comment">    /// 闭包同步调用跳板入口（compileAllChunks 末尾发射，runtime_.add 后解析地址）。</span></div>
+<div class="line"><a id="l01359" name="l01359"></a><span class="lineno"> 1359</span><span class="comment">    /// jitInvokeClosureSync（JITRuntime.cpp）用它从 C++ 同步调用 JIT 编译的闭包：</span></div>
+<div class="line"><a id="l01360" name="l01360"></a><span class="lineno"> 1360</span><span class="comment">    /// spawn 延迟执行模式下 thread.join() 的 pending 闭包经此桥执行。</span></div>
+<div class="line"><a id="l01361" name="l01361"></a><span class="lineno"> 1361</span><span class="comment"></span>    <span class="keyword">using </span>JitTrampolineFn = int64_t (*)(JitContext*, uint64_t);</div>
+<div class="line"><a id="l01362" name="l01362"></a><span class="lineno"> 1362</span>    JitTrampolineFn closureTrampoline_ = <span class="keyword">nullptr</span>;</div>
+<div class="line"><a id="l01363" name="l01363"></a><span class="lineno"> 1363</span><span class="comment"></span> </div>
+<div class="line"><a id="l01364" name="l01364"></a><span class="lineno"> 1364</span><span class="comment">    /// 跳板帧地板栈：jitInvokeClosureSync 进入时 push 当前 *frameCount，退出时 pop。</span></div>
+<div class="line"><a id="l01365" name="l01365"></a><span class="lineno"> 1365</span><span class="comment">    /// jitThrow 据此阻止异常跨跳板边界向外层 JIT 帧传播（否则 catch 地址位于外层</span></div>
+<div class="line"><a id="l01366" name="l01366"></a><span class="lineno"> 1366</span><span class="comment">    /// 代码，jmp 过去会在跳板的本机栈上继续执行外层逻辑，造成控制流双重执行）。</span></div>
+<div class="line"><a id="l01367" name="l01367"></a><span class="lineno"> 1367</span><span class="comment">    /// 未在跳板范围内捕获的异常降级为 hasError（&quot;未捕获的异常: X&quot;）。</span></div>
+<div class="line"><a id="l01368" name="l01368"></a><span class="lineno"> 1368</span><span class="comment"></span>    std::vector&lt;size_t&gt; trampolineFrameFloors_;</div>
+<div class="line"><a id="l01369" name="l01369"></a><span class="lineno"> 1369</span><span class="comment"></span> </div>
+<div class="line"><a id="l01370" name="l01370"></a><span class="lineno"> 1370</span><span class="comment">    /// R156: 关闭所有指向 address &lt;= fromAddr 的 open upvalues</span></div>
+<div class="line"><a id="l01371" name="l01371"></a><span class="lineno"> 1371</span><span class="comment">    /// 与 StackVM closeUpvaluesFrom(fromSlot) 语义对齐但方向反转：</span></div>
+<div class="line"><a id="l01372" name="l01372"></a><span class="lineno"> 1372</span><span class="comment">    /// StackVM 栈向上增长，关闭 stackSlot &gt;= fromSlot（升序 multimap 的 lower_bound 到 end）；</span></div>
+<div class="line"><a id="l01373" name="l01373"></a><span class="lineno"> 1373</span><span class="comment">    /// JIT 栈向下增长，关闭 address &lt;= fromAddr（升序 multimap 的 begin 到 upper_bound）。</span></div>
+<div class="line"><a id="l01374" name="l01374"></a><span class="lineno"> 1374</span><span class="comment">    /// @param fromAddr 帧基址 r13（高地址端），关闭当前帧所有 slot 的 upvalues（addr &lt;= r13）</span></div>
+<div class="line"><a id="l01375" name="l01375"></a><span class="lineno"> 1375</span><span class="comment"></span>    <span class="keywordtype">void</span> closeUpvaluesFrom(int64_t* fromAddr);</div>
+<div class="line"><a id="l01376" name="l01376"></a><span class="lineno"> 1376</span> </div>
+<div class="line"><a id="l01377" name="l01377"></a><span class="lineno"> 1377</span>    JitContext jitContext_;            <span class="comment">///&lt; 运行时上下文（传给 JIT 代码）</span></div>
+<div class="line"><a id="l01378" name="l01378"></a><span class="lineno"> 1378</span>    std::string lastError_;            <span class="comment">///&lt; 最后的错误消息</span></div>
+<div class="line"><a id="l01379" name="l01379"></a><span class="lineno"> 1379</span>    <span class="keywordtype">bool</span> hasError_ = <span class="keyword">false</span>;            <span class="comment">///&lt; 错误标志</span></div>
+<div class="line"><a id="l01380" name="l01380"></a><span class="lineno"> 1380</span>    std::atomic&lt;int&gt; gcNeededFlag_{0}; <span class="comment">///&lt; Safepoint GC 请求标志（OP_LOOP 回边轮询）</span></div>
+<div class="line"><a id="l01381" name="l01381"></a><span class="lineno"> 1381</span>    <span class="comment">// 拓展二期·教学：汇编文本捕获（setAsmCapture 启用，compileAllChunks 填充）</span></div>
+<div class="line"><a id="l01382" name="l01382"></a><span class="lineno"> 1382</span>    <span class="keywordtype">bool</span> asmCaptureEnabled_ = <span class="keyword">false</span>; <span class="comment">///&lt; 是否在 CodeHolder 上挂 StringLogger</span></div>
+<div class="line"><a id="l01383" name="l01383"></a><span class="lineno"> 1383</span>    std::string capturedAsm_;        <span class="comment">///&lt; 捕获的 x86-64 汇编文本</span></div>
+<div class="line"><a id="l01384" name="l01384"></a><span class="lineno"> 1384</span>};</div>
+<div class="line"><a id="l01385" name="l01385"></a><span class="lineno"> 1385</span> </div>
+<div class="line"><a id="l01386" name="l01386"></a><span class="lineno"> 1386</span><span class="preprocessor">#endif </span><span class="comment">// MINILANG_USE_JIT</span></div>
 <div class="ttc" id="aBytecode_8h_html"><div class="ttname"><a href="Bytecode_8h.html">Bytecode.h</a></div></div>
 <div class="ttc" id="aDiagnostic_8h_html"><div class="ttname"><a href="Diagnostic_8h.html">Diagnostic.h</a></div><div class="ttdoc">统一诊断体系（错误/警告/信息/建议）。</div></div>
 <div class="ttc" id="aIBackend_8h_html"><div class="ttname"><a href="IBackend_8h.html">IBackend.h</a></div><div class="ttdoc">MiniLang 后端抽象接口（ARCH-09）。</div></div>
@@ -1462,7 +1496,7 @@ $(document).ready(function(){initNavTree('JIT_8h_source.html',''); initResizable
 <div class="ttc" id="aclassIBackend_html_aec22ab2fec6041b8d3ad396139e23de8"><div class="ttname"><a href="classIBackend.html#aec22ab2fec6041b8d3ad396139e23de8">IBackend::getLastErrorLine</a></div><div class="ttdeci">virtual int getLastErrorLine() const</div><div class="ttdef"><b>Definition</b> <a href="IBackend_8h_source.html#l00114">IBackend.h:114</a></div></div>
 <div class="ttc" id="aclassIBackend_html_af18ca0ca735aaa42fd48c984b0597780"><div class="ttname"><a href="classIBackend.html#af18ca0ca735aaa42fd48c984b0597780">IBackend::getDiagnostics</a></div><div class="ttdeci">virtual const DiagnosticBag &amp; getDiagnostics() const =0</div></div>
 <div class="ttc" id="aclassIBackend_html_af1c8bcc0b85ae4e9e0531fe1df7d24a5"><div class="ttname"><a href="classIBackend.html#af1c8bcc0b85ae4e9e0531fe1df7d24a5">IBackend::backendName</a></div><div class="ttdeci">virtual std::string backendName() const =0</div></div>
-<div class="ttc" id="aclassInterpreter_html"><div class="ttname"><a href="classInterpreter.html">Interpreter</a></div><div class="ttdoc">访问者模式解释执行器</div><div class="ttdef"><b>Definition</b> <a href="Interpreter_8h_source.html#l00106">Interpreter.h:106</a></div></div>
+<div class="ttc" id="aclassInterpreter_html"><div class="ttname"><a href="classInterpreter.html">Interpreter</a></div><div class="ttdoc">访问者模式解释执行器</div><div class="ttdef"><b>Definition</b> <a href="Interpreter_8h_source.html#l00107">Interpreter.h:107</a></div></div>
 <div class="ttc" id="aclassRuntimeError_html"><div class="ttname"><a href="classRuntimeError.html">RuntimeError</a></div><div class="ttdoc">运行时错误</div><div class="ttdef"><b>Definition</b> <a href="RuntimeExceptions_8h_source.html#l00033">RuntimeExceptions.h:33</a></div></div>
 <div class="ttc" id="anamespaceNumericOps_html_a5dd3d3679b3342ad846808580c9480b5ae0aa021e21dddbd6d8cecec71e9cf564"><div class="ttname"><a href="namespaceNumericOps.html#a5dd3d3679b3342ad846808580c9480b5ae0aa021e21dddbd6d8cecec71e9cf564">NumericOps::ArithStatus::OK</a></div><div class="ttdeci">@ OK</div><div class="ttdoc">运算成功</div></div>
 <div class="ttc" id="anamespaceminilang_html"><div class="ttname"><a href="namespaceminilang.html">minilang</a></div><div class="ttdef"><b>Definition</b> <a href="SimdUtils_8h_source.html#l00073">SimdUtils.h:73</a></div></div>

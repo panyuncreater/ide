@@ -1,5 +1,6 @@
 var structCompiler_1_1CompileContext =
 [
+    [ "blockScopedGlobals", "structCompiler_1_1CompileContext.html#ac834853e5aef1f7233dfbea340f8a79d", null ],
     [ "chunk", "structCompiler_1_1CompileContext.html#a977d850ee39b55f1454fa0978bdd5930", null ],
     [ "currentFunctionDecl", "structCompiler_1_1CompileContext.html#a7cfa62a9501dec1fdf83eb28cfba88cd", null ],
     [ "currentFunctionEntryIp", "structCompiler_1_1CompileContext.html#a5b30239e3860b40190ebb0cb284a9fbc", null ],

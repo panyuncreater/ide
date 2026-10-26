@@ -1,6 +1,6 @@
 var searchData=
 [
-  ['ebnf_0',['ebnf',['../structSyntaxProduction.html#a449042e577cc6ab10be736546db0562f',1,'SyntaxProduction::ebnf'],['../classSyntaxExplorerPanel.html#a5ad00a9150bfd8e794f5fcf310368289a30c667262c501d5067925232b06d32b2',1,'SyntaxExplorerPanel::EBNF']]],
+  ['ebnf_0',['ebnf',['../classSyntaxExplorerPanel.html#a5ad00a9150bfd8e794f5fcf310368289a30c667262c501d5067925232b06d32b2',1,'SyntaxExplorerPanel::EBNF'],['../structSyntaxProduction.html#a449042e577cc6ab10be736546db0562f',1,'SyntaxProduction::ebnf']]],
   ['ebnfbtn_5f_1',['ebnfBtn_',['../classSyntaxExplorerPanel.html#a533f8af2de671873b0bcc12ab5297418',1,'SyntaxExplorerPanel']]],
   ['editdistance_2',['editDistance',['../namespaceSpellChecker.html#ab98cd15b4738168304326c4763b9a298',1,'SpellChecker']]],
   ['editingguard_5f_3',['editingGuard_',['../classWatchPanel.html#ac3070c2273c79611e009a08b421d0620',1,'WatchPanel']]],
@@ -97,7 +97,7 @@ var searchData=
   ['enum_94',['ENUM',['../namespaceTypeName.html#a9a04be5549e33f701a28fc9f886a16fc',1,'TypeName']]],
   ['enum_5fvariant_5ffield_95',['ENUM_VARIANT_FIELD',['../IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93a85ced61423777fa8b7d578d9c8cc8259',1,'IR.h']]],
   ['enum_5fvariant_5fname_96',['ENUM_VARIANT_NAME',['../IR_8h.html#a94fc4b093337bccec25ff7e6c9345e93acc2c5ea5684669a7d9a2849b9d28676e',1,'IR.h']]],
-  ['enumdecl_97',['enumdecl',['../classEnumDecl.html#aeeb6918905388b60fd09d0ac0b3f8640',1,'EnumDecl::EnumDecl()'],['../classParser.html#ae1d56cb01ff96ce18b23b5ccc4a15ac5',1,'Parser::enumDecl()'],['../classEnumDecl.html',1,'EnumDecl']]],
+  ['enumdecl_97',['enumdecl',['../classParser.html#ae1d56cb01ff96ce18b23b5ccc4a15ac5',1,'Parser::enumDecl()'],['../classEnumDecl.html#aeeb6918905388b60fd09d0ac0b3f8640',1,'EnumDecl::EnumDecl()'],['../classEnumDecl.html',1,'EnumDecl']]],
   ['enuminfo_98',['EnumInfo',['../structEnumInfo.html',1,'']]],
   ['enuminfos_99',['enuminfos',['../structRegisterCompileResult.html#ac9b032bb932606529f8ff3bd49f0bfa9',1,'RegisterCompileResult::enumInfos'],['../structCompileResult.html#a5120ecf5ac6bee6733530a566a144c34',1,'CompileResult::enumInfos']]],
   ['enuminfos_5f_100',['enumInfos_',['../classAstIRBuilder.html#abaae9a90587f1c664dc6d6d2d4502d46',1,'AstIRBuilder']]],
@@ -358,7 +358,7 @@ var searchData=
   ['exportednames_355',['exportedNames',['../structInterpreter_1_1StateSnapshot.html#ae2ad6d7df8ae139f688f892f58ae05cf',1,'Interpreter::StateSnapshot']]],
   ['exportednames_5f_356',['exportedNames_',['../classInterpreter.html#a12c9bbbc541113fe4aed2b5189c3bcf1',1,'Interpreter']]],
   ['exportfilebtn_5f_357',['exportFileBtn_',['../classCourseSystemPanel.html#a28fb2418631bb66566a7ac4d57b24d6a',1,'CourseSystemPanel']]],
-  ['exportstmt_358',['exportstmt',['../classExportStmt.html#a891d8c155d86f18cf86708a2760fb9dc',1,'ExportStmt::ExportStmt()'],['../classExportStmt.html',1,'ExportStmt'],['../classParser.html#a85c08045cdd80ce9fc63f6873298e344',1,'Parser::exportStmt()']]],
+  ['exportstmt_358',['exportstmt',['../classParser.html#a85c08045cdd80ce9fc63f6873298e344',1,'Parser::exportStmt()'],['../classExportStmt.html',1,'ExportStmt'],['../classExportStmt.html#a891d8c155d86f18cf86708a2760fb9dc',1,'ExportStmt::ExportStmt()']]],
   ['expression_359',['expression',['../classThrowStmt.html#a0a88758f945b2ce410be36bd2c4fd842',1,'ThrowStmt::expression'],['../structWatchScenario.html#a39f4d34efbe8dc8f2b80cddb1aa371f7',1,'WatchScenario::expression'],['../classParser.html#a468374153a71bcc4e958fdfa2e1f0583',1,'Parser::expression()']]],
   ['expressions_360',['expressions',['../classInterpolatedString.html#a765abbfeb6c9488a5cc1ca5fad95b274',1,'InterpolatedString']]],
   ['expressionstatement_361',['expressionStatement',['../classParser.html#aa1b7b789c7eb1847f5dfca10aeb93a36',1,'Parser']]],

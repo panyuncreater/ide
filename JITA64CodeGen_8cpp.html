@@ -103,7 +103,7 @@ $(document).ready(function(){initNavTree('JITA64CodeGen_8cpp.html',''); initResi
 <div class="textblock"><p>ARM64 JIT 后端实现 — Phase 1 PoC 代码生成。 </p>
 <p>将 <a class="el" href="structBytecodeChunk.html" title="字节码块：一段连续的指令">BytecodeChunk</a> 编译为 ARM64 (AArch64) 本地机器码。 仅实现核心整数算术 + 控制流 + 全局/局部变量子集。</p>
 <p>AAPCS64 调用约定：</p><ul>
-<li>入口函数签名: int64_t jitA64Entry(JitContext* ctx)</li>
+<li>入口函数签名: int64_t jitA64Entry(JitA64Context* ctx)</li>
 <li>ctx 通过 x0 传入，prologue 保存到 x19 (callee-saved)</li>
 <li>调用 C++ helper 时：x0=ctx, x1/x2=args</li>
 </ul>

@@ -1,5 +1,9 @@
 var NAVTREEINDEX12 =
 {
+"classDictLiteral.html#a7684e00270df994f5051df3c6da2148b":[1,0,86,0],
+"classDictLiteral.html#a9dba3dc4b309840c7653416135ec3362":[1,0,86,2],
+"classDictLiteral.html#aaaafebc531c3e2fd72075e999966ab48":[1,0,86,1],
+"classDominanceFrontier.html":[1,0,87],
 "classDominanceFrontier.html#a14481db068a09ae5f06e1b0f29233c8b":[1,0,87,0],
 "classDominanceFrontier.html#a4e52a1886de2696240144bebf8febd67":[1,0,87,1],
 "classDominanceFrontier.html#ad5649799e58f0fc2b5c6ac0e7147756e":[1,0,87,2],
@@ -245,9 +249,5 @@ var NAVTREEINDEX12 =
 "classExportStmt.html#adc9754dea0db4c54923651698aac0475":[1,0,112,3],
 "classExportStmt.html#af5985d3fccafd299b84a445e26126b03":[1,0,112,1],
 "classFindReplacePanel.html":[1,0,113],
-"classFindReplacePanel.html#a0134271202e2537f3d206cfdaac2be1d":[1,0,113,25],
-"classFindReplacePanel.html#a0b30fbf65f54a7dad9eb1d583b731a06":[1,0,113,15],
-"classFindReplacePanel.html#a357eb95eef6684bce16835a4276bfd69":[1,0,113,22],
-"classFindReplacePanel.html#a38af5c8687981580f3d7e07b4b122e19":[1,0,113,5],
-"classFindReplacePanel.html#a4a2661e7501cd998171cba7ce5c26075":[1,0,113,9]
+"classFindReplacePanel.html#a0134271202e2537f3d206cfdaac2be1d":[1,0,113,25]
 };

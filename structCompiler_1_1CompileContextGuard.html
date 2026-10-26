@@ -133,11 +133,11 @@ Public Attributes</h2></td></tr>
 <div class="ttc" id="aclassCompiler_html_ae2f086bcc829ecba11479e428a554f75"><div class="ttname"><a href="classCompiler.html#ae2f086bcc829ecba11479e428a554f75">Compiler::error</a></div><div class="ttdeci">void error(const std::string &amp;msg, int line, int col)</div><div class="ttdoc">发出编译错误</div><div class="ttdef"><b>Definition</b> <a href="CompilerClass_8cpp_source.html#l00646">CompilerClass.cpp:646</a></div></div>
 <div class="ttc" id="aclassCompiler_html_af1ce7bdcefc8a4779756b7457eb763f2"><div class="ttname"><a href="classCompiler.html#af1ce7bdcefc8a4779756b7457eb763f2">Compiler::chunk_</a></div><div class="ttdeci">BytecodeChunk chunk_</div><div class="ttdef"><b>Definition</b> <a href="Compiler_8h_source.html#l00172">Compiler.h:172</a></div></div>
 <div class="ttc" id="astructBytecodeChunk_html"><div class="ttname"><a href="structBytecodeChunk.html">BytecodeChunk</a></div><div class="ttdoc">字节码块：一段连续的指令</div><div class="ttdef"><b>Definition</b> <a href="Bytecode_8h_source.html#l00231">Bytecode.h:231</a></div></div>
-<div class="ttc" id="astructCompiler_1_1CompileContextGuard_html"><div class="ttname"><a href="structCompiler_1_1CompileContextGuard.html">Compiler::CompileContextGuard</a></div><div class="ttdoc">RAII 守卫：构造时保存编译上下文，析构时自动恢复（含异常路径）。</div><div class="ttdef"><b>Definition</b> <a href="Compiler_8h_source.html#l00436">Compiler.h:436</a></div></div>
+<div class="ttc" id="astructCompiler_1_1CompileContextGuard_html"><div class="ttname"><a href="structCompiler_1_1CompileContextGuard.html">Compiler::CompileContextGuard</a></div><div class="ttdoc">RAII 守卫：构造时保存编译上下文，析构时自动恢复（含异常路径）。</div><div class="ttdef"><b>Definition</b> <a href="Compiler_8h_source.html#l00442">Compiler.h:442</a></div></div>
 </div><!-- fragment --><dl class="section note"><dt>Note</dt><dd>不可拷贝（避免双重恢复）。如需在正常路径跳过恢复，调用 <a class="el" href="structCompiler_1_1CompileContextGuard.html#ad8f6ba7c04caf9dbe29d56550620874f">dismiss()</a>。 </dd></dl>
 <dl class="section warning"><dt>Warning</dt><dd>currentClassName_ 不在 <a class="el" href="structCompiler_1_1CompileContext.html" title="编译上下文快照（函数编译时保存的外层状态）">CompileContext</a> 中，需单独手动保存/恢复。 </dd></dl>
 
-<p class="definition">Definition at line <a class="el" href="Compiler_8h_source.html#l00436">436</a> of file <a class="el" href="Compiler_8h_source.html">Compiler.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Compiler_8h_source.html#l00442">442</a> of file <a class="el" href="Compiler_8h_source.html">Compiler.h</a>.</p>
 </div><h2 class="groupheader">Constructor &amp; Destructor Documentation</h2>
 <a id="a44181cc65cf7977663981d0d1835b883" name="a44181cc65cf7977663981d0d1835b883"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a44181cc65cf7977663981d0d1835b883">&#9670;&#160;</a></span>CompileContextGuard() <span class="overload">[1/2]</span></h2>
@@ -163,7 +163,7 @@ Public Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Compiler_8h_source.html#l00440">440</a> of file <a class="el" href="Compiler_8h_source.html">Compiler.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Compiler_8h_source.html#l00446">446</a> of file <a class="el" href="Compiler_8h_source.html">Compiler.h</a>.</p>
 
 </div>
 </div>
@@ -190,9 +190,9 @@ Public Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Compiler_8h_source.html#l00441">441</a> of file <a class="el" href="Compiler_8h_source.html">Compiler.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Compiler_8h_source.html#l00447">447</a> of file <a class="el" href="Compiler_8h_source.html">Compiler.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Compiler_8h_source.html#l00437">compiler</a>, <a class="el" href="Compiler_8h_source.html#l00439">dismissed</a>, <a class="el" href="Compiler_8cpp_source.html#l00671">Compiler::restoreCompileContext()</a>, and <a class="el" href="Compiler_8h_source.html#l00438">saved</a>.</p>
+<p class="reference">References <a class="el" href="Compiler_8h_source.html#l00443">compiler</a>, <a class="el" href="Compiler_8h_source.html#l00445">dismissed</a>, <a class="el" href="Compiler_8cpp_source.html#l00673">Compiler::restoreCompileContext()</a>, and <a class="el" href="Compiler_8h_source.html#l00444">saved</a>.</p>
 
 </div>
 </div>
@@ -246,9 +246,9 @@ Public Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Compiler_8h_source.html#l00445">445</a> of file <a class="el" href="Compiler_8h_source.html">Compiler.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Compiler_8h_source.html#l00451">451</a> of file <a class="el" href="Compiler_8h_source.html">Compiler.h</a>.</p>
 
-<p class="reference">References <a class="el" href="Compiler_8h_source.html#l00439">dismissed</a>.</p>
+<p class="reference">References <a class="el" href="Compiler_8h_source.html#l00445">dismissed</a>.</p>
 
 </div>
 </div>
@@ -291,9 +291,9 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Compiler_8h_source.html#l00437">437</a> of file <a class="el" href="Compiler_8h_source.html">Compiler.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Compiler_8h_source.html#l00443">443</a> of file <a class="el" href="Compiler_8h_source.html">Compiler.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Compiler_8h_source.html#l00441">~CompileContextGuard()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Compiler_8h_source.html#l00447">~CompileContextGuard()</a>.</p>
 
 </div>
 </div>
@@ -309,9 +309,9 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Compiler_8h_source.html#l00439">439</a> of file <a class="el" href="Compiler_8h_source.html">Compiler.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Compiler_8h_source.html#l00445">445</a> of file <a class="el" href="Compiler_8h_source.html">Compiler.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="Compiler_8h_source.html#l00445">dismiss()</a>, and <a class="el" href="Compiler_8h_source.html#l00441">~CompileContextGuard()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="Compiler_8h_source.html#l00451">dismiss()</a>, and <a class="el" href="Compiler_8h_source.html#l00447">~CompileContextGuard()</a>.</p>
 
 </div>
 </div>
@@ -327,9 +327,9 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Compiler_8h_source.html#l00438">438</a> of file <a class="el" href="Compiler_8h_source.html">Compiler.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Compiler_8h_source.html#l00444">444</a> of file <a class="el" href="Compiler_8h_source.html">Compiler.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="CompilerClass_8cpp_source.html#l00140">Compiler::emitMethodBody()</a>, <a class="el" href="CompilerStmt_8cpp_source.html#l00351">Compiler::visitFunDecl()</a>, and <a class="el" href="Compiler_8h_source.html#l00441">~CompileContextGuard()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="CompilerClass_8cpp_source.html#l00140">Compiler::emitMethodBody()</a>, <a class="el" href="CompilerStmt_8cpp_source.html#l00351">Compiler::visitFunDecl()</a>, and <a class="el" href="Compiler_8h_source.html#l00447">~CompileContextGuard()</a>.</p>
 
 </div>
 </div>

@@ -163,6 +163,8 @@ var classAstIRBuilder =
     [ "shortCircuitScratchSlot_", "classAstIRBuilder.html#a1b1edb9b48c9136773a57cd8b3b1c224", null ],
     [ "shortCircuitScratchValid_", "classAstIRBuilder.html#a5ec99415f33b2e3291bd3b1b71cb198a", null ],
     [ "slotNameRanges_", "classAstIRBuilder.html#ad5bbaf53899c8494d49ef5e358ca9ace", null ],
+    [ "stmtAssignSuppressed_", "classAstIRBuilder.html#aa45fda716044295376ead55deea89046", null ],
+    [ "stmtAssignSuppressPending_", "classAstIRBuilder.html#a96786fb18441e5f8290225aeb82e4fda", null ],
     [ "topLevelBlockFreshGlobals_", "classAstIRBuilder.html#a0af7058719535f8300af516305414531", null ],
     [ "topLevelFunDeclNames_", "classAstIRBuilder.html#a18e26a51409908b0b8bbe2971e1435b6", null ],
     [ "tryDepth_", "classAstIRBuilder.html#a8ff0a5dfa0f190fcbd5fca8a81e75b31", null ],

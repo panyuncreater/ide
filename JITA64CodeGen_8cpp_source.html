@@ -106,7 +106,7 @@ $(document).ready(function(){initNavTree('JITA64CodeGen_8cpp_source.html',''); i
 <div class="line"><a id="l00006" name="l00006"></a><span class="lineno">    6</span><span class="comment"> * 仅实现核心整数算术 + 控制流 + 全局/局部变量子集。</span></div>
 <div class="line"><a id="l00007" name="l00007"></a><span class="lineno">    7</span><span class="comment"> *</span></div>
 <div class="line"><a id="l00008" name="l00008"></a><span class="lineno">    8</span><span class="comment"> * AAPCS64 调用约定：</span></div>
-<div class="line"><a id="l00009" name="l00009"></a><span class="lineno">    9</span><span class="comment"> *   - 入口函数签名: int64_t jitA64Entry(JitContext* ctx)</span></div>
+<div class="line"><a id="l00009" name="l00009"></a><span class="lineno">    9</span><span class="comment"> *   - 入口函数签名: int64_t jitA64Entry(JitA64Context* ctx)</span></div>
 <div class="line"><a id="l00010" name="l00010"></a><span class="lineno">   10</span><span class="comment"> *   - ctx 通过 x0 传入，prologue 保存到 x19 (callee-saved)</span></div>
 <div class="line"><a id="l00011" name="l00011"></a><span class="lineno">   11</span><span class="comment"> *   - 调用 C++ helper 时：x0=ctx, x1/x2=args</span></div>
 <div class="line"><a id="l00012" name="l00012"></a><span class="lineno">   12</span><span class="comment"> *</span></div>
@@ -135,7 +135,7 @@ $(document).ready(function(){initNavTree('JITA64CodeGen_8cpp_source.html',''); i
 <div class="line"><a id="l00035" name="l00035"></a><span class="lineno">   35</span><span class="keyword">extern</span> <span class="stringliteral">&quot;C&quot;</span> {</div>
 <div class="line"><a id="l00036" name="l00036"></a><span class="lineno">   36</span><span class="comment"></span> </div>
 <div class="line"><a id="l00037" name="l00037"></a><span class="lineno">   37</span><span class="comment">/// ARM64 版 print：输出 NaN-boxed Value</span></div>
-<div class="line"><a id="l00038" name="l00038"></a><span class="lineno">   38</span><span class="comment"></span><span class="keywordtype">void</span> jitA64PrintValue(JitContext* ctx, uint64_t rawBits) {</div>
+<div class="line"><a id="l00038" name="l00038"></a><span class="lineno">   38</span><span class="comment"></span><span class="keywordtype">void</span> jitA64PrintValue(JitA64Context* ctx, uint64_t rawBits) {</div>
 <div class="line"><a id="l00039" name="l00039"></a><span class="lineno">   39</span>    <span class="keywordflow">if</span> (!ctx || !ctx-&gt;outputCallback)</div>
 <div class="line"><a id="l00040" name="l00040"></a><span class="lineno">   40</span>        <span class="keywordflow">return</span>;</div>
 <div class="line"><a id="l00041" name="l00041"></a><span class="lineno">   41</span>    <a class="code hl_struct" href="structValue.html">Value</a> v = bitsToValue(rawBits);</div>
@@ -143,7 +143,7 @@ $(document).ready(function(){initNavTree('JITA64CodeGen_8cpp_source.html',''); i
 <div class="line"><a id="l00043" name="l00043"></a><span class="lineno">   43</span>}</div>
 <div class="line"><a id="l00044" name="l00044"></a><span class="lineno">   44</span><span class="comment"></span> </div>
 <div class="line"><a id="l00045" name="l00045"></a><span class="lineno">   45</span><span class="comment">/// ARM64 版错误报告</span></div>
-<div class="line"><a id="l00046" name="l00046"></a><span class="lineno">   46</span><span class="comment"></span><span class="keywordtype">void</span> jitA64ReportError(JitContext* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* msg) {</div>
+<div class="line"><a id="l00046" name="l00046"></a><span class="lineno">   46</span><span class="comment"></span><span class="keywordtype">void</span> jitA64ReportError(JitA64Context* ctx, <span class="keyword">const</span> <span class="keywordtype">char</span>* msg) {</div>
 <div class="line"><a id="l00047" name="l00047"></a><span class="lineno">   47</span>    <span class="keywordflow">if</span> (!ctx || !ctx-&gt;hasError || !ctx-&gt;errorBuffer)</div>
 <div class="line"><a id="l00048" name="l00048"></a><span class="lineno">   48</span>        <span class="keywordflow">return</span>;</div>
 <div class="line"><a id="l00049" name="l00049"></a><span class="lineno">   49</span>    *ctx-&gt;hasError = <span class="keyword">true</span>;</div>
@@ -392,7 +392,7 @@ $(document).ready(function(){initNavTree('JITA64CodeGen_8cpp_source.html',''); i
 <div class="line"><a id="l00292" name="l00292"></a><span class="lineno">  292</span> </div>
 <div class="line"><a id="l00293" name="l00293"></a><span class="lineno">  293</span>        <span class="keywordflow">case</span> <a class="code hl_enumvalue" href="Bytecode_8h.html#a7e85f04e30e1c4c4607773335350fe20a3f69d5181c3fdbdaa72159a39e04494b">OpCode::OP_GET_GLOBAL</a>: {</div>
 <div class="line"><a id="l00294" name="l00294"></a><span class="lineno">  294</span>            uint16_t slot = <span class="keyword">static_cast&lt;</span>uint16_t<span class="keyword">&gt;</span>(codeBytes[ip + 1]) | (<span class="keyword">static_cast&lt;</span>uint16_t<span class="keyword">&gt;</span>(codeBytes[ip + 2]) &lt;&lt; 8);</div>
-<div class="line"><a id="l00295" name="l00295"></a><span class="lineno">  295</span>            <span class="comment">// ldr x1, [x19 + offsetof(JitContext, globalSlots)]  // ctx-&gt;globalSlots</span></div>
+<div class="line"><a id="l00295" name="l00295"></a><span class="lineno">  295</span>            <span class="comment">// ldr x1, [x19 + offsetof(JitA64Context, globalSlots)]  // ctx-&gt;globalSlots</span></div>
 <div class="line"><a id="l00296" name="l00296"></a><span class="lineno">  296</span>            a.ldr(a64::regs::x1, a64::ptr(a64::regs::x19, 24));</div>
 <div class="line"><a id="l00297" name="l00297"></a><span class="lineno">  297</span>            <span class="comment">// ldr x0, [x1 + slot*8]</span></div>
 <div class="line"><a id="l00298" name="l00298"></a><span class="lineno">  298</span>            a.ldr(a64::regs::x0, a64::ptr(a64::regs::x1, <span class="keyword">static_cast&lt;</span>int32_t<span class="keyword">&gt;</span>(slot * 8)));</div>

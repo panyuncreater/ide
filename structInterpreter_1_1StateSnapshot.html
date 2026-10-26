@@ -149,7 +149,7 @@ Public Attributes</h2></td></tr>
 <a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
 <div class="textblock"><p><a class="el" href="classInterpreter.html" title="访问者模式解释执行器">Interpreter</a> 状态快照（用于回溯调试 / reverse debugging）。 捕获完整执行状态：环境链 + 调用栈 + 注册表 + 控制标志。 通过 shared_ptr 共享所有权保持 <a class="el" href="classEnvironment.html">Environment</a> 对象存活；通过 flat variables map 保持快照时刻的变量值（防止 live 执行变异污染快照）。 COW 容器（Array/Dict/Instance）通过 <a class="el" href="structValue.html">Value</a> 拷贝自然隔离——live 执行的变异 会触发 COW detach，快照持有的 <a class="el" href="structValue.html">Value</a> 仍指向旧容器数据。 </p>
 
-<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00263">263</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00264">264</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
 </div><h2 class="groupheader">Member Data Documentation</h2>
 <a id="a2ef7da56c761a075cf7c5038ff5f896b" name="a2ef7da56c761a075cf7c5038ff5f896b"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a2ef7da56c761a075cf7c5038ff5f896b">&#9670;&#160;</a></span>callStack</h2>
@@ -163,7 +163,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00267">267</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00268">268</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00419">Interpreter::restoreFromSnapshot()</a>.</p>
 
@@ -181,7 +181,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00287">287</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00288">288</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00419">Interpreter::restoreFromSnapshot()</a>.</p>
 
@@ -199,7 +199,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00275">275</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00276">276</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00419">Interpreter::restoreFromSnapshot()</a>.</p>
 
@@ -217,7 +217,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00276">276</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00277">277</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00419">Interpreter::restoreFromSnapshot()</a>.</p>
 
@@ -235,7 +235,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00291">291</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00292">292</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00419">Interpreter::restoreFromSnapshot()</a>.</p>
 
@@ -253,7 +253,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00266">266</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00267">267</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00419">Interpreter::restoreFromSnapshot()</a>.</p>
 
@@ -271,7 +271,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00288">288</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00289">289</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00419">Interpreter::restoreFromSnapshot()</a>.</p>
 
@@ -289,7 +289,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00289">289</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00290">290</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00419">Interpreter::restoreFromSnapshot()</a>.</p>
 
@@ -307,7 +307,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00292">292</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00293">293</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00419">Interpreter::restoreFromSnapshot()</a>.</p>
 
@@ -325,7 +325,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00278">278</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00279">279</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00419">Interpreter::restoreFromSnapshot()</a>.</p>
 
@@ -343,7 +343,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00271">271</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00272">272</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00419">Interpreter::restoreFromSnapshot()</a>.</p>
 
@@ -361,7 +361,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00284">284</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00285">285</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00419">Interpreter::restoreFromSnapshot()</a>.</p>
 
@@ -379,7 +379,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00273">273</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00274">274</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00419">Interpreter::restoreFromSnapshot()</a>.</p>
 
@@ -397,7 +397,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00274">274</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00275">275</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00419">Interpreter::restoreFromSnapshot()</a>.</p>
 
@@ -415,7 +415,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00265">265</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00266">266</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00419">Interpreter::restoreFromSnapshot()</a>.</p>
 
@@ -433,7 +433,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00290">290</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00291">291</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00419">Interpreter::restoreFromSnapshot()</a>.</p>
 
@@ -451,7 +451,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00279">279</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00280">280</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00419">Interpreter::restoreFromSnapshot()</a>.</p>
 
@@ -469,7 +469,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00280">280</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00281">281</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00419">Interpreter::restoreFromSnapshot()</a>.</p>
 
@@ -487,7 +487,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00283">283</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00284">284</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00419">Interpreter::restoreFromSnapshot()</a>.</p>
 
@@ -505,7 +505,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00282">282</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00283">283</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00419">Interpreter::restoreFromSnapshot()</a>.</p>
 
@@ -523,7 +523,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00281">281</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00282">282</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00419">Interpreter::restoreFromSnapshot()</a>.</p>
 
@@ -541,7 +541,7 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00286">286</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00287">287</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="Interpreter_8cpp_source.html#l00419">Interpreter::restoreFromSnapshot()</a>.</p>
 

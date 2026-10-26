@@ -91,76 +91,451 @@ $(document).ready(function(){initNavTree('structInterpreter_1_1ChainInfo.html','
 
 <div class="header">
   <div class="summary">
+<a href="#pub-methods">Public Member Functions</a> &#124;
 <a href="#pub-attribs">Public Attributes</a> &#124;
+<a href="#pub-static-attribs">Static Public Attributes</a> &#124;
 <a href="structInterpreter_1_1ChainInfo-members.html">List of all members</a>  </div>
   <div class="headertitle"><div class="title">Interpreter::ChainInfo Struct Reference</div></div>
 </div><!--header-->
 <div class="contents">
-
-<p>链收集与求值结果  
- <a href="structInterpreter_1_1ChainInfo.html#details">More...</a></p>
 <table class="memberdecls">
+<tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="pub-methods" name="pub-methods"></a>
+Public Member Functions</h2></td></tr>
+<tr class="memitem:a5484d644d6353ff67d7b2b5d77fd8a33" id="r_a5484d644d6353ff67d7b2b5d77fd8a33"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structInterpreter_1_1ChainInfo.html#a5484d644d6353ff67d7b2b5d77fd8a33">appendNode</a> (<a class="el" href="classASTNode.html">ASTNode</a> *node)</td></tr>
+<tr class="separator:a5484d644d6353ff67d7b2b5d77fd8a33"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:aa6bb21862be3bed8f294813c655a63c0" id="r_aa6bb21862be3bed8f294813c655a63c0"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structInterpreter_1_1ChainInfo.html#aa6bb21862be3bed8f294813c655a63c0">resizeValues</a> (size_t n)</td></tr>
+<tr class="separator:aa6bb21862be3bed8f294813c655a63c0"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a43fb9540bfa145ad86f1376da5ec99fd" id="r_a43fb9540bfa145ad86f1376da5ec99fd"><td class="memItemLeft" align="right" valign="top"><a class="el" href="classASTNode.html">ASTNode</a> *&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structInterpreter_1_1ChainInfo.html#a43fb9540bfa145ad86f1376da5ec99fd">nodeAt</a> (size_t i) const</td></tr>
+<tr class="separator:a43fb9540bfa145ad86f1376da5ec99fd"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a78df9ade6ec3434cdcd197a27604478b" id="r_a78df9ade6ec3434cdcd197a27604478b"><td class="memItemLeft" align="right" valign="top"><a class="el" href="structValue.html">Value</a> &amp;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structInterpreter_1_1ChainInfo.html#a78df9ade6ec3434cdcd197a27604478b">valAt</a> (size_t i)</td></tr>
+<tr class="separator:a78df9ade6ec3434cdcd197a27604478b"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:aa65a5d5ddf9362decd7e9f4183a581c8" id="r_aa65a5d5ddf9362decd7e9f4183a581c8"><td class="memItemLeft" align="right" valign="top">const <a class="el" href="structValue.html">Value</a> &amp;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structInterpreter_1_1ChainInfo.html#aa65a5d5ddf9362decd7e9f4183a581c8">valAt</a> (size_t i) const</td></tr>
+<tr class="separator:aa65a5d5ddf9362decd7e9f4183a581c8"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a7b1978b6ff47f0a24cc4e00159254cd8" id="r_a7b1978b6ff47f0a24cc4e00159254cd8"><td class="memItemLeft" align="right" valign="top"><a class="el" href="structValue.html">Value</a> &amp;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structInterpreter_1_1ChainInfo.html#a7b1978b6ff47f0a24cc4e00159254cd8">idxAt</a> (size_t i)</td></tr>
+<tr class="separator:a7b1978b6ff47f0a24cc4e00159254cd8"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a3223d90902b16a92c6bec6d6e1116e3b" id="r_a3223d90902b16a92c6bec6d6e1116e3b"><td class="memItemLeft" align="right" valign="top">const <a class="el" href="structValue.html">Value</a> &amp;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structInterpreter_1_1ChainInfo.html#a3223d90902b16a92c6bec6d6e1116e3b">idxAt</a> (size_t i) const</td></tr>
+<tr class="separator:a3223d90902b16a92c6bec6d6e1116e3b"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a8ebb0ddd3667095cf0d0927b7e4237ab" id="r_a8ebb0ddd3667095cf0d0927b7e4237ab"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structInterpreter_1_1ChainInfo.html#a8ebb0ddd3667095cf0d0927b7e4237ab">clearValues</a> ()</td></tr>
+<tr class="separator:a8ebb0ddd3667095cf0d0927b7e4237ab"><td class="memSeparator" colspan="2">&#160;</td></tr>
+</table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="pub-attribs" name="pub-attribs"></a>
 Public Attributes</h2></td></tr>
-<tr class="memitem:a25cd28ad3bef46a12644cbe61ae0270f" id="r_a25cd28ad3bef46a12644cbe61ae0270f"><td class="memItemLeft" align="right" valign="top">std::vector&lt; <a class="el" href="classASTNode.html">ASTNode</a> * &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structInterpreter_1_1ChainInfo.html#a25cd28ad3bef46a12644cbe61ae0270f">chain</a></td></tr>
-<tr class="separator:a25cd28ad3bef46a12644cbe61ae0270f"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a9558437fce142151e8c0f4a170c98f8b" id="r_a9558437fce142151e8c0f4a170c98f8b"><td class="memItemLeft" align="right" valign="top">std::vector&lt; <a class="el" href="structValue.html">Value</a> &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structInterpreter_1_1ChainInfo.html#a9558437fce142151e8c0f4a170c98f8b">vals</a></td></tr>
-<tr class="separator:a9558437fce142151e8c0f4a170c98f8b"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a021b2843eaafc96344dd1b652c4c431e" id="r_a021b2843eaafc96344dd1b652c4c431e"><td class="memItemLeft" align="right" valign="top">std::vector&lt; <a class="el" href="structValue.html">Value</a> &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structInterpreter_1_1ChainInfo.html#a021b2843eaafc96344dd1b652c4c431e">idxs</a></td></tr>
-<tr class="separator:a021b2843eaafc96344dd1b652c4c431e"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:ab5705c00daa3eaa170bac2603aee4a9d" id="r_ab5705c00daa3eaa170bac2603aee4a9d"><td class="memItemLeft" align="right" valign="top"><a class="el" href="classVarRef.html">VarRef</a> *&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structInterpreter_1_1ChainInfo.html#ab5705c00daa3eaa170bac2603aee4a9d">varRef</a></td></tr>
+<tr class="memitem:a7f20363f222d7794eb495d24f1a717f6" id="r_a7f20363f222d7794eb495d24f1a717f6"><td class="memItemLeft" align="right" valign="top">std::array&lt; <a class="el" href="classASTNode.html">ASTNode</a> *, <a class="el" href="structInterpreter_1_1ChainInfo.html#a93668e7418001787c55b74f18cf4c400">kInlineDepth</a> &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structInterpreter_1_1ChainInfo.html#a7f20363f222d7794eb495d24f1a717f6">chainInline</a> {}</td></tr>
+<tr class="separator:a7f20363f222d7794eb495d24f1a717f6"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a916f8921b0e02601fe302575510628a5" id="r_a916f8921b0e02601fe302575510628a5"><td class="memItemLeft" align="right" valign="top">std::array&lt; <a class="el" href="structValue.html">Value</a>, <a class="el" href="structInterpreter_1_1ChainInfo.html#a93668e7418001787c55b74f18cf4c400">kInlineDepth</a> &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structInterpreter_1_1ChainInfo.html#a916f8921b0e02601fe302575510628a5">valsInline</a> {}</td></tr>
+<tr class="separator:a916f8921b0e02601fe302575510628a5"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ac4ff08342c2b8d2ec506440e54214025" id="r_ac4ff08342c2b8d2ec506440e54214025"><td class="memItemLeft" align="right" valign="top">std::array&lt; <a class="el" href="structValue.html">Value</a>, <a class="el" href="structInterpreter_1_1ChainInfo.html#a93668e7418001787c55b74f18cf4c400">kInlineDepth</a> &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structInterpreter_1_1ChainInfo.html#ac4ff08342c2b8d2ec506440e54214025">idxsInline</a> {}</td></tr>
+<tr class="separator:ac4ff08342c2b8d2ec506440e54214025"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a56a84bedaf978d7850a7dd93ad48c18f" id="r_a56a84bedaf978d7850a7dd93ad48c18f"><td class="memItemLeft" align="right" valign="top">std::vector&lt; <a class="el" href="classASTNode.html">ASTNode</a> * &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structInterpreter_1_1ChainInfo.html#a56a84bedaf978d7850a7dd93ad48c18f">chainOverflow</a></td></tr>
+<tr class="separator:a56a84bedaf978d7850a7dd93ad48c18f"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a5044e4768894916f089a6f1e0e30cf37" id="r_a5044e4768894916f089a6f1e0e30cf37"><td class="memItemLeft" align="right" valign="top">std::vector&lt; <a class="el" href="structValue.html">Value</a> &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structInterpreter_1_1ChainInfo.html#a5044e4768894916f089a6f1e0e30cf37">valsOverflow</a></td></tr>
+<tr class="separator:a5044e4768894916f089a6f1e0e30cf37"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:acb8eebccf535be4bc7c7e0399e22692a" id="r_acb8eebccf535be4bc7c7e0399e22692a"><td class="memItemLeft" align="right" valign="top">std::vector&lt; <a class="el" href="structValue.html">Value</a> &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structInterpreter_1_1ChainInfo.html#acb8eebccf535be4bc7c7e0399e22692a">idxsOverflow</a></td></tr>
+<tr class="separator:acb8eebccf535be4bc7c7e0399e22692a"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a83a0f0d5bcd857009677dca97814fc62" id="r_a83a0f0d5bcd857009677dca97814fc62"><td class="memItemLeft" align="right" valign="top">size_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structInterpreter_1_1ChainInfo.html#a83a0f0d5bcd857009677dca97814fc62">depth</a> = 0</td></tr>
+<tr class="separator:a83a0f0d5bcd857009677dca97814fc62"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ab5705c00daa3eaa170bac2603aee4a9d" id="r_ab5705c00daa3eaa170bac2603aee4a9d"><td class="memItemLeft" align="right" valign="top"><a class="el" href="classVarRef.html">VarRef</a> *&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structInterpreter_1_1ChainInfo.html#ab5705c00daa3eaa170bac2603aee4a9d">varRef</a> = nullptr</td></tr>
 <tr class="separator:ab5705c00daa3eaa170bac2603aee4a9d"><td class="memSeparator" colspan="2">&#160;</td></tr>
+</table><table class="memberdecls">
+<tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="pub-static-attribs" name="pub-static-attribs"></a>
+Static Public Attributes</h2></td></tr>
+<tr class="memitem:a93668e7418001787c55b74f18cf4c400" id="r_a93668e7418001787c55b74f18cf4c400"><td class="memItemLeft" align="right" valign="top">static constexpr size_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structInterpreter_1_1ChainInfo.html#a93668e7418001787c55b74f18cf4c400">kInlineDepth</a> = 8</td></tr>
+<tr class="separator:a93668e7418001787c55b74f18cf4c400"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
 <a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
-<div class="textblock"><p>链收集与求值结果 </p>
-
-<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00739">739</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
-</div><h2 class="groupheader">Member Data Documentation</h2>
-<a id="a25cd28ad3bef46a12644cbe61ae0270f" name="a25cd28ad3bef46a12644cbe61ae0270f"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a25cd28ad3bef46a12644cbe61ae0270f">&#9670;&#160;</a></span>chain</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">std::vector&lt;<a class="el" href="classASTNode.html">ASTNode</a>*&gt; Interpreter::ChainInfo::chain</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00740">740</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
-
-</div>
-</div>
-<a id="a021b2843eaafc96344dd1b652c4c431e" name="a021b2843eaafc96344dd1b652c4c431e"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a021b2843eaafc96344dd1b652c4c431e">&#9670;&#160;</a></span>idxs</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">std::vector&lt;<a class="el" href="structValue.html">Value</a>&gt; Interpreter::ChainInfo::idxs</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
+<div class="textblock"><p>链收集与求值结果 PERF: 成员/索引链绝大多数深度 ≤ 8，内联存储避免每条链 3 次堆分配； 更深的链回落 vector（访问统一经 nodeAt/valAt/idxAt）。 </p>
 
 <p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00742">742</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+</div><h2 class="groupheader">Member Function Documentation</h2>
+<a id="a5484d644d6353ff67d7b2b5d77fd8a33" name="a5484d644d6353ff67d7b2b5d77fd8a33"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a5484d644d6353ff67d7b2b5d77fd8a33">&#9670;&#160;</a></span>appendNode()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">void Interpreter::ChainInfo::appendNode </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="classASTNode.html">ASTNode</a> *&#160;</td>
+          <td class="paramname"><em>node</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">inline</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00745">745</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+
+<p class="reference">References <a class="el" href="Interpreter_8h_source.html#l00776">chainInline</a>, <a class="el" href="Interpreter_8h_source.html#l00779">chainOverflow</a>, <a class="el" href="Interpreter_8h_source.html#l00782">depth</a>, and <a class="el" href="Interpreter_8h_source.html#l00743">kInlineDepth</a>.</p>
 
 </div>
 </div>
-<a id="a9558437fce142151e8c0f4a170c98f8b" name="a9558437fce142151e8c0f4a170c98f8b"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a9558437fce142151e8c0f4a170c98f8b">&#9670;&#160;</a></span>vals</h2>
+<a id="a8ebb0ddd3667095cf0d0927b7e4237ab" name="a8ebb0ddd3667095cf0d0927b7e4237ab"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a8ebb0ddd3667095cf0d0927b7e4237ab">&#9670;&#160;</a></span>clearValues()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">void Interpreter::ChainInfo::clearValues </td>
+          <td>(</td>
+          <td class="paramname"></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">inline</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00769">769</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+
+<p class="reference">References <a class="el" href="Value_8h_source.html#l00939">Value::nullValue()</a>, <a class="el" href="Interpreter_8h_source.html#l00777">valsInline</a>, and <a class="el" href="Interpreter_8h_source.html#l00780">valsOverflow</a>.</p>
+
+</div>
+</div>
+<a id="a7b1978b6ff47f0a24cc4e00159254cd8" name="a7b1978b6ff47f0a24cc4e00159254cd8"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a7b1978b6ff47f0a24cc4e00159254cd8">&#9670;&#160;</a></span>idxAt() <span class="overload">[1/2]</span></h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname"><a class="el" href="structValue.html">Value</a> &amp; Interpreter::ChainInfo::idxAt </td>
+          <td>(</td>
+          <td class="paramtype">size_t&#160;</td>
+          <td class="paramname"><em>i</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">inline</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00766">766</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+
+<p class="reference">References <a class="el" href="Interpreter_8h_source.html#l00778">idxsInline</a>, <a class="el" href="Interpreter_8h_source.html#l00781">idxsOverflow</a>, and <a class="el" href="Interpreter_8h_source.html#l00743">kInlineDepth</a>.</p>
+
+</div>
+</div>
+<a id="a3223d90902b16a92c6bec6d6e1116e3b" name="a3223d90902b16a92c6bec6d6e1116e3b"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a3223d90902b16a92c6bec6d6e1116e3b">&#9670;&#160;</a></span>idxAt() <span class="overload">[2/2]</span></h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">const <a class="el" href="structValue.html">Value</a> &amp; Interpreter::ChainInfo::idxAt </td>
+          <td>(</td>
+          <td class="paramtype">size_t&#160;</td>
+          <td class="paramname"><em>i</em></td><td>)</td>
+          <td> const</td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">inline</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00767">767</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+
+<p class="reference">References <a class="el" href="Interpreter_8h_source.html#l00778">idxsInline</a>, <a class="el" href="Interpreter_8h_source.html#l00781">idxsOverflow</a>, and <a class="el" href="Interpreter_8h_source.html#l00743">kInlineDepth</a>.</p>
+
+</div>
+</div>
+<a id="a43fb9540bfa145ad86f1376da5ec99fd" name="a43fb9540bfa145ad86f1376da5ec99fd"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a43fb9540bfa145ad86f1376da5ec99fd">&#9670;&#160;</a></span>nodeAt()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname"><a class="el" href="classASTNode.html">ASTNode</a> * Interpreter::ChainInfo::nodeAt </td>
+          <td>(</td>
+          <td class="paramtype">size_t&#160;</td>
+          <td class="paramname"><em>i</em></td><td>)</td>
+          <td> const</td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">inline</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00761">761</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+
+<p class="reference">References <a class="el" href="Interpreter_8h_source.html#l00776">chainInline</a>, <a class="el" href="Interpreter_8h_source.html#l00779">chainOverflow</a>, and <a class="el" href="Interpreter_8h_source.html#l00743">kInlineDepth</a>.</p>
+
+</div>
+</div>
+<a id="aa6bb21862be3bed8f294813c655a63c0" name="aa6bb21862be3bed8f294813c655a63c0"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aa6bb21862be3bed8f294813c655a63c0">&#9670;&#160;</a></span>resizeValues()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">void Interpreter::ChainInfo::resizeValues </td>
+          <td>(</td>
+          <td class="paramtype">size_t&#160;</td>
+          <td class="paramname"><em>n</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">inline</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00754">754</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+
+<p class="reference">References <a class="el" href="Interpreter_8h_source.html#l00781">idxsOverflow</a>, <a class="el" href="Interpreter_8h_source.html#l00743">kInlineDepth</a>, and <a class="el" href="Interpreter_8h_source.html#l00780">valsOverflow</a>.</p>
+
+</div>
+</div>
+<a id="a78df9ade6ec3434cdcd197a27604478b" name="a78df9ade6ec3434cdcd197a27604478b"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a78df9ade6ec3434cdcd197a27604478b">&#9670;&#160;</a></span>valAt() <span class="overload">[1/2]</span></h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname"><a class="el" href="structValue.html">Value</a> &amp; Interpreter::ChainInfo::valAt </td>
+          <td>(</td>
+          <td class="paramtype">size_t&#160;</td>
+          <td class="paramname"><em>i</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">inline</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00763">763</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+
+<p class="reference">References <a class="el" href="Interpreter_8h_source.html#l00743">kInlineDepth</a>, <a class="el" href="Interpreter_8h_source.html#l00777">valsInline</a>, and <a class="el" href="Interpreter_8h_source.html#l00780">valsOverflow</a>.</p>
+
+</div>
+</div>
+<a id="aa65a5d5ddf9362decd7e9f4183a581c8" name="aa65a5d5ddf9362decd7e9f4183a581c8"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aa65a5d5ddf9362decd7e9f4183a581c8">&#9670;&#160;</a></span>valAt() <span class="overload">[2/2]</span></h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">const <a class="el" href="structValue.html">Value</a> &amp; Interpreter::ChainInfo::valAt </td>
+          <td>(</td>
+          <td class="paramtype">size_t&#160;</td>
+          <td class="paramname"><em>i</em></td><td>)</td>
+          <td> const</td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">inline</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00764">764</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+
+<p class="reference">References <a class="el" href="Interpreter_8h_source.html#l00743">kInlineDepth</a>, <a class="el" href="Interpreter_8h_source.html#l00777">valsInline</a>, and <a class="el" href="Interpreter_8h_source.html#l00780">valsOverflow</a>.</p>
+
+</div>
+</div>
+<h2 class="groupheader">Member Data Documentation</h2>
+<a id="a7f20363f222d7794eb495d24f1a717f6" name="a7f20363f222d7794eb495d24f1a717f6"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a7f20363f222d7794eb495d24f1a717f6">&#9670;&#160;</a></span>chainInline</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">std::vector&lt;<a class="el" href="structValue.html">Value</a>&gt; Interpreter::ChainInfo::vals</td>
+          <td class="memname">std::array&lt;<a class="el" href="classASTNode.html">ASTNode</a>*, <a class="el" href="structInterpreter_1_1ChainInfo.html#a93668e7418001787c55b74f18cf4c400">kInlineDepth</a>&gt; Interpreter::ChainInfo::chainInline {}</td>
         </tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00741">741</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00776">776</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="Interpreter_8h_source.html#l00745">appendNode()</a>, and <a class="el" href="Interpreter_8h_source.html#l00761">nodeAt()</a>.</p>
+
+</div>
+</div>
+<a id="a56a84bedaf978d7850a7dd93ad48c18f" name="a56a84bedaf978d7850a7dd93ad48c18f"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a56a84bedaf978d7850a7dd93ad48c18f">&#9670;&#160;</a></span>chainOverflow</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">std::vector&lt;<a class="el" href="classASTNode.html">ASTNode</a>*&gt; Interpreter::ChainInfo::chainOverflow</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00779">779</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="Interpreter_8h_source.html#l00745">appendNode()</a>, and <a class="el" href="Interpreter_8h_source.html#l00761">nodeAt()</a>.</p>
+
+</div>
+</div>
+<a id="a83a0f0d5bcd857009677dca97814fc62" name="a83a0f0d5bcd857009677dca97814fc62"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a83a0f0d5bcd857009677dca97814fc62">&#9670;&#160;</a></span>depth</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">size_t Interpreter::ChainInfo::depth = 0</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00782">782</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="Interpreter_8h_source.html#l00745">appendNode()</a>.</p>
+
+</div>
+</div>
+<a id="ac4ff08342c2b8d2ec506440e54214025" name="ac4ff08342c2b8d2ec506440e54214025"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ac4ff08342c2b8d2ec506440e54214025">&#9670;&#160;</a></span>idxsInline</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">std::array&lt;<a class="el" href="structValue.html">Value</a>, <a class="el" href="structInterpreter_1_1ChainInfo.html#a93668e7418001787c55b74f18cf4c400">kInlineDepth</a>&gt; Interpreter::ChainInfo::idxsInline {}</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00778">778</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="Interpreter_8h_source.html#l00766">idxAt()</a>, and <a class="el" href="Interpreter_8h_source.html#l00767">idxAt()</a>.</p>
+
+</div>
+</div>
+<a id="acb8eebccf535be4bc7c7e0399e22692a" name="acb8eebccf535be4bc7c7e0399e22692a"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#acb8eebccf535be4bc7c7e0399e22692a">&#9670;&#160;</a></span>idxsOverflow</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">std::vector&lt;<a class="el" href="structValue.html">Value</a>&gt; Interpreter::ChainInfo::idxsOverflow</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00781">781</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="Interpreter_8h_source.html#l00766">idxAt()</a>, <a class="el" href="Interpreter_8h_source.html#l00767">idxAt()</a>, and <a class="el" href="Interpreter_8h_source.html#l00754">resizeValues()</a>.</p>
+
+</div>
+</div>
+<a id="a93668e7418001787c55b74f18cf4c400" name="a93668e7418001787c55b74f18cf4c400"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a93668e7418001787c55b74f18cf4c400">&#9670;&#160;</a></span>kInlineDepth</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">constexpr size_t Interpreter::ChainInfo::kInlineDepth = 8</td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">static</span><span class="mlabel">constexpr</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00743">743</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="Interpreter_8h_source.html#l00745">appendNode()</a>, <a class="el" href="Interpreter_8h_source.html#l00766">idxAt()</a>, <a class="el" href="Interpreter_8h_source.html#l00767">idxAt()</a>, <a class="el" href="Interpreter_8h_source.html#l00761">nodeAt()</a>, <a class="el" href="Interpreter_8h_source.html#l00754">resizeValues()</a>, <a class="el" href="Interpreter_8h_source.html#l00763">valAt()</a>, and <a class="el" href="Interpreter_8h_source.html#l00764">valAt()</a>.</p>
+
+</div>
+</div>
+<a id="a916f8921b0e02601fe302575510628a5" name="a916f8921b0e02601fe302575510628a5"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a916f8921b0e02601fe302575510628a5">&#9670;&#160;</a></span>valsInline</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">std::array&lt;<a class="el" href="structValue.html">Value</a>, <a class="el" href="structInterpreter_1_1ChainInfo.html#a93668e7418001787c55b74f18cf4c400">kInlineDepth</a>&gt; Interpreter::ChainInfo::valsInline {}</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00777">777</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="Interpreter_8h_source.html#l00769">clearValues()</a>, <a class="el" href="Interpreter_8h_source.html#l00763">valAt()</a>, and <a class="el" href="Interpreter_8h_source.html#l00764">valAt()</a>.</p>
+
+</div>
+</div>
+<a id="a5044e4768894916f089a6f1e0e30cf37" name="a5044e4768894916f089a6f1e0e30cf37"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a5044e4768894916f089a6f1e0e30cf37">&#9670;&#160;</a></span>valsOverflow</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">std::vector&lt;<a class="el" href="structValue.html">Value</a>&gt; Interpreter::ChainInfo::valsOverflow</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00780">780</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="Interpreter_8h_source.html#l00769">clearValues()</a>, <a class="el" href="Interpreter_8h_source.html#l00754">resizeValues()</a>, <a class="el" href="Interpreter_8h_source.html#l00763">valAt()</a>, and <a class="el" href="Interpreter_8h_source.html#l00764">valAt()</a>.</p>
 
 </div>
 </div>
@@ -171,12 +546,12 @@ Public Attributes</h2></td></tr>
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname"><a class="el" href="classVarRef.html">VarRef</a>* Interpreter::ChainInfo::varRef</td>
+          <td class="memname"><a class="el" href="classVarRef.html">VarRef</a>* Interpreter::ChainInfo::varRef = nullptr</td>
         </tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00743">743</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="Interpreter_8h_source.html#l00783">783</a> of file <a class="el" href="Interpreter_8h_source.html">Interpreter.h</a>.</p>
 
 </div>
 </div>

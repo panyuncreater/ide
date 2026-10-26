@@ -1,5 +1,7 @@
 var NAVTREEINDEX8 =
 {
+"classBackendComparePanel.html#a8de0cee5b160b8e104ea13e58d48b293":[1,0,19,16],
+"classBackendComparePanel.html#a9ca8e293f780ac7abd237f5fc5472246":[1,0,19,18],
 "classBackendComparePanel.html#aae5f2a9361b5cc64920c17d080598e11":[1,0,19,12],
 "classBackendComparePanel.html#aae77b112a7e6596324af89618c2ed4f4":[1,0,19,15],
 "classBackendComparePanel.html#ab50f0b3b3475a2d657ec6f1edd2da1ab":[1,0,19,4],
@@ -247,7 +249,5 @@ var NAVTREEINDEX8 =
 "classBytecodeIRBackend.html#af7ef096b83556053d0ebade5dcf1d6c5":[1,0,45,39],
 "classBytecodeIRBackend.html#afa25043980747293b6badd6ef4faec63":[1,0,45,8],
 "classBytecodeTraceLibrary.html":[1,0,47],
-"classBytecodeTraceLibrary.html#a3ac734a2c5afd8c45540fcdb9ba0a686":[1,0,47,0],
-"classBytecodeTracePanel.html":[1,0,48],
-"classBytecodeTracePanel.html#a089bc709be1d9f424f47364251db0e01":[1,0,48,28]
+"classBytecodeTraceLibrary.html#a3ac734a2c5afd8c45540fcdb9ba0a686":[1,0,47,0]
 };

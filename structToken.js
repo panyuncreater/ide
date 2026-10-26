@@ -2,6 +2,7 @@ var structToken =
 [
     [ "Token", "structToken.html#aa3c5868ba4115f3189df6b2ac5b36f39", null ],
     [ "Token", "structToken.html#aecaac6a9509d177d3338f71135e10685", null ],
+    [ "Token", "structToken.html#a4e2cea23f0e0696f3875a498e3c71ac8", null ],
     [ "literalBool", "structToken.html#a577923fee79887ba8a6a610f7b56c5e0", null ],
     [ "literalFloat", "structToken.html#abbbd937dc183491183b5abf480961002", null ],
     [ "literalInt", "structToken.html#ad31c0c2ba45dfa8032a581ea3335e034", null ],

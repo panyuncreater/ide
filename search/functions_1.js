@@ -19,7 +19,7 @@ var searchData=
   ['bindvardecl_16',['bindVarDecl',['../classInterpreter.html#ac234e197fd3b9ad8f11db2ca396587d8',1,'Interpreter']]],
   ['binop_17',['binOp',['../classFormatter.html#a6082d8e7a5a0185743860d72de253c11',1,'Formatter']]],
   ['bitsof_18',['bitsOf',['../structValue.html#a4447fa923e78e5171ae400936e95d8b1',1,'Value']]],
-  ['block_19',['block',['../classBlock.html#a7259f4c4a2be0c94f92e33003604cba5',1,'Block::Block()'],['../classParser.html#a93f4c877608e4639d829fbb4028c1dea',1,'Parser::block()']]],
+  ['block_19',['block',['../classParser.html#a93f4c877608e4639d829fbb4028c1dea',1,'Parser::block()'],['../classBlock.html#a7259f4c4a2be0c94f92e33003604cba5',1,'Block::Block()']]],
   ['blockifhaserrors_20',['blockIfHasErrors',['../classIde.html#a3943f032b0a3bda35819626e023b7ff7',1,'Ide']]],
   ['boolliteral_21',['BoolLiteral',['../classBoolLiteral.html#a3dacd1cd17359ffd9b704aa4764f8d00',1,'BoolLiteral']]],
   ['boolscope_22',['boolscope',['../structParser_1_1BoolScope.html#a01c2ebc961d38f52e091a7af83e21b6f',1,'Parser::BoolScope::BoolScope(bool &amp;f)'],['../structParser_1_1BoolScope.html#a661f559fd689d653581830519f1c63f1',1,'Parser::BoolScope::BoolScope(const BoolScope &amp;)=delete']]],

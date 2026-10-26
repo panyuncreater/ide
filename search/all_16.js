@@ -49,7 +49,7 @@ var searchData=
   ['workerfinished_46',['workerfinished',['../classIdeController.html#a15e14f308ae5d78f0c1aa7baad03c689',1,'IdeController::workerFinished()'],['../classWorkerManager.html#a14328bd2feab1b2f284109502db34ca9',1,'WorkerManager::workerFinished()']]],
   ['workerid_47',['workerId',['../classReplTaskQueue.html#a16ad34e69be82d8b70e761d4fc427849',1,'ReplTaskQueue']]],
   ['workerid_5f_48',['workerId_',['../classReplTaskQueue.html#a0df57eeb2ceede4baa28f0aa945fd8b2',1,'ReplTaskQueue']]],
-  ['workermanager_49',['workermanager',['../classIdeController.html#a1c4078e72b85313d4b900ecce145b481',1,'IdeController::workerManager()'],['../classIdeController.html#add080ab31a88316832d3bdf3687939dc',1,'IdeController::workerManager() const'],['../classWorkerManager.html',1,'WorkerManager'],['../classWorkerManager.html#a9ceb32e47bea1196bbd894e9d5750eef',1,'WorkerManager::WorkerManager()']]],
+  ['workermanager_49',['workermanager',['../classIdeController.html#add080ab31a88316832d3bdf3687939dc',1,'IdeController::workerManager()'],['../classWorkerManager.html#a9ceb32e47bea1196bbd894e9d5750eef',1,'WorkerManager::WorkerManager()'],['../classWorkerManager.html',1,'WorkerManager'],['../classIdeController.html#a1c4078e72b85313d4b900ecce145b481',1,'IdeController::workerManager()']]],
   ['workermanager_2ecpp_50',['WorkerManager.cpp',['../WorkerManager_8cpp.html',1,'']]],
   ['workermanager_2eh_51',['WorkerManager.h',['../WorkerManager_8h.html',1,'']]],
   ['workermgr_5f_52',['workerMgr_',['../classIdeController.html#afed6b0feb2f9b2aff05e52378906d6c8',1,'IdeController']]],

@@ -295,7 +295,7 @@ var searchData=
   ['op_5fyield_292',['OP_YIELD',['../Bytecode_8h.html#a7e85f04e30e1c4c4607773335350fe20a6c28d8a4ad8b4d4753c56044a8b3bbc3',1,'Bytecode.h']]],
   ['opbuttonshost_5f_293',['opButtonsHost_',['../classVmStackSandboxPanel.html#a73c529a97cf9c140a696a6188f9cc4c1',1,'VmStackSandboxPanel']]],
   ['opbuttontext_294',['opButtonText',['../classVmStackSandboxPanel.html#a27c656973d03cc7d663718a1b27f1236',1,'VmStackSandboxPanel']]],
-  ['opcode_295',['opcode',['../Bytecode_8h.html#a7e85f04e30e1c4c4607773335350fe20',1,'OpCode:&#160;Bytecode.h'],['../structVMStepInfo.html#a60c94d27e4062db4b084ffc19f1f7e98',1,'VMStepInfo::opcode'],['../structRegVMStepInfo.html#ab440fff58943cedb6b2b955a85deb188',1,'RegVMStepInfo::opcode'],['../structOpCodePerfDoc.html#a7147750d02a65921d725281dded0cd30',1,'OpCodePerfDoc::opCode']]],
+  ['opcode_295',['opcode',['../Bytecode_8h.html#a7e85f04e30e1c4c4607773335350fe20',1,'OpCode:&#160;Bytecode.h'],['../structOpCodePerfDoc.html#a7147750d02a65921d725281dded0cd30',1,'OpCodePerfDoc::opCode'],['../structVMStepInfo.html#a60c94d27e4062db4b084ffc19f1f7e98',1,'VMStepInfo::opcode'],['../structRegVMStepInfo.html#ab440fff58943cedb6b2b955a85deb188',1,'RegVMStepInfo::opcode']]],
   ['opcodebrowser_5f_296',['opCodeBrowser_',['../classJitVisualizerPanel.html#a130ff01ddad7578d6757a76a5f912133',1,'JitVisualizerPanel']]],
   ['opcodecategories_297',['opCodeCategories',['../classJitVisualizerLibrary.html#ac661d06b12fa134a61a1ef209d4375af',1,'JitVisualizerLibrary']]],
   ['opcodecounts_298',['opcodeCounts',['../structBackendExecDetail.html#a8f4ea83dc7a2a53ebb648023be5c3e09',1,'BackendExecDetail']]],
