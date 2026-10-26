@@ -34,6 +34,8 @@
 | 宿主嵌入 GC 隔离 | 与常驻 Interpreter 并存的短生命周期实例必须 `GcTriggerPolicy::Isolated`；隔离期不触发进程级增量 GC | 见 `docs/specs/memory-model.md` §8；`GcIsolation.*` |
 
 > 表中每项的新增/修改都必须在三后端同步实现（含 IR 双出口），并以一致性测试锁定（§5）。
+>
+> **已知例外（锁定）：顶层声明前向引用**——Interpreter 不提升顶层 `var/fun/class`（含类型前置声明），声明前使用报“未定义的变量/函数”；StackVM/RegisterVM 的 `preScanTopLevelDecls` 预分配全局槽位，读到 `null` 或提前可见。该差异由 `ConsistencyDiff.G4_TopLevelForwardReferenceDivergence` 锁定；fuzz 将其计入 `knownDivergences`，不计失败。消除该差异需三后端同步引入 TDZ/初始化标记或取消预扫描提升，并先立 ADR。
 
 ## 3. 新增语言特性：三后端同步 checklist
 

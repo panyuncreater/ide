@@ -5,8 +5,8 @@
 // 核心逻辑在 cli/fuzz_core.h/cpp 中（便于单元测试）。
 //
 // 退出码：
-//   0  成功（无崩溃、无分歧）
-//   1  发现崩溃或三后端分歧（已记录用例）
+//   0  成功（无崩溃、无未知分歧；已知顶层前向引用差异不计失败）
+//   1  发现崩溃或未知三后端分歧（已记录用例）
 //   2  错误（参数解析失败、文件不存在等）
 // ============================================================
 #include "cli/fuzz_core.h"
@@ -50,8 +50,7 @@ int main(int argc, char* argv[]) {
             FuzzSummary s = processFile(file, args.options);
             // BUG-93 fix: 改用 ok 标志检查文件错误（替代 crashes<0 哨兵值）
             if (!s.ok) {
-                std::fprintf(stderr, "错误: 无法读取文件 %s (%s)\n", file.c_str(),
-                             s.errorMessage.c_str());
+                std::fprintf(stderr, "错误: 无法读取文件 %s (%s)\n", file.c_str(), s.errorMessage.c_str());
                 anyError = true;
                 continue;
             }
@@ -63,11 +62,14 @@ int main(int argc, char* argv[]) {
             summary.parseFailures += s.parseFailures;
             summary.compileFailures += s.compileFailures;
             summary.runtimeErrors += s.runtimeErrors;
+            summary.knownDivergences += s.knownDivergences;
             summary.totalDurationMs += s.totalDurationMs;
             for (auto& c : s.crashCases)
                 summary.crashCases.push_back(c);
             for (auto& d : s.disagreementCases)
                 summary.disagreementCases.push_back(d);
+            for (auto& k : s.knownDivergenceCases)
+                summary.knownDivergenceCases.push_back(k);
         }
         if (anyError)
             return 2;

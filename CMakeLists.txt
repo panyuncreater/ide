@@ -246,7 +246,8 @@ unset(_saved_install_prefix)
 # 第三方依赖：asmjit（JIT 后端，可选）
 # ------------------------------------------------------------
 # asmjit 是轻量级 C++17 JIT 编译库，支持 x86/x64/ARM64。
-# 启用 MINILANG_USE_JIT=ON 时作为静态库编入项目，供 JITBackend 使用。
+# x86-64 JIT（MINILANG_USE_JIT）或 ARM64 JIT PoC（MINILANG_USE_JIT_A64）
+# 任一启用时作为静态库编入项目。
 # 教学价值：展示 JIT 编译原理（字节码→本地代码），与 StackVM 解释执行对比。
 # ASMJIT_VERSION 固定：asmjit 上游采用 rolling 发布（无正式版本 tag），
 # 子模块跟随 master 分支，当前 pin commit 0bd5787（见 .gitmodules 记录）。
@@ -256,20 +257,29 @@ unset(_saved_install_prefix)
 #   find_package(asmjit CONFIG REQUIRED)
 # 并将 target_link_libraries 中的 asmjit 改为 asmjit::asmjit。
 #
-# 平台限制：当前 JIT 代码生成仅支持 x86-64 架构。
-# 非 x86-64 平台（如 Apple Silicon Mac）自动禁用 JIT，回退到 StackVM 解释执行。
-# 教学平台 ARM64 支持尚未实现，待 asmjit ARM64 后端成熟后追加。
+# 平台限制：x86-64 JIT 代码生成仅支持 x86-64；非 x86-64 平台自动禁用
+# MINILANG_USE_JIT 并回退 StackVM。ARM64 PoC 由 MINILANG_USE_JIT_A64
+# 单独门控（见下），编译期不依赖 x86-64 JIT。
 # ============================================================
 set(ASMJIT_VERSION "master-0bd5787" CACHE STRING "Pinned asmjit version (submodule: master, rolling)")
 option(MINILANG_USE_JIT "Enable JIT backend (asmjit)" ON)
-# 平台检测：JIT 代码生成仅支持 x86-64，非 x64 平台自动禁用
+
+# ARM64 JIT 后端（实验性 PoC，默认 OFF）
+# 仅实现 Phase 1 PoC：基本算术 + 控制流 + 局部/全局变量（对齐 x86-64 R138-R140），
+# 无函数调用/类/闭包/异常/GC 集成，无单元测试覆盖。不建议生产使用，
+# 仅供后续 ARM64 教学平台移植参考。详见 docs/adr/ADR-006-jit-backend.md。
+option(MINILANG_USE_JIT_A64 "Enable ARM64 JIT backend (asmjit a64, EXPERIMENTAL PoC)" OFF)
+
+# 平台检测：x86-64 JIT 代码生成仅支持 x86-64，非 x64 平台自动禁用
 if(MINILANG_USE_JIT)
     if(NOT (CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64"))
         message(STATUS "JIT disabled: current platform '${CMAKE_SYSTEM_PROCESSOR}' is not x86-64 (JIT code generation requires x86-64)")
         set(MINILANG_USE_JIT OFF CACHE BOOL "" FORCE)
     endif()
 endif()
-if(MINILANG_USE_JIT)
+# asmjit 必须覆盖“仅 ARM64 PoC”场景：非 x64 平台会强制关闭
+# MINILANG_USE_JIT，若只按该变量门控会导致 JITA64CodeGen 找不到 a64.h。
+if(MINILANG_USE_JIT OR MINILANG_USE_JIT_A64)
     set(ASMJIT_STATIC ON CACHE BOOL "Build asmjit as static library" FORCE)
     set(ASMJIT_TEST OFF CACHE BOOL "Build asmjit tests" FORCE)
     set(ASMJIT_NO_INSTALL ON CACHE BOOL "Disable asmjit install" FORCE)
@@ -277,15 +287,11 @@ if(MINILANG_USE_JIT)
     # 抑制其头文件在本项目 TU 中触发的 -Wpedantic 警告
     # （如匿名 struct）——第三方代码不受本项目 -Werror 门禁约束。
     add_subdirectory(third_party/asmjit SYSTEM)
+endif()
+if(MINILANG_USE_JIT)
     add_compile_definitions(MINILANG_USE_JIT)
     message(STATUS "JIT backend enabled (asmjit ${ASMJIT_VERSION})")
 endif()
-
-# ARM64 JIT 后端（实验性 PoC，默认 OFF）
-# 仅实现 Phase 1 PoC：基本算术 + 控制流 + 局部/全局变量（对齐 x86-64 R138-R140），
-# 无函数调用/类/闭包/异常/GC 集成，无单元测试覆盖。不建议生产使用，
-# 仅供后续 ARM64 教学平台移植参考。详见 docs/adr/ADR-006-jit-backend.md。
-option(MINILANG_USE_JIT_A64 "Enable ARM64 JIT backend (asmjit a64, EXPERIMENTAL PoC)" OFF)
 if(MINILANG_USE_JIT_A64)
     add_compile_definitions(MINILANG_USE_JIT_A64)
     message(WARNING "MINILANG_USE_JIT_A64 is an EXPERIMENTAL PoC: limited opcode coverage, no tests, no GC/closure/exception support. Not for production use.")

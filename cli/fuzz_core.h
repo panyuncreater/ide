@@ -14,8 +14,8 @@
 //   - parseArgs: 命令行参数解析（--seed/--iterations/--backend/--format/...）
 //
 // 退出码约定：
-//   0  成功（无崩溃、无分歧）
-//   1  发现崩溃或三后端分歧（已记录用例）
+//   0  成功（无崩溃、无未知分歧；已知顶层前向引用差异不计失败）
+//   1  发现崩溃或未知三后端分歧（已记录用例）
 //   2  错误（参数解析失败、文件不存在等）
 // ============================================================
 #pragma once
@@ -64,11 +64,11 @@ enum class FuzzCategory : uint32_t {
 
 /// 模糊测试选项
 struct FuzzOptions {
-    uint64_t seed = 0;                                                ///< 随机种子（0 = 时间派生）
-    bool seedSpecified = false;                                       ///< BUG-67 fix: 用户是否显式指定 --seed（区分 --seed 0 与未指定）
-    int iterations = 100;                                             ///< 生成/变异迭代次数
-    FuzzBackend backend = FuzzBackend::All;                           ///< 后端选择
-    FuzzMode mode = FuzzMode::Generate;                               ///< 模式
+    uint64_t seed = 0;                      ///< 随机种子（0 = 时间派生）
+    bool seedSpecified = false;             ///< BUG-67 fix: 用户是否显式指定 --seed（区分 --seed 0 与未指定）
+    int iterations = 100;                   ///< 生成/变异迭代次数
+    FuzzBackend backend = FuzzBackend::All; ///< 后端选择
+    FuzzMode mode = FuzzMode::Generate;     ///< 模式
     uint32_t categoryMask = static_cast<uint32_t>(FuzzCategory::All); ///< 生成类别位掩码
     int maxLength = 8192;                                             ///< 最大源码长度（字节）
     bool quiet = false;                                               ///< 仅输出崩溃/分歧
@@ -88,34 +88,41 @@ struct CliArgs {
 
 /// 单次模糊测试结果
 struct FuzzResult {
-    bool ok = false;            ///< 是否成功执行（无崩溃）
-    std::string source;         ///< 输入源码
-    std::string interpOutput;   ///< Interpreter 输出
-    std::string stackvmOutput;  ///< StackVM 输出
-    std::string regvmOutput;    ///< RegisterVM 输出
-    bool crashDetected = false; ///< 是否检测到崩溃（未捕获异常/abort）
-    bool disagreement = false;  ///< 三后端输出是否不一致
-    std::string errorMessage;   ///< 错误信息
-    std::string errorPhase;     ///< 错误阶段："lex"/"parse"/"compile"/"runtime"
-    int64_t durationMs = 0;     ///< 执行耗时（毫秒）
+    bool ok = false;              ///< 是否成功执行（无崩溃）
+    std::string source;           ///< 输入源码
+    std::string interpOutput;     ///< Interpreter 输出
+    std::string stackvmOutput;    ///< StackVM 输出
+    std::string regvmOutput;      ///< RegisterVM 输出
+    bool crashDetected = false;   ///< 是否检测到崩溃（未捕获异常/abort）
+    bool disagreement = false;    ///< 三后端输出是否不一致
+    bool knownDivergence = false; ///< 已知设计差异（顶层前向引用，不计失败）
+    std::string errorMessage;     ///< 错误信息
+    std::string errorPhase;       ///< 错误阶段："lex"/"parse"/"compile"/"runtime"
+    int64_t durationMs = 0;       ///< 执行耗时（毫秒）
 };
 
 /// 批量模糊测试汇总
 struct FuzzSummary {
-    bool ok = true;                            ///< BUG-93 fix: 整体是否成功（替代 crashes=-1 哨兵值）
-    std::string errorMessage;                  ///< BUG-93 fix: ok=false 时的错误描述
-    int totalRuns = 0;                         ///< 总执行次数
-    int crashes = 0;                           ///< 崩溃次数
-    int disagreements = 0;                     ///< 三后端分歧次数
-    int agreements = 0;                        ///< 三后端一致次数
-    int parseFailures = 0;                     ///< 解析失败次数
-    int compileFailures = 0;                   ///< 编译失败次数
-    int runtimeErrors = 0;                     ///< 运行时错误次数（三后端一致）
-    uint64_t seed = 0;                         ///< 实际使用的种子
-    std::vector<FuzzResult> crashCases;        ///< 发现的崩溃用例
-    std::vector<FuzzResult> disagreementCases; ///< 发现的分歧用例
-    int64_t totalDurationMs = 0;               ///< 总耗时（毫秒）
+    bool ok = true;                               ///< BUG-93 fix: 整体是否成功（替代 crashes=-1 哨兵值）
+    std::string errorMessage;                     ///< BUG-93 fix: ok=false 时的错误描述
+    int totalRuns = 0;                            ///< 总执行次数
+    int crashes = 0;                              ///< 崩溃次数
+    int disagreements = 0;                        ///< 三后端分歧次数
+    int agreements = 0;                           ///< 三后端一致次数
+    int parseFailures = 0;                        ///< 解析失败次数
+    int compileFailures = 0;                      ///< 编译失败次数
+    int runtimeErrors = 0;                        ///< 运行时错误次数（三后端一致）
+    int knownDivergences = 0;                     ///< 已知设计差异次数（顶层前向引用，不计失败）
+    uint64_t seed = 0;                            ///< 实际使用的种子
+    std::vector<FuzzResult> crashCases;           ///< 发现的崩溃用例
+    std::vector<FuzzResult> disagreementCases;    ///< 发现的分歧用例
+    std::vector<FuzzResult> knownDivergenceCases; ///< 已知设计差异用例
+    int64_t totalDurationMs = 0;                  ///< 总耗时（毫秒）
 };
+
+/// 识别已知的顶层前向引用差异（Interpreter 不提升，VMs 预扫描）。
+/// 仅当 Interpreter 报未定义变量/函数且源码存在同名顶层声明时返回 true。
+bool isKnownPreScanHoistingDivergence(const std::string& source, const std::string& interpOutput);
 
 /// 对单段源码执行单后端模糊测试
 /// 完整管线：source → Lexer → Parser → Compiler → Backend execute

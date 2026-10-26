@@ -7,6 +7,7 @@
 #
 # 作业：
 #   dynamic-fuzz     — 运行 tests_dynamic/fuzz_minilang.py 动态模糊测试
+#                      （历史 bug 复现报告，信息性，不计门禁）
 #   native-fuzz      — 构建并运行 minilang-fuzz 原生三后端差分模糊测试
 #                      （拓展计划·基建：崩溃/分歧用例自动归档 artifact）
 #   sanitize-tsan    — TSan 竞态检测（并发/GUI 测试子集，信息性）
@@ -41,17 +42,31 @@ jobs:
   # ------------------------------------------------------------
   # 运行 tests_dynamic/fuzz_minilang.py：模拟 NaNBox/Lexer/Parser/GC
   # 等核心逻辑的动态验证 + 生成 MiniLang 程序模糊测试用例。
+  # 该脚本是历史 BUG_REPORT 的复现/验证报告，部分用例以“确认 bug 存在”
+  # 为通过条件，不作为正确性门禁；此处 continue-on-error 并归档 JSON 报告。
   # ============================================================
   dynamic-fuzz:
-    name: Dynamic Fuzz (Python)
+    name: Dynamic Fuzz (Python, 信息性)
     runs-on: ubuntu-24.04
+    continue-on-error: true
 
     steps:
       - name: Checkout 代码
         uses: actions/checkout@v5
 
       - name: 运行模糊测试
+        env:
+          PYTHONIOENCODING: utf-8
         run: python3 tests_dynamic/fuzz_minilang.py
+
+      - name: 上传动态验证报告
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: dynamic-fuzz-report-${{ github.run_id }}
+          path: tests_dynamic/dynamic_test_report.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   # ============================================================
   # 作业 1.5：原生三后端差分模糊测试（拓展计划·基建）
@@ -491,11 +506,15 @@ jobs:
 
       # 趟 1：插桩构建 + 运行代表性负载生成 profile
       # （PGO 插桩/优化与 ccache 不兼容，两趟均禁用 ccache）
+      # MINILANG_BUILD_PERF_TESTS=ON：该 option 声明在 add_subdirectory(tests)
+      # 之后，全新 configure 必须在缓存中显式启用（AGENTS §6），否则
+      # minilang_perf_test 目标不存在。
       - name: 配置（趟 1：PGO GENERATE）
         run: >
           cmake --preset linux-gcc-release
           -DMINILANG_USE_CCACHE=OFF
           -DMINILANG_PGO_GENERATE=ON
+          -DMINILANG_BUILD_PERF_TESTS=ON
 
       - name: 构建 perf 负载（趟 1）
         run: cmake --build out/build/linux-release --target minilang_perf_test --parallel
@@ -513,6 +532,7 @@ jobs:
           -DMINILANG_USE_CCACHE=OFF
           -DMINILANG_PGO_GENERATE=OFF
           -DMINILANG_PGO_USE=ON
+          -DMINILANG_BUILD_PERF_TESTS=ON
           -DCMAKE_CXX_FLAGS=-Wno-missing-profile
 
       - name: 构建（趟 2：PGO 优化产物）

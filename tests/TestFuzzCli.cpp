@@ -171,6 +171,95 @@ TEST(FuzzCliThreeAgree, ClassMethod) {
 }
 
 // ============================================================
+// FuzzCliKnownDivergence: 顶层前向引用已知差异分类
+// （ConsistencyDiff.G4_TopLevelForwardReferenceDivergence）
+// ============================================================
+
+TEST(FuzzCliKnownDivergence, VarForwardReference) {
+    FuzzResult r = fuzzThreeAgree("vc(x);\nvar x = 10;\n");
+    EXPECT_TRUE(r.knownDivergence) << "Interpreter=" << r.interpOutput << " StackVM=" << r.stackvmOutput
+                                   << " RegVM=" << r.regvmOutput;
+    EXPECT_FALSE(r.disagreement);
+    EXPECT_TRUE(r.ok);
+}
+
+TEST(FuzzCliKnownDivergence, SameLineForwardReference) {
+    FuzzResult r = fuzzThreeAgree("vc(x); var x = 10;\n");
+    EXPECT_TRUE(r.knownDivergence);
+    EXPECT_FALSE(r.disagreement);
+}
+
+TEST(FuzzCliKnownDivergence, FunctionForwardReference) {
+    FuzzResult r = fuzzThreeAgree("print(foo());\nfunc foo() { return 42; }\n");
+    EXPECT_TRUE(r.knownDivergence) << "Interpreter=" << r.interpOutput << " StackVM=" << r.stackvmOutput;
+    EXPECT_FALSE(r.disagreement);
+}
+
+TEST(FuzzCliKnownDivergence, TypeFirstForwardReference) {
+    FuzzResult r = fuzzThreeAgree("print(s);\nr s = \"x\";\n");
+    EXPECT_TRUE(r.knownDivergence) << "Interpreter=" << r.interpOutput << " StackVM=" << r.stackvmOutput;
+    EXPECT_FALSE(r.disagreement);
+}
+
+TEST(FuzzCliKnownDivergence, ChainedAssignment) {
+    FuzzResult r = fuzzThreeAgree("var s = s = \"hello\";\nprint(s);\n");
+    EXPECT_TRUE(r.knownDivergence) << "Interpreter=" << r.interpOutput << " StackVM=" << r.stackvmOutput;
+    EXPECT_FALSE(r.disagreement);
+}
+
+TEST(FuzzCliKnownDivergence, ClassifierNegativeCases) {
+    // 无同名顶层声明
+    EXPECT_FALSE(isKnownPreScanHoistingDivergence("vc(x);\n", "<runtime:未定义的变量: x>"));
+    // 同名声明但名字不匹配
+    EXPECT_FALSE(isKnownPreScanHoistingDivergence("vc(x);\nvar y = 10;\n", "<runtime:未定义的变量: x>"));
+    // 声明在嵌套作用域（非顶层）
+    EXPECT_FALSE(isKnownPreScanHoistingDivergence("fun f() { var x = 1; }\nvc(x);\n", "<runtime:未定义的变量: x>"));
+    // 非未定义错误
+    EXPECT_FALSE(isKnownPreScanHoistingDivergence("vc(x);\nvar x = 10;\n", "<runtime:除零错误>"));
+    // 解析失败源
+    EXPECT_FALSE(isKnownPreScanHoistingDivergence("???\n", "<runtime:未定义的变量: x>"));
+}
+
+TEST(FuzzCliKnownDivergence, ClassifierPositiveCases) {
+    EXPECT_TRUE(isKnownPreScanHoistingDivergence("vc(x);\nvar x = 10;\n", "<runtime:未定义的变量: x>"));
+    EXPECT_TRUE(isKnownPreScanHoistingDivergence("vc(x);\nvar x = 10;\n", "out<runtime:未定义的变量: x>"));
+    EXPECT_TRUE(
+        isKnownPreScanHoistingDivergence("print(foo());\nfunc foo() { return 42; }\n", "<runtime:未定义的函数: foo>"));
+    EXPECT_TRUE(isKnownPreScanHoistingDivergence("print(s);\nr s = \"x\";\n", "<runtime:未定义的变量: s>"));
+}
+
+TEST(FuzzCliKnownDivergence, SummaryTextAndJson) {
+    FuzzSummary s;
+    s.totalRuns = 1;
+    s.knownDivergences = 1;
+    FuzzResult r;
+    r.source = "vc(x);\nvar x = 10;\n";
+    r.knownDivergence = true;
+    r.errorMessage = "已知设计差异: 顶层声明前向引用（G4）";
+    s.knownDivergenceCases.push_back(r);
+
+    std::string text = formatSummaryText(s);
+    EXPECT_NE(text.find("已知设计差异（顶层前向引用，不计失败）: 1"), std::string::npos);
+    EXPECT_NE(text.find("known-divergence #0"), std::string::npos);
+    EXPECT_NE(text.find("无崩溃、无未知分歧"), std::string::npos);
+
+    std::string json = formatSummaryJson(s);
+    EXPECT_NE(json.find("\"knownDivergences\": 1"), std::string::npos);
+    EXPECT_NE(json.find("\"knownDivergenceCases\""), std::string::npos);
+}
+
+TEST(FuzzCliKnownDivergence, ProcessFileCountsKnown) {
+    std::string path = makeTempFile("vc(x);\nvar x = 10;\n");
+    FuzzOptions opts;
+    opts.dumpCrashes = false;
+    FuzzSummary s = processFile(path, opts);
+    removeTempFile(path);
+    EXPECT_EQ(s.knownDivergences, 1);
+    EXPECT_EQ(s.disagreements, 0);
+    EXPECT_EQ(s.runtimeErrors, 0);
+}
+
+// ============================================================
 // FuzzCliRunBatch: 批量生成 + 执行测试
 // ============================================================
 

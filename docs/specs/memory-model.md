@@ -13,7 +13,7 @@
 
 堆类型通过侵入式 `RefCounted` 基类管理引用计数（`interpreter/RefCounted.h`）。
 
-**内存序约定（2026-10-04 起）**：`release()` 使用 shared_ptr 同款惯用法——`fetch_sub(1, memory_order_release)` + 归零时 `atomic_thread_fence(memory_order_acquire)` 后 `delete this`（非归零递减省去 acquire 半序，堆值密集代码每次少一次强同步）。**勿"修复"回 `acq_rel`**：归零路径的 acquire fence 已覆盖跨线程析构可见性语义。
+**内存序约定（2026-10-04 起）**：`release()` 使用 shared_ptr 同款惯用法——`fetch_sub(1, memory_order_release)` + 归零时 `atomic_thread_fence(memory_order_acquire)` 后 `delete this`（非归零递减省去 acquire 半序，堆值密集代码每次少一次强同步）。**勿"修复"回 `acq_rel`**：归零路径的 acquire fence 已覆盖跨线程析构可见性语义。**唯一例外**：TSan 构建（`__SANITIZE_THREAD__` / `__has_feature(thread_sanitizer)`）下 GCC 不支持 `atomic_thread_fence`（`-Werror=tsan`），`release()` 使用 `fetch_sub(1, acq_rel)`；生产构建保持 release-only 快路径。
 **新增堆类型强制 checklist**：
 1. 继承 `RefCounted`，实现 `release`/减引用语义，禁止手工 `delete` 裸 `Value` 持有者。
 2. 检查是否需要被 `GcManager` 追踪（见 §3）；`Value.h` 中 `friend class GcManager` 表明 GC 可访问内部结构，新类型如参与循环引用检测须配合 GC 遍历接口。

@@ -434,7 +434,7 @@ if(NOT TARGET minilang_core)
     # 避免 mocs_compilation.cpp 污染 Unity batch（同 minilang_core_base）。
     set_target_properties(minilang_backend PROPERTIES AUTOMOC OFF)
     # JIT 后端：链接 asmjit（条件依赖）
-    if(MINILANG_USE_JIT)
+    if(MINILANG_USE_JIT OR MINILANG_USE_JIT_A64)
         target_link_libraries(minilang_backend PUBLIC asmjit::asmjit)
     endif()
 
@@ -464,7 +464,7 @@ if(NOT TARGET minilang_core)
     # OBJECT 库的 PUBLIC 链接关系不会通过 $<TARGET_OBJECTS:...> 传递到 STATIC 聚合，
     # 需在 minilang_core 上显式声明外部依赖，确保消费方（minilang_ide/tests/cli）能链接到。
     # JIT 后端：链接 asmjit 静态库（条件依赖）
-    if(MINILANG_USE_JIT)
+    if(MINILANG_USE_JIT OR MINILANG_USE_JIT_A64)
         target_link_libraries(minilang_core PUBLIC asmjit::asmjit)
     endif()
 

@@ -17,10 +17,14 @@ MiniLang IDE 动态验证测试套件（Python 模糊测试框架）
 
 执行方式: python3 fuzz_minilang.py
 输出: JSON 格式测试报告 + 控制台彩色输出
+
+注意: 本套件是历史 BUG_REPORT 的复现/验证报告，部分用例以“确认 bug 存在”
+为通过条件，不作为 CI 正确性门禁；CI 以 continue-on-error 运行并归档 JSON。
 """
 
 import json
 import math
+import os
 import random
 import struct
 import sys
@@ -1389,7 +1393,7 @@ if __name__ == '__main__':
     results = runner.run_all()
     
     # 保存JSON报告
-    report_path = '/mnt/local/ide/tests_dynamic/dynamic_test_report.json'
+    report_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dynamic_test_report.json')
     with open(report_path, 'w', encoding='utf-8') as f:
         f.write(runner.to_json())
     print(f"\n📄 JSON报告已保存: {report_path}")

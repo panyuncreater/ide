@@ -6,7 +6,7 @@
  * 仅实现核心整数算术 + 控制流 + 全局/局部变量子集。
  *
  * AAPCS64 调用约定：
- *   - 入口函数签名: int64_t jitA64Entry(JitContext* ctx)
+ *   - 入口函数签名: int64_t jitA64Entry(JitA64Context* ctx)
  *   - ctx 通过 x0 传入，prologue 保存到 x19 (callee-saved)
  *   - 调用 C++ helper 时：x0=ctx, x1/x2=args
  *
@@ -35,7 +35,7 @@ using namespace jit_internal;
 extern "C" {
 
 /// ARM64 版 print：输出 NaN-boxed Value
-void jitA64PrintValue(JitContext* ctx, uint64_t rawBits) {
+void jitA64PrintValue(JitA64Context* ctx, uint64_t rawBits) {
     if (!ctx || !ctx->outputCallback)
         return;
     Value v = bitsToValue(rawBits);
@@ -43,7 +43,7 @@ void jitA64PrintValue(JitContext* ctx, uint64_t rawBits) {
 }
 
 /// ARM64 版错误报告
-void jitA64ReportError(JitContext* ctx, const char* msg) {
+void jitA64ReportError(JitA64Context* ctx, const char* msg) {
     if (!ctx || !ctx->hasError || !ctx->errorBuffer)
         return;
     *ctx->hasError = true;
@@ -292,7 +292,7 @@ JitA64EntryFn JITA64Backend::compileMainChunk(const CompileResult& result) {
 
         case OpCode::OP_GET_GLOBAL: {
             uint16_t slot = static_cast<uint16_t>(codeBytes[ip + 1]) | (static_cast<uint16_t>(codeBytes[ip + 2]) << 8);
-            // ldr x1, [x19 + offsetof(JitContext, globalSlots)]  // ctx->globalSlots
+            // ldr x1, [x19 + offsetof(JitA64Context, globalSlots)]  // ctx->globalSlots
             a.ldr(a64::regs::x1, a64::ptr(a64::regs::x19, 24));
             // ldr x0, [x1 + slot*8]
             a.ldr(a64::regs::x0, a64::ptr(a64::regs::x1, static_cast<int32_t>(slot * 8)));

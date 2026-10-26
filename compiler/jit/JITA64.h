@@ -33,6 +33,7 @@
 #include "compiler/core/Bytecode.h"
 #include "compiler/jit/JITInternal.h"
 #include <asmjit/a64.h>
+#include <cstddef>
 #include <functional>
 #include <string>
 #include <vector>
@@ -44,10 +45,22 @@ enum class JitA64Result {
     CompileError, // JIT 编译失败
 };
 
+/// ARM64 JIT 运行时上下文（仅 Phase 1 PoC 使用的字段）。
+/// 前四个字段与 x86-64 JitContext 的布局一致（globalSlots 固定在 offset 24），
+/// A64 codegen 通过 x19 + 硬编码偏移访问；完整 JitContext 依赖 x86 JIT 类型，
+/// 不应在 A64-only 构建中引入。
+struct JitA64Context {
+    std::function<void(const std::string&)>* outputCallback = nullptr; // offset 0
+    bool* hasError = nullptr;                                          // offset 8
+    std::string* errorBuffer = nullptr;                                // offset 16
+    int64_t* globalSlots = nullptr;                                    // offset 24
+};
+static_assert(offsetof(JitA64Context, globalSlots) == 24, "A64 codegen hardcodes ctx+24 for globalSlots");
+
 /// ARM64 JIT 入口函数签名
-/// @param ctx JitContext 指针（通过 x0 传入，prologue 保存到 x19）
+/// @param ctx JitA64Context 指针（通过 x0 传入，prologue 保存到 x19）
 /// @return int64_t（最后一个表达式的值）
-using JitA64EntryFn = int64_t (*)(JitContext* ctx);
+using JitA64EntryFn = int64_t (*)(JitA64Context* ctx);
 
 // ============================================================
 // JITA64Backend — ARM64 JIT 后端（Phase 1 PoC）
@@ -110,8 +123,8 @@ private:
     std::string lastError_;
     bool hasError_ = false;
 
-    // 运行时状态（与 x86-64 JITBackend 共用 JitContext 结构）
-    JitContext jitContext_;
+    // 运行时状态（前四字段布局与 x86-64 JitContext 一致）
+    JitA64Context jitContext_;
     std::vector<int64_t> globalSlots_;
 };
 

@@ -11,7 +11,7 @@
  * @since P3（JIT.cpp 拆分）
  */
 
-#ifdef MINILANG_USE_JIT
+#if defined(MINILANG_USE_JIT) || defined(MINILANG_USE_JIT_A64)
 
 #include "interpreter/Value.h"
 #include <cstdint>
@@ -112,6 +112,7 @@ template <typename T> inline uint64_t jitReturn(T&& v) {
 // compileAllChunks (via reinterpret_cast<uint64_t>(&func)).
 
 struct JitContext;
+struct JitFrame;
 
 extern "C" {
 // --- Output/Error (JITRuntime.cpp) ---
@@ -218,4 +219,4 @@ void jitSafepointGc(JitContext* ctx);
 void jitLoopLimitExceeded(JitContext* ctx, int64_t limit);
 } // extern "C"
 
-#endif // MINILANG_USE_JIT
+#endif // MINILANG_USE_JIT || MINILANG_USE_JIT_A64

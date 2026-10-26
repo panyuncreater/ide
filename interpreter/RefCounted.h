@@ -65,6 +65,16 @@ class GcManager;
 // 对象直接持有自己的槽位下标，注册/注销/sweep 均不再有哈希操作。
 inline constexpr size_t kInvalidGcSlot = static_cast<size_t>(-1);
 
+// TSan 不支持 atomic_thread_fence（GCC 会报 -Werror=tsan）：仅在 sanitizer
+// 构建下把归零递减改为 acq_rel，生产路径仍保持 release-only 快路径。
+#if defined(__SANITIZE_THREAD__)
+#define MINILANG_TSAN_BUILD 1
+#elif defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define MINILANG_TSAN_BUILD 1
+#endif
+#endif
+
 struct RefCounted {
     mutable std::atomic<int> refCount{1};
     const ValueType type;
@@ -74,7 +84,7 @@ struct RefCounted {
     // AUDIT-R4 BUG-13 fix: 改为 atomic<bool>——写入点 registerTracked 在锁内，
     // 但析构线程在 ~RefCounted 中锁外读取，跨线程裸 bool 读写构成 TOCTOU
     // 数据竞争（可能导致登记表残留悬垂条目）。relaxed 序足够：
-    // release() 的 acq_rel 已保证注册线程写入对析构线程可见。
+    // release() 的 release + acquire fence 已保证注册线程写入对析构线程可见。
     mutable std::atomic<bool> gcTracked_{false};
     // 2026-10-06 slot-index 重构：本对象在 GcManager::slots_ 中的槽位下标。
     // 仅当 gcTracked_ 为 true 时有效；写入点（registerTracked / Phase 3 压缩回写）
@@ -108,10 +118,18 @@ struct RefCounted {
     /// 堆值密集代码（字符串拼接/容器元素搬运/字段赋值）每条指令减少 1 次强同步。
     /// 减少引用计数，若降为 0 则自删除
     void release() const {
+#ifdef MINILANG_TSAN_BUILD
+        // TSan 无法建模 atomic_thread_fence（GCC -Werror=tsan）；sanitizer
+        // 构建改用 acq_rel 让归零递减被正确插桩，生产路径保持 release-only。
+        if (refCount.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+            delete this;
+        }
+#else
         if (refCount.fetch_sub(1, std::memory_order_release) == 1) {
             std::atomic_thread_fence(std::memory_order_acquire);
             delete this;
         }
+#endif
     }
 
     /// 检查是否独占引用（用于 COW detach 判断）
@@ -120,3 +138,7 @@ struct RefCounted {
     /// 获取当前引用计数（调试/诊断用）
     int useCount() const { return refCount.load(std::memory_order_relaxed); }
 };
+
+#ifdef MINILANG_TSAN_BUILD
+#undef MINILANG_TSAN_BUILD
+#endif

@@ -17,9 +17,9 @@
 #include "cli/fuzz_core.h"
 
 #include "cli/AtomicWrite.h" // F13 fix: crash 用例原子导出
-#include "compiler/core/Compiler.h"
 #include "compiler/backend-reg/RegisterVM.h"
 #include "compiler/backend-stack/VM.h"
+#include "compiler/core/Compiler.h"
 #include "interpreter/Interpreter.h"
 #include "interpreter/RuntimeExceptions.h"
 #include "lexer/Lexer.h"
@@ -630,7 +630,144 @@ bool hasErrorTag(const std::string& s) {
            s.find("<runtime:") != std::string::npos || s.find("<crash:") != std::string::npos;
 }
 
+// ============================================================
+// 已知设计差异：顶层声明前向引用（G4 / R164 fixup3）
+// ------------------------------------------------------------
+// Interpreter 不做顶层预扫描，声明前使用报“未定义的变量/函数”；VMs
+// preScanTopLevelDecls 预分配全局槽位，读到 null 或提前可见。该差异由
+// ConsistencyDiff.G4_TopLevelForwardReferenceDivergence 锁定，fuzz 将其
+// 单独计数，不计入失败分歧。
+// ============================================================
+
+std::string extractUndefinedName(const std::string& output) {
+    const std::string varMarker = "未定义的变量: ";
+    const std::string fnMarker = "未定义的函数: ";
+    size_t varPos = output.rfind(varMarker);
+    size_t fnPos = output.rfind(fnMarker);
+    size_t pos = std::string::npos;
+    size_t markerLen = 0;
+    if (varPos != std::string::npos && (fnPos == std::string::npos || varPos > fnPos)) {
+        pos = varPos;
+        markerLen = varMarker.size();
+    } else if (fnPos != std::string::npos) {
+        pos = fnPos;
+        markerLen = fnMarker.size();
+    }
+    if (pos == std::string::npos)
+        return {};
+    size_t start = pos + markerLen;
+    size_t end = output.find('>', start);
+    if (end == std::string::npos)
+        end = output.size();
+    std::string name = output.substr(start, end - start);
+    size_t paren = name.find('(');
+    if (paren != std::string::npos)
+        name = name.substr(0, paren);
+    while (!name.empty() && (name.back() == ' ' || name.back() == '\t' || name.back() == '\r' || name.back() == '\n'))
+        name.pop_back();
+    return name;
+}
+
+bool isTypeFirstToken(TokenType t) {
+    switch (t) {
+    case TokenType::TK_IDENTIFIER:
+    case TokenType::TK_INT:
+    case TokenType::TK_FLOAT:
+    case TokenType::TK_BOOL:
+    case TokenType::TK_STRING_TYPE:
+    case TokenType::TK_DICT:
+    case TokenType::TK_ARRAY:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// 收集顶层（花括号/圆括号/方括号深度均为 0）声明名：
+// var NAME / Type NAME (=|;) / fun NAME / const fun NAME / class NAME / enum NAME。
+// 覆盖 fuzz 变异产生的类型前置声明（如 `r arr = ...`）。
+std::vector<std::string> collectTopLevelBindings(const std::string& source) {
+    Lexer lx;
+    auto tokens = lx.scan(source);
+    if (lx.getDiagnostics().hasErrors())
+        return {};
+
+    std::vector<std::string> names;
+    int braceDepth = 0;
+    int parenDepth = 0;
+    int bracketDepth = 0;
+    const size_t n = tokens.size();
+    for (size_t i = 0; i < n; ++i) {
+        const Token& t = tokens[i];
+        switch (t.type) {
+        case TokenType::TK_LBRACE:
+            ++braceDepth;
+            continue;
+        case TokenType::TK_RBRACE:
+            if (braceDepth > 0)
+                --braceDepth;
+            continue;
+        case TokenType::TK_LPAREN:
+            ++parenDepth;
+            continue;
+        case TokenType::TK_RPAREN:
+            if (parenDepth > 0)
+                --parenDepth;
+            continue;
+        case TokenType::TK_LBRACKET:
+            ++bracketDepth;
+            continue;
+        case TokenType::TK_RBRACKET:
+            if (bracketDepth > 0)
+                --bracketDepth;
+            continue;
+        default:
+            break;
+        }
+        if (braceDepth != 0 || parenDepth != 0 || bracketDepth != 0)
+            continue;
+
+        if (t.type == TokenType::TK_VAR && i + 1 < n && tokens[i + 1].type == TokenType::TK_IDENTIFIER) {
+            names.push_back(tokens[i + 1].lexeme);
+            continue;
+        }
+        if (t.type == TokenType::TK_FUN && i + 1 < n && tokens[i + 1].type == TokenType::TK_IDENTIFIER) {
+            names.push_back(tokens[i + 1].lexeme);
+            continue;
+        }
+        if (t.type == TokenType::TK_CONST && i + 2 < n && tokens[i + 1].type == TokenType::TK_FUN &&
+            tokens[i + 2].type == TokenType::TK_IDENTIFIER) {
+            names.push_back(tokens[i + 2].lexeme);
+            continue;
+        }
+        if ((t.type == TokenType::TK_CLASS || t.type == TokenType::TK_ENUM) && i + 1 < n &&
+            tokens[i + 1].type == TokenType::TK_IDENTIFIER) {
+            names.push_back(tokens[i + 1].lexeme);
+            continue;
+        }
+        if (isTypeFirstToken(t.type) && i + 2 < n && tokens[i + 1].type == TokenType::TK_IDENTIFIER) {
+            TokenType after = tokens[i + 2].type;
+            if (after == TokenType::TK_ASSIGN || after == TokenType::TK_SEMICOLON) {
+                names.push_back(tokens[i + 1].lexeme);
+            }
+        }
+    }
+    return names;
+}
+
 } // anonymous namespace
+
+bool isKnownPreScanHoistingDivergence(const std::string& source, const std::string& interpOutput) {
+    // 只看最后一个 <runtime:> 段，避免 stdout 中出现同样的提示文本造成误判。
+    size_t runtimePos = interpOutput.rfind("<runtime:");
+    if (runtimePos == std::string::npos)
+        return false;
+    std::string name = extractUndefinedName(interpOutput.substr(runtimePos));
+    if (name.empty())
+        return false;
+    auto bindings = collectTopLevelBindings(source);
+    return std::find(bindings.begin(), bindings.end(), name) != bindings.end();
+}
 
 // ============================================================
 // 公有 API 实现
@@ -684,12 +821,24 @@ FuzzResult fuzzSource(const std::string& source, FuzzBackend backend) {
             std::string interpNorm = normalizeErrorPhase(result.interpOutput);
             std::string stackNorm = normalizeErrorPhase(result.stackvmOutput);
             std::string regNorm = normalizeErrorPhase(result.regvmOutput);
+            // 已知设计差异（G4）：顶层声明前向引用。若 Interpreter 报未定义
+            // 变量/函数且源码存在同名顶层声明，则归入 knownDivergence，不计失败。
             if (interpNorm != stackNorm) {
-                result.disagreement = true;
-                result.errorMessage = "Interpreter vs StackVM 分歧";
+                if (isKnownPreScanHoistingDivergence(source, result.interpOutput)) {
+                    result.knownDivergence = true;
+                    result.errorMessage = "已知设计差异: 顶层声明前向引用（G4）";
+                } else {
+                    result.disagreement = true;
+                    result.errorMessage = "Interpreter vs StackVM 分歧";
+                }
             } else if (!skipRegvmComparison && interpNorm != regNorm) {
-                result.disagreement = true;
-                result.errorMessage = "Interpreter vs RegisterVM 分歧";
+                if (isKnownPreScanHoistingDivergence(source, result.interpOutput)) {
+                    result.knownDivergence = true;
+                    result.errorMessage = "已知设计差异: 顶层声明前向引用（G4）";
+                } else {
+                    result.disagreement = true;
+                    result.errorMessage = "Interpreter vs RegisterVM 分歧";
+                }
             }
         }
         break;
@@ -745,6 +894,11 @@ FuzzSummary runFuzzBatch(const FuzzOptions& opts) {
             if (static_cast<int>(summary.crashCases.size()) < 50) {
                 summary.crashCases.push_back(r);
             }
+        } else if (r.knownDivergence) {
+            summary.knownDivergences++;
+            if (static_cast<int>(summary.knownDivergenceCases.size()) < 50) {
+                summary.knownDivergenceCases.push_back(r);
+            }
         } else if (r.disagreement) {
             summary.disagreements++;
             if (static_cast<int>(summary.disagreementCases.size()) < 50) {
@@ -762,8 +916,8 @@ FuzzSummary runFuzzBatch(const FuzzOptions& opts) {
 
         // 非 quiet 模式实时输出进度
         if (!opts.quiet && (i % 10 == 0 || i == static_cast<int64_t>(opts.iterations) - 1)) {
-            std::fprintf(stdout, "[%lld/%d] crashes=%d disagreements=%d\n", static_cast<long long>(i + 1),
-                         opts.iterations, summary.crashes, summary.disagreements);
+            std::fprintf(stdout, "[%lld/%d] crashes=%d disagreements=%d known=%d\n", static_cast<long long>(i + 1),
+                         opts.iterations, summary.crashes, summary.disagreements, summary.knownDivergences);
             std::fflush(stdout);
         }
     }
@@ -801,6 +955,9 @@ FuzzSummary processFile(const std::string& path, const FuzzOptions& opts) {
     if (r.crashDetected) {
         summary.crashes = 1;
         summary.crashCases.push_back(r);
+    } else if (r.knownDivergence) {
+        summary.knownDivergences = 1;
+        summary.knownDivergenceCases.push_back(r);
     } else if (r.disagreement) {
         summary.disagreements = 1;
         summary.disagreementCases.push_back(r);
@@ -965,8 +1122,8 @@ void printHelp() {
                "  --version, -v          显示版本\n"
                "\n"
                "退出码:\n"
-               "  0  成功（无崩溃、无分歧）\n"
-               "  1  发现崩溃或三后端分歧（已记录用例）\n"
+               "  0  成功（无崩溃、无未知分歧；已知设计差异不计失败）\n"
+               "  1  发现崩溃或未知三后端分歧（已记录用例）\n"
                "  2  错误（参数解析失败、文件不存在等）\n"
                "\n"
                "示例:\n"
@@ -1049,6 +1206,7 @@ std::string formatSummaryText(const FuzzSummary& summary) {
     oss << "  运行时错误（三后端一致）: " << summary.runtimeErrors << "\n";
     oss << "  崩溃: " << summary.crashes << "\n";
     oss << "  三后端分歧: " << summary.disagreements << "\n";
+    oss << "  已知设计差异（顶层前向引用，不计失败）: " << summary.knownDivergences << "\n";
     oss << "总耗时: " << summary.totalDurationMs << " ms\n";
     if (summary.totalRuns > 0) {
         oss << "平均: " << (summary.totalDurationMs / summary.totalRuns) << " ms/次\n";
@@ -1086,11 +1244,30 @@ std::string formatSummaryText(const FuzzSummary& summary) {
         }
     }
 
+    if (!summary.knownDivergenceCases.empty()) {
+        oss << "\n--- 已知设计差异用例（前 " << summary.knownDivergenceCases.size() << " 个）---\n";
+        for (size_t i = 0; i < summary.knownDivergenceCases.size(); ++i) {
+            const auto& d = summary.knownDivergenceCases[i];
+            oss << "[known-divergence #" << i << "] " << d.errorMessage << "\n";
+            oss << "  Interpreter: " << d.interpOutput.substr(0, 200) << "\n";
+            oss << "  StackVM:     " << d.stackvmOutput.substr(0, 200) << "\n";
+            oss << "  RegisterVM:  " << d.regvmOutput.substr(0, 200) << "\n";
+            oss << "  源码:\n";
+            std::istringstream iss(d.source);
+            std::string line;
+            while (std::getline(iss, line)) {
+                oss << "    " << line << "\n";
+            }
+        }
+    }
+
     oss << "\n结论: ";
     if (summary.crashes > 0) {
         oss << "发现 " << summary.crashes << " 个崩溃（已保存到 crash-*.ml）";
     } else if (summary.disagreements > 0) {
         oss << "发现 " << summary.disagreements << " 个三后端分歧";
+    } else if (summary.knownDivergences > 0) {
+        oss << "无崩溃、无未知分歧；发现 " << summary.knownDivergences << " 个已知设计差异（顶层前向引用）";
     } else {
         oss << "无崩溃、无分歧，三后端语义一致";
     }
@@ -1109,6 +1286,7 @@ std::string formatSummaryJson(const FuzzSummary& summary) {
     oss << "  \"runtimeErrors\": " << summary.runtimeErrors << ",\n";
     oss << "  \"crashes\": " << summary.crashes << ",\n";
     oss << "  \"disagreements\": " << summary.disagreements << ",\n";
+    oss << "  \"knownDivergences\": " << summary.knownDivergences << ",\n";
     oss << "  \"totalDurationMs\": " << summary.totalDurationMs << ",\n";
     oss << "  \"crashCases\": [\n";
     for (size_t i = 0; i < summary.crashCases.size(); ++i) {
@@ -1127,6 +1305,17 @@ std::string formatSummaryJson(const FuzzSummary& summary) {
             << escapeJson(d.interpOutput) << "\", \"stackvm\": \"" << escapeJson(d.stackvmOutput) << "\", \"regvm\": \""
             << escapeJson(d.regvmOutput) << "\", \"source\": \"" << escapeJson(d.source) << "\"}";
         if (i + 1 < summary.disagreementCases.size())
+            oss << ",";
+        oss << "\n";
+    }
+    oss << "  ],\n";
+    oss << "  \"knownDivergenceCases\": [\n";
+    for (size_t i = 0; i < summary.knownDivergenceCases.size(); ++i) {
+        const auto& d = summary.knownDivergenceCases[i];
+        oss << "    {\"index\": " << i << ", \"reason\": \"" << escapeJson(d.errorMessage) << "\", \"interp\": \""
+            << escapeJson(d.interpOutput) << "\", \"stackvm\": \"" << escapeJson(d.stackvmOutput) << "\", \"regvm\": \""
+            << escapeJson(d.regvmOutput) << "\", \"source\": \"" << escapeJson(d.source) << "\"}";
+        if (i + 1 < summary.knownDivergenceCases.size())
             oss << ",";
         oss << "\n";
     }
